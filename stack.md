@@ -2,7 +2,7 @@
 
 > **In one sentence:** We turn Stellar's invisible infrastructure (anchors, USDC, sponsorship) into something an ordinary person can use by tapping a WhatsApp link — and every tap creates a newly funded Stellar account.
 
-Target program: **SCF Build (Integration Track)** + **Instawards** (ambassador, 30-day MVP). Builder: Stellar Turkey ambassador (shipped Stelvin — a Soroban privacy batch-auction, our credibility lever).
+Target program: **SCF Build (Integration Track)** + **Instawards** (ambassador, 30-day MVP). Builder: Stellar Türkiye ambassador.
 
 ---
 
@@ -52,8 +52,7 @@ Target program: **SCF Build (Integration Track)** + **Instawards** (ambassador, 
 lumenia/  (pnpm workspaces)
 ├── apps/web/        → Next.js 16 PWA (PUBLIC, no secrets)
 ├── apps/sponsor/    → separate Node service (HOT Ed25519 sponsor key)
-├── packages/shared/ → tx-builder, claim-secret hash, types (web+sponsor must build byte-identical tx)
-└── contracts/       → existing Stelvin (unchanged)
+└── packages/shared/ → tx-builder, claim-secret hash, types (web+sponsor must build byte-identical tx)
 ```
 The sponsor backend is a **separate Node service** (not a Next API route): the hot signing key + KMS + anti-drain validation must live within their own network/IAM boundary and their own deploy cadence.
 
@@ -133,7 +132,7 @@ The sponsor backend is a **separate Node service** (not a Next API route): the h
 > "**Web/PWA-first, app optional** — a claim is a link, its fate is the browser; a 'go to the App Store first' funnel kills it. Governing principle: **every crypto primitive stays backstage; the user is always front-stage and sees only two names: a person and an amount.** Biometric = account ('lock your money to you', not 'sign up'). The **trustline is buried inside a single 'we're moving your money' animation frame**, the sponsor pays the reserve, the user never sees it. Bill-split = a drag-to-rebalance game (the thing Venmo does badly). Wallet stack: passkey-clean for link-claim + web, but with a graceful fallback to classic-keypair + local-biometric."
 
 ### ✍️ Bri — Technical Writer
-> "Positioning: *'Send and request USDC by link — the recipient claims it with zero setup, gasless, on Stellar.'* **AVOID:** trustless, only-on-Stellar, savings/yield/bank, auto-charge. Weaponize Sling/Peanut as *validation*, don't deny them: 'the mechanic is proven; the question is which chain's primitive does it cleanest — Stellar's escrow+sponsorship+passkey is the cleanest without a custom contract, and the volume that needs it is already on Stellar.' Lead with Stelvin as **builder-proof** (not product similarity — 'I ship hard Soroban work'). Metric: **net-new funded Stellar addresses created via claim** (not TVL — ecosystem activation)."
+> "Positioning: *'Send and request USDC by link — the recipient claims it with zero setup, gasless, on Stellar.'* **AVOID:** trustless, only-on-Stellar, savings/yield/bank, auto-charge. Weaponize Sling/Peanut as *validation*, don't deny them: 'the mechanic is proven; the question is which chain's primitive does it cleanest — Stellar's escrow+sponsorship+passkey is the cleanest without a custom contract, and the volume that needs it is already on Stellar.' Metric: **net-new funded Stellar addresses created via claim** (not TVL — ecosystem activation)."
 
 ---
 

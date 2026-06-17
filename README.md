@@ -158,7 +158,6 @@ lumenia/  (pnpm workspaces)
 ├── packages/
 │   └── shared/      → tx-builders, claim-secret hash, types
 │                      (web + sponsor must build the tx byte-for-byte identically)
-├── contracts/       → existing Stelvin (unchanged)
 ├── stack.md         → pinned tech stack + persona rulings
 └── README.md        → this document
 ```

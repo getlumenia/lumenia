@@ -4,7 +4,7 @@ This file records **only the work that has actually been done** (not plans or de
 
 Last updated: 2026-06-17 · Network: **testnet** · No real money used.
 
-> Naming note: the product is **Lumenia**; packages are `@lumenia/*`. The working directory is historically named `faceid-wallet` and some text still references the earlier `stelvin` project — these are cosmetic and being cleaned up.
+> Naming note: the product is **Lumenia**; packages are `@lumenia/*`. The working directory is historically named `faceid-wallet` (cosmetic). Stelvin is a **separate, independent project** — not part of Lumenia and not used as its credential.
 
 > "Personas" (Tyler/Elliot/Justin/Nicole/Kaan/Bri) are an **adversarial AI review method**, not a team of people — see [stack.md](stack.md).
 
