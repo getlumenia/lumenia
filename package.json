@@ -10,6 +10,9 @@
   "scripts": {
     "web:dev": "pnpm --filter @lumenia/web dev",
     "sponsor:dev": "pnpm --filter @lumenia/sponsor dev",
-    "spike1": "pnpm --filter @lumenia/sponsor spike1"
+    "spike1": "pnpm --filter @lumenia/sponsor spike1",
+    "spike1b": "pnpm --filter @lumenia/sponsor spike1b",
+    "spike1c": "pnpm --filter @lumenia/sponsor spike1c",
+    "test:antidrain": "pnpm --filter @lumenia/sponsor test:antidrain"
   }
 }

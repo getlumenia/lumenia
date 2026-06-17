@@ -5,7 +5,10 @@
   "description": "Lumenia sponsor service — sponsored create + fee-bump (HOT key, KMS)",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "spike1": "tsx src/spike1-sponsored-claim.ts"
+    "spike1": "tsx src/spike1-sponsored-claim.ts",
+    "spike1b": "tsx src/spike1b-kms-rawsign.ts",
+    "spike1c": "tsx src/spike1c-wire-parity.ts",
+    "test:antidrain": "tsx src/test-antidrain.ts"
   },
   "dependencies": {
     "@lumenia/shared": "workspace:*",
