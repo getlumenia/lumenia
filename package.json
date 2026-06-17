@@ -13,6 +13,7 @@
     "spike1": "pnpm --filter @lumenia/sponsor spike1",
     "spike1b": "pnpm --filter @lumenia/sponsor spike1b",
     "spike1c": "pnpm --filter @lumenia/sponsor spike1c",
+    "spike4": "pnpm --filter @lumenia/sponsor spike4",
     "test:antidrain": "pnpm --filter @lumenia/sponsor test:antidrain"
   }
 }

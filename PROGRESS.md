@@ -102,6 +102,16 @@ Inserts the real wire boundary: WEB builds + signs the claim inner tx → `toXDR
 
 ---
 
+## 4e. ✅ Spike #4 — CCTP off-ramp bridge: Stellar-side interface (TESTNET)
+
+**File:** [apps/sponsor/src/spike4-cctp-bridge.ts](apps/sponsor/src/spike4-cctp-bridge.ts) · **Run:** `pnpm spike4`
+
+Proves the Stellar-specific half of the CCTP bridge leg (off-ramp Path 3) on live testnet. **Result: `✅ SPIKE #4 PASS`** — `approve` (USDC SAC → TokenMessengerMinter) ran as a **real testnet tx (SUCCESS)**, and `deposit_for_burn` **simulation reached contract logic** (host accepted all 8 args — `i128`, `u32`, `BytesN<32>`, `Address` — plus `require_auth`, then returned `Error(Contract, #10)`, a contract business-rule rejection consistent with an unfunded account — NOT an ABI/type/method error). Iris attestation sandbox endpoint is reachable. Interface verified against `circlefin/stellar-cctp` + Circle quickstart.
+
+**Honest scope:** this proves the Stellar-side CCTP interface (SAC approve, `deposit_for_burn` arg types/order/auth, recipient-signed). It does NOT run a funded burn (the testnet CCTP USDC faucet `faucet.circle.com` is web/reCAPTCHA only — no scriptable API) nor the EVM `receiveMessage` mint (standard CCTP, out of scope). Remaining = a [YOU] step: fund via the faucet, then the same call + Iris poll completes a real burn→attestation. The `Error(Contract, #10)` exact meaning isn't mapped to Circle's enum yet (most likely balance/allowance) — confirm on a funded run.
+
+---
+
 ## 5. 🔎 Day-1 finding caught (mempool-class)
 
 `@stellar/stellar-sdk@16` ESM build blows up under `tsx`/Node ESM on its internal `@stellar/js-xdr` import (`does not provide an export named 'config'`). **Fix:** run `apps/sponsor` as **CommonJS** (no `"type": "module"`). Web (Next.js bundler) unaffected. Keep the production sponsor on CJS/bundle. (Also in [apps/sponsor/README.md](apps/sponsor/README.md).)
@@ -139,7 +149,7 @@ Six deep research briefs were produced to de-risk the persona-flagged unknowns. 
 
 ## 8. NOT DONE YET (for the next agent)
 
-- ❌ `apps/web` Next.js app files (manifest, claim page, OG route, Serwist SW) — only package.json + README exist.
+- 🟡 `apps/web` **skeleton written** (landing, value-first claim page + `ClaimButton`, per-claim OG card, manifest, and the architecture seams `lib/signer.ts` / `lib/account.ts` / `lib/offramp.ts`). **NOT yet built/run** (`next dev` not executed); the real signer/recovery, sponsor HTTP wiring, off-ramp adapters and Serwist SW are still stubbed/TODO. Run: `pnpm install && pnpm --filter @lumenia/web dev`.
 - ❌ `apps/sponsor/src/index.ts` real HTTP service (`/create-account`, `/feebump`) with rate-limit + the KMS call wired in. When building it, also close the items below.
   - **Fee-abuse / rate-limit (Elliot):** the anti-drain validator guards the reserve/principal but NOT fee-grind; add per-account/per-IP rate-limit + fee caps in the HTTP layer.
   - **Exact-shape matcher (Tyler):** the validator allows any subset/permutation of the allowed ops; add an expected op-sequence/count template (and watch for double-`payment` once `allowedPaymentDestinations` is enabled in prod).
@@ -160,6 +170,7 @@ pnpm spike1         # Spike #1   → testnet → "✅ SPIKE #1 PASS"
 pnpm test:antidrain # validator  → "✅ ANTI-DRAIN TESTS PASS (14/14)" (no network)
 pnpm spike1b        # Spike #1b  → testnet → "✅ SPIKE #1b PASS"
 pnpm spike1c        # Spike #1c  → testnet → "✅ SPIKE #1c PASS"
+pnpm spike4         # Spike #4   → testnet → "✅ SPIKE #4 PASS" (CCTP Stellar-side interface)
 ```
 
 > `node_modules/` is gitignored. Network is required (npm registry + Horizon testnet + friendbot).

@@ -10,7 +10,7 @@ importers:
 
   apps/sponsor:
     dependencies:
-      '@claim/shared':
+      '@lumenia/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@simplewebauthn/server':
@@ -32,7 +32,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@claim/shared':
+      '@lumenia/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@simplewebauthn/browser':

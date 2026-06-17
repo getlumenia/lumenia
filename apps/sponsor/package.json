@@ -8,6 +8,7 @@
     "spike1": "tsx src/spike1-sponsored-claim.ts",
     "spike1b": "tsx src/spike1b-kms-rawsign.ts",
     "spike1c": "tsx src/spike1c-wire-parity.ts",
+    "spike4": "tsx src/spike4-cctp-bridge.ts",
     "test:antidrain": "tsx src/test-antidrain.ts"
   },
   "dependencies": {
