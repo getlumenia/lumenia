@@ -9,9 +9,9 @@
  *   4. fee-bumps the re-parsed tx with the sponsor key and submits it.
  *
  * The recipient holds 0 XLM throughout — the sponsor pays the fee via the bump.
- * The anti-drain validator is imported from packages/shared by relative path so
- * esbuild inlines it into the deployed function (no workspace:* dependency, which
- * npm/Vercel can't resolve); the SAME validator runs in test-antidrain (18/18).
+ * The anti-drain validator is the sponsor-local ./anti-drain.js module, so esbuild
+ * inlines it into the deployed function (no workspace:* dependency, which
+ * npm/Vercel can't resolve); the SAME module runs in test-antidrain (18/18).
  */
 import { TransactionBuilder, type Transaction, type Horizon } from "@stellar/stellar-sdk";
 import { validateInnerTransaction, type InnerTxPolicy } from "./anti-drain.js";

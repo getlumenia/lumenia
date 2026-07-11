@@ -241,7 +241,7 @@ Detailed risk table and the "mempool-class" assumption traps that were caught: [
 
 **NOT cheap/fast fees** (Solana/Base match those). The real muscle is **the stack itself**: native Claimable Balances (escrow without a smart contract) + protocol-level Sponsored Reserves (the recipient pays no gas — zero XLM — with no custom relayer) + passkey + native USDC. To do this, Peanut sets up a vault contract + relayer on every chain; Stellar gives it in the protocol.
 
-**But we're not a monopoly** — Daimo/Peanut offer gasless walletless claims on other chains. The honest positioning: not *"only possible on Stellar,"* but **"zero custom-contract risk + zero setup for the recipient + native USDC + EM rails — and the social primitive that Stellar's consumer ecosystem is missing."** Value metric for SCF: **net-new funded Stellar addresses created via claim** (not TVL — ecosystem activation).
+**But we're not a monopoly** — Daimo/Peanut offer walletless claim links (sponsor-paid fees) on other chains. The honest positioning: not *"only possible on Stellar,"* but **"zero custom-contract risk + zero setup for the recipient + native USDC + EM rails — and the social primitive that Stellar's consumer ecosystem is missing."** Value metric for SCF: **net-new funded Stellar addresses created via claim** (not TVL — ecosystem activation).
 
 ---
 

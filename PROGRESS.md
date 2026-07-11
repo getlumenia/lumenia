@@ -30,7 +30,7 @@ Last updated: 2026-07-11 · Network: **testnet** · No real money used.
 
 ## 2. Monorepo skeleton (set up)
 
-pnpm workspaces. `pnpm install` ran successfully (including the argon2 native build; Node 24, pnpm 9.12).
+pnpm workspaces. `pnpm install` runs clean (Node 24, pnpm 9.12). (The argon2/simplewebauthn recovery deps present pre-sprint were dropped — recovery is SOW out-of-scope.)
 
 ```
 lumenia/  (working dir: faceid-wallet)
@@ -39,11 +39,11 @@ lumenia/  (working dir: faceid-wallet)
 ├── apps/
 │   ├── web/
 │   │   ├── package.json                 # @lumenia/web — Next 16.2.9, Serwist 9.5.11, stellar-sdk 16.0.0 (PINNED)
-│   │   └── README.md                    # web responsibilities (no Next app files YET)
+│   │   └── README.md                    # web responsibilities (app built + deployed — §10)
 │   └── sponsor/
-│       ├── package.json                 # @lumenia/sponsor — stellar-sdk, simplewebauthn/server, argon2 (CJS!)
+│       ├── package.json                 # @lumenia/sponsor — stellar-sdk only (ESM; recovery deps dropped)
 │       ├── tsconfig.json
-│       ├── README.md                    # spikes + stellar-sdk@16/tsx CJS finding
+│       ├── README.md                    # live service layout + module-system gotchas
 │       └── src/
 │           ├── spike1-sponsored-claim.ts   # ✅ Spike #1  — sponsored 0-XLM claim economics
 │           ├── spike1b-kms-rawsign.ts      # ✅ Spike #1b — external raw Ed25519 → DecoratedSignature
@@ -52,7 +52,7 @@ lumenia/  (working dir: faceid-wallet)
 └── packages/
     └── shared/
         ├── package.json                 # @lumenia/shared
-        └── src/index.ts                 # hardened anti-drain validator + claim-secret + asset helpers + types
+        └── src/index.ts                 # claim-secret + asset helpers + types (validator moved to apps/sponsor — §10)
 ```
 
 **Pinned versions:** `@stellar/stellar-sdk@16.0.0` (exact), `next@16.2.9`, `react@19.2.0`, `serwist@9.5.11` + `@serwist/turbopack@9.5.11`, `@simplewebauthn/{browser@13.3.0,server@13.3.1}`, `@stellar/typescript-wallet-sdk@3.0.1`, `argon2@^0.41.1`, `tsx@^4.19`.
@@ -60,6 +60,11 @@ lumenia/  (working dir: faceid-wallet)
 ---
 
 ## 3. `packages/shared/src/index.ts` (written, hardened)
+
+> ⚠️ Superseded in part (§10): during the sprint the validator moved to
+> `apps/sponsor/src/lib/anti-drain.ts` (Vercel deploy boundary); `packages/shared`
+> now holds only claim-secret/asset helpers + types. The description below records
+> the pre-sprint state.
 
 The primitives shared by web + sponsor:
 - `usdc(issuer)` / `USDC_MAINNET_ISSUER` — asset helpers.
@@ -118,7 +123,7 @@ Proves the Stellar-specific half of the CCTP bridge leg (off-ramp Path 3) on liv
 
 ## 5. 🔎 Day-1 finding caught (mempool-class)
 
-`@stellar/stellar-sdk@16` ESM build blows up under `tsx`/Node ESM on its internal `@stellar/js-xdr` import (`does not provide an export named 'config'`). **Fix:** run `apps/sponsor` as **CommonJS** (no `"type": "module"`). Web (Next.js bundler) unaffected. Keep the production sponsor on CJS/bundle. (Also in [apps/sponsor/README.md](apps/sponsor/README.md).)
+`@stellar/stellar-sdk@16` ESM build blows up under Node ESM on its internal `@stellar/js-xdr` import (`does not provide an export named 'config'`). **Original fix** was running `apps/sponsor` as CommonJS. **Superseded during the sprint (§10):** the package is now ESM (`"type":"module"`, tsx runs it fine); what still needs CJS is the **Vercel deploy**, handled by the esbuild self-contained bundle (`build-vercel.mjs`). Web (Next.js bundler) unaffected. (Details in [apps/sponsor/README.md](apps/sponsor/README.md).)
 
 ---
 
@@ -167,7 +172,7 @@ Six deep research briefs were produced to de-risk the persona-flagged unknowns. 
 
 ```bash
 # at the repo root
-pnpm install        # entire workspace; includes the argon2 native build
+pnpm install        # entire workspace
 pnpm spike1         # Spike #1   → testnet → "✅ SPIKE #1 PASS"
 pnpm test:antidrain # validator  → "✅ ANTI-DRAIN TESTS PASS (18/18)" (no network)
 pnpm --filter @lumenia/sponsor test:integration  # → "✅ INTEGRATION TESTS PASS (5/5)" (testnet)

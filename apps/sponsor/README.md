@@ -1,32 +1,45 @@
 # @lumenia/sponsor
 
 Lumenia's sponsor service: sponsored account creation + fee-bump (the recipient holds 0 XLM).
-It holds a hot Ed25519 signing key → separate service, KMS, anti-drain allowlist.
+It holds a hot Ed25519 signing key (testnet scope; a KMS raw-signer drops in behind
+`src/lib/signer.ts` later — mechanically proven by Spike #1b) and gates every fee-bump
+with the anti-drain allowlist.
 
-> Skeleton phase — the real HTTP service (`src/index.ts`) does not exist yet. For now there is only **Spike #1**.
+**Live (testnet):** https://lumenia-sponsor.vercel.app — `GET /health`,
+`POST /create-account`, `POST /feebump`. Evidence: [../../EVIDENCE.md](../../EVIDENCE.md).
 
-## Spike #1 — Sponsored 0-XLM Claim (testnet)
+## Layout
 
-Proves Lumenia's economic backbone: a new user gets an account + USDC trustline with **zero XLM**,
-the sponsor pays the entire reserve+fee, the fee-bumped claim works, and anti-drain rejects a malicious tx.
-
-```bash
-pnpm install          # at the repo root
-pnpm spike1           # or: pnpm --filter @lumenia/sponsor spike1
+```
+src/index.ts        node:http server (local dev + integration-test child)
+src/lib/            config · signer · stellar · service · create-account · feebump ·
+                    anti-drain (the D3 validator) · rate-limit (durable KV/Upstash + in-memory fallback)
+src/vercel/         function sources → bundled to api/*.js by build-vercel.mjs
+src/cli/            bootstrap · create-account · claim · makelink
+src/test-antidrain.ts     18/18, no network
+src/test-integration.ts   5/5 — happy claim / drain rejection / rate-limit (testnet)
+src/spike*.ts             the pre-sprint proof spikes (#1, #1b, #1c, #4)
 ```
 
-Output: 6 steps + `✅ SPIKE #1 PASS` + live testnet tx hashes. No real money.
+## Run
 
-## ⚠️ Day-1 finding: stellar-sdk@16 + tsx ESM interop
+```bash
+pnpm install                                       # at the repo root
+pnpm --filter @lumenia/sponsor test:antidrain      # 18/18, no network
+pnpm --filter @lumenia/sponsor test:integration    # 5/5, testnet (friendbot)
+pnpm --filter @lumenia/sponsor dev                 # local server (needs .env — see .env.example)
+# deploy: node build-vercel.mjs && vercel deploy --prod --yes
+```
 
-The `@stellar/stellar-sdk@16` ESM build blows up under `tsx`/Node ESM on the internal `@stellar/js-xdr`
-import (`does not provide an export named 'config'`). **Solution:** run this package as
-**CommonJS** (NO `"type": "module"` in package.json) → stellar-sdk's solid
-CJS build is loaded. On the web side (the Next.js bundler) this issue does not occur; only Node/tsx execution
-is affected. Keep the production sponsor service CJS (or bundled) as well.
+## ⚠️ stellar-sdk@16 module-system gotchas (hard-won)
 
-## Responsibilities (once built)
-- `/sponsor/create-account` — sponsored create + USDC trustline
-- `/sponsor/feebump` — validate the inner tx against the **allowlist** (anti-drain) + fee-bump + submit
-- Sponsor key: AWS KMS Ed25519 / Dfns / Turnkey (NOT a plaintext key in env)
-- Rate-limit (per-account), poll `getTransaction` → SUCCESS
+- This package is **ESM** (`"type":"module"`, explicit `.js` extensions on relative
+  imports); `tsx` runs everything fine. An earlier note said "run as CJS" — that is
+  obsolete.
+- What still breaks is **plain Node-ESM on Vercel** (the `@stellar/js-xdr` `config`
+  export). The deployed functions are therefore an **esbuild self-contained CJS
+  bundle** (`build-vercel.mjs` → `api/*.js` + `api/package.json {type:commonjs}`).
+  Don't deploy raw `.ts`/ESM function files.
+- Vercel uploads only this directory → no `workspace:*` imports in deployed code;
+  the anti-drain validator lives here (`src/lib/anti-drain.ts`), not in
+  `packages/shared`, so the tests and the deployed bundle share one module.

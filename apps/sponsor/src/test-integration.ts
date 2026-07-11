@@ -24,7 +24,9 @@ import { passphraseFor, defaultHorizon } from "./lib/config.js";
 import { friendbot, submit } from "./lib/stellar.js";
 
 const NETWORK = passphraseFor("testnet");
-const PORT = 8791;
+// Random ephemeral port: a previously orphaned child (crashed parent skips the
+// finally-kill) must not EADDRINUSE the next run.
+const PORT = 42000 + Math.floor(Math.random() * 10000);
 const BASE = `http://localhost:${PORT}`;
 const RECLAIM = (7 * 24 * 60 * 60).toString();
 

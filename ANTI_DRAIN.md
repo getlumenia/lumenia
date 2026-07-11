@@ -22,7 +22,7 @@ But a service that hands out reserves and pays fees is a natural target: if an a
 | `payment` is rejected unless its destination is explicitly allow-listed | No value leaves to an attacker |
 | Missing a constraint (asset / balanceId) **fails closed** (strict-by-default) | A forgotten field rejects rather than silently allowing anything |
 
-**2. A fee cap.** Every fee-bump is bounded to a small fixed maximum (`FEE_BUMP_MAX_STROOPS`). Even a flood of *valid* claims can only ever cost the sponsor a tiny, capped fee per request.
+**2. A fee cap.** Every fee-bump is bounded to a small fixed maximum (`FEE_BUMP_MAX_STROOPS`). Even a flood of *valid* claims can only ever cost the sponsor a tiny, capped fee per request. (Honest note: the server also *chooses* the fee itself — a fixed per-op rate on a 1-op claim — so the client cannot influence it at all; the cap is defense-in-depth against a future code change, not the only thing preventing a client-set fee.)
 
 **3. Per-IP + per-account rate limiting** ([`apps/sponsor/src/lib/rate-limit.ts`](apps/sponsor/src/lib/rate-limit.ts)) throttles bursts on both `/create-account` and `/feebump`. The deployed limiter is **durable across serverless instances** (a fixed-window counter in Upstash Redis via Vercel Marketplace); it degrades to in-memory per-instance buckets if the store is unset or unavailable, so the limiter's own infrastructure can never block a legitimate claim.
 
