@@ -313,3 +313,25 @@
 :root[data-theme="dark"] .trust-il{filter:brightness(.9)}
 /* Honour reduced-motion: drop the ambient bg videos entirely (sections keep their flat paper base). */
 @media (prefers-reduced-motion:reduce){.op-after-bg,.fears-bg,.foot-bg{display:none}}
+
+/* ============ Section transitions — brand-kit sticky-overlap (/brand-kit/transitions) ============
+   Short sections PIN (position:sticky;top:0) with a rising z-index, so the NEXT section slides up
+   over the pinned previous one — the "overlay" transition, visible at every paper↔dark boundary.
+   The tall scroll-regions (scrub reel, pinned how-it-works, FAQ-heavy Trust) can't pin without
+   hiding their own content, so they stay relative and their neighbours overlay them. Every section
+   already paints an opaque background, so each fully covers the one beneath. */
+/* SHORT / showpiece sections PIN (position:sticky;top:0) so the next slides over them — the overlay
+   transition. min-height:140vh + padding-bottom:40vh gives DWELL (content centred in the top ~100vh,
+   ~40vh still zone below) so a small scroll doesn't swap sections and the overlay spans ~a viewport.
+   READING-HEAVY sections (fears, proof, trust) stay RELATIVE so they scroll at the reader's own pace
+   (pinning "stuck scroll" ruins reading) — they still get a transition-in by sliding OVER the pinned
+   showpiece before them, but the reader controls the pace and nothing covers the text early. */
+.op-scrub{z-index:1}
+.op-after{position:sticky;top:0;z-index:2;min-height:140vh;padding-bottom:40vh}
+.fears{position:relative;z-index:3}
+.moment{position:sticky;top:0;z-index:4;min-height:140vh;padding-bottom:40vh}
+.hiw{position:relative;z-index:5}
+.proof{position:relative;z-index:6}
+.trust{position:relative;z-index:7}
+.close{position:relative;z-index:8}
+.foot{position:relative;z-index:9}

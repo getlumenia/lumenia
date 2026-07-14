@@ -34,6 +34,11 @@ export default function Landing() {
           landing render on-brand; the landing's own styles use the collision-free `--pw-*` namespace. */}
       <div className="op site-theme">
         <Greeting />
+        {/* Section transitions = the brand-kit sticky-overlap (each section is position:sticky;top:0
+            with a rising z-index, so the NEXT section slides up over the pinned previous one). The
+            tall scroll-regions (scrub reel, pinned how-it-works, the FAQ-heavy Trust) can't pin
+            without hiding content, so they stay relative and their neighbours overlay them instead.
+            Sticky/z-index is driven from landing.css by section class. */}
         <div className="op-over">
           <ScrubHero />
           <HeroResolution />
