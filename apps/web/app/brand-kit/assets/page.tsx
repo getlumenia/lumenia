@@ -21,13 +21,6 @@ const LOGOS: Item[] = [
   { src: "/brand-kit-assets/logo-lumen-spark.png", label: "Mark — lumen", note: "a lumen / light form, periwinkle", ratio: "1 / 1" },
 ];
 
-const STORY: Item[] = [
-  { src: "/brand-kit-assets/story-1-share.png", label: "1 · Share", note: "the money as a glowing link on a phone", ratio: "16 / 9" },
-  { src: "/brand-kit-assets/story-2-travel.png", label: "2 · Travel", note: "the link in transit", ratio: "16 / 9" },
-  { src: "/brand-kit-assets/story-3-tap.png", label: "3 · Tap", note: "a tap, a ripple — it arrives", ratio: "16 / 9" },
-  { src: "/brand-kit-assets/story-4-received.png", label: "4 · Received", note: "relief + confetti", ratio: "16 / 9" },
-];
-
 const ICONS: Item[] = [
   { src: "/brand-kit-assets/icons-core.png", label: "Core — money actions", note: "send · receive · request · link · envelope · check · phone · face-id · key · banknote · 7-day · shield", ratio: "1 / 1" },
   { src: "/brand-kit-assets/icons-app.png", label: "App & future", note: "home · profile · activity · notify · settings · security · bank · gift · chat · split · contacts · QR", ratio: "1 / 1" },
@@ -110,11 +103,7 @@ export default function AssetKit() {
         <Grid items={ILLUSTRATIONS} cols={3} />
       </Section>
 
-      <Section n="05" title="Scroll story" hint="the how-it-works flow, frame by frame">
-        <Grid items={STORY} cols={2} />
-      </Section>
-
-      <Section n="06" title="Avatar — the messenger" hint="5 live 3D avatars + 2 more poses">
+      <Section n="05" title="Avatar — the messenger" hint="5 live 3D avatars + 2 more poses">
         <div className="ak-avatar">
           <Image src="/brand-kit-concepts/mascot-v2.png" alt="The messenger" width={600} height={600} className="ak-avatar-img" />
           <div>

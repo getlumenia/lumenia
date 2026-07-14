@@ -120,9 +120,12 @@
 .hiw-more{display:inline-block;margin-top:30px;font-weight:600;font-size:15px;color:var(--pw-accent);text-decoration:none}
 .hiw-more:hover{text-decoration:underline;text-underline-offset:3px}
 .hiw-frames{position:relative;height:min(74vh,620px)}
-.hiw-frwrap{position:absolute;inset:0;border-radius:22px;overflow:hidden;border:1px solid var(--pw-line);background:var(--pw-surface);box-shadow:0 40px 80px -40px color-mix(in srgb,var(--pw-accent) 50%,transparent)}
+.hiw-frwrap{position:absolute;inset:0;border-radius:22px;overflow:hidden;border:1px solid var(--pw-line);
+  background:var(--pw-surface);box-shadow:0 40px 80px -40px color-mix(in srgb,var(--pw-accent) 50%,transparent)}
 .hiw-fr{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;will-change:opacity,transform}
-.hiw-frglow{position:absolute;inset:0;pointer-events:none;background:radial-gradient(60% 55% at 50% 45%, transparent 55%, color-mix(in srgb,var(--pw-accent) 8%,transparent))}
+.hiw-frglow{position:absolute;inset:0;pointer-events:none;border-radius:inherit;
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pw-line) 60%,transparent), inset 0 34px 60px -26px rgba(0,0,0,.4), inset 0 -26px 54px -22px rgba(0,0,0,.32);
+  background:radial-gradient(62% 56% at 50% 45%, transparent 56%, color-mix(in srgb,var(--pw-accent) 8%,transparent))}
 
 /* Section 5 — proof + Stellar (the one Stellar-dark strip, brand.md §4.4) */
 .proof{position:relative;z-index:1;color:#F6F7F8;overflow:hidden;

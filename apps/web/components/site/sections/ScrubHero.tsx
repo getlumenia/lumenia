@@ -168,9 +168,9 @@ export function ScrubHero() {
   if (reduce) {
     return (
       <section className="op-reduce">
-        <video poster="/brand-kit-assets/story-1-share.webp" autoPlay loop muted playsInline className="op-reduce-v">
-          <source src="/brand-kit-assets/video/lumenia-story-reel.webm" type="video/webm" />
-          <source src="/brand-kit-assets/video/lumenia-story-reel.mp4" type="video/mp4" />
+        <video poster="/brand-kit-assets/bg-hero.png" autoPlay loop muted playsInline className="op-reduce-v">
+          <source src="/brand-kit-assets/video/bg-hero-bloom.webm" type="video/webm" />
+          <source src="/brand-kit-assets/video/bg-hero-bloom.mp4" type="video/mp4" />
         </video>
         <div className="op-reduce-copy">
           <h1>No wallet. No seed phrase. No app.</h1>

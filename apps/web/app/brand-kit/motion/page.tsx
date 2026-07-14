@@ -8,13 +8,6 @@
  * /brand-kit layout.
  */
 
-const STORY = [
-  { src: "/brand-kit-assets/video/story-1.mp4", n: "01", t: "You send a link.", b: "The glow breathes; a wisp of steam rises from the mug." },
-  { src: "/brand-kit-assets/video/story-2.mp4", n: "02", t: "It’s on its way.", b: "The orb floats and rotates as a sparkle trail drifts." },
-  { src: "/brand-kit-assets/video/story-3.mp4", n: "03", t: "They tap it.", b: "Ripple rings pulse outward from the fingertip." },
-  { src: "/brand-kit-assets/video/story-4.mp4", n: "04", t: "It’s theirs.", b: "Confetti falls softly as the screen glow pulses." },
-];
-
 function Vid({ src, poster }: { src: string; poster?: string }) {
   const webm = src.replace(/\.mp4$/, ".webm");
   return (
@@ -48,31 +41,6 @@ export default function MotionGalleryPage() {
           on-brand motion only.
         </p>
       </header>
-
-      {/* Sizzle reel — the hero of the gallery */}
-      <section className="mo-reel">
-        <div className="mo-reel-card">
-          <Vid src="/brand-kit-assets/video/lumenia-story-reel.mp4" poster="/brand-kit-assets/story-2-travel.webp" />
-        </div>
-        <p className="mo-cap">Launch sizzle — travel → tap → received, then the wordmark. ~9s, silent, 1280×720.</p>
-      </section>
-
-      {/* Story beats */}
-      <section className="mo-sec">
-        <h2 className="mo-h2">The story, in motion</h2>
-        <div className="mo-grid">
-          {STORY.map((s) => (
-            <figure key={s.n} className="mo-cell">
-              <div className="mo-frame"><Vid src={s.src} /></div>
-              <figcaption>
-                <span className="mo-n">{s.n}</span>
-                <span className="mo-t">{s.t}</span>
-                <span className="mo-b">{s.b}</span>
-              </figcaption>
-            </figure>
-          ))}
-        </div>
-      </section>
 
       {/* Backgrounds */}
       <section className="mo-sec">

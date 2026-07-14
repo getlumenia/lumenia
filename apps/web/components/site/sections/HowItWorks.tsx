@@ -1,7 +1,7 @@
 /**
- * HowItWorks — section 4, a pinned scroll story (ported from /brand-kit/story). Three story
- * videos crossfade on the right while a progress rail + step copy advance on the left. No "01/02"
- * numeral rails (brand.md §8) — just titles and the filling rail. Scroll ranges stay in [0,1].
+ * HowItWorks — section 4, a pinned scroll story. Three brand illustrations (soft-3D, il-*) crossfade
+ * on the right while a progress rail + step copy advance on the left. No "01/02" numeral rails
+ * (brand.md §8) — just titles and the filling rail. Scroll ranges stay in [0,1].
  */
 "use client";
 
@@ -11,22 +11,25 @@ import { motion, useScroll, useTransform, type MotionValue } from "motion/react"
 import { clamp } from "./utils";
 
 const HIW = [
-  { vid: "/brand-kit-assets/video/story-1.mp4", poster: "/brand-kit-assets/story-1-share.webp", t: "You send a link.", b: "Choose an amount and share it in a chat, like anything else. That’s the whole transfer." },
-  { vid: "/brand-kit-assets/video/story-3.mp4", poster: "/brand-kit-assets/story-3-tap.webp", t: "They tap it.", b: "Your recipient sees the money the moment they tap — before creating anything." },
-  { vid: "/brand-kit-assets/video/story-4.mp4", poster: "/brand-kit-assets/story-4-received.webp", t: "It’s theirs.", b: "They claim it with their face or a password. Receiving is free. Done." },
+  { img: "/brand-kit-assets/il-abstract.png", t: "You send a link.", b: "Choose an amount and share it in a chat, like anything else. That’s the whole transfer." },
+  { img: "/brand-kit-assets/il-phone.png", t: "They tap it.", b: "Your recipient sees the money the moment they tap — before creating anything." },
+  { img: "/brand-kit-assets/il-celebrate.png", t: "It’s theirs.", b: "They claim it with their face or a password. Receiving is free. Done." },
 ];
 
-function HiwFrame({ i, step, p }: { i: number; step: (typeof HIW)[number]; p: MotionValue<number> }) {
+function HiwFrame({ i, last, step, p }: { i: number; last: number; step: (typeof HIW)[number]; p: MotionValue<number> }) {
   const c = (i + 0.5) / HIW.length;
   const w = 0.5 / HIW.length;
-  const opacity = useTransform(p, [clamp(c - w - 0.02), clamp(c - w + 0.03), clamp(c + w - 0.03), clamp(c + w + 0.02)], [0, 1, 1, 0]);
-  const scale = useTransform(p, [clamp(c - w - 0.05), clamp(c + w + 0.05)], [1.08, 0.98]);
-  const y = useTransform(p, [clamp(c - w - 0.05), clamp(c + w + 0.05)], ["3%", "-3%"]);
+  // First frame stays fully visible from the very start (no empty frame), last frame stays to the end.
+  const opacity = useTransform(
+    p,
+    [clamp(c - w - 0.02), clamp(c - w + 0.03), clamp(c + w - 0.03), clamp(c + w + 0.02)],
+    [i === 0 ? 1 : 0, 1, 1, i === last ? 1 : 0],
+  );
+  // Subtle zoom kept ABOVE 1 so the illustration always fully covers the frame — no gaps.
+  const scale = useTransform(p, [clamp(c - w - 0.05), clamp(c + w + 0.05)], [1.06, 1.0]);
   return (
-    <motion.video className="hiw-fr" style={{ opacity, scale, y }} poster={step.poster} autoPlay loop muted playsInline aria-hidden="true">
-      <source src={step.vid.replace(/\.mp4$/, ".webm")} type="video/webm" />
-      <source src={step.vid} type="video/mp4" />
-    </motion.video>
+    // eslint-disable-next-line @next/next/no-img-element
+    <motion.img className="hiw-fr" style={{ opacity, scale }} src={step.img} alt="" aria-hidden="true" />
   );
 }
 
@@ -64,7 +67,7 @@ export function HowItWorks() {
         <div className="hiw-frames">
           <div className="hiw-frwrap">
             {HIW.map((s, i) => (
-              <HiwFrame key={s.t} i={i} step={s} p={scrollYProgress} />
+              <HiwFrame key={s.t} i={i} last={HIW.length - 1} step={s} p={scrollYProgress} />
             ))}
             <div className="hiw-frglow" />
           </div>
