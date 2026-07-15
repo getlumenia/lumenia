@@ -304,6 +304,47 @@
 @keyframes openv{0%,100%{opacity:.28;transform:translate(-50%,-50%) scale(.9)}50%{opacity:.85;transform:translate(-50%,-50%) scale(1.12)}}
 @media (prefers-reduced-motion:reduce){.op-mascot,.op-glow-back,.op-mascot-halo,.op-greet-stage,.op-brandlogo,.op-bubble,.op-envglow{animation:none}}
 
+/* -------------------------------------------------------------------------
+   Boot opening (components/site/sections/BootOpening.tsx) — the page opens as one flat field of
+   the colour the wordmark's "i" is drawn in, which then contracts into that "i" and lights its
+   lumen spark. The field is var(--pw-accent) because that token IS the letters' fill (#6E5FCE
+   light / #B7ACE8 dark), so it stays theme-correct with no second source of truth.
+   The script drives clip-path/left/top inline; these rules own the look + the phase gating.
+   ------------------------------------------------------------------------- */
+.op-boot{position:fixed;inset:0;z-index:80;background:var(--pw-accent);
+  clip-path:circle(150% at 50% 50%);will-change:clip-path;
+  /* Fail-safe: the field is server-rendered to cover the first paint, so it must be able to leave
+     on CSS alone if its script never runs. The component removes it long before this fires. */
+  animation:op-boot-failsafe 0s linear 3.2s forwards}
+@keyframes op-boot-failsafe{to{opacity:0;visibility:hidden}}
+
+/* The spark lives OUTSIDE the field — it has to survive the field being clipped to nothing.
+   Stops mirror the SVG's own radial `lumen` gradient (warm on light, lavender on dark).
+   Lit by a class, NOT by [data-boot]: the phase attribute is dropped the moment the field lands
+   (to release the greeting), and a selector keyed on it would cancel this mid-flash. */
+.op-boot-spark{--lumen-core:#FFF7DE;--lumen-mid:#FDE7B0;--lumen-edge:#F9DCA0;
+  /* Sized against the tittle it belongs to (~12px on screen), not the viewport: the whole wordmark
+     is only ~96px wide, so this peaks at ~25px — the "i" lighting up, then blooming out as it
+     fades. Anything larger eclipses "nia" instead of igniting the dot over it. */
+  position:fixed;z-index:81;left:-9999px;top:-9999px;width:48px;height:48px;margin:-24px 0 0 -24px;
+  border-radius:50%;pointer-events:none;opacity:0;
+  background:radial-gradient(circle,var(--lumen-core) 0%,var(--lumen-mid) 28%,var(--lumen-edge) 55%,transparent 72%)}
+:root[data-theme="dark"] .op-boot-spark{--lumen-core:#D4CCF2;--lumen-mid:#B7ACE8;--lumen-edge:#B7ACE8}
+/* Delay ≈ the point where the field has collapsed onto the "i" — the light arrives, THEN it ignites.
+   Fired earlier it just reads as a sun floating in the field. */
+.op-boot-spark--lit{animation:op-boot-spark .7s ease-out .5s forwards}
+@keyframes op-boot-spark{0%{opacity:0;transform:scale(.14)}32%{opacity:1;transform:scale(.52)}100%{opacity:0;transform:scale(1.5)}}
+
+/* Hold the greeting's EXISTING entrance animations at their first frame instead of restaging them.
+   Keyed off .op (which ships data-boot in the SSR markup) so the hold is in force from the first
+   paint — an effect-set attribute would arrive after opreveal/opbubble had already run.
+   In `focus` the wordmark is released early so it materialises as the light drains into it. */
+.op[data-boot="hold"] .op-brandlogo,
+.op[data-boot="hold"] .op-greet-stage,
+.op[data-boot="hold"] .op-bubble,
+.op[data-boot="focus"] .op-greet-stage,
+.op[data-boot="focus"] .op-bubble{animation-play-state:paused}
+
 /* =========================================================================
    Dark theme (brand.md dark palette). Driven by data-theme on <html> (the (site)
    ThemeProvider — never the legacy .dark class), so it flips ONLY the landing.

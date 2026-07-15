@@ -16,6 +16,7 @@
  */
 import SmoothScroll from "../../components/brand/SmoothScroll";
 import "../../components/site/sections/landing.css";
+import { BootOpening } from "../../components/site/sections/BootOpening";
 import { Greeting } from "../../components/site/sections/Greeting";
 import { ScrubHero } from "../../components/site/sections/ScrubHero";
 import { HeroResolution } from "../../components/site/sections/HeroResolution";
@@ -32,7 +33,19 @@ export default function Landing() {
     <SmoothScroll>
       {/* `site-theme` maps shadcn semantic tokens to Periwinkle so shadcn primitives placed inside the
           landing render on-brand; the landing's own styles use the collision-free `--pw-*` namespace. */}
-      <div className="op site-theme">
+      {/* data-boot ships in the SSR markup, not from an effect: it holds the greeting's entrance at
+          its first frame from the very first paint. Set after hydration it would land too late —
+          opreveal/opbubble would already have played under the field and freeze half-open. */}
+      <div className="op site-theme" data-boot="hold">
+        {/* First frame: a flat field of the wordmark's "i" colour that contracts into the "i"
+            itself, then releases the greeting's own entrance. Inside .op so it inherits
+            --pw-accent (the letters' fill) and flips with the theme. */}
+        <BootOpening />
+        {/* Without JS nothing clears the hold, so the greeting would sit invisible behind a field
+            that only a CSS failsafe removes. Hand no-JS readers the settled page instead. */}
+        <noscript>
+          <style>{`.op[data-boot]{--boot-noscript:1}.op[data-boot] .op-brandlogo,.op[data-boot] .op-greet-stage,.op[data-boot] .op-bubble{animation-play-state:running}.op-boot,.op-boot-spark{display:none}`}</style>
+        </noscript>
         <Greeting />
         {/* Section transitions = the brand-kit sticky-overlap (each section is position:sticky;top:0
             with a rising z-index, so the NEXT section slides up over the pinned previous one). The
