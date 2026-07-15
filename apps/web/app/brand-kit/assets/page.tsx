@@ -32,7 +32,7 @@ const BACKGROUNDS: Item[] = [
   { src: "/brand-kit-assets/bg-hero.webp", label: "Hero", note: "warm paper + periwinkle glow, space to rest an object", ratio: "16 / 9" },
   { src: "/brand-kit-assets/bg-howitworks.png", label: "How-it-works", note: "dark aurora — the Stellar/proof strip", ratio: "16 / 9" },
   { src: "/brand-kit-assets/bg-soft.webp", label: "Soft field", note: "periwinkle gradient — section dividers", ratio: "16 / 9" },
-  { src: "/brand-kit-assets/bg-cta.png", label: "CTA band", note: "bright periwinkle glow — call-to-action", ratio: "16 / 9" },
+  { src: "/brand-kit-assets/bg-cta.webp", label: "CTA band", note: "bright periwinkle glow — call-to-action", ratio: "16 / 9" },
   { src: "/brand-kit-assets/bg-footer.webp", label: "Footer", note: "dark low-glow — footer / close", ratio: "16 / 9" },
 ];
 

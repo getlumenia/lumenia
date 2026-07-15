@@ -133,6 +133,28 @@
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--pw-line) 60%,transparent), inset 0 34px 60px -26px rgba(0,0,0,.4), inset 0 -26px 54px -22px rgba(0,0,0,.32);
   background:radial-gradient(62% 56% at 50% 45%, transparent 56%, color-mix(in srgb,var(--pw-accent) 8%,transparent))}
 
+/* Phones: the stacked story (kept BELOW the .hiw-* base rules on purpose — same specificity, so
+   whichever comes last wins; sitting above them this block was silently overridden) has to survive inside one sticky 100vh pane. The copy alone (title +
+   three steps + link) runs ~600px, while .hiw-frames still asked for min(74vh,620px) — together far
+   past the viewport, so the illustration was cut off at the fold. Tighten the story's own rhythm and
+   let the frame take what is genuinely left, with a floor so it never collapses to a sliver. */
+/* The moment the story stacks (≤860 — tablet portrait included, not just phones) the frame can no
+   longer keep a height of its own: the grid gives it `1fr` of one sticky 100vh pane, and a fixed
+   min(74vh,620px) simply overflowed it. Measured at 768×1024 the illustration ran 99px past the
+   fold; at 375×812 it lost 254px. height:auto hands the decision back to the grid. */
+@media (max-width:860px){
+  /* align-self overrides the grid's align-items:center — centred, the frame sat at its min-height
+     and left a third of a tablet's pane empty beneath it. Stretched, it takes the row it was given. */
+  .hiw-frames{height:auto;min-height:clamp(160px,24vh,300px);align-self:stretch}
+}
+/* Phones also need the story's own rhythm tightened, or the copy alone eats the pane. */
+@media (max-width:640px){
+  .hiw-sticky{gap:16px;padding-top:32px;padding-bottom:32px}
+  .hiw-title{margin-bottom:18px}
+  .hiw-rows{gap:14px}
+  .hiw-more{margin-top:16px}
+}
+
 /* Section 5 — proof + Stellar (the one Stellar-dark strip, brand.md §4.4) */
 .proof{position:relative;z-index:1;color:#F6F7F8;overflow:hidden;
   background:radial-gradient(120% 90% at 26% 0%, #0b3d68 0%, #002E5D 40%, #03131f 100%);
@@ -405,7 +427,12 @@
 /* The cream-lit il-trust illustration reads a touch hot on the dark essay — settle it in. */
 :root[data-theme="dark"] .trust-il{filter:brightness(.9)}
 /* Honour reduced-motion: drop the ambient bg videos entirely (sections keep their flat paper base). */
-@media (prefers-reduced-motion:reduce){.op-after-bg,.fears-bg,.foot-bg,.foot-bg-light{display:none!important}}
+/* Scoped to `video` now that the poster <img> shares these classes. The rule used to blank the whole
+   layer, because a video was the only thing there and the only way to honour the preference was to
+   remove it. A still poster has no motion to reduce, so it stays: reduced-motion readers now get the
+   same composition as everyone else, minus the movement — which is what the preference actually asks
+   for. AmbientVideo does not mount the <video> under reduced motion, so this is belt-and-braces. */
+@media (prefers-reduced-motion:reduce){video.op-after-bg,video.fears-bg,video.foot-bg,video.foot-bg-light{display:none!important}}
 
 /* ============ Section transitions — brand-kit sticky-overlap (/brand-kit/transitions) ============
    Short sections PIN (position:sticky;top:0) with a rising z-index, so the NEXT section slides up
@@ -428,3 +455,72 @@
 .trust{position:relative;z-index:7}
 .close{position:relative;z-index:8}
 .foot{position:relative;z-index:9}
+
+/* =========================================================================
+   Large screens (roughly 1900px and up).
+   
+   Every clamp() on this page tops out around 1250px and every container caps at
+   1060–1240px, so past that width the composition simply stops. Measured content-to-viewport:
+   86–100% at ≤1024, 74–86% at 1440, but 41–48% at 2560 and 31–36% at 3440 — the page becomes a
+   small island marooned in the middle of a big display, with the hero h1 frozen at 88px since 1440.
+
+   The fix keeps today's numbers as the FLOOR and lets the composition breathe above them:
+     containers  clamp(<today>, Xvw, <ceiling>)
+     display type  max(<today's clamp>, min(Yvw, <ceiling>))
+   Both forms are continuous, and each crossover lands near 1900px — so nothing below that moves by
+   a single pixel. The approved composition is untouched at every size it was approved at.
+
+   Reading measures (the 36–48ch maxes, body copy) are deliberately NOT scaled: a line stays
+   readable by holding its measure, not by growing with the monitor.
+   ========================================================================= */
+.fears-inner{max-width:clamp(1060px,56vw,1560px)}
+.hiw-sticky{max-width:clamp(1240px,64vw,1800px)}
+.proof-inner{max-width:clamp(1120px,58vw,1640px)}
+.trust-inner{max-width:clamp(1080px,56vw,1580px)}
+.faq{max-width:clamp(760px,40vw,1100px)}
+.close-copy{max-width:clamp(640px,34vw,940px)}
+.foot-inner,.foot-bottom{max-width:clamp(1120px,58vw,1640px)}
+
+/* Display type resumes growing where its clamp gave up. The min() ceiling stops it before it turns
+   into a billboard on a 3440 ultrawide. */
+.op-beat{font-size:max(clamp(38px,8vw,104px),min(5.4vw,150px))}
+.op-after-h{font-size:max(clamp(40px,7vw,88px),min(4.6vw,132px))}
+.moment-h{font-size:max(clamp(36px,5.6vw,70px),min(3.7vw,104px))}
+.fears-title{font-size:max(clamp(28px,4.4vw,52px),min(2.8vw,76px))}
+.hiw-title{font-size:max(clamp(26px,3.4vw,44px),min(2.3vw,64px))}
+.hiw-stt{font-size:max(clamp(20px,2.4vw,30px),min(1.6vw,42px))}
+.proof-h{font-size:max(clamp(32px,5vw,58px),min(3.05vw,84px))}
+.trust-h{font-size:max(clamp(30px,4.6vw,54px),min(2.85vw,78px))}
+.faq-h{font-size:max(clamp(24px,3vw,38px),min(2vw,54px))}
+.close-h{font-size:max(clamp(34px,6vw,68px),min(3.6vw,98px))}
+
+/* =========================================================================
+   Phones: still ambience, but no video decode.
+
+   Five background loops autoplay across this page. Bytes are not the issue — WebM, 45–268 KB. The
+   cost on a phone is the decode: five continuous videos of battery and heat for an effect that sits
+   under a scrim at opacity .24–.5 and is nearly invisible at that size.
+
+   The gate is NOT here — it is in AmbientVideo.tsx, because CSS cannot do it: `preload="none"` is
+   ignored when autoplay is set, and `display:none` does not stop the fetch (both measured). The
+   component simply does not mount the <video> below 641px. What is left for CSS is making the
+   poster <img> and the <video> interchangeable: they share a class, so every opacity, transform and
+   theme rule below already applies to whichever is present, and none of it is duplicated.
+   ========================================================================= */
+img.op-after-bg,img.fears-bg,img.close-bg,img.foot-bg,img.foot-bg-light{
+  /* The poster is a real image, so it needs the fit the video got for free. */
+  object-fit:cover}
+/* Tablet and up the video mounts on top of its own poster; one layer is enough.
+   The footer pair needs its theme selector repeated, not just the class: `:root[data-theme="light"]
+   .foot-bg-light{display:block}` above scores (0,3,0) and would beat a plain `img.foot-bg-light`
+   (0,1,1) — which is exactly what happened, leaving the poster stacked under the video in light. */
+@media (min-width:641px){
+  img.op-after-bg,img.fears-bg,img.close-bg,img.foot-bg,img.foot-bg-light,
+  :root[data-theme="light"] img.foot-bg-light,
+  :root[data-theme="dark"] img.foot-bg{display:none}
+}
+/* Reduced motion never mounts the video (AmbientVideo checks it), so the poster has to stay —
+   the old rule blanked these layers outright and left the sections bare. */
+@media (prefers-reduced-motion:reduce){
+  img.op-after-bg,img.fears-bg,img.close-bg,img.foot-bg,img.foot-bg-light{display:block}
+}

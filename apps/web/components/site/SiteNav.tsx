@@ -48,7 +48,11 @@ export function SiteNav() {
       transition={{ duration: 0.5, ease: [0.2, 0.7, 0.2, 1] }}
       style={{ pointerEvents: shown ? "auto" : "none" }}
     >
-      <nav className="grid w-full max-w-5xl grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-2xl border border-border/70 bg-background/75 px-4 py-2.5 shadow-[0_16px_44px_-24px_rgba(110,95,206,0.55)] backdrop-blur-xl">
+      {/* The width tracks the sections' own large-screen growth (see the large-screen block in
+          landing.css). Capped at max-w-5xl the bar shrank to ~40% of a 2560 display while the
+          content beneath it grew past — the nav read as a lost little pill. Below ~1770px this
+          resolves to exactly max-w-5xl, so nothing changes at the sizes it was designed at. */}
+      <nav className="grid w-full max-w-[clamp(64rem,58vw,90rem)] grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-2xl border border-border/70 bg-background/75 px-4 py-2.5 shadow-[0_16px_44px_-24px_rgba(110,95,206,0.55)] backdrop-blur-xl">
         <Link href="/" className="group justify-self-start px-1" aria-label="Lumenia — home">
           {/* Wordmark swaps per theme (paper-filled counters only read on light). */}
           {/* eslint-disable-next-line @next/next/no-img-element */}

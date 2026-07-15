@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { AvatarReveal } from "./AvatarReveal";
+import { AmbientVideo } from "../AmbientVideo";
 
 const COLS = [
   { title: "Product", links: [["How it works", "/how-it-works"], ["Live demo", "/demo"], ["Waitlist", "/waitlist"]] },
@@ -19,14 +20,10 @@ export function Footer() {
     <footer className="foot">
       {/* Living footer glow — theme-aware: bg-footer (dark navy smoke) in dark, bg-soft (light lavender
           drift) in light. Only the theme's video is shown (CSS); reduced-motion drops both. */}
-      <video className="foot-bg" poster="/brand-kit-assets/bg-footer.webp" autoPlay loop muted playsInline preload="none" aria-hidden="true">
-        <source src="/brand-kit-assets/video/bg-footer.webm" type="video/webm" />
-        <source src="/brand-kit-assets/video/bg-footer.mp4" type="video/mp4" />
-      </video>
-      <video className="foot-bg-light" poster="/brand-kit-assets/bg-soft.webp" autoPlay loop muted playsInline preload="none" aria-hidden="true">
-        <source src="/brand-kit-assets/video/bg-soft.webm" type="video/webm" />
-        <source src="/brand-kit-assets/video/bg-soft.mp4" type="video/mp4" />
-      </video>
+      <AmbientVideo className="foot-bg" poster="/brand-kit-assets/bg-footer.webp"
+        sources={["/brand-kit-assets/video/bg-footer.webm", "/brand-kit-assets/video/bg-footer.mp4"]} />
+      <AmbientVideo className="foot-bg-light" poster="/brand-kit-assets/bg-soft.webp"
+        sources={["/brand-kit-assets/video/bg-soft.webm", "/brand-kit-assets/video/bg-soft.mp4"]} />
       <div className="foot-scrim" aria-hidden="true" />
 
       <div className="foot-inner">

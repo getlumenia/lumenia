@@ -7,6 +7,7 @@
 
 import { useRef } from "react";
 import { motion, useInView } from "motion/react";
+import { AmbientVideo } from "../AmbientVideo";
 
 // Each fear carries a soft-3D icon from the brand-kit icon set (icons-core, bg-removed) — the wall
 // being taken down: receive-without-a-wallet (hand), no-seed-words (key), it's-real (check), safe (shield).
@@ -64,10 +65,8 @@ export function Fears() {
     <section className="fears">
       {/* Living lavender field (brand-kit bg-soft) drifting behind the fears — ambient motion for a
           text-heavy section. Paper scrim keeps the editorial crisp; reduced-motion drops it. */}
-      <video className="fears-bg" poster="/brand-kit-assets/bg-soft.webp" autoPlay loop muted playsInline preload="none" aria-hidden="true">
-        <source src="/brand-kit-assets/video/bg-soft.webm" type="video/webm" />
-        <source src="/brand-kit-assets/video/bg-soft.mp4" type="video/mp4" />
-      </video>
+      <AmbientVideo className="fears-bg" poster="/brand-kit-assets/bg-soft.webp"
+        sources={["/brand-kit-assets/video/bg-soft.webm", "/brand-kit-assets/video/bg-soft.mp4"]} />
       <div className="fears-scrim" aria-hidden="true" />
       <div className="fears-inner">
         <div className="fears-head">

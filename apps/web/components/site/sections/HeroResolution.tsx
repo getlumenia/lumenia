@@ -8,6 +8,7 @@
 
 import Link from "next/link";
 import { motion } from "motion/react";
+import { AmbientVideo } from "../AmbientVideo";
 
 const EASE = [0.2, 0.7, 0.2, 1] as const;
 const rise = (delay: number) => ({
@@ -22,10 +23,8 @@ export function HeroResolution() {
     <section className="op-after">
       {/* Living hero backdrop (brand-kit bg-hero-bloom) — a soft periwinkle bloom behind the promise.
           Muted by a paper scrim so the headline stays crisp; reduced-motion falls back to the still. */}
-      <video className="op-after-bg" poster="/brand-kit-assets/bg-hero.webp" autoPlay loop muted playsInline preload="none" aria-hidden="true">
-        <source src="/brand-kit-assets/video/bg-hero-bloom.webm" type="video/webm" />
-        <source src="/brand-kit-assets/video/bg-hero-bloom.mp4" type="video/mp4" />
-      </video>
+      <AmbientVideo className="op-after-bg" poster="/brand-kit-assets/bg-hero.webp"
+        sources={["/brand-kit-assets/video/bg-hero-bloom.webm", "/brand-kit-assets/video/bg-hero-bloom.mp4"]} />
       <div className="op-after-scrim" aria-hidden="true" />
       <motion.p className="op-after-eyebrow" {...rise(0)}>Nothing to set up.</motion.p>
       <motion.h1 className="op-after-h" {...rise(0.08)}>Money home, in a link.</motion.h1>

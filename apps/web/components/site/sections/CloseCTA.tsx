@@ -7,14 +7,15 @@
 import Link from "next/link";
 import { motion } from "motion/react";
 import { AvatarReveal } from "./AvatarReveal";
+import { AmbientVideo } from "../AmbientVideo";
 
 export function CloseCTA() {
   return (
     <section className="close">
-      <video className="close-bg" autoPlay loop muted playsInline preload="none" aria-hidden="true">
-        <source src="/brand-kit-assets/video/bg-cta.webm" type="video/webm" />
-        <source src="/brand-kit-assets/video/bg-cta.mp4" type="video/mp4" />
-      </video>
+      {/* This was the one ambient video with no poster: until it loaded (and it is preload="none",
+          so that is only on approach) the band had no background at all. */}
+      <AmbientVideo className="close-bg" poster="/brand-kit-assets/bg-cta.webp"
+        sources={["/brand-kit-assets/video/bg-cta.webm", "/brand-kit-assets/video/bg-cta.mp4"]} />
       <div className="close-scrim" aria-hidden="true" />
       {/* Brand-kit messenger (var-celebrate, bg-removed) pops in cheering from the corner — a joyful
           nudge to try the demo. Bottom-fade grounds it; hidden on small screens. */}
