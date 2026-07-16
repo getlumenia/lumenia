@@ -7,6 +7,7 @@
  * leaks"). Rebuilt on the --pw-* system from the retired warm-paper marketing version.
  */
 import { useState } from "react";
+import Image from "next/image";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
 
@@ -36,7 +37,16 @@ export function EmailCapture({ list, cta }: { list: "waitlist" | "cashout"; cta:
   }
 
   if (done) {
-    return <p className="cap-done">Thanks — you&apos;re on the list. We&apos;ll be in touch.</p>;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" }}>
+        {/* The messenger's thumbs-up — you're on the list. */}
+        <div className="pg-mascot-wrap" aria-hidden="true">
+          <span className="pg-mascot-glow" />
+          <Image className="pg-mascot pg-mascot-sm" src="/brand-kit-assets/mascot-thumbsup-cut.webp" alt="" width={108} height={135} />
+        </div>
+        <p className="cap-done">Thanks — you&apos;re on the list. We&apos;ll be in touch.</p>
+      </div>
+    );
   }
 
   return (

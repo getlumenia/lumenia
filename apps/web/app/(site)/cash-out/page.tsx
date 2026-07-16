@@ -3,6 +3,7 @@
  * Lumenia). Rebuilt on Periwinkle, moved from (marketing). Honest: no date we can't keep.
  */
 import type { Metadata } from "next";
+import Image from "next/image";
 import { Footer } from "../../../components/site/sections/Footer";
 import { EmailCapture } from "../../../components/site/EmailCapture";
 import "../../../components/site/page.css";
@@ -49,8 +50,16 @@ export default function CashOut() {
       </header>
 
       <section className="tool-body">
-        <div className="tool-inner">
-          <EmailCapture list="cashout" cta="Notify me" />
+        <div className="tool-inner" style={{ textAlign: "center" }}>
+          {/* The messenger holding a phone, money glowing on the screen — your money, in your hand;
+              turning it into lira is the step that comes next. */}
+          <div className="pg-mascot-wrap" aria-hidden="true" style={{ marginBottom: "clamp(12px,3vh,28px)" }}>
+            <span className="pg-mascot-glow" />
+            <Image className="pg-mascot" src="/brand-kit-assets/mascot-phone-cut.webp" alt="" width={172} height={244} />
+          </div>
+          <div style={{ display: "inline-block", textAlign: "left" }}>
+            <EmailCapture list="cashout" cta="Notify me" />
+          </div>
         </div>
       </section>
 

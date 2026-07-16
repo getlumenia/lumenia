@@ -3,6 +3,7 @@
  * The email is kept in an ISOLATED store, never joined to money or an account (EmailCapture).
  */
 import type { Metadata } from "next";
+import Image from "next/image";
 import { Footer } from "../../../components/site/sections/Footer";
 import { EmailCapture } from "../../../components/site/EmailCapture";
 import "../../../components/site/page.css";
@@ -32,6 +33,11 @@ export default function Waitlist() {
     <div className="pg">
       <header className="pg-hero pg-glow" style={{ textAlign: "center" }}>
         <div className="pg-hero-inner" style={{ maxWidth: "640px" }}>
+          {/* The messenger waving hello — "we'll be in touch." */}
+          <div className="pg-mascot-wrap" aria-hidden="true" style={{ marginBottom: "clamp(8px,2vh,20px)" }}>
+            <span className="pg-mascot-glow" />
+            <Image className="pg-mascot" src="/brand-kit-assets/mascot-wave-cut.webp" alt="" width={184} height={204} priority />
+          </div>
           <h1 className="pg-h1">Be first when real money goes live.</h1>
           <p className="pg-lead" style={{ marginLeft: "auto", marginRight: "auto" }}>
             Lumenia is in pilot on a test network today. Leave your email and we&apos;ll tell you the

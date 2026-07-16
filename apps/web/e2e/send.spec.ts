@@ -9,9 +9,31 @@ import { mintClaimLink } from "./mintLink";
  */
 const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
 const WEB = process.env.WEB_URL ?? "https://lumenia-chi.vercel.app";
+const BAKED_SPONSOR = "https://lumenia-sponsor.vercel.app";
 
 test("claim → send $7 onward → the onward link is claimable (loop closed)", async ({ page }) => {
   page.on("pageerror", (e) => console.log("[pageerror]", e.message));
+
+  // For local runs the web build bakes the LIVE sponsor origin, whose CORS allowlist pins the
+  // deployed web origin — so a browser call from localhost is blocked. Rewrite the baked origin to
+  // the target sponsor (a URL swap, not a stub: every byte still comes from the real sponsor code +
+  // real testnet). Same helper request.spec uses; no-op when the target IS the baked origin.
+  if (SPONSOR !== BAKED_SPONSOR) {
+    await page.context().route(`${BAKED_SPONSOR}/**`, async (route) => {
+      const req = route.request();
+      const url = new URL(req.url());
+      const res = await fetch(`${SPONSOR}${url.pathname}${url.search}`, {
+        method: req.method(),
+        headers: req.postData() ? { "content-type": "application/json" } : undefined,
+        body: req.postData() ?? undefined,
+      });
+      await route.fulfill({
+        status: res.status,
+        body: await res.text(),
+        contentType: res.headers.get("content-type") ?? "application/json",
+      });
+    });
+  }
 
   // 1. claim $20 to get money on this device
   const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, amount: "20", from: "Alvin" });

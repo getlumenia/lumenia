@@ -97,6 +97,28 @@
 }
 .tool-row-hi .tool-row-name, .tool-row-hi .tool-row-range { color: var(--pw-accent) }
 
+/* ---- Mascot — the messenger, at an emotional beat ----------------------------------------
+   The brand character (brand.md §10), cut out + watermark-cleaned to match the landing's messenger.
+   Used sparingly at a beat, not as decoration (brand.md §9 "do it once; don't scatter"): a WAVE on
+   /waitlist ("see you soon"), a PHONE on /cash-out ("your money, in your hand"), a THUMBS-UP on the
+   email-capture success state ("you're on the list"). Floats over its own soft ground-glow like the
+   footer mascot; drop-shadow + float are aria-hidden decoration and honour reduced-motion. */
+.pg-mascot-wrap { position: relative; width: -moz-fit-content; width: fit-content; margin: 0 auto }
+.pg-mascot-glow {
+  position: absolute; left: 50%; bottom: 6%; transform: translateX(-50%);
+  width: 74%; height: 26%; z-index: 0; pointer-events: none; border-radius: 50%;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--pw-accent) 32%, transparent), transparent 70%);
+  filter: blur(14px);
+}
+.pg-mascot {
+  position: relative; z-index: 1; width: clamp(128px, 17vw, 184px); height: auto; display: block;
+  filter: drop-shadow(0 20px 26px color-mix(in srgb, var(--pw-accent) 32%, transparent));
+  animation: pgfloat 5.2s ease-in-out infinite;
+}
+.pg-mascot-sm { width: clamp(88px, 20vw, 108px) }
+@keyframes pgfloat { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-11px) } }
+@media (prefers-reduced-motion: reduce) { .pg-mascot { animation: none } }
+
 /* ---- Email capture (/waitlist, /cash-out) ------------------------------------------------- */
 .cap-form { display: flex; flex-direction: column; gap: 10px }
 @media (min-width: 560px) { .cap-form { flex-direction: row; justify-content: center } }

@@ -25,7 +25,7 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: "/",
       // `/r/` keeps its trailing slash: a bare `/r` prefix would also block /roadmap.
-      disallow: ["/c/", "/r/", "/request", "/claimed", "/home", "/send", "/sent/", "/unlock", "/brand-kit", "/dev$", "/spike"],
+      disallow: ["/c/", "/r/", "/request", "/claimed", "/home", "/account", "/activity", "/send", "/sent/", "/unlock", "/brand-kit", "/dev$", "/spike"],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
     host: SITE_URL,

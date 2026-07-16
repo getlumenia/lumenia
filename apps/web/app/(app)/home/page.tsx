@@ -30,6 +30,14 @@ import { copy } from "../../../lib/copy";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
 
+/** The home dashboard's primary actions — each a soft-3D brand icon, each a real destination. */
+const ACTIONS: Array<{ href: string; label: string; icon: string }> = [
+  { href: "/send", label: "Send", icon: "/brand-kit-assets/icon-send.webp" },
+  { href: "/request", label: "Ask", icon: "/brand-kit-assets/icon-hand.webp" },
+  { href: "/activity", label: "Activity", icon: "/brand-kit-assets/icon-receipt.webp" },
+  { href: "/account", label: "Account", icon: "/brand-kit-assets/icon-key.webp" },
+];
+
 export default function HomePage() {
   const { status, account, getSigner } = useWallet();
   const router = useRouter();
@@ -145,26 +153,30 @@ export default function HomePage() {
         </MoneyCard>
       )}
 
-      {/* Primary action — send money onward with a link of your own. */}
-      <Link
-        href="/send"
-        className="flex h-14 w-full items-center justify-center rounded-full bg-money text-base font-semibold text-primary-foreground"
-      >
-        {copy.claim.ctaSend}
-      </Link>
-      {/* The pull side — ask someone to pay you (request money). */}
-      <Link
-        href="/request"
-        className="flex h-12 w-full items-center justify-center rounded-full border border-line text-sm font-semibold text-ink"
-      >
-        {copy.claim.ctaRequest}
-      </Link>
+      {/* Primary actions — a soft-3D icon tile each (the brand icon set, in the screens it was drawn
+          for). Every tile goes to a surface that exists; no mock actions. */}
+      <nav className="app-actions">
+        {ACTIONS.map((a) => (
+          <Link key={a.href} href={a.href} className="app-action">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={a.icon} alt="" width={46} height={46} />
+            <span>{a.label}</span>
+          </Link>
+        ))}
+      </nav>
 
       {account.phase === 1 && <LockMoneyCard />}
 
-      {/* Activity */}
+      {/* Activity — the most recent few; the full history lives on /activity. */}
       <section>
-        <h2 className="mb-1 text-sm font-semibold text-ink-soft">Activity</h2>
+        <div className="mb-1 flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold text-ink-soft">Activity</h2>
+          {activity.length > 0 && (
+            <Link href="/activity" className="text-xs font-semibold text-money underline-offset-2 hover:underline">
+              See all
+            </Link>
+          )}
+        </div>
         {loadingData && activity.length === 0 ? (
           <p className="py-6 text-center text-sm text-ink-soft">Loading…</p>
         ) : activity.length === 0 ? (
@@ -173,7 +185,7 @@ export default function HomePage() {
           </p>
         ) : (
           <div className="rounded-[20px] border border-line bg-surface px-4">
-            {activity.map((a) => (
+            {activity.slice(0, 5).map((a) => (
               <ActivityRow key={a.id} direction={a.direction} usd={a.usd} at={a.at} />
             ))}
           </div>

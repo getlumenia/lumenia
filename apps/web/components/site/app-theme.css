@@ -1,0 +1,117 @@
+/*
+ * The (app) group's Periwinkle scope. The money surfaces — /home, /send, /request, /r, /sent,
+ * /unlock, and now /account + /activity — were the LAST routes on the retired warm-paper GREEN
+ * system. This flips them to the LOCKED Periwinkle palette (brand.md §4) so the whole product is
+ * finally one system, and so the Periwinkle soft-3D icon set can live where it belongs (the app
+ * screens it was drawn for).
+ *
+ * It does this WITHOUT touching the global :root tokens — which the FROZEN claim route /c/[id] still
+ * renders against — and WITHOUT rewriting a single component:
+ *
+ *   The app components use Tailwind brand utilities (bg-money, text-ink, bg-surface, border-line,
+ *   bg-secondary, text-primary-foreground …). Tailwind v4 compiles those to var(--money), var(--ink)
+ *   … (see @theme inline in globals.css). Overriding those base variables INSIDE .app-pw re-points
+ *   every utility to a Periwinkle value for the app group only. The global :root stays green, so
+ *   /c/[id] is byte-identical (its freeze is verified per-route after every build).
+ *
+ * Dark is driven by data-theme on <html> (the same next-themes provider the (site) group uses),
+ * never the legacy .dark class — so nothing here can reach the frozen claim route.
+ */
+.app-pw {
+  --paper: #f5f3ef;
+  --surface: #fbfaf8;
+  --ink: #1e1b22;
+  --ink-soft: #67626e;
+  --line: #e5dfe8;
+  --money: #6e5fce; /* the accent now marks action + arrival (brand.md §4.5) */
+  --money-pressed: #4e40a8;
+  --joy: #6e5fce; /* no apricot in Periwinkle — the accent carries the positive moment */
+  --danger: #c4362b;
+  /* shadcn literals that don't already resolve through a brand var */
+  --primary-foreground: #f6f4fd;
+  --secondary: #e8e3f7; /* accent-soft */
+  --muted: #e8e3f7;
+  --accent: #e8e3f7;
+  --ring: #6e5fce;
+
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Switzer", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+}
+
+:root[data-theme="dark"] .app-pw {
+  --paper: #15121c;
+  --surface: #1d1926;
+  --ink: #edeaf3;
+  --ink-soft: #a59db2;
+  --line: #2c2536;
+  --money: #b7ace8; /* Stellar lavender on dark — the funder tie-back (brand.md §4.2) */
+  --money-pressed: #a99ce0;
+  --joy: #b7ace8;
+  --danger: #e5695f;
+  --primary-foreground: #1a1622;
+  --secondary: #2a2338;
+  --muted: #2a2338;
+  --accent: #2a2338;
+  --ring: #b7ace8;
+}
+
+/* Sentient for the headings in the app scope, matching the (site) system; the body + figures stay
+   Switzer (tabular-nums money is a span, not a heading, so it is untouched). */
+.app-pw :where(h1, h2, h3) { font-family: "Sentient", Georgia, serif; letter-spacing: -0.015em }
+
+/* ---- App top chrome ---------------------------------------------------------------------- */
+.app-nav {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--paper) 82%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.app-nav-inner {
+  max-width: 28rem; margin: 0 auto; padding: 12px clamp(16px, 5vw, 20px);
+  display: flex; align-items: center; gap: 10px;
+}
+/* No `display` here on purpose: the theme swap (.site-wordmark-light/dark in globals.css) owns
+   display, and a `display:block` at this specificity would beat `.site-wordmark-dark{display:none}`
+   (same score, later file wins) and show BOTH wordmarks stacked. */
+.app-wordmark { height: 20px; width: auto }
+.app-nav-links { margin-left: auto; display: flex; align-items: center; gap: 2px }
+.app-nav-link {
+  padding: 6px 11px; border-radius: 10px; font-size: 14px; font-weight: 500;
+  color: var(--ink-soft); text-decoration: none; transition: color .18s, background .18s;
+}
+.app-nav-link:hover { color: var(--ink) }
+.app-nav-link[data-active="true"] { color: var(--money); background: color-mix(in srgb, var(--money) 10%, transparent) }
+
+/* ---- Actions grid (soft-3D icon tiles) ---------------------------------------------------
+   The home dashboard's primary actions, each a soft-3D icon from the brand set (icons-*, sliced +
+   cream-removed to match the beats icons). Real actions only (no-mock): Send, Ask, Receive,
+   Activity, Account — every one goes to a surface that exists. */
+.app-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px }
+.app-action {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 14px 4px; border-radius: 16px; text-decoration: none;
+  border: 1px solid var(--line); background: var(--surface);
+  transition: transform .18s, border-color .18s, box-shadow .18s;
+}
+.app-action:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--money) 38%, var(--line));
+  box-shadow: 0 14px 28px -18px color-mix(in srgb, var(--money) 60%, transparent);
+}
+.app-action img { width: 42px; height: 42px; display: block }
+.app-action span { font-size: 11.5px; font-weight: 600; color: var(--ink) }
+@media (prefers-reduced-motion: reduce) { .app-action { transition: none } .app-action:hover { transform: none } }
+
+/* ---- Account rows ------------------------------------------------------------------------ */
+.app-krow {
+  display: flex; align-items: center; gap: 12px; padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.app-krow:last-child { border-bottom: 0 }
+.app-kicon { width: 40px; height: 40px; flex: none }
+.app-krow-body { flex: 1; min-width: 0 }
+.app-krow-t { font-size: 14px; font-weight: 600; color: var(--ink) }
+.app-krow-s { margin-top: 2px; font-size: 13px; line-height: 1.45; color: var(--ink-soft); word-break: break-all }
