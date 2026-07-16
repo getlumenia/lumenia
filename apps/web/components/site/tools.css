@@ -1,0 +1,124 @@
+/*
+ * The utility layer — /tools (hub + the four interactive tools), /waitlist, /cash-out. Sits on top
+ * of page.css (ground, hero, buttons) and adds what a single-purpose tool needs and the reading
+ * pages do not: a form, a result card, a converter figure, a comparison row, an email capture.
+ *
+ * These are CONSUMER surfaces (brand.md §8): no mono rails, no "01/02/03" numerals. The one place a
+ * mono/tabular figure is allowed is a real number the tool exists to show — a converted amount, a
+ * cost range — never as decoration. Written against the --pw-* tokens.
+ */
+
+/* ---- Tool body (narrower than the hero — a single job, held close) ----------------------- */
+.tool-body {
+  position: relative; z-index: 2; background: var(--pw-paper);
+  padding: 0 clamp(20px, 6vw, 64px) clamp(80px, 12vh, 140px);
+}
+.tool-inner { max-width: 620px; margin: 0 auto }
+
+/* ---- Form ---------------------------------------------------------------------------------- */
+.tool-form { display: flex; flex-direction: column; gap: 10px }
+@media (min-width: 560px) { .tool-form { flex-direction: row } }
+.tool-input {
+  width: 100%; padding: 15px 18px; border-radius: 14px;
+  border: 1px solid var(--pw-line); background: var(--pw-surface); color: var(--pw-ink);
+  font-family: inherit; font-size: 16px; outline: none;
+  transition: border-color .18s, box-shadow .18s;
+}
+.tool-input:focus {
+  border-color: var(--pw-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pw-accent) 22%, transparent);
+}
+.tool-input::placeholder { color: var(--pw-muted) }
+.tool-input-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px }
+.tool-submit { flex: none }
+@media (prefers-reduced-motion: reduce) { .tool-input { transition: none } }
+
+/* ---- Result / disclosure cards ------------------------------------------------------------ */
+.tool-card {
+  margin-top: 24px; padding: clamp(20px, 3vw, 28px); border-radius: 18px;
+  border: 1px solid var(--pw-line); background: var(--pw-surface);
+}
+.tool-card-head {
+  font-family: "Sentient", Georgia, serif; font-weight: 600; font-size: 20px; line-height: 1.2;
+  color: var(--pw-ink);
+}
+.tool-card-head[data-tone="accent"] { color: var(--pw-accent) }
+.tool-note { margin-top: 8px; font-size: 15px; line-height: 1.6; color: var(--pw-muted) }
+.tool-link {
+  display: inline-block; margin-top: 12px; font-size: 14px; font-weight: 600;
+  color: var(--pw-accent); text-decoration: none;
+}
+.tool-link:hover { text-decoration: underline; text-underline-offset: 3px }
+.tool-error { margin-top: 16px; font-size: 15px; color: var(--pw-danger) }
+.tool-status { margin-top: 20px; font-size: 15px; color: var(--pw-muted) }
+
+/* A soft privacy/honesty disclosure (link-check "this stays in your browser"). */
+.tool-notice {
+  margin-top: 18px; padding: 16px 18px; border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--pw-accent) 30%, var(--pw-line));
+  background: color-mix(in srgb, var(--pw-accent) 6%, var(--pw-surface));
+  font-size: 14.5px; line-height: 1.6; color: var(--pw-muted);
+}
+
+/* ---- Converter figure --------------------------------------------------------------------- */
+.tool-panel {
+  margin-top: 28px; padding: clamp(22px, 3vw, 30px); border-radius: 20px;
+  border: 1px solid var(--pw-line); background: var(--pw-surface);
+}
+.tool-field-label { display: block; font-size: 14px; color: var(--pw-muted) }
+.tool-field {
+  margin-top: 8px; display: flex; align-items: center; gap: 4px;
+  border-radius: 14px; border: 1px solid var(--pw-line); background: var(--pw-paper); padding: 0 14px;
+}
+.tool-field-sym { font-size: 19px; color: var(--pw-muted) }
+.tool-field input {
+  width: 100%; background: transparent; border: 0; outline: none; padding: 13px 6px;
+  font-size: 19px; color: var(--pw-ink); font-variant-numeric: tabular-nums;
+}
+.tool-figure { margin-top: 22px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px }
+.tool-figure-label { color: var(--pw-muted) }
+.tool-figure-value {
+  font-family: "Sentient", Georgia, serif; font-weight: 600;
+  font-size: clamp(28px, 4.5vw, 40px); color: var(--pw-ink); font-variant-numeric: tabular-nums;
+}
+.tool-fine { margin-top: 16px; font-size: 13px; line-height: 1.55; color: var(--pw-muted) }
+
+/* ---- Comparison rows (/tools/cost) -------------------------------------------------------- */
+.tool-rows { display: flex; flex-direction: column; gap: 12px; margin-top: 8px }
+.tool-row { padding: 18px 20px; border-radius: 16px; border: 1px solid var(--pw-line); background: var(--pw-surface) }
+.tool-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 14px }
+.tool-row-name { font-weight: 600; color: var(--pw-ink) }
+.tool-row-range { flex: none; font-weight: 700; color: var(--pw-ink); font-variant-numeric: tabular-nums }
+.tool-row-note { margin-top: 6px; font-size: 14.5px; line-height: 1.55; color: var(--pw-muted) }
+/* The one row that is us — accent-tinted, per brand.md §4.5 (accent marks the arrival moment). */
+.tool-row-hi {
+  border-color: color-mix(in srgb, var(--pw-accent) 45%, var(--pw-line));
+  background: color-mix(in srgb, var(--pw-accent) 7%, var(--pw-surface));
+}
+.tool-row-hi .tool-row-name, .tool-row-hi .tool-row-range { color: var(--pw-accent) }
+
+/* ---- Email capture (/waitlist, /cash-out) ------------------------------------------------- */
+.cap-form { display: flex; flex-direction: column; gap: 10px }
+@media (min-width: 560px) { .cap-form { flex-direction: row; justify-content: center } }
+.cap-input { max-width: 340px }
+.cap-done { font-weight: 600; color: var(--pw-accent) }
+
+/* ---- Brand press kit (/brand) ------------------------------------------------------------- */
+.brand-h2 {
+  margin-top: clamp(40px, 6vh, 56px); font-family: "Sentient", Georgia, serif; font-weight: 600;
+  font-size: clamp(20px, 2.2vw, 25px); letter-spacing: -.015em; color: var(--pw-ink);
+}
+.brand-p { margin-top: 10px; font-size: clamp(15.5px, 1.6vw, 17px); line-height: 1.65; color: var(--pw-muted) }
+.brand-p strong { color: var(--pw-ink); font-weight: 600 }
+.brand-swatches { margin-top: 16px; display: grid; gap: 12px; grid-template-columns: 1fr }
+@media (min-width: 560px) { .brand-swatches { grid-template-columns: 1fr 1fr } }
+.brand-swatch { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; border: 1px solid var(--pw-line); background: var(--pw-surface) }
+.brand-chip { width: 40px; height: 40px; flex: none; border-radius: 10px; border: 1px solid var(--pw-line) }
+.brand-swatch-name { font-weight: 600; color: var(--pw-ink) }
+.brand-hex { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--pw-muted) }
+.brand-swatch-use { font-size: 13.5px; color: var(--pw-muted) }
+.brand-box {
+  margin-top: 14px; padding: 18px 20px; border-radius: 16px;
+  border: 1px solid var(--pw-line); background: var(--pw-surface);
+  font-size: 15px; line-height: 1.65; color: var(--pw-muted);
+}

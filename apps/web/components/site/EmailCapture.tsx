@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * EmailCapture — the only PII we collect (notify-me email). Posts to the sponsor
- * /waitlist endpoint, which keeps it in an ISOLATED store, never joined to a pubkey
- * or any money data (FRONTEND_PLAN §1 / Architecture: "email + account balance in
- * one row is a dataset we don't want to be holding when it leaks").
+ * EmailCapture (Periwinkle) — the only PII we collect (notify-me email). Posts to the sponsor
+ * /waitlist endpoint, which keeps it in an ISOLATED store, never joined to a pubkey or any money
+ * data ("email + account balance in one row is a dataset we don't want to be holding when it
+ * leaks"). Rebuilt on the --pw-* system from the retired warm-paper marketing version.
  */
 import { useState } from "react";
 
@@ -36,27 +36,23 @@ export function EmailCapture({ list, cta }: { list: "waitlist" | "cashout"; cta:
   }
 
   if (done) {
-    return <p className="font-semibold text-money">Thanks — you&apos;re on the list. We&apos;ll be in touch.</p>;
+    return <p className="cap-done">Thanks — you&apos;re on the list. We&apos;ll be in touch.</p>;
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-2 sm:flex-row">
+    <form onSubmit={submit} className="cap-form">
       <input
         type="email"
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="you@email.com"
-        className="w-full rounded-full border border-line bg-surface px-4 py-3 text-ink outline-none focus:border-money sm:max-w-xs"
+        className="tool-input cap-input"
       />
-      <button
-        type="submit"
-        disabled={busy}
-        className="rounded-full bg-money px-6 py-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-money/90 disabled:opacity-60"
-      >
+      <button type="submit" disabled={busy} className="pg-btn pg-btn-primary tool-submit">
         {busy ? "…" : cta}
       </button>
-      {error && <p className="text-sm text-danger sm:w-full">{error}</p>}
+      {error && <p className="tool-error sm:w-full">{error}</p>}
     </form>
   );
 }

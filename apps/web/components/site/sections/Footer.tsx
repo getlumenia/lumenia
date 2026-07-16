@@ -11,8 +11,8 @@ import { AvatarReveal } from "./AvatarReveal";
 import { AmbientVideo } from "../AmbientVideo";
 
 const COLS = [
-  { title: "Product", links: [["How it works", "/how-it-works"], ["Live demo", "/demo"], ["Waitlist", "/waitlist"]] },
-  { title: "Company", links: [["About", "/about"], ["Roadmap", "/roadmap"], ["Developers", "/developers"]] },
+  { title: "Product", links: [["How it works", "/how-it-works"], ["Live demo", "/demo"], ["Tools", "/tools"], ["Waitlist", "/waitlist"], ["Cash-out", "/cash-out"]] },
+  { title: "Company", links: [["About", "/about"], ["Roadmap", "/roadmap"], ["Developers", "/developers"], ["Brand", "/brand"]] },
   { title: "Legal", links: [["Privacy", "/privacy"], ["Terms", "/terms"]] },
 ];
 

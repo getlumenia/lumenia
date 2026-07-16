@@ -40,6 +40,23 @@
 .ed-prose > p:first-child { font-size: clamp(18px, 1.9vw, 21px); line-height: 1.55; color: var(--pw-ink) }
 .ed-prose a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
 .ed-prose a:hover { text-decoration: underline; text-underline-offset: 3px }
+/* Structured prose (/privacy, /terms): section subheads + hairline-marked lists. The lead-paragraph
+   rule above still applies to the first child; these add the section rhythm those two pages need
+   without a second stylesheet. */
+.ed-prose h2 {
+  margin-top: .7em; font-family: "Sentient", Georgia, serif; font-weight: 600;
+  font-size: clamp(19px, 2vw, 23px); line-height: 1.2; letter-spacing: -.015em; color: var(--pw-ink);
+}
+.ed-prose ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: .55em }
+.ed-prose li {
+  position: relative; padding-left: 20px;
+  font-size: clamp(16.5px, 1.7vw, 18.5px); line-height: 1.6; color: var(--pw-muted);
+}
+.ed-prose li::before {
+  content: ""; position: absolute; left: 0; top: .62em; width: 9px; height: 2px; border-radius: 2px;
+  background: color-mix(in srgb, var(--pw-accent) 55%, transparent);
+}
+.ed-prose li strong { color: var(--pw-ink); font-weight: 600 }
 
 /* ---- Back link ---------------------------------------------------------------------------
    Its own row above the h1, not floated into it: an inline "← All guides" beside a serif display
