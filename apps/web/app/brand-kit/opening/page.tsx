@@ -321,7 +321,7 @@ function Greeting() {
               <span className="op-bubble-name">Lumenia</span>
               <span className="op-bubble-time">now</span>
             </div>
-            <p className="op-bubble-text">Hey — I&rsquo;ve got a message for you.</p>
+            <p className="op-bubble-text">Hey, I&rsquo;ve got a message for you.</p>
             <span className="op-bubble-tail" />
           </div>
         </div>

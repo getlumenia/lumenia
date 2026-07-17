@@ -131,7 +131,7 @@ export function Greeting() {
               <img className="op-bubble-mark" src="/brand-kit-assets/mark-link.webp" alt="Lumenia" />
               <span className="op-bubble-time">now</span>
             </div>
-            <p className="op-bubble-text">Hey — I&rsquo;ve got a message for you.</p>
+            <p className="op-bubble-text">Hey, I&rsquo;ve got a message for you.</p>
             <span className="op-bubble-tail" />
           </div>
         </div>
