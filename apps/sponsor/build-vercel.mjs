@@ -4,6 +4,13 @@
  * @stellar/js-xdr `config` CJS interop at build time, so the deployed functions
  * have NO runtime module resolution (which is what breaks under Vercel's plain
  * Node ESM loader). Run by Vercel's buildCommand (see vercel.json).
+ *
+ * OPS NOTE: this build ONLY runs when the Vercel project's Root Directory is set to
+ * `apps/sponsor` (so vercel.json + this script are found). A GitHub org transfer /
+ * Git reconnect can silently RESET that Root Directory to the repo root, in which
+ * case Vercel runs a generic no-op build (~1s), emits ZERO functions, and every
+ * endpoint 404s while the deployment still shows "READY". If /health 404s after a
+ * reconnect, check Settings → Build and Deployment → Root Directory first.
  */
 import { build } from "esbuild";
 import { rmSync, mkdirSync, writeFileSync } from "node:fs";
