@@ -15,7 +15,7 @@ Preferred channel — GitHub's private reporting:
 2. Click **Report a vulnerability** (GitHub Private Vulnerability Reporting).
 3. Describe the issue, the impact, and steps to reproduce.
 
-If you can't use that channel, email **mericcintosun@gmail.com** with `SECURITY` in
+If you can't use that channel, email **security@getlumenia.com** with `SECURITY` in
 the subject line. If you'd like, mention a way to reach you and we'll follow up.
 
 We aim to acknowledge a report within **72 hours** and to share a remediation plan

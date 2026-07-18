@@ -55,5 +55,5 @@ recipient claims it walletless, seedless, and pays no gas.
   the address bar after use; it is never sent to a server.
 - Money surfaces never expose wallet, crypto, or ledger-level error codes to users.
 
-[Unreleased]: https://github.com/mericcintosun/lumenia/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/mericcintosun/lumenia/releases/tag/v0.1.0
+[Unreleased]: https://github.com/getlumenia/lumenia/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/getlumenia/lumenia/releases/tag/v0.1.0

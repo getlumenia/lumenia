@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for the report. Lumenia runs on the Stellar **testnet** — no real
         money is involved. For **security** issues, do **not** file a public issue —
-        [report it privately](https://github.com/mericcintosun/lumenia/security/advisories/new) instead.
+        [report it privately](https://github.com/getlumenia/lumenia/security/advisories/new) instead.
   - type: textarea
     id: what-happened
     attributes:

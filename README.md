@@ -1,6 +1,6 @@
 # Lumenia
 
-[![CI](https://github.com/mericcintosun/lumenia/actions/workflows/ci.yml/badge.svg)](https://github.com/mericcintosun/lumenia/actions/workflows/ci.yml)
+[![CI](https://github.com/getlumenia/lumenia/actions/workflows/ci.yml/badge.svg)](https://github.com/getlumenia/lumenia/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-6E5FCE.svg)](LICENSE)
 ![Network: Stellar testnet](https://img.shields.io/badge/network-Stellar%20testnet-6E5FCE.svg)
 

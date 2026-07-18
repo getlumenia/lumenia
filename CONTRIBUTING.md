@@ -19,7 +19,7 @@ gets you from a fresh clone to green checks.
 ## Setup
 
 ```bash
-git clone https://github.com/mericcintosun/lumenia.git
+git clone https://github.com/getlumenia/lumenia.git
 cd lumenia
 pnpm install
 ```
