@@ -71,6 +71,9 @@ HANDOFF.md
 .claude/
 .vscode/
 
+# Staging for the SEPARATE org `.github` repo (not part of the product repo) — local only
+docs/org-github/
+
 # Internal working docs (agent manual, personal profile, strategy & planning) —
 # kept local; the public repo carries the Instawards-relevant docs only
 # (README, stack, PROGRESS, INSTAWARDS_SOW, EVIDENCE, ANTI_DRAIN, evidence/).

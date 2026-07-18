@@ -1,11 +1,28 @@
 # Lumenia
 
+[![CI](https://github.com/mericcintosun/lumenia/actions/workflows/ci.yml/badge.svg)](https://github.com/mericcintosun/lumenia/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-6E5FCE.svg)](LICENSE)
+![Network: Stellar testnet](https://img.shields.io/badge/network-Stellar%20testnet-6E5FCE.svg)
+
 > **Send and request money by link — the recipient claims it walletless, seedless, and the recipient pays no gas, in a target ~30 seconds.**
 > On Stellar, with native USDC. Every claim creates a new funded Stellar account.
 
 Lumenia — from Stellar's lumens: light (value) that travels by link. It is a consumer payments app that lets **an ordinary person use Stellar's invisible infrastructure (anchors, USDC, sponsorship) just by tapping a WhatsApp link.** No one needs to know anything about crypto.
 
 **Context:** Built for [SCF Build (Integration Track)](https://stellar.gitbook.io/scf-handbook) + Instawards (Stellar ambassador, 30-day MVP).
+
+## Quickstart
+
+Everything runs on the Stellar **testnet** — no real money:
+
+```bash
+pnpm install
+pnpm test:antidrain   # anti-drain validator (25/25, offline)
+pnpm spike1           # sponsored 0-XLM claim economics (testnet)
+```
+
+Full setup and environment variables are in [§7 Getting started](#7-getting-started).
+New here? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

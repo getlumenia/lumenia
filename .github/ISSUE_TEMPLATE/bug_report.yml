@@ -1,0 +1,63 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Lumenia runs on the Stellar **testnet** — no real
+        money is involved. For **security** issues, do **not** file a public issue —
+        [report it privately](https://github.com/mericcintosun/lumenia/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: When I tapped the claim link, …
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that triggers it.
+      placeholder: |
+        1. Open …
+        2. Tap …
+        3. See …
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Where did it happen?
+      description: The page or flow (e.g. the claim page, /send, /request). Please do NOT paste a full claim link — it can contain a bearer key.
+      placeholder: the claim page / /home / /send
+    validations:
+      required: false
+  - type: dropdown
+    id: device
+    attributes:
+      label: Device
+      options:
+        - Phone — iOS Safari
+        - Phone — Android Chrome
+        - Phone — inside WhatsApp / another app's in-app browser
+        - Desktop browser
+        - Other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser & OS version
+      placeholder: iOS 18.4 Safari / Android 15 Chrome 140 / …
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, console errors, or a transaction hash (never paste keys or the URL fragment).
+    validations:
+      required: false
