@@ -15,5 +15,10 @@
     "spike1c": "pnpm --filter @lumenia/sponsor spike1c",
     "spike4": "pnpm --filter @lumenia/sponsor spike4",
     "test:antidrain": "pnpm --filter @lumenia/sponsor test:antidrain"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.19"
+    }
   }
 }
