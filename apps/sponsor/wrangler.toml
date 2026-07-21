@@ -1,0 +1,25 @@
+# Cloudflare Workers config for the sponsor service (moved off Vercel — the Hobby plan
+# caps a deployment at 12 serverless functions; the sponsor is ONE service, so one Worker
+# with no function limit). Proven: @stellar/stellar-sdk@16 runs on workerd + nodejs_compat.
+#
+# Deploy:  wrangler deploy        (owner-authed, or a CLOUDFLARE_API_TOKEN)
+# Secrets: wrangler secret put SPONSOR_SECRET   (repeat per secret; never commit them)
+# Custom domain: add a Route / Custom Domain to sponsor.getlumenia.com in the dashboard
+#                (the zone is already on Cloudflare), or uncomment [[routes]] below.
+name = "lumenia-sponsor"
+main = "src/worker.ts"
+compatibility_date = "2025-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Non-secret var(s). Secrets (SPONSOR_SECRET, USDC_ISSUER, FAUCET_SECRET,
+# KV_REST_API_URL/TOKEN, RESEND_API_KEY, FEEDBACK_NOTIFY_TO) are set with `wrangler secret put`
+# or in the dashboard — NOT here.
+[vars]
+STELLAR_NETWORK = "testnet"
+ALLOWED_ORIGIN = "https://getlumenia.com"
+USDC_ISSUER = "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC"
+
+# Uncomment after the Worker exists + the zone DNS is set:
+# [[routes]]
+# pattern = "sponsor.getlumenia.com"
+# custom_domain = true

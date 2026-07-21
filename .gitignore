@@ -57,6 +57,10 @@ stellar-build/
 apps/sponsor/api/
 apps/sponsor/public/
 
+# Cloudflare Workers (wrangler) — local secrets + build state, never commit
+**/.dev.vars
+**/.wrangler/
+
 # Heavy 3D GLB models (~60M) used ONLY by the internal /brand-kit workspace, which
 # is gated to a 404 in production — so they are never served to a user and were pure
 # deploy + clone weight. Kept LOCAL for brand exploration; regenerate via the Meshy
@@ -102,6 +106,7 @@ SCF_INTEREST_FORM.md
 RECOVERY_ARCHITECTURE.md
 REVIEW_AND_ROADMAP.md
 V2_SOROBAN_ESCROW.md
+SPONSOR_CLOUDFLARE.md
 
 # Property-test (proptest) writes a snapshot per fuzz case — noise, not a fixture
 contracts/lumen-drop/test_snapshots/test/no_pool_op_*.json

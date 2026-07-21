@@ -31,9 +31,11 @@ const FUNCTIONS = [
   "waitlist",
   "feedback",
   "events",
-  "recovery",
-  "recovery-otp",
-  "recovery-fetch",
+  // NOTE: recovery / recovery-otp / recovery-fetch are NOT bundled here — the Vercel
+  // Hobby plan caps a deployment at 12 serverless functions, and recovery pushed us to
+  // 15. The sponsor moved to a single Cloudflare Worker (src/worker.ts, no function
+  // limit) which serves ALL endpoints incl. recovery. This Vercel build stays at 12
+  // (classic endpoints) as a transition fallback until the web points at the Worker.
 ];
 
 const OUT = ".vercel/output";
