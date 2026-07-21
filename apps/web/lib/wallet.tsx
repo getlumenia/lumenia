@@ -9,8 +9,10 @@
  * v2 swaps the concrete signer without touching this shape.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { getHome, listAccounts, unlockPhase1, type Phase } from "./keystore";
+import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase2, setHome, type Phase } from "./keystore";
 import { localSignerFromSeed, type Signer } from "./signer";
+import { DEFAULT_ARGON } from "./argon";
+import { wrapWithPassword, unwrapWithPassword, emptyBox, putCopy, findCopy, type RecoveryBox } from "./recovery";
 
 export interface WalletAccount {
   address: string;
@@ -38,6 +40,17 @@ interface WalletState {
    * routes to /unlock). The seed never leaves this module.
    */
   getSigner: () => Promise<Signer>;
+  /**
+   * Back up the home seed into a portable, server-storable box (RECOVERY_ARCHITECTURE
+   * §12): the same `password` locks the account locally (Phase 2) AND wraps the seed for
+   * recovery. Returns ONLY the ciphertext box — the seed never leaves this module.
+   */
+  secureRecovery: (password: string) => Promise<RecoveryBox>;
+  /**
+   * Restore on a fresh device: open a fetched box with `password`, adopt the seed as the
+   * home account (locked with that password), and unlock it for the session.
+   */
+  restoreRecovery: (box: RecoveryBox, password: string) => Promise<void>;
 }
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -92,8 +105,45 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     return signer;
   }, [account]);
 
+  const secureRecovery = useCallback(
+    async (password: string): Promise<RecoveryBox> => {
+      if (!account) throw new Error("no local account");
+      let seed: Uint8Array;
+      if (account.phase === 1) {
+        // First lock: the same password locks this account locally (Phase 2)…
+        seed = await unlockPhase1(account.address);
+        await savePhase2(account.address, seed, password, DEFAULT_ARGON);
+      } else {
+        // Already locked: verify the password by decrypting with it (throws if wrong).
+        seed = (await unlockPhase2(password, account.address)).seed;
+      }
+      // …and wraps the seed into a portable box. Only the ciphertext leaves this module.
+      const box = putCopy(emptyBox(), await wrapWithPassword(seed, password));
+      setSessionSeed(seed); // keep unlocked this session (the session owns the seed)
+      await refresh(); // the phase may have changed 1 → 2
+      return box;
+    },
+    [account, refresh, setSessionSeed],
+  );
+
+  const restoreRecovery = useCallback(
+    async (box: RecoveryBox, password: string): Promise<void> => {
+      const copy = findCopy(box, "password");
+      if (!copy) throw new Error("This backup can only be opened with Face ID.");
+      const seed = await unwrapWithPassword(copy, password); // throws on a wrong password
+      const pub = localSignerFromSeed(seed).publicKey();
+      await savePhase2(pub, seed, password, DEFAULT_ARGON);
+      await setHome(pub);
+      setSessionSeed(seed);
+      await refresh();
+    },
+    [refresh, setSessionSeed],
+  );
+
   return (
-    <WalletContext.Provider value={{ status, account, accounts, unlocked, refresh, setSessionSeed, getSigner }}>
+    <WalletContext.Provider
+      value={{ status, account, accounts, unlocked, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery }}
+    >
       {children}
     </WalletContext.Provider>
   );

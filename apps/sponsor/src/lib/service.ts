@@ -50,6 +50,8 @@ export interface VercelReq {
   headers: Record<string, string | string[] | undefined>;
   /** Vercel parses the JSON body when content-type is application/json. */
   body?: unknown;
+  /** Vercel's Node launcher (shouldAddHelpers) parses the query string. */
+  query?: Record<string, string | string[] | undefined>;
 }
 export interface VercelRes {
   setHeader(key: string, value: string): void;

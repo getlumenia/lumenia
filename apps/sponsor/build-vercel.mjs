@@ -31,6 +31,9 @@ const FUNCTIONS = [
   "waitlist",
   "feedback",
   "events",
+  "recovery",
+  "recovery-otp",
+  "recovery-fetch",
 ];
 
 const OUT = ".vercel/output";

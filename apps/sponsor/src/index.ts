@@ -16,6 +16,9 @@
  *   POST /waitlist        → store a notify-me email (isolated, never joined to a pubkey)
  *   POST /feedback        → store a "report a problem" entry (isolated, never joined to a pubkey)
  *   POST /events          → allowlisted funnel beacon (no PII; always 200)
+ *   POST /recovery-otp    → email a single-use code proving control of the box's email
+ *   POST /recovery        → store a ciphertext-only recovery box (OTP-gated; isolated; signs nothing)
+ *   POST /recovery-fetch  → fetch a ciphertext-only recovery box (OTP-gated)
  *
  * The request handlers live in lib/* and are platform-agnostic, so the same core
  * runs behind this node:http server (local dev + CLI) and behind a Vercel function
@@ -35,6 +38,8 @@ import { demoLinkHandler } from "./lib/demo-link.js";
 import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
+import { putBox, getBox } from "./lib/recovery-store.js";
+import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
 
 const { config, signer, faucet, server } = getService();
 const allowedOrigin = process.env.ALLOWED_ORIGIN ?? "*";
@@ -226,6 +231,36 @@ const httpServer = createServer(async (req, res) => {
         /* ignore an unknown/bad event — the beacon is fire-and-forget */
       }
       return send(res, 200, { ok: true });
+    }
+
+    if (method === "POST" && url === "/recovery-otp") {
+      // Email a single-use code (proves control of the email that keys the box).
+      const rl = await enforceRateLimit(`rec:${clientIp(req)}`);
+      if (rl.limited) return send(res, 429, { error: rl.reason });
+      const body = (await readJson(req)) as { email?: unknown };
+      await requestOtp(body.email);
+      return send(res, 200, { ok: true });
+    }
+
+    if (method === "POST" && url === "/recovery") {
+      // Store a ciphertext-only box AFTER verifying the emailed code. Its OWN limiter
+      // bucket ("rec:"); signs nothing and touches no anti-drain policy.
+      const rl = await enforceRateLimit(`rec:${clientIp(req)}`);
+      if (rl.limited) return send(res, 429, { error: rl.reason });
+      const body = (await readJson(req)) as { id?: unknown; box?: unknown; code?: unknown };
+      if (!(await verifyOtp(body.id, body.code))) return send(res, 401, { error: "invalid or expired code" });
+      await putBox(body.id, body.box);
+      return send(res, 200, { ok: true });
+    }
+
+    if (method === "POST" && url === "/recovery-fetch") {
+      const rl = await enforceRateLimit(`rec:${clientIp(req)}`);
+      if (rl.limited) return send(res, 429, { error: rl.reason });
+      const body = (await readJson(req)) as { id?: unknown; code?: unknown };
+      if (!(await verifyOtp(body.id, body.code))) return send(res, 401, { error: "invalid or expired code" });
+      const box = await getBox(body.id);
+      if (!box) return send(res, 404, { error: "not found" });
+      return send(res, 200, { box });
     }
 
     return send(res, 404, { error: "not found" });
