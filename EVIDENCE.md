@@ -31,7 +31,7 @@ held 0 XLM throughout and paid no fee** — no wallet, no seed phrase, no setup.
 | Signer | Env hot-key (testnet scope per SOW); external raw-Ed25519/KMS signing proven separately (Spike #1b, [PROGRESS.md §4c](PROGRESS.md)) |
 | Fee cap | `FEE_BUMP_MAX_STROOPS` enforced in [`apps/sponsor/src/lib/feebump.ts`](apps/sponsor/src/lib/feebump.ts) |
 | Rate limiting | Per-IP + per-account on both POST endpoints ([`apps/sponsor/src/lib/rate-limit.ts`](apps/sponsor/src/lib/rate-limit.ts)), **durable across serverless instances** (Upstash Redis fixed-window; in-memory fallback). Proven live 2026-07-11: 12 concurrent `/create-account` for one account → 5×200 (cap) + 7×429 |
-| Public repo | <https://github.com/mericcintosun/lumenia> |
+| Public repo | <https://github.com/getlumenia/lumenia> |
 
 ## D2 — End-to-end walletless claim (testnet)
 
@@ -165,7 +165,7 @@ WhatsApp automation, production KMS/HSM, DB/SEP-7, abuse-at-scale handling.
 ## Re-run everything
 
 ```bash
-git clone https://github.com/mericcintosun/lumenia && cd lumenia
+git clone https://github.com/getlumenia/lumenia && cd lumenia
 pnpm install
 pnpm --filter @lumenia/sponsor test:antidrain     # 25/25, no network
 pnpm --filter @lumenia/sponsor test:integration   # 6/6, testnet (friendbot; can be slow if friendbot rate-limits)

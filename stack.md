@@ -65,7 +65,7 @@ The sponsor backend is a **separate Node service** (not a Next API route): the h
 | `@serwist/turbopack` + `serwist` | `9.5.11` | Service worker (Turbopack default). **next-pwa is DEAD.** Fallback: `@serwist/next` + `--webpack` |
 | `@stellar/stellar-sdk` | `16.0.0` (exact, NOT `^16` — don't jump to the `p27` preview) | rpc namespace, sponsored-reserve ops, `buildFeeBumpTransaction` |
 | `@simplewebauthn/browser` | `13.3.0` | Passkey + PRF (low-level; `getClientExtensionResults().prf.results.first` by hand) |
-| `@stellar/typescript-wallet-sdk` | `3.0.1` | SEP-10/24/6/12/30 — once an anchor is wired up; deferrable for v1 testnet |
+| `@stellar/typescript-wallet-sdk` | `3.0.1` | SEP-24 (interactive) + SEP-10 (auth) + SEP-12 (KYC), + SEP-38 quotes; SEP-30 recovery — once an anchor is wired up; deferrable for v1 testnet. **SEP-6 interactive is deprecated → we commit to SEP-24.** |
 
 - **Manifest:** Next native (`app/manifest.ts`); 192/512 + 512 maskable. On iOS, a manual "Add to Home Screen" hint.
 - **OG cards:** `next/og`, a **per-claim-ID route** (`/c/[id]/opengraph-image`), **SSR**, pre-rendered/cached when the claim is created (the WhatsApp crawler misses a cold function). Each claim has a unique URL → WhatsApp's cache self-solves.

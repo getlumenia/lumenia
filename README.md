@@ -144,7 +144,7 @@ This section is the heart of the project: every major decision and **why** it wa
 **Why:** SCF legal teams flag three things: returns/yield (securities/deposit risk), tokenized securities, and prediction/betting. Custody also brings money-transmitter classification. That's why Lumenia is strictly non-custodial (ledger escrow) and **never uses a "savings/interest/bank" framing** — only "money movement." We leave the regulated part of money transfer to licensed anchors/CEXes.
 
 ### Decision 8 — Take the Stellar Wallet SDK as **infrastructure**, write the core on top
-**Why:** The mentor's advice is right — the Wallet SDK wipes out anchor/ramp (SEP-6/24/10/12) and account/signing boilerplate (the most painful part, which is the real risk on the cash-out side). **But** the SDK does **not** give passkey/smart-wallet or sponsored-claim logic (classic Ed25519). So the SDK handles ~70%; the differentiating 30% (sponsored claim + request-money + link mechanics) is the core we write ourselves with `@stellar/stellar-sdk`.
+**Why:** The mentor's advice is right — the Wallet SDK wipes out anchor/ramp (SEP-24 interactive + SEP-10 auth + SEP-12 KYC, +SEP-38 quotes; SEP-6 interactive is deprecated) and account/signing boilerplate (the most painful part, which is the real risk on the cash-out side). **But** the SDK does **not** give passkey/smart-wallet or sponsored-claim logic (classic Ed25519). So the SDK handles ~70%; the differentiating 30% (sponsored claim + request-money + link mechanics) is the core we write ourselves with `@stellar/stellar-sdk`.
 
 ---
 
@@ -280,7 +280,7 @@ Detailed risk table and the "mempool-class" assumption traps that were caught: [
 
 **Lumenia's honest edge:** the **cross-border EU→TR leg** + an **open, shareable claim link** (not a closed in-app transfer). The moat is **distribution, not technology** — the mechanic is proven and copyable.
 
-**Verdict:** claim-link is **crowded on EVM, funded on Solana (Morse), and nearly EMPTY on Stellar.** The mechanic is proven, the chain lane is open, the moat = distribution.
+**Verdict:** claim-link is **crowded on EVM, funded on Solana (Morse), and under-built on Stellar** — LOBSTR already does email/phone claimable-balance claim, and Sendit/Beans are adjacent, but no one ships a **non-custodial, browser-complete walletless claim on the EU→TR corridor**. The mechanic is proven, the chain lane is open, the moat = distribution (not "only possible here").
 
 ---
 
