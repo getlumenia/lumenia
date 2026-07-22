@@ -31,6 +31,13 @@ const CONTRACT = process.env.NEXT_PUBLIC_LUMENDROP_CONTRACT ?? "CDYEDHBPMDOOZSJG
 const UNIT = 10_000_000n; // 1 USDC = 1e7 stroops
 
 const usdcStroops = (amount: string) => BigInt(Math.round(Number.parseFloat(amount) * Number(UNIT)));
+const stroopsToUsdc = (s: bigint): string => {
+  const neg = s < 0n;
+  const a = neg ? -s : s;
+  const whole = a / UNIT;
+  const frac = (a % UNIT).toString().padStart(7, "0");
+  return `${neg ? "-" : ""}${whole}.${frac}`;
+};
 
 export interface V2Link {
   /** The share link — link id in the path, metadata in the query, the secret in the #fragment. */
@@ -188,4 +195,111 @@ export async function claimV2ToSponsoredAccount(opts: {
     group: opts.group,
   });
   return { hash, publicKey: payout.publicKey(), seed: new Uint8Array(payout.rawSecretKey()) };
+}
+
+/* -------------------------- v2 reclaim (C2 recovery) -------------------------- */
+
+export interface ReclaimableV2 {
+  /** the drop id (32-byte link public key, hex) — pass to reclaimV2 */
+  linkHex: string;
+  usd: string;
+  /** unix seconds the reclaim window opened (already past for a reclaimable drop) */
+  expiry: number;
+}
+
+/** Read a drop's on-chain state via the contract's get_drop view (read-only simulation). */
+async function readDrop(
+  server: rpc.Server,
+  sourceAccount: string,
+  linkHex: string,
+): Promise<{ amount: bigint; expiry: number; claimed: boolean } | null> {
+  const src = await server.getAccount(sourceAccount);
+  const view = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: NETWORK })
+    .addOperation(new Contract(CONTRACT).call("get_drop", xdr.ScVal.scvBytes(Buffer.from(linkHex, "hex"))))
+    .setTimeout(60)
+    .build();
+  const sim = await server.simulateTransaction(view);
+  if (rpc.Api.isSimulationError(sim)) return null;
+  const val = (sim as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+  if (!val) return null;
+  const d = scValToNative(val) as { amount?: bigint; expiry?: bigint | number; claimed?: boolean } | null;
+  if (!d) return null; // None ⇒ the drop is gone (claimed or already reclaimed)
+  return { amount: BigInt(d.amount ?? 0n), expiry: Number(d.expiry ?? 0), claimed: !!d.claimed };
+}
+
+/**
+ * Your v2 sends that have come back: local `lumenia.sent` records whose drop is still on-chain,
+ * UNCLAIMED, and past its expiry — so you can reclaim them gaslessly (reclaimV2). Reads
+ * get_drop(link) per record (a read-only simulation); classic-CB ids (not 64-hex link keys) are
+ * skipped, so this never double-counts the classic Horizon path (loadReclaimableSends).
+ * `sender` is the user's home account (an existing account is needed as the simulation source).
+ */
+export async function loadReclaimableV2(sender: string): Promise<ReclaimableV2[]> {
+  let records: Record<string, { balanceId?: string }>;
+  try {
+    records = JSON.parse(localStorage.getItem("lumenia.sent") ?? "{}") as Record<string, { balanceId?: string }>;
+  } catch {
+    return [];
+  }
+  const linkHexes = Array.from(
+    new Set(
+      Object.values(records)
+        .map((r) => r.balanceId)
+        .filter((b): b is string => typeof b === "string" && /^[0-9a-f]{64}$/i.test(b)),
+    ),
+  );
+  if (linkHexes.length === 0) return [];
+  const server = new rpc.Server(RPC_URL);
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Parallel per-drop reads (bounded by the local send count) so the bell poll stays light.
+  const results = await Promise.all(
+    linkHexes.map(async (linkHex): Promise<ReclaimableV2 | null> => {
+      try {
+        const drop = await readDrop(server, sender, linkHex);
+        if (drop && !drop.claimed && nowSec >= drop.expiry && drop.amount > 0n) {
+          return { linkHex, usd: stroopsToUsdc(drop.amount), expiry: drop.expiry };
+        }
+      } catch {
+        /* unreadable / archived ⇒ skip (it isn't reclaimable right now) */
+      }
+      return null;
+    }),
+  );
+  return results.filter((r): r is ReclaimableV2 => r !== null);
+}
+
+/**
+ * Reclaim your OWN unclaimed v2 drop after its expiry — GASLESS. You sign the reclaim(link)
+ * invoke (the contract does sender.require_auth, satisfied by source-account auth); the sponsor
+ * FEE-BUMPS it via /v2-reclaim so you pay no gas. Your USDC returns to you. Proven: spike10.
+ */
+export async function reclaimV2(opts: {
+  signer: Signer;
+  linkHex: string;
+  sponsorUrl: string;
+  /** true for a group drop (reclaim_pool); false/undefined for a one-to-one drop (reclaim) */
+  group?: boolean;
+}): Promise<{ hash: string }> {
+  const server = new rpc.Server(RPC_URL);
+  const sender = opts.signer.publicKey();
+  const method = opts.group ? "reclaim_pool" : "reclaim";
+  const source = await server.getAccount(sender);
+  const tx = new TransactionBuilder(source, { fee: "2000000", networkPassphrase: NETWORK })
+    .addOperation(new Contract(CONTRACT).call(method, xdr.ScVal.scvBytes(Buffer.from(opts.linkHex, "hex"))))
+    .setTimeout(120)
+    .build();
+  const sim = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(sim)) throw new Error(`reclaim simulation failed: ${sim.error}`);
+  const prepared = rpc.assembleTransaction(tx, sim).build();
+  await opts.signer.sign(prepared); // sender authorizes (source-account auth); sponsor fee-bumps
+
+  const base = opts.sponsorUrl.replace(/\/$/, "");
+  const res = await fetch(`${base}/v2-reclaim`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ xdr: prepared.toXDR(), senderPublicKey: sender }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`/v2-reclaim → ${res.status}: ${text}`);
+  return JSON.parse(text) as { hash: string };
 }

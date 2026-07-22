@@ -13,6 +13,7 @@ import { useWallet } from "../../../lib/wallet";
 import { loadNotices, markAllSeen, type Notice } from "../../../lib/notifications";
 import { loadLinkStatus } from "../../../lib/horizon";
 import { collectIncoming } from "../../../lib/claim";
+import { reclaimV2 } from "../../../lib/lumendrop";
 import { formatUsd } from "../../../lib/money";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
@@ -76,9 +77,10 @@ export default function NotificationsPage() {
     );
   }
 
-  async function collect(balanceId: string, noticeId: string) {
+  async function recover(n: Notice) {
+    if (!n.balanceId) return;
     setError("");
-    setCollectingId(noticeId);
+    setCollectingId(n.id);
     try {
       let signer;
       try {
@@ -87,20 +89,31 @@ export default function NotificationsPage() {
         router.push("/unlock?next=/notifications");
         return;
       }
-      await collectIncoming({ sponsorUrl: SPONSOR_URL, signer, balanceId });
+      // A v2 drop comes back via the contract reclaim (/v2-reclaim); a classic CB (waiting or
+      // a classic reclaimable send) via the /feebump claim — collectIncoming handles both.
+      if (n.kind === "reclaimable" && n.via === "v2") {
+        await reclaimV2({ signer, linkHex: n.balanceId, sponsorUrl: SPONSOR_URL });
+      } else {
+        await collectIncoming({ sponsorUrl: SPONSOR_URL, signer, balanceId: n.balanceId });
+      }
       await reload();
     } catch {
-      // Terminal (already collected / reclaimed) vs. transient — re-read existence,
-      // never leak a result code. Gone → calm copy + refresh clears the stale item.
-      try {
-        if ((await loadLinkStatus(balanceId)) === "settled") {
-          setError(copy.errors.collectGone);
-          await reload();
-        } else {
+      // Terminal (already collected / reclaimed) vs. transient — never leak a result code.
+      // For a classic CB, re-read existence for calm "it's gone" copy; a v2 drop just refreshes.
+      if (n.via === "v2") {
+        setError(copy.errors.generic);
+        await reload();
+      } else {
+        try {
+          if ((await loadLinkStatus(n.balanceId)) === "settled") {
+            setError(copy.errors.collectGone);
+            await reload();
+          } else {
+            setError(copy.errors.generic);
+          }
+        } catch {
           setError(copy.errors.generic);
         }
-      } catch {
-        setError(copy.errors.generic);
       }
     } finally {
       setCollectingId(null);
@@ -144,7 +157,7 @@ export default function NotificationsPage() {
                     loading={collectingId === n.id}
                     disabled={collectingId !== null && collectingId !== n.id}
                     loadingLabel={n.kind === "reclaimable" ? copy.recover.taking : copy.waiting.collecting}
-                    onClick={() => collect(n.balanceId!, n.id)}
+                    onClick={() => recover(n)}
                   >
                     {n.kind === "reclaimable" ? copy.recover.take : copy.waiting.collect}
                   </PrimaryButton>

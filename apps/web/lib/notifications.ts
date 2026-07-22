@@ -15,14 +15,17 @@
  * cross-device sync: a notification is a hint derived from the ledger, not a record we keep for you.
  */
 import { loadActivity, loadIncomingClaims, loadReclaimableSends, loadBalance } from "./horizon";
+import { loadReclaimableV2 } from "./lumendrop";
 
 export interface Notice {
   id: string;
   kind: "waiting" | "reclaimable" | "received";
   usd: string;
   at: string; // ISO ("" if the ledger didn't stamp one)
-  /** for a "waiting" or "reclaimable" item: the balance id to collect / take back. */
+  /** for "waiting"/"reclaimable": the id to act on — a Claimable Balance id, or (via:"v2") a drop linkHex. */
   balanceId?: string;
+  /** for "reclaimable": how to take it back — a classic CB (/feebump) or a v2 drop (/v2-reclaim). */
+  via?: "classic" | "v2";
 }
 
 const SEEN_KEY = "lumenia.notif.seen";
@@ -49,9 +52,10 @@ export function markAllSeen(ids: string[]): void {
 /** Build the full notice list from the ledger, newest first. */
 export async function loadNotices(address: string): Promise<Notice[]> {
   const bal = await loadBalance(address);
-  const [waiting, reclaimable, activity] = await Promise.all([
+  const [waiting, reclaimable, reclaimableV2, activity] = await Promise.all([
     bal?.issuer ? loadIncomingClaims(address, bal.issuer) : Promise.resolve([]),
     bal?.issuer ? loadReclaimableSends(address, bal.issuer) : Promise.resolve([]),
+    loadReclaimableV2(address).catch(() => []), // v2 drops are local + on-chain; never block the feed
     loadActivity(address, 50),
   ]);
   const notices: Notice[] = [
@@ -68,6 +72,15 @@ export async function loadNotices(address: string): Promise<Notice[]> {
       usd: r.usd,
       at: r.at,
       balanceId: r.balanceId,
+      via: "classic" as const,
+    })),
+    ...reclaimableV2.map((r) => ({
+      id: `rc2:${r.linkHex}`,
+      kind: "reclaimable" as const,
+      usd: r.usd,
+      at: new Date(r.expiry * 1000).toISOString(),
+      balanceId: r.linkHex,
+      via: "v2" as const,
     })),
     ...activity
       .filter((a) => a.direction === "in")
