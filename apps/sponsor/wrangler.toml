@@ -47,3 +47,39 @@ crons = ["*/15 * * * *"]
 # [[routes]]
 # pattern = "sponsor.getlumenia.com"
 # custom_domain = true
+
+# ---------------------------------------------------------------------------------------------
+# MAINNET — a SEPARATE Worker (`lumenia-sponsor-mainnet`) for a bounded, real-money evidence run.
+# It is deliberately its own deployment with its own secrets, so the testnet product cannot be
+# affected by it and a mistake on one side cannot reach the other.
+#
+#   deploy:  wrangler deploy --env mainnet
+#   secrets: wrangler secret put SPONSOR_SECRET --env mainnet   (repeat per secret)
+#
+# Caps are an order of magnitude tighter than testnet and FAIL CLOSED: if the counter store is
+# unreachable the sponsor creates no escrow at all, rather than falling back to the per-drop cap.
+# See ops/RUNBOOK_MAINNET_DEMO.md for the full sequence — nothing here spends money by itself.
+# ---------------------------------------------------------------------------------------------
+[env.mainnet]
+name = "lumenia-sponsor-mainnet"
+
+[env.mainnet.vars]
+STELLAR_NETWORK = "mainnet"
+ALLOWED_ORIGIN = "https://getlumenia.com"
+# Circle's USDC on mainnet (verified on Horizon: auth_revocable=true, clawback disabled — Circle
+# can freeze for compliance, and no one can seize).
+USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+# Set after `stellar contract deploy --network mainnet` (runbook step 4).
+LUMENDROP_CONTRACT = ""
+LUMENDROP_LEGACY_CONTRACTS = ""
+# Set to the sha256 of the deployed wasm so the watchdog can detect an unexpected upgrade.
+LUMENDROP_WASM_HASH = ""
+# Canary caps — real money. Raise only after an audit and a soak period.
+MAX_DROP_USDC = "5"
+MAX_DAY_USDC = "50"
+CAPS_FAIL_CLOSED = "1"
+# The float is meant to be tiny; alert well before it runs out.
+SPONSOR_MIN_XLM = "3"
+
+[env.mainnet.triggers]
+crons = ["*/15 * * * *"]

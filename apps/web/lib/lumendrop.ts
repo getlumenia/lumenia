@@ -24,26 +24,29 @@ import {
   type Transaction,
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
+import { resolveNetwork, type NetworkConfig } from "./network";
 
-const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC ?? "https://soroban-testnet.stellar.org";
+/**
+ * Every v2 call takes an optional network. Omitting it means TESTNET — the product's default —
+ * so existing call sites are unchanged; a mainnet claim link passes its own config through.
+ */
+const DEFAULT_NET = resolveNetwork(undefined);
+const RPC_URL = DEFAULT_NET.rpcUrl;
 const NETWORK = Networks.TESTNET;
 /** The CURRENT escrow — every NEW deposit goes here. */
-const CONTRACT =
-  process.env.NEXT_PUBLIC_LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S";
+const CONTRACT = DEFAULT_NET.contract;
+
 /**
- * SUPERSEDED escrows that may still hold live drops. A drop can only ever be released by the
- * contract that holds it, so after an upgrade the app must keep READING and EXITING these —
- * otherwise a link already in someone's chat silently stops resolving. Never written to.
+ * Lookup order for an EXISTING drop on a given network: the current escrow first, then each
+ * SUPERSEDED one. A drop can only ever be released by the contract that holds it, so after an
+ * upgrade the app must keep reading and exiting the old ones — otherwise a link already sitting
+ * in someone's chat silently stops resolving. Superseded escrows are never written to.
  */
-const LEGACY_CONTRACTS = (
-  process.env.NEXT_PUBLIC_LUMENDROP_LEGACY ??
-  "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF,CAKEJAGCATVMJB6CMB6LM736DHUJ37YOTOER23SWRNDHPLTU2ZJUDIAB"
-)
-  .split(",")
-  .map((c) => c.trim())
-  .filter(Boolean);
-/** Lookup order for an existing drop: current first, then each superseded escrow. */
-const DROP_CONTRACTS = [CONTRACT, ...LEGACY_CONTRACTS.filter((c) => c !== CONTRACT)];
+const dropContracts = (net: NetworkConfig): string[] => [
+  net.contract,
+  ...net.legacyContracts.filter((c) => c !== net.contract),
+];
+const DROP_CONTRACTS = dropContracts(DEFAULT_NET);
 const UNIT = 10_000_000n; // 1 USDC = 1e7 stroops
 
 const usdcStroops = (amount: string) => BigInt(Math.round(Number.parseFloat(amount) * Number(UNIT)));
@@ -130,11 +133,14 @@ export async function claimV2(opts: {
   linkSecret: string;
   /** the recipient's payout account (G… or C…) */
   payout: string;
+  /** which network this link lives on; omit for testnet (the product default) */
+  net?: NetworkConfig;
   sponsorUrl: string;
   /** true for a group-drop share (claim_share); false/undefined for a one-to-one claim */
   group?: boolean;
 }): Promise<{ hash: string }> {
-  const server = new rpc.Server(RPC_URL);
+  const net = opts.net ?? DEFAULT_NET;
+  const server = new rpc.Server(net.rpcUrl);
   const link = Keypair.fromSecret(opts.linkSecret);
   const linkHex = Buffer.from(link.rawPublicKey()).toString("hex");
   const kind = opts.group ? 2 : 1;
@@ -142,13 +148,13 @@ export async function claimV2(opts: {
 
   // Find the escrow that actually holds this drop — a link minted before a contract upgrade
   // still lives in the superseded one, and only that contract can release it.
-  const contract = await resolveDropContract(server, opts.payout, linkHex, opts.group);
+  const contract = await resolveDropContract(server, opts.payout, linkHex, opts.group, net);
 
   // Read the EXACT bytes to sign from THAT contract (source = payout, which exists). The
   // message binds the contract address, so reading it from the wrong one yields a signature
   // the escrow would reject — this is why the resolution has to happen first. No submit.
   const src = await server.getAccount(opts.payout);
-  const view = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: NETWORK })
+  const view = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: net.passphrase })
     .addOperation(
       new Contract(contract).call(
         "claim_message",
@@ -165,7 +171,7 @@ export async function claimV2(opts: {
 
   const sigHex = Buffer.from(link.sign(Buffer.from(message))).toString("hex");
 
-  const base = opts.sponsorUrl.replace(/\/$/, "");
+  const base = (opts.sponsorUrl || net.sponsorUrl).replace(/\/$/, "");
   const res = await fetch(`${base}/v2-claim`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -190,10 +196,13 @@ const HORIZON_URL = "https://horizon-testnet.stellar.org";
 export async function claimV2ToSponsoredAccount(opts: {
   linkSecret: string;
   sponsorUrl: string;
+  /** which network this link lives on; omit for testnet (the product default) */
+  net?: NetworkConfig;
   group?: boolean;
 }): Promise<{ hash: string; publicKey: string; seed: Uint8Array }> {
-  const base = opts.sponsorUrl.replace(/\/$/, "");
-  const horizon = new Horizon.Server(HORIZON_URL);
+  const net = opts.net ?? DEFAULT_NET;
+  const base = (opts.sponsorUrl || net.sponsorUrl).replace(/\/$/, "");
+  const horizon = new Horizon.Server(net.horizonUrl);
   const payout = Keypair.random();
 
   // 1. sponsor creates the account + USDC trustline (recipient holds 0 XLM); recipient co-signs.
@@ -205,7 +214,7 @@ export async function claimV2ToSponsoredAccount(opts: {
     })
   ).json()) as { xdr?: string; error?: string };
   if (!created.xdr) throw new Error(created.error ?? "create-account failed");
-  const sandwich = TransactionBuilder.fromXDR(created.xdr, NETWORK) as Transaction;
+  const sandwich = TransactionBuilder.fromXDR(created.xdr, net.passphrase) as Transaction;
   sandwich.sign(payout);
   await horizon.submitTransaction(sandwich);
 
@@ -213,7 +222,8 @@ export async function claimV2ToSponsoredAccount(opts: {
   const { hash } = await claimV2({
     linkSecret: opts.linkSecret,
     payout: payout.publicKey(),
-    sponsorUrl: opts.sponsorUrl,
+    sponsorUrl: base,
+    net,
     group: opts.group,
   });
   return { hash, publicKey: payout.publicKey(), seed: new Uint8Array(payout.rawSecretKey()) };
@@ -277,13 +287,15 @@ async function resolveDropContract(
   sourceAccount: string,
   linkHex: string,
   group?: boolean,
+  net: NetworkConfig = DEFAULT_NET,
 ): Promise<string> {
-  if (DROP_CONTRACTS.length === 1) return CONTRACT;
+  const candidates = dropContracts(net);
+  if (candidates.length === 1) return net.contract;
   const view = group ? "get_pool" : "get_drop";
-  for (const contract of DROP_CONTRACTS) {
+  for (const contract of candidates) {
     try {
       const src = await server.getAccount(sourceAccount);
-      const tx = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: NETWORK })
+      const tx = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: net.passphrase })
         .addOperation(new Contract(contract).call(view, xdr.ScVal.scvBytes(Buffer.from(linkHex, "hex"))))
         .setTimeout(60)
         .build();
@@ -295,7 +307,7 @@ async function resolveDropContract(
       /* try the next contract */
     }
   }
-  return CONTRACT;
+  return net.contract;
 }
 
 /**

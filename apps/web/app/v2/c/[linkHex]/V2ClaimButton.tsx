@@ -10,9 +10,11 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { claimV2ToSponsoredAccount } from "../../../../lib/lumendrop";
 import { savePhase1 } from "../../../../lib/keystore";
+import { resolveNetwork, type NetworkConfig } from "../../../../lib/network";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
-const explorer = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;
+const explorer = (hash: string, net: NetworkConfig) =>
+  `https://stellar.expert/explorer/${net.isMainnet ? "public" : "testnet"}/tx/${hash}`;
 
 type State = "idle" | "claiming" | "done" | "error";
 
@@ -27,9 +29,19 @@ export default function V2ClaimButton({
   const [state, setState] = useState<State>("idle");
   const [hash, setHash] = useState("");
   const [noKey, setNoKey] = useState(false);
+  const [error, setError] = useState("");
+  // The link carries its own network (`?n=public`). The product is testnet; a handful of mainnet
+  // links exist as real-money evidence, and this is what keeps one deployment able to serve both.
+  const [net, setNet] = useState<NetworkConfig | null>(null);
   const secretRef = useRef("");
 
   useEffect(() => {
+    try {
+      setNet(resolveNetwork(new URLSearchParams(window.location.search).get("n")));
+    } catch (e) {
+      setError((e as Error).message);
+      setState("error");
+    }
     const frag = window.location.hash.slice(1);
     if (frag) {
       secretRef.current = frag;
@@ -44,7 +56,12 @@ export default function V2ClaimButton({
     try {
       const secret = secretRef.current;
       if (!secret) throw new Error("This link is invalid (missing key).");
-      const r = await claimV2ToSponsoredAccount({ linkSecret: secret, sponsorUrl: SPONSOR_URL });
+      if (!net) throw new Error("Still loading — please tap again.");
+      const r = await claimV2ToSponsoredAccount({
+        linkSecret: secret,
+        sponsorUrl: net.isMainnet ? net.sponsorUrl : SPONSOR_URL,
+        net,
+      });
       // Persist the claimed account locally so /home shows it. Best-effort.
       try {
         await savePhase1(r.publicKey, r.seed);
@@ -56,6 +73,7 @@ export default function V2ClaimButton({
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
     } catch (e) {
       console.error("[v2-claim]", e);
+      setError((e as Error).message);
       setState("error");
     }
   }
@@ -69,7 +87,7 @@ export default function V2ClaimButton({
       <div className="flex w-full flex-col items-center gap-4">
         <p className="text-lg font-semibold text-money">It&apos;s yours 🎉</p>
         <a
-          href={explorer(hash)}
+          href={explorer(hash, net ?? resolveNetwork(undefined))}
           target="_blank"
           rel="noreferrer"
           className="text-sm text-ink-soft underline-offset-2 hover:underline"
@@ -102,7 +120,11 @@ export default function V2ClaimButton({
         </button>
       )}
       {state === "error" && (
-        <p className="text-sm text-danger">{sender}&apos;s money is still safe — please try again.</p>
+        <p className="text-sm text-danger">
+          {error.includes("mainnet is not configured")
+            ? "This link is for a network this site cannot reach right now."
+            : `${sender}'s money is still safe — please try again.`}
+        </p>
       )}
     </div>
   );
