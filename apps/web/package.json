@@ -38,7 +38,7 @@
     "@playwright/test": "^1.61.1",
     "@serwist/turbopack": "9.5.11",
     "@tailwindcss/postcss": "4.3.3",
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.9.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.185.1",
