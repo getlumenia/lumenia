@@ -9,7 +9,8 @@
  * two claim methods, valid 32-byte link + 64-byte sig. The sponsor sources the tx (pays fees) and
  * can never lose value — it holds no USDC in this path.
  */
-import { rpc, Address, Contract, TransactionBuilder, xdr, type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
+import { rpc, Address, Contract, TransactionBuilder, scValToNative, xdr, type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
+import { capsFromEnv, checkCaps } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { CHANNEL_LEASE_TTL_SECONDS, type ChannelManager } from "./channels.js";
@@ -42,6 +43,25 @@ export interface RelayClaimInput {
   payout: string;
   /** The 64-byte Ed25519 signature as hex. */
   sigHex: string;
+  /**
+   * Which LumenDrop holds this drop. Defaults to the CURRENT contract; a superseded id from
+   * `lumendropLegacyContracts` is accepted so links minted before an upgrade still claim.
+   * Any other value is rejected.
+   */
+  contract?: string;
+}
+
+/**
+ * Resolve + authorize the escrow contract for an EXIT (claim / reclaim). New escrow always goes
+ * to the current contract; exits may also target a superseded one, because a drop can only ever
+ * be released by the contract that holds it. Every id here is one we deployed, and each enforces
+ * its own in-contract signature (claim) or sender auth (reclaim) — so the relayer gains nothing.
+ */
+function exitContract(config: SponsorConfig, requested?: string): string {
+  const current = config.lumendropContract!;
+  if (!requested || requested === current) return current;
+  if (config.lumendropLegacyContracts.includes(requested)) return requested;
+  throw new Error(`contract not allowed: ${requested}`);
 }
 
 export interface RelayClaimResult {
@@ -58,6 +78,7 @@ export async function relayClaimHandler(
 ): Promise<RelayClaimResult> {
   if (!config.lumendropContract) throw new Error("v2 relayer not configured (LUMENDROP_CONTRACT unset)");
   if (!ALLOWED_METHODS.has(input.method)) throw new Error(`method not allowed: ${input.method}`);
+  const contract = exitContract(config, input.contract);
 
   const link = Buffer.from(input.linkHex, "hex");
   const sig = Buffer.from(input.sigHex, "hex");
@@ -79,7 +100,7 @@ export async function relayClaimHandler(
     const source = await server.getAccount(sourcePub);
     const tx = new TransactionBuilder(source, { fee: "1000000", networkPassphrase: config.networkPassphrase })
       .addOperation(
-        new Contract(config.lumendropContract).call(
+        new Contract(contract).call(
           input.method,
           xdr.ScVal.scvBytes(link),
           payoutScVal,
@@ -104,10 +125,10 @@ export async function relayClaimHandler(
         prepared,
         config.networkPassphrase,
       );
-      signer.sign(feeBump);
+      await signer.sign(feeBump);
       submitTx = feeBump;
     } else {
-      signer.sign(prepared); // sponsor = tx source (fallback)
+      await signer.sign(prepared); // sponsor = tx source (fallback)
       submitTx = prepared;
     }
 
@@ -159,30 +180,45 @@ export async function relayDepositHandler(
   const ic = op.func.invokeContract();
   const calledContract = Address.fromScAddress(ic.contractAddress()).toString();
   const calledFn = ic.functionName().toString();
+  // NEW escrow only ever goes into the CURRENT contract (the legacy one is read/exit-only).
   if (calledContract !== config.lumendropContract) throw new Error("wrong contract");
   if (calledFn !== "deposit") throw new Error(`only 'deposit' is relayed here, got '${calledFn}'`);
   if (Number.parseInt(inner.fee, 10) > V2_DEPOSIT_FEE_CAP) {
     throw new Error(`inner fee ${inner.fee} exceeds cap ${V2_DEPOSIT_FEE_CAP}`);
   }
 
-  const feeBump = TransactionBuilder.buildFeeBumpTransaction(
-    signer.publicKey(),
-    inner.fee, // covers the inner's inclusion + Soroban resource fee (paid by the sponsor)
-    inner,
-    config.networkPassphrase,
-  );
-  signer.sign(feeBump);
+  // Canary caps — `deposit(from, link, amount, expiry)`, so the escrowed amount is arg 2.
+  // Reading it from the XDR (not from a client-supplied field) means the cap is enforced on
+  // what the ledger will actually execute.
+  const args = ic.args();
+  if (args.length !== 4) throw new Error(`deposit expects 4 args, got ${args.length}`);
+  const amountStroops = BigInt(scValToNative(args[2]!) as bigint | number | string);
+  const cap = await checkCaps(amountStroops, capsFromEnv());
+  if (!cap.ok) throw new Error(`canary cap: ${cap.reason}`);
 
-  const server = new rpc.Server(config.sorobanRpcUrl);
-  const sent = await server.sendTransaction(feeBump);
-  if (sent.status === "ERROR") throw new Error(`v2-deposit send failed: ${JSON.stringify(sent.errorResult)}`);
-  let got = await server.getTransaction(sent.hash);
-  for (let i = 0; i < 40 && got.status === "NOT_FOUND"; i++) {
-    await sleep(1500);
-    got = await server.getTransaction(sent.hash);
+  try {
+    const feeBump = TransactionBuilder.buildFeeBumpTransaction(
+      signer.publicKey(),
+      inner.fee, // covers the inner's inclusion + Soroban resource fee (paid by the sponsor)
+      inner,
+      config.networkPassphrase,
+    );
+    await signer.sign(feeBump);
+
+    const server = new rpc.Server(config.sorobanRpcUrl);
+    const sent = await server.sendTransaction(feeBump);
+    if (sent.status === "ERROR") throw new Error(`v2-deposit send failed: ${JSON.stringify(sent.errorResult)}`);
+    let got = await server.getTransaction(sent.hash);
+    for (let i = 0; i < 40 && got.status === "NOT_FOUND"; i++) {
+      await sleep(1500);
+      got = await server.getTransaction(sent.hash);
+    }
+    if (got.status !== "SUCCESS") throw new Error(`v2-deposit tx ${got.status}`);
+    return { hash: sent.hash };
+  } catch (e) {
+    await cap.release?.(); // the deposit never landed — give the day's budget back
+    throw e;
   }
-  if (got.status !== "SUCCESS") throw new Error(`v2-deposit tx ${got.status}`);
-  return { hash: sent.hash };
 }
 
 /**
@@ -210,7 +246,9 @@ export async function relayReclaimHandler(
   const ic = op.func.invokeContract();
   const calledContract = Address.fromScAddress(ic.contractAddress()).toString();
   const calledFn = ic.functionName().toString();
-  if (calledContract !== config.lumendropContract) throw new Error("wrong contract");
+  // Exits may target a superseded contract (a drop is only ever released by the contract that
+  // holds it); `exitContract` throws for anything that is not one of ours.
+  exitContract(config, calledContract);
   if (!ALLOWED_RECLAIM_METHODS.has(calledFn)) {
     throw new Error(`only reclaim/reclaim_pool is relayed here, got '${calledFn}'`);
   }
@@ -224,7 +262,7 @@ export async function relayReclaimHandler(
     inner,
     config.networkPassphrase,
   );
-  signer.sign(feeBump);
+  await signer.sign(feeBump);
 
   const server = new rpc.Server(config.sorobanRpcUrl);
   const sent = await server.sendTransaction(feeBump);

@@ -1,0 +1,11 @@
+{
+  "_comment": "DRAFT — validate against the deployed Monitor version's schema. The sponsor account's ONLY legitimate moves are fee-bumps, sponsored create-accounts, and channel top-ups. Any payment OUT that is not fee spend = drain in progress: page AND flip the kill-switch (ops/RUNBOOK_SPONSOR_KEY.md §4). Replace the address with the live sponsor G... (docs/HANDOFF.md).",
+  "name": "Sponsor account outflows",
+  "paused": false,
+  "networks": ["stellar_testnet"],
+  "addresses": [{ "address": "SPONSOR_G_ADDRESS_HERE" }],
+  "match_conditions": {
+    "transactions": [{ "status": "Success" }]
+  },
+  "triggers": ["ops_webhook"]
+}

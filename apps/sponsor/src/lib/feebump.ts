@@ -68,6 +68,6 @@ export async function feebumpHandler(
     inner,
     config.networkPassphrase,
   );
-  signer.sign(feeBump);
+  await signer.sign(feeBump);
   return submit(server, feeBump);
 }

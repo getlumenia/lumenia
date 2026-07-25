@@ -28,6 +28,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { getService, enforceRateLimit } from "./lib/service.js";
+import { isHalted } from "./lib/kill-switch.js";
 import { createAccountHandler } from "./lib/create-account.js";
 import { feebumpHandler } from "./lib/feebump.js";
 import { sendLinkHandler } from "./lib/send.js";
@@ -90,6 +91,15 @@ const httpServer = createServer(async (req, res) => {
       usdcCode: config.usdc.getCode(),
       usdcIssuer: config.usdc.getIssuer(),
     });
+  }
+
+  // Kill-switch parity with the Worker: one flip halts every value-moving route.
+  const VALUE_ROUTES = new Set([
+    "/create-account", "/feebump", "/send-link", "/sweep",
+    "/v2-claim", "/v2-deposit", "/v2-reclaim", "/faucet", "/demo-link",
+  ]);
+  if (method === "POST" && VALUE_ROUTES.has(url) && (await isHalted())) {
+    return send(res, 503, { error: "sponsor temporarily halted" });
   }
 
   try {
@@ -163,7 +173,7 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (method === "POST" && url === "/v2-claim") {
-      const body = (await readJson(req)) as { method?: string; linkHex?: string; payout?: string; sigHex?: string };
+      const body = (await readJson(req)) as { method?: string; linkHex?: string; payout?: string; sigHex?: string; contract?: string };
       if (!body.method || !body.linkHex || !body.payout || !body.sigHex) {
         return send(res, 400, { error: "method, linkHex, payout and sigHex are required" });
       }
@@ -177,6 +187,7 @@ const httpServer = createServer(async (req, res) => {
           linkHex: body.linkHex,
           payout: body.payout,
           sigHex: body.sigHex,
+          contract: body.contract, // optional: a superseded escrow, for links minted pre-upgrade
         },
         channels,
       );

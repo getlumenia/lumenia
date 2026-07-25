@@ -1,0 +1,18 @@
+{
+  "_comment": "DRAFT — validate against the deployed Monitor version's schema. ANY governance call on the escrow pages the operator: these are rare + human-initiated; an unexpected one means the owner key is compromised. Replace the address with the CURRENT LumenDrop contract id (docs/HANDOFF.md).",
+  "name": "LumenDrop governance actions",
+  "paused": false,
+  "networks": ["stellar_testnet"],
+  "addresses": [{ "address": "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S" }],
+  "match_conditions": {
+    "functions": [
+      { "signature": "pause(Address)" },
+      { "signature": "unpause(Address)" },
+      { "signature": "upgrade(BytesN<32>,Address)" },
+      { "signature": "transfer_ownership(Address,U32)" },
+      { "signature": "accept_ownership()" },
+      { "signature": "renounce_ownership()" }
+    ]
+  },
+  "triggers": ["ops_webhook"]
+}

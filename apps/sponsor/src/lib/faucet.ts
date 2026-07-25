@@ -61,7 +61,7 @@ export async function faucetHandler(
     )
     .setTimeout(180)
     .build();
-  faucet.sign(tx);
+  await faucet.sign(tx);
   const { hash, ledger } = await submit(server, tx);
   return { hash, ledger, amount: FAUCET_AMOUNT };
 }

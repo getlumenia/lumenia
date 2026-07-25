@@ -27,11 +27,16 @@
     "provision-channels": "tsx src/cli/provision-channels.ts",
     "concurrency-check": "tsx src/cli/concurrency-check.ts",
     "reserve-report": "tsx src/cli/reserve-report.ts",
+    "test:kms": "tsx src/test-kms-signer.ts",
+    "test:caps": "tsx src/test-caps.ts",
+    "test:legacy": "tsx src/test-legacy-fallback.ts",
+    "test:watchdog": "tsx src/test-watchdog.ts",
     "test:antidrain": "tsx src/test-antidrain.ts",
     "test:integration": "tsx src/test-integration.ts"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "16.0.1"
+    "@stellar/stellar-sdk": "16.0.1",
+    "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

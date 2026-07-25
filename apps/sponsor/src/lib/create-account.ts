@@ -157,7 +157,7 @@ export async function createAccountHandler(
         CHANNEL_TX_TIMEOUT_SECONDS,
       );
       tx.sign(lease.keypair); // channel = tx source (lends its sequence, pays the fee)
-      signer.sign(tx); // sponsor = begin + createAccount (the reserves)
+      await signer.sign(tx); // sponsor = begin + createAccount (the reserves)
       // Do NOT release the lease: the CLIENT submits this tx later. The lease TTL guards
       // the channel from reuse until the handout is submitted or dead (tx_too_late).
       return { xdr: tx.toXDR(), via: "channel", ...base };
@@ -171,6 +171,6 @@ export async function createAccountHandler(
   // SPONSOR path — the original behavior (tx.source = sponsor). Serializes on the
   // sponsor's single sequence; used only when no channel is configured/free.
   const tx = await buildCreateAccountSandwich(server, config, signer.publicKey(), input.recipientPublicKey);
-  signer.sign(tx);
+  await signer.sign(tx);
   return { xdr: tx.toXDR(), via: "sponsor", ...base };
 }

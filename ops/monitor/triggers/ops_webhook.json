@@ -1,0 +1,15 @@
+{
+  "_comment": "DRAFT — fill in a real Slack webhook / generic webhook URL at deploy time (secret, never committed). One trigger shared by all monitors initially; split pager vs info channels when volume grows.",
+  "ops_webhook": {
+    "name": "Ops webhook",
+    "trigger_type": "webhook",
+    "config": {
+      "url": { "type": "plain", "value": "https://REPLACE-ME.example/webhook" },
+      "method": "POST",
+      "message": {
+        "title": "Lumenia monitor: ${monitor.name}",
+        "body": "Match on ${monitor.name}: tx ${transaction.hash} on ${monitor.networks}"
+      }
+    }
+  }
+}

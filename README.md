@@ -130,7 +130,7 @@ This section is the heart of the project: every major decision and **why** it wa
 **Why:** "A Face ID, seedless wallet" is a UX promise, not a cryptographic one. Keeping a classic Ed25519 key in the device's secure enclave and unlocking it with biometrics is **indistinguishable** from a real passkey in the experience the user lives — and it ships in 30 days. A true passkey smart-account (OpenZeppelin Smart Accounts), on the other hand, requires a factory contract + relayer + Soroban-token balances + RN native modules; SDF's own relayer (Launchtube) was "prototype, no SLA" (SDF is now discontinuing Launchtube — the v2 send path uses the **OpenZeppelin Relayer** instead). **The "Zero XLM" feature already comes from sponsorship, not from the account type** — meaning it's achievable today even with a classic account. Smart-account = v2 (for recovery + multi-device); placing the `RecipientAccount` interface in v1 makes the migration cheap.
 > Note: the `passkey-kit` library says in its README "demo only, not audited, do not use to protect anything" → an app that holds money is not built on top of it.
 >
-> **Status (2026-07-22):** the passkey *smart-account* for identity/recovery/multi-device remains v2/future — but the v2 **Soroban escrow** for the *send* path, **LumenDrop**, is already **built + deployed to testnet** (11 unit tests + a 48-case fund-conservation proptest + a 7/7 on-chain proof that the recipient pays no gas) and is now the **default shareable link-send** (late-bound payout; the OpenZeppelin Relayer pays the Soroban fee, so the recipient still pays no gas) and the **SCF Integration centerpiece**, live in the deployed sponsor Worker. The **frozen classic `/c/[id]` Claimable-Balance claim stays v1**, so the app runs a **v1-claim / v2-send hybrid.** Mainnet is gated on an audit.
+> **Status (2026-07-25):** the passkey *smart-account* for identity/recovery/multi-device remains v2/future — but the v2 **Soroban escrow** for the *send* path, **LumenDrop**, is already **built + deployed to testnet** (29 unit + property tests over a written 14-invariant spec, plus a 7/7 escrow, 5/5 relayer and 10/10 governance on-chain proof that the recipient pays no gas) and is now the **default shareable link-send** (late-bound payout; the OpenZeppelin Relayer pays the Soroban fee, so the recipient still pays no gas) and the **SCF Integration centerpiece**, live in the deployed sponsor Worker. The **frozen classic `/c/[id]` Claimable-Balance claim stays v1**, so the app runs a **v1-claim / v2-send hybrid.** The contract is **upgradeable behind an owner** today (upgrade + pause-new-escrow only; no owner path can move escrowed funds; claims and reclaims are never pausable) and is intended to become immutable via a final upgrade that removes the upgrade entrypoint — **after** a professional audit. Mainnet is gated on that audit.
 
 ### Decision 3 — Custody: **sender-funded Claimable Balance + sponsor backend**
 **Why:** Choosing the right primitive for "let the walletless recipient claim the money" is critical.
@@ -165,6 +165,7 @@ Full pinned list and rationales: **[stack.md](stack.md)**. Summary:
 | **Frontend** | Next.js 16 PWA + Serwist (`@serwist/turbopack`), `next/og` dynamic claim cards, TypeScript |
 | **Identity** | Classic Ed25519 keypair; encrypted recovery with WebAuthn PRF + Argon2id (`@simplewebauthn` 13.x) |
 | **Chain** | `@stellar/stellar-sdk@16.0.0` (sponsored-reserve sandwich + fee-bump); `@stellar/typescript-wallet-sdk@3` (SEP flows) |
+| **Contract (v2 send)** | `contracts/lumen-drop` — Rust, `soroban-sdk@26.1` + OpenZeppelin Stellar contracts `0.7.2` (Ownable / Pausable / Upgradeable); testnet only |
 | **Custody** | Sender-funded Claimable Balance (dual predicate) — ledger escrow, non-custodial |
 | **Backend** | Single **Cloudflare Worker** sponsor service (`worker.ts`); sponsor key = env hot-key behind a `SponsorSigner` interface (AWS KMS Ed25519 raw-sign mechanically proven, not yet wired); anti-drain allowlist + rate-limit |
 | **State** | **No Postgres** — **Upstash Redis** (rate-limit, waitlist, recovery ciphertext boxes, channel-account leases; in-memory fallback) + everything else **on-chain** (Horizon / Soroban) |
@@ -189,6 +190,11 @@ lumenia/  (pnpm workspaces)
 │       │   ├── spike1c-wire-parity.ts → web→sponsor XDR wire-parity proof
 │       │   └── test-antidrain.ts      → anti-drain validator tests
 │       └── wrangler.toml              → Worker config (nodejs_compat)
+├── contracts/
+│   └── lumen-drop/  → v2 Soroban escrow (Rust): late-bound-payout link drops + group drops
+│       ├── src/     → lib.rs (contract) + test.rs (unit + invariant property tests)
+│       ├── fuzz/    → cargo-fuzz solvency target (runs in CI on Linux)
+│       └── README.md→ interface, governance, the 14-invariant spec, tooling
 ├── packages/
 │   └── shared/      → claim-secret / asset helpers + shared types
 │                      (web + sponsor cross the wire as XDR, must re-parse byte-identically)
@@ -239,12 +245,14 @@ Three gates that must pass before writing any feature code (if one fails, the ar
 |---|---|
 | **Turkey off-ramp broken** (no Turkish CASP confirmed to accept USDC on the *Stellar* network; MASAK ~$3k/day cap + 72h first withdrawal) | Off-ramp framed honestly as a **next-milestone infrastructure bet, not solved**. Mitigation: **CCTP is live on Stellar (~May 2026)** → bridge Stellar-USDC to a chain a TR CASP accepts, or a **USDC-funded card** (RedotPay; note KAST cannot be funded from Stellar-USDC). v1 leans on internal circulation + EU→TR inbound. |
 | **WhatsApp webview blocks passkey** | Argon2id primary recovery, PRF upgrade |
-| **Sponsor service single choke-point** | **AWS KMS Ed25519 raw-sign is now available (since 2025-11-07) and proven mechanically (Spike #1b)**; anti-drain validator hardened to op SOURCE+PARAMETER level (**44/44 unit + 6/6 integration tests**, gating the live `/feebump`); web→sponsor XDR **wire-parity proven (Spike #1c + live browser claim)**; plus per-IP/per-account rate-limit + fee cap. |
+| **Sponsor service single choke-point** | **AWS KMS Ed25519 raw-sign is now available (since 2025-11-07), proven mechanically (Spike #1b) and code-complete behind the signer interface (13/13 offline tests, byte-parity with the SDK's own signing) — the live AWS key is not provisioned yet, so the deployed service still uses an env hot-key**; a **kill-switch** can halt every value-moving endpoint; anti-drain validator hardened to op SOURCE+PARAMETER level (**44/44 unit + 6/6 integration tests**, gating the live `/feebump`); web→sponsor XDR **wire-parity proven (Spike #1c + live browser claim)**; plus per-IP/per-account rate-limit + fee cap. |
 | **Competitor: Sling Money** ($15M, Solana) | Corridor strategy; being a global competitor; frame Sling as validation |
 | **Regulation (MASAK/CASP)** | Strictly non-custodial; leave off-ramp to a licensed CEX; lawyer before mainnet |
 | **Serwist + Turbopack** newest combo | Day-1 spike; fallback `--webpack` |
 
 Detailed risk table and the "mempool-class" assumption traps that were caught: [stack.md §2](stack.md).
+
+**Security posture (stated honestly).** Everything runs on **testnet**; no real money. For the v2 escrow contract a **static-analysis, property-test, fuzz and mutation-testing pass is complete** (Scout, strict clippy, cargo-audit/deny, 29 unit + invariant property tests, mutation testing) — that is self-assessment, **not** an audit, and **a professional audit is pending** before any mainnet move. Full policy and disclosure: [SECURITY.md](SECURITY.md) · contract interface, governance and the invariant specification: [contracts/lumen-drop/README.md](contracts/lumen-drop/README.md).
 
 ---
 
@@ -260,7 +268,7 @@ Detailed risk table and the "mempool-class" assumption traps that were caught: [
 **v1.5 — SCF Build** — the retention layer + Integration track:
 - ✅ **Request-money** (push-only) + **uneven splits** — shipped on testnet (SEP-7 "pay from any wallet" still deferred to this track)
 - ✅ **Onward-send** + **sender-reclaim** ("take it back"), both sponsor-paid so the user pays no gas — shipped
-- ✅ **v2 Soroban escrow (LumenDrop)** — built + deployed to testnet; the default shareable link-send + the Integration centerpiece
+- ✅ **v2 Soroban escrow (LumenDrop)** — built + deployed to testnet; the default shareable link-send + the Integration centerpiece. Hardened 2026-07-25 (soroban-sdk 26.1, owner-gated pause/upgrade, 29 tests, tool-clean) — **a professional audit is still pending**
 - **WhatsApp auto-notifications** (Business API) — still future (email via Resend is the interim channel)
 - EU→TR inbound on-ramp (MyKobo EURC/SEPA + on-chain EURC→USDC swap)
 - Mainnet, real USDC (gated on an audit)

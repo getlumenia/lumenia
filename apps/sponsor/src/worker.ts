@@ -12,7 +12,9 @@
  * mailer code (which reads process.env) works unchanged. getService() is called lazily
  * (inside fetch), never at module top level — env isn't available at isolate startup.
  */
-import { getService, enforceRateLimit, corsHeaders } from "./lib/service.js";
+import { getServiceAsync, enforceRateLimit, corsHeaders } from "./lib/service.js";
+import { isHalted } from "./lib/kill-switch.js";
+import { runWatchdog } from "./lib/watchdog.js";
 import { createAccountHandler } from "./lib/create-account.js";
 import { feebumpHandler } from "./lib/feebump.js";
 import { sendLinkHandler } from "./lib/send.js";
@@ -62,6 +64,22 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * Every endpoint where the sponsor SPENDS (fees, reserves, faucet funds). All of them 503
+ * behind the kill-switch; read-only + recovery + feedback endpoints stay up during an incident.
+ */
+const VALUE_ROUTES = new Set([
+  "/create-account",
+  "/feebump",
+  "/send-link",
+  "/sweep",
+  "/v2-claim",
+  "/v2-deposit",
+  "/v2-reclaim",
+  "/faucet",
+  "/demo-link",
+]);
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     hydrateEnv(env);
@@ -72,7 +90,13 @@ export default {
     if (method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
 
     try {
-      const { config, signer, faucet, server, channels } = getService();
+      // KMS-aware bootstrap: with KMS_KEY_ID set the sponsor signs via AWS KMS (no hot key).
+      const { config, signer, faucet, server, channels } = await getServiceAsync();
+
+      // Kill-switch: one flip halts every value-moving route (see lib/kill-switch.ts).
+      if (method === "POST" && VALUE_ROUTES.has(url) && (await isHalted())) {
+        return json(503, { error: "sponsor temporarily halted" });
+      }
 
       if (method === "GET" && url === "/health") {
         return json(200, {
@@ -134,7 +158,7 @@ export default {
       }
 
       if (method === "POST" && url === "/v2-claim") {
-        const body = (await readJson(request)) as { method?: string; linkHex?: string; payout?: string; sigHex?: string };
+        const body = (await readJson(request)) as { method?: string; linkHex?: string; payout?: string; sigHex?: string; contract?: string };
         if (!body.method || !body.linkHex || !body.payout || !body.sigHex) {
           return json(400, { error: "method, linkHex, payout and sigHex are required" });
         }
@@ -142,6 +166,7 @@ export default {
         if (rl.limited) return json(429, { error: rl.reason });
         return json(200, await relayClaimHandler(config, signer, {
           method: body.method, linkHex: body.linkHex, payout: body.payout, sigHex: body.sigHex,
+          contract: body.contract, // optional: a superseded escrow, for links minted pre-upgrade
         }, channels));
       }
 
@@ -235,5 +260,20 @@ export default {
     } catch (e) {
       return json(400, { error: (e as Error).message });
     }
+  },
+
+  /**
+   * Cron Trigger — the watchdog (lib/watchdog.ts): sponsor float, sponsor sourcing value, and
+   * escrow governance calls. Alerts land in `wrangler tail` and, with RESEND_API_KEY +
+   * ALERT_NOTIFY_TO, by email. Schedule lives in wrangler.toml.
+   */
+  async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+    hydrateEnv(env);
+    const { config, signer } = await getServiceAsync();
+    ctx.waitUntil(
+      runWatchdog(config, signer.publicKey()).then((r) => {
+        console.log(`[watchdog] checked ${r.checked.join(", ")} — ${r.alerts.length} alert(s)`);
+      }),
+    );
   },
 };

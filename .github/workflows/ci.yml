@@ -3,7 +3,7 @@ name: CI
 # Hermetic checks on every push + PR to main. Deliberately does NOT run the testnet-dependent
 # suites (test:integration, Playwright e2e, the spikes) — those need friendbot + Horizon +
 # USDC_ISSUER_SECRET and would be flaky/secret-dependent in CI. They stay as the local + post-deploy
-# gates. Everything here passes offline: typecheck, the anti-drain validator (25/25, no network),
+# gates. Everything here passes offline: typecheck, the contract security gate (clippy strict + tests + audit/deny + coverage), the anti-drain validator (44/44, no network),
 # a production web build, and the sponsor's esbuild Vercel bundle.
 
 on:
@@ -35,7 +35,7 @@ jobs:
         run: pnpm --filter @lumenia/sponsor exec tsc --noEmit
       - name: Typecheck — web
         run: pnpm --filter @lumenia/web exec tsc --noEmit
-      - name: Anti-drain validator (25/25, no network)
+      - name: Anti-drain validator (44/44, no network)
         run: pnpm --filter @lumenia/sponsor test:antidrain
 
   build:
@@ -57,10 +57,44 @@ jobs:
       - name: Sponsor Vercel bundle (esbuild → api/*.js)
         run: pnpm --filter @lumenia/sponsor build:vercel
 
+  contract:
+    name: Contract — clippy strict + tests + audit + deny + coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/lumen-drop
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts/lumen-drop
+      - name: Clippy (strict — deny warnings + arithmetic/unwrap/panic lints)
+        run: >
+          cargo clippy --all-targets --
+          -D warnings
+          -W clippy::arithmetic_side_effects
+          -W clippy::unwrap_used
+          -W clippy::panic
+      - name: Unit + invariant property tests
+        run: cargo test
+      - name: Install cargo-audit + cargo-deny + cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-llvm-cov
+      - name: cargo audit (RustSec advisories)
+        run: cargo audit
+      - name: cargo deny (advisories + licenses + bans + sources)
+        run: cargo deny check
+      - name: Coverage gate (lines ≥ 90%)
+        run: cargo llvm-cov --fail-under-lines 90 --summary-only
+
   # A single required status to protect main against, if branch protection is ever turned on.
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: [quality, build]
+    needs: [quality, build, contract]
     steps:
       - run: echo "All CI checks passed."

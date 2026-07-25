@@ -30,7 +30,9 @@ import { createAccountHandler } from "./lib/create-account.js";
 const NET = Networks.TESTNET;
 const RPC = new rpc.Server("https://soroban-testnet.stellar.org");
 const HZ = new Horizon.Server("https://horizon-testnet.stellar.org");
-const CONTRACT = "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF";
+// Overridable so the same proof can gate a redeploy (hardening passes deploy NEW contract ids).
+const CONTRACT =
+  process.env.LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S";
 const USDC = new Asset("USDC", "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC");
 const need = (n: string) => process.env[n] ?? (() => { throw new Error(`set ${n}`); })();
 const ISSUER = Keypair.fromSecret(need("USDC_ISSUER_SECRET"));
@@ -62,7 +64,7 @@ async function deposit(sender: Keypair, linkPub: Buffer, amountStroops: bigint) 
       Address.fromString(sender.publicKey()).toScVal(),
       xdr.ScVal.scvBytes(linkPub),
       nativeToScVal(amountStroops, { type: "i128" }),
-      nativeToScVal(4_000_000_000n, { type: "u64" }),
+      nativeToScVal(BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 3600), { type: "u64" }),
     )).setTimeout(60).build();
   const sim = await RPC.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);
@@ -113,7 +115,7 @@ async function main() {
         Address.fromString(sender.publicKey()).toScVal(),
         xdr.ScVal.scvBytes(linkPub),
         nativeToScVal(80_000_000n, { type: "i128" }),
-        nativeToScVal(4_000_000_000n, { type: "u64" }),
+        nativeToScVal(BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 3600), { type: "u64" }),
       )).setTimeout(60).build();
     const sim = await RPC.simulateTransaction(tx);
     if (rpc.Api.isSimulationError(sim)) throw new Error(sim.error);

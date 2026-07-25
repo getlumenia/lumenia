@@ -19,6 +19,7 @@
  */
 import { TransactionBuilder, type Transaction, type Horizon } from "@stellar/stellar-sdk";
 import { validateInnerTransaction, ALLOWED_SEND_OP_TYPES, type InnerTxPolicy } from "./anti-drain.js";
+import { capsFromEnv, checkCaps, USDC_STROOPS } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { submit, createdBalanceIdFromResult } from "./stellar.js";
@@ -75,18 +76,34 @@ export async function sendLinkHandler(
     throw new Error(`fee ${totalFee} exceeds cap ${config.feeBumpMaxStroops}`);
   }
 
-  // The sponsor signs the INNER tx too (it is the source of the begin op). Adding a
-  // signature does not change the inner tx hash, so both signatures validate.
-  signer.sign(inner);
+  // Canary caps — bound the escrow this endpoint will create (per-send + per-UTC-day).
+  // The anti-drain policy above already pinned the op sequence, so index 1 IS the CB.
+  const cbOp = inner.operations.find((op) => op.type === "createClaimableBalance") as
+    | { amount?: string }
+    | undefined;
+  const amountStroops = BigInt(Math.round(Number.parseFloat(cbOp?.amount ?? "0") * Number(USDC_STROOPS)));
+  const cap = await checkCaps(amountStroops, capsFromEnv());
+  if (!cap.ok) throw new Error(`canary cap: ${cap.reason}`);
 
-  const feeBump = TransactionBuilder.buildFeeBumpTransaction(
-    signer.publicKey(),
-    String(FEEBUMP_PER_OP_STROOPS),
-    inner,
-    config.networkPassphrase,
-  );
-  signer.sign(feeBump);
-  const { hash, ledger, resultXdr } = await submit(server, feeBump);
+  let submitted: Awaited<ReturnType<typeof submit>>;
+  try {
+    // The sponsor signs the INNER tx too (it is the source of the begin op). Adding a
+    // signature does not change the inner tx hash, so both signatures validate.
+    await signer.sign(inner);
+
+    const feeBump = TransactionBuilder.buildFeeBumpTransaction(
+      signer.publicKey(),
+      String(FEEBUMP_PER_OP_STROOPS),
+      inner,
+      config.networkPassphrase,
+    );
+    await signer.sign(feeBump);
+    submitted = await submit(server, feeBump);
+  } catch (e) {
+    await cap.release?.(); // the send never landed — give the day's budget back
+    throw e;
+  }
+  const { hash, ledger, resultXdr } = submitted;
 
   // The created CB's id comes from THIS transaction's result XDR. The previous
   // "newest CB where the sender is a claimant" Horizon query was racy: two sends

@@ -36,7 +36,9 @@ import { relayClaimHandler } from "./lib/soroban-relay.js";
 const NET = Networks.TESTNET;
 const RPC = new rpc.Server("https://soroban-testnet.stellar.org");
 const HZ = new Horizon.Server("https://horizon-testnet.stellar.org");
-const CONTRACT = "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF";
+// Overridable so the same proof can gate a redeploy (hardening passes deploy NEW contract ids).
+const CONTRACT =
+  process.env.LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S";
 const USDC = new Asset("USDC", "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC");
 const need = (n: string) => process.env[n] ?? (() => { throw new Error(`set ${n}`); })();
 const ISSUER = Keypair.fromSecret(need("USDC_ISSUER_SECRET"));

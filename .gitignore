@@ -108,6 +108,22 @@ REVIEW_AND_ROADMAP.md
 V2_SOROBAN_ESCROW.md
 SPONSOR_CLOUDFLARE.md
 DEFERRED.md
+OPEN_ITEMS.md
+SECURITY_HARDENING.md
+PRE_MAINNET_HARDENING_BRIEF.md
+AUDIT_BANK_PACKAGE.md
+DECISION_PACKET_MAINNET.md
+
+# cargo-mutants / cargo-fuzz working output — reports, not sources
+contracts/lumen-drop/mutants.out/
+contracts/lumen-drop/mutants.out.old/
+contracts/lumen-drop/fuzz/target/
+contracts/lumen-drop/fuzz/artifacts/
+contracts/lumen-drop/fuzz/corpus/
 
 # Property-test (proptest) writes a snapshot per fuzz case — noise, not a fixture
 contracts/lumen-drop/test_snapshots/test/no_pool_op_*.json
+contracts/lumen-drop/test_snapshots/test/single_drop_pays_exactly_once.*.json
+contracts/lumen-drop/test_snapshots/test/signature_never_pays_a_different_payout.*.json
+contracts/lumen-drop/test_snapshots/test/pool_conservation_holds.*.json
+contracts/lumen-drop/test_snapshots/test/global_solvency_exact_over_mixed_population.*.json

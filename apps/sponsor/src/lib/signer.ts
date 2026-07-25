@@ -1,20 +1,20 @@
 /**
  * SponsorSigner seam — the sponsor's signing capability, abstracted so the hot
- * env key (this sprint) and an external KMS raw-signer (later) are drop-in
- * interchangeable. The rest of the service never touches a raw secret.
+ * env key (this sprint) and an external KMS raw-signer are drop-in interchangeable.
+ * The rest of the service never touches a raw secret.
  *
- * The KMS path is already proven mechanically by Spike #1b: raw-sign the 32-byte
- * tx hash with Ed25519, then build a Stellar DecoratedSignature whose hint is the
- * last 4 bytes of the public key. `KmsSponsorSigner` (future) implements exactly
- * that against `@aws-sdk/client-kms` — the interface below is identical.
+ * `sign` may be async: the KMS signer (lib/kms-signer.ts) raw-signs the 32-byte tx
+ * hash over the network (AWS KMS Ed25519, Spike #1b mechanics) and wraps it as a
+ * DecoratedSignature. Call sites `await signer.sign(tx)` — a no-op for the sync
+ * env-key signer.
  */
 import { Keypair, type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
 
 export interface SponsorSigner {
   /** The sponsor's public account address (G...). */
   publicKey(): string;
-  /** Add the sponsor's signature to a tx (mutates it in place). */
-  sign(tx: Transaction | FeeBumpTransaction): void;
+  /** Add the sponsor's signature to a tx (mutates it in place). May be async (KMS). */
+  sign(tx: Transaction | FeeBumpTransaction): void | Promise<void>;
 }
 
 /** Env hot-key signer: wraps a local Ed25519 Keypair (S...). Testnet-sprint default. */

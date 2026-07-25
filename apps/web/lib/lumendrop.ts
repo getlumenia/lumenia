@@ -27,7 +27,23 @@ import type { Signer } from "./signer";
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC ?? "https://soroban-testnet.stellar.org";
 const NETWORK = Networks.TESTNET;
-const CONTRACT = process.env.NEXT_PUBLIC_LUMENDROP_CONTRACT ?? "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF";
+/** The CURRENT escrow — every NEW deposit goes here. */
+const CONTRACT =
+  process.env.NEXT_PUBLIC_LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S";
+/**
+ * SUPERSEDED escrows that may still hold live drops. A drop can only ever be released by the
+ * contract that holds it, so after an upgrade the app must keep READING and EXITING these —
+ * otherwise a link already in someone's chat silently stops resolving. Never written to.
+ */
+const LEGACY_CONTRACTS = (
+  process.env.NEXT_PUBLIC_LUMENDROP_LEGACY ??
+  "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF,CAKEJAGCATVMJB6CMB6LM736DHUJ37YOTOER23SWRNDHPLTU2ZJUDIAB"
+)
+  .split(",")
+  .map((c) => c.trim())
+  .filter(Boolean);
+/** Lookup order for an existing drop: current first, then each superseded escrow. */
+const DROP_CONTRACTS = [CONTRACT, ...LEGACY_CONTRACTS.filter((c) => c !== CONTRACT)];
 const UNIT = 10_000_000n; // 1 USDC = 1e7 stroops
 
 const usdcStroops = (amount: string) => BigInt(Math.round(Number.parseFloat(amount) * Number(UNIT)));
@@ -124,11 +140,17 @@ export async function claimV2(opts: {
   const kind = opts.group ? 2 : 1;
   const method = opts.group ? "claim_share" : "claim";
 
-  // Read the EXACT bytes to sign from the contract (source = payout, which exists). No submit.
+  // Find the escrow that actually holds this drop — a link minted before a contract upgrade
+  // still lives in the superseded one, and only that contract can release it.
+  const contract = await resolveDropContract(server, opts.payout, linkHex, opts.group);
+
+  // Read the EXACT bytes to sign from THAT contract (source = payout, which exists). The
+  // message binds the contract address, so reading it from the wrong one yields a signature
+  // the escrow would reject — this is why the resolution has to happen first. No submit.
   const src = await server.getAccount(opts.payout);
   const view = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: NETWORK })
     .addOperation(
-      new Contract(CONTRACT).call(
+      new Contract(contract).call(
         "claim_message",
         nativeToScVal(kind, { type: "u32" }),
         xdr.ScVal.scvBytes(Buffer.from(link.rawPublicKey())),
@@ -147,7 +169,7 @@ export async function claimV2(opts: {
   const res = await fetch(`${base}/v2-claim`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ method, linkHex, payout: opts.payout, sigHex }),
+    body: JSON.stringify({ method, linkHex, payout: opts.payout, sigHex, contract }),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`/v2-claim → ${res.status}: ${text}`);
@@ -207,15 +229,16 @@ export interface ReclaimableV2 {
   expiry: number;
 }
 
-/** Read a drop's on-chain state via the contract's get_drop view (read-only simulation). */
-async function readDrop(
+/** Read a drop's on-chain state from ONE contract via its get_drop view (read-only simulation). */
+async function readDropFrom(
   server: rpc.Server,
   sourceAccount: string,
   linkHex: string,
+  contract: string,
 ): Promise<{ amount: bigint; expiry: number; claimed: boolean } | null> {
   const src = await server.getAccount(sourceAccount);
   const view = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: NETWORK })
-    .addOperation(new Contract(CONTRACT).call("get_drop", xdr.ScVal.scvBytes(Buffer.from(linkHex, "hex"))))
+    .addOperation(new Contract(contract).call("get_drop", xdr.ScVal.scvBytes(Buffer.from(linkHex, "hex"))))
     .setTimeout(60)
     .build();
   const sim = await server.simulateTransaction(view);
@@ -223,8 +246,56 @@ async function readDrop(
   const val = (sim as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
   if (!val) return null;
   const d = scValToNative(val) as { amount?: bigint; expiry?: bigint | number; claimed?: boolean } | null;
-  if (!d) return null; // None ⇒ the drop is gone (claimed or already reclaimed)
+  if (!d) return null; // None ⇒ this contract doesn't hold the drop (or it's already gone)
   return { amount: BigInt(d.amount ?? 0n), expiry: Number(d.expiry ?? 0), claimed: !!d.claimed };
+}
+
+/** Read a drop from whichever escrow holds it (current first, then superseded ones). */
+async function readDrop(
+  server: rpc.Server,
+  sourceAccount: string,
+  linkHex: string,
+): Promise<({ amount: bigint; expiry: number; claimed: boolean } & { contract: string }) | null> {
+  for (const contract of DROP_CONTRACTS) {
+    try {
+      const d = await readDropFrom(server, sourceAccount, linkHex, contract);
+      if (d) return { ...d, contract };
+    } catch {
+      /* unreachable contract ⇒ try the next one */
+    }
+  }
+  return null;
+}
+
+/**
+ * Which escrow holds this link? Returns the current contract when nothing is found, so a caller
+ * still produces a normal on-chain error rather than a confusing client-side one. A group drop
+ * lives under `get_pool`, so the probe follows the drop kind.
+ */
+async function resolveDropContract(
+  server: rpc.Server,
+  sourceAccount: string,
+  linkHex: string,
+  group?: boolean,
+): Promise<string> {
+  if (DROP_CONTRACTS.length === 1) return CONTRACT;
+  const view = group ? "get_pool" : "get_drop";
+  for (const contract of DROP_CONTRACTS) {
+    try {
+      const src = await server.getAccount(sourceAccount);
+      const tx = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: NETWORK })
+        .addOperation(new Contract(contract).call(view, xdr.ScVal.scvBytes(Buffer.from(linkHex, "hex"))))
+        .setTimeout(60)
+        .build();
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) continue;
+      const val = (sim as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+      if (val && scValToNative(val) != null) return contract;
+    } catch {
+      /* try the next contract */
+    }
+  }
+  return CONTRACT;
 }
 
 /**
@@ -283,9 +354,11 @@ export async function reclaimV2(opts: {
   const server = new rpc.Server(RPC_URL);
   const sender = opts.signer.publicKey();
   const method = opts.group ? "reclaim_pool" : "reclaim";
+  // Your own money can be sitting in a superseded escrow — reclaim from wherever it is.
+  const contract = await resolveDropContract(server, sender, opts.linkHex, opts.group);
   const source = await server.getAccount(sender);
   const tx = new TransactionBuilder(source, { fee: "2000000", networkPassphrase: NETWORK })
-    .addOperation(new Contract(CONTRACT).call(method, xdr.ScVal.scvBytes(Buffer.from(opts.linkHex, "hex"))))
+    .addOperation(new Contract(contract).call(method, xdr.ScVal.scvBytes(Buffer.from(opts.linkHex, "hex"))))
     .setTimeout(120)
     .build();
   const sim = await server.simulateTransaction(tx);

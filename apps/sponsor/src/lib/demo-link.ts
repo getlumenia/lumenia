@@ -38,7 +38,7 @@ export async function demoLinkHandler(
     .addOperation(Operation.createClaimableBalance({ asset: config.usdc, amount: DEMO_AMOUNT, claimants }))
     .setTimeout(180)
     .build();
-  faucet.sign(tx);
+  await faucet.sign(tx);
   const { resultXdr } = await submit(server, tx);
 
   // Read the created CB id from THIS tx's result (the createClaimableBalance is op 0),

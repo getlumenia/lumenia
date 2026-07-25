@@ -1,0 +1,18 @@
+{
+  "_comment": "DRAFT — validate against the deployed Monitor version's schema. Money-movement events on the escrow, for volume/anomaly awareness (a sudden claim burst = link-farm abuse or a bug). Informational channel, not a pager.",
+  "name": "LumenDrop escrow activity",
+  "paused": false,
+  "networks": ["stellar_testnet"],
+  "addresses": [{ "address": "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S" }],
+  "match_conditions": {
+    "events": [
+      { "signature": "deposit" },
+      { "signature": "claim" },
+      { "signature": "reclaim" },
+      { "signature": "newpool" },
+      { "signature": "share" },
+      { "signature": "repool" }
+    ]
+  },
+  "triggers": ["ops_webhook"]
+}

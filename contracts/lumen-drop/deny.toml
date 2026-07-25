@@ -1,0 +1,43 @@
+# cargo-deny policy for the LumenDrop contract crate (supply-chain gate; part of the
+# pre-mainnet free-tool CI gate). Run: `cargo deny check` from contracts/lumen-drop.
+
+[graph]
+targets = [
+    "wasm32v1-none",
+    "wasm32-unknown-unknown",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # Unmaintained-crate ADVISORIES (not vulnerabilities) on transitive deps of soroban-sdk's
+    # toolchain; nothing to remediate on our side — re-check on every SDK bump.
+    { id = "RUSTSEC-2024-0436", reason = "`paste` unmaintained; transitive via soroban-sdk" },
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

@@ -20,7 +20,28 @@ ALLOWED_ORIGIN = "https://getlumenia.com"
 USDC_ISSUER = "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC"
 # v2 Soroban LumenDrop escrow (public contract id) — enables the /v2-deposit,
 # /v2-claim and /v2-reclaim relayers. SOROBAN_RPC_URL defaults to the testnet RPC.
-LUMENDROP_CONTRACT = "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF"
+# CURRENT (v0.2.0, hardened: versioned storage + owner-gated pause/upgrade). All NEW escrow.
+LUMENDROP_CONTRACT = "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S"
+# SUPERSEDED escrows that may still hold live drops. EXIT-ONLY: claim/reclaim are relayed for
+# these so links already in the wild keep working; deposits never go here. Drop an id from this
+# list once its drops have all expired and been reclaimed (a drop lives at most 7 days).
+LUMENDROP_LEGACY_CONTRACTS = "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF,CAKEJAGCATVMJB6CMB6LM736DHUJ37YOTOER23SWRNDHPLTU2ZJUDIAB"
+
+# Canary caps — the maximum escrow this sponsor will facilitate (see lib/caps.ts).
+# Testnet values; mainnet should start far lower (20 / 500) with CAPS_FAIL_CLOSED = "1".
+MAX_DROP_USDC = "100"
+MAX_DAY_USDC = "1000"
+# Watchdog: alert when the sponsor's float drops under this many XLM (see lib/watchdog.ts).
+SPONSOR_MIN_XLM = "50"
+# The wasm the escrow is EXPECTED to run. An upgrade emits no event, so a mismatch here is the
+# only signal that the deployed bytecode changed. Update this whenever you intentionally upgrade.
+LUMENDROP_WASM_HASH = "38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a"
+
+# The watchdog (lib/watchdog.ts) — sponsor float + "sponsor sourced value" + escrow governance
+# calls. Alerts appear in `wrangler tail`; set RESEND_API_KEY + ALERT_NOTIFY_TO (secrets) to
+# also get email. Every 15 minutes is well inside the free plan's cron allowance.
+[triggers]
+crons = ["*/15 * * * *"]
 
 # Uncomment after the Worker exists + the zone DNS is set:
 # [[routes]]

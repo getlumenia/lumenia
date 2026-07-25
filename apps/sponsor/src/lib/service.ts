@@ -6,6 +6,7 @@
 import type { Horizon } from "@stellar/stellar-sdk";
 import { loadConfig, type SponsorConfig } from "./config.js";
 import { signerFromSecret, type SponsorSigner } from "./signer.js";
+import { kmsSignerFromEnv } from "./kms-signer.js";
 import { horizon } from "./stellar.js";
 import { ChannelManager } from "./channels.js";
 import { checkRateLimitDurable, rateLimitConfigFromEnv, type RateLimitVerdict } from "./rate-limit.js";
@@ -33,6 +34,27 @@ export function getService(): Service {
       channels: new ChannelManager(config.channelSecrets),
     };
   }
+  return cached;
+}
+
+/**
+ * Async service bootstrap for the LIVE host (the Cloudflare Worker): when `KMS_KEY_ID` is set,
+ * the sponsor signer is the AWS-KMS raw-Ed25519 signer (one GetPublicKey at boot, Sign-only
+ * after) and the env hot-key is never used for value signing; otherwise identical to
+ * `getService()`. Activating KMS is therefore CONFIG-ONLY — see ops/RUNBOOK_SPONSOR_KEY.md.
+ */
+export async function getServiceAsync(): Promise<Service> {
+  if (cached) return cached;
+  const kms = await kmsSignerFromEnv();
+  if (!kms) return getService();
+  const config = loadConfig();
+  cached = {
+    config,
+    signer: kms, // the env hot-key is never constructed in KMS mode
+    faucet: config.faucetSecret ? signerFromSecret(config.faucetSecret) : null,
+    server: horizon(config),
+    channels: new ChannelManager(config.channelSecrets),
+  };
   return cached;
 }
 

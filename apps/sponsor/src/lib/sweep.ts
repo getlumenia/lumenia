@@ -81,7 +81,7 @@ export async function sweepHandler(
     inner,
     config.networkPassphrase,
   );
-  signer.sign(feeBump);
+  await signer.sign(feeBump);
   const { hash, ledger } = await submit(server, feeBump);
   return { hash, ledger };
 }

@@ -168,8 +168,9 @@ sees the current shape of the repo, not to expand the SOW's claims:
   money, it authorizes a payout to an address chosen at claim time, verified inside the
   contract, so the relayer can never redirect a stroop. The relayer pays the Soroban fee,
   so the flow stays walletless and the recipient still pays no gas. Proven on-chain (7/7)
-  plus native unit tests and a fund-conservation proptest; a separate v2 claim route
-  (`/v2/c/[…]`). Mainnet is gated on an audit.
+  plus native unit and property tests; a separate v2 claim route
+  (`/v2/c/[…]`). Hardened and re-proven on 2026-07-25 — see the section below. Mainnet is
+  gated on an audit.
 - **Account recovery** (`lib/recovery.ts`, `/account`) — password + email-OTP recovery of
   the on-device seed, plus a WebAuthn-PRF "Face ID" fast-unlock upgrade. One 32-byte seed,
   two wraps (Argon2id → AES-GCM as the floor; PRF → HKDF → AES-GCM as the upgrade), stored
@@ -195,6 +196,108 @@ sees the current shape of the repo, not to expand the SOW's claims:
 The SOW deliverables above (D1/D2/D3) are evidenced on their own terms and do not depend
 on any of this.
 
+## v2 escrow hardening + proof re-runs (2026-07-25)
+
+Also outside the SOW, and listed here only because the numbers below are re-runnable. A
+pre-mainnet hardening pass landed on the v2 Soroban escrow (`contracts/lumen-drop`):
+**a static-analysis, property-test, fuzz and mutation-testing pass is complete; a
+professional audit is pending.** Free tooling is not an audit and is not described as one.
+Contract details: [contracts/lumen-drop/README.md](contracts/lumen-drop/README.md) ·
+posture: [SECURITY.md](SECURITY.md).
+
+### The deployed artifact (testnet)
+
+| Item | Value |
+|---|---|
+| Contract id | `CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S` — <https://stellar.expert/explorer/testnet/contract/CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S> |
+| Pinned USDC SAC | `CDUL6GQBQKJYG26YZDJHTZF7G73EKUAWA3LTPK7LXODHPCUPK5AU76KF` |
+| wasm sha256 | `38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a` (21,323 bytes) |
+| Build | `stellar contract build` — stellar CLI 25.2.0, rustc 1.96.0, target `wasm32v1-none`; soroban-sdk 26.1, OpenZeppelin Stellar contracts 0.7.2; `contractmeta binver = "0.2.0"` |
+| Supersedes | `CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF` (the original) and `CAKEJAGCATVMJB6CMB6LM736DHUJ37YOTOER23SWRNDHPLTU2ZJUDIAB` (an interim hardened build) |
+| Live wiring | The deployed sponsor Worker points at **this** contract for all new escrow. Because a drop can only ever be released by the contract holding it, both the Worker and the web app also **read and exit** drops still held by the superseded ids (`LUMENDROP_LEGACY_CONTRACTS`), so claim links already sent keep working. Deposits only ever enter the current contract. Proven 9/9 on testnet (below). |
+
+### Proof runs against the new contract
+
+| Proof | Result | How to re-run |
+|---|---|---|
+| Escrow, on-chain (deposit → late-bound claim → relayer cannot redirect) | **7/7** real testnet txs | `USDC_ISSUER_SECRET=S… pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-onchain-proof.ts` |
+| Relayer handler (the same code the deployed `/v2-claim` runs) | **5/5** real testnet txs | `SPONSOR_SECRET=S… USDC_ISSUER_SECRET=S… pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-relay-test.ts` |
+| **Governance, on-chain (new)** | **10/10** real testnet txs | `USDC_ISSUER_SECRET=S… OWNER_SECRET=S… LUMENDROP_CONTRACT=C… WASM_HASH=… pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-governance-proof.ts` |
+| Anti-drain validator | **44/44** (offline) | `pnpm --filter @lumenia/sponsor test:antidrain` |
+| Sponsor integration (real HTTP) | **6/6** (testnet) | `pnpm --filter @lumenia/sponsor test:integration` |
+| KMS Ed25519 signer (offline; byte-parity with the SDK's own signing) | **13/13** | `pnpm --filter @lumenia/sponsor test:kms` |
+| **Canary caps (new)** — per-drop + rolling-UTC-day escrow ceiling on both escrow-creating paths | **28/28** (offline) | `pnpm --filter @lumenia/sponsor test:caps` |
+| **Legacy-contract fallback (new)** — claim/reclaim a drop held by a superseded contract | **9/9** real testnet txs | `SPONSOR_SECRET=S… USDC_ISSUER_SECRET=S… pnpm --filter @lumenia/sponsor test:legacy` |
+| **Watchdog (new)** — cron tripwire smoke test | **3/3** (testnet) | `pnpm --filter @lumenia/sponsor test:watchdog` |
+
+**What the caps proof establishes.** The cap is read from the **transaction XDR** — the Claimable
+Balance amount for v1, `deposit`'s second argument for v2 — so it bounds what the ledger will
+actually execute, not a client-supplied field. The per-drop cap is enforced locally with no network
+call, so a store outage cannot disable it; the per-day total is an **atomic `INCRBY` reserve-then-check**
+in the same Upstash store as the rate limiter, so concurrent requests cannot slip through a
+read-then-write gap. A rejected request does not consume the day's budget and a failed transaction
+releases its reservation. The 28 cases cover boundaries, UTC-day rollover, reserve/release, both
+store-outage behaviours (default **fail open**, `CAPS_FAIL_CLOSED=1` **fail closed**) and a malformed
+env value falling back to the default rather than to unlimited. Testnet values: `MAX_DROP_USDC=100`,
+`MAX_DAY_USDC=1000`.
+
+**What the legacy-fallback proof establishes**, with real transactions: a drop escrowed in the
+**superseded** contract claims through the relayer; a drop in the **current** contract claims with no
+`contract` argument at all; a **foreign** contract id is rejected before any network spend; and a
+`/v2-deposit` aimed at a superseded contract is rejected ("wrong contract") — new escrow only ever
+enters the current contract. On the web side the resolution has to happen *first*, because the signed
+claim message binds the contract address: reading a drop from the wrong contract would produce a
+signature the escrow rejects.
+
+**What the watchdog verification establishes.** Beyond the 3/3 smoke test, **both tripwires were fired
+against real testnet transactions**: a live `pause` on the escrow produced a page naming the
+transaction hash (the contract was then unpaused and `paused` reads false again), and a deliberately
+wrong pinned wasm hash produced the wasm-changed page.
+
+What the **governance** proof establishes on-chain: a **non-owner can neither pause nor
+upgrade**; pausing **blocks new deposits while a claim of an already-escrowed drop still
+succeeds** (escrowed funds can always exit); and an **owner upgrade leaves a pre-upgrade drop
+claimable** (versioned storage survives). The owner has **no path that moves escrowed funds**.
+
+### Contract test + tooling numbers (re-runnable in `contracts/lumen-drop`)
+
+| Check | Result | Command |
+|---|---|---|
+| Unit + invariant property tests | **29** (11 before the pass), over a written **14-invariant** spec | `cargo test` |
+| Mutation testing | 58 mutants — **51 caught**, 1 missed (a deliberately redundant defense-in-depth guard, documented in the source), 6 unviable | `PROPTEST_CASES=16 cargo mutants -f src/lib.rs` |
+| Coverage | **99.16%** lines overall (95.2% on the contract library) | `cargo llvm-cov --summary-only` |
+| CoinFabrik Scout | **0 findings** (was 2 Critical + 1 Medium) | `cargo scout-audit` |
+| Strict clippy · cargo-deny · cargo-geiger | 0 warnings · ok · **0 `unsafe`** in the contract crate | `cargo clippy --all-targets -- -D warnings …` · `cargo deny check` |
+| cargo-audit | clean apart from one unmaintained-crate advisory (`paste`, transitive); cargo-vet baseline established | `cargo audit` |
+| Fuzzing | a solvency target that runs in CI on Linux (it cannot link on macOS); the same invariant also runs as a property test everywhere | `cargo +nightly fuzz run escrow_solvency` |
+
+CI runs the fast checks (strict clippy, contract tests, `cargo-audit`, `cargo-deny`, a **90%
+line-coverage gate**) on every push; Scout, OpenZeppelin's `soroban-scanner`, fuzzing and
+mutation testing run on a weekly workflow.
+
+### Alongside (honest status)
+
+- **AWS-KMS Ed25519 signer** — code-complete behind the existing signer interface, **13/13**
+  offline tests. **Live AWS provisioning has not happened**: the deployed service still uses an
+  environment key.
+- **Kill-switch** — can halt every value-moving endpoint.
+- **Canary caps** (`apps/sponsor/src/lib/caps.ts`) — a per-drop and a rolling-UTC-day ceiling on the
+  escrow the sponsor will facilitate, live on both escrow-creating paths (`/send-link`, `/v2-deposit`).
+  Testnet values are 100 / 1000 USDC; mainnet should start at 20 / 500 with `CAPS_FAIL_CLOSED=1`.
+- **Watchdog** (`apps/sponsor/src/lib/watchdog.ts`) — a **Cloudflare Cron Trigger every 15 minutes** on
+  the Worker that is already running, because OpenZeppelin Monitor needs a separate always-on host we do
+  not operate. It checks sponsor float (`SPONSOR_MIN_XLM`, default 50), any `payment` /
+  `path_payment_*` / `account_merge` / offer **sourced by the sponsor** (the sponsor only creates
+  accounts and pays fees, so one of those is the signature of a stolen key), and escrow governance —
+  pause/unpause/ownership events **plus the deployed wasm hash**, since an `upgrade` emits **no event**
+  at all and event-watching alone would miss the most serious possible action. The expected hash is
+  pinned in `LUMENDROP_WASM_HASH` and must be updated on every intentional upgrade. Alerts go to
+  `wrangler tail`, plus email when `RESEND_API_KEY` + `ALERT_NOTIFY_TO` are set.
+- **OpenZeppelin Monitor configs** remain in `ops/monitor/` as a documented, **not-deployed** richer
+  alternative. A key-custody runbook exists (`ops/RUNBOOK_SPONSOR_KEY.md`).
+- **Next.js bumped to 16.2.11**, closing 4 high and 6 moderate advisories (including a middleware
+  bypass and SSRF in Server Actions); the dependency audit is now clean.
+
 ## Out of scope (per SOW §4.1)
 
 What the SOW deferred: Mainnet/real money, live fiat conversion (delegated to a licensed
@@ -212,7 +315,14 @@ git clone https://github.com/getlumenia/lumenia && cd lumenia
 pnpm install
 pnpm --filter @lumenia/sponsor test:antidrain     # 44/44, no network
 pnpm --filter @lumenia/sponsor test:integration   # 6/6, testnet (friendbot; can be slow if friendbot rate-limits)
+pnpm --filter @lumenia/sponsor test:kms           # 13/13 KMS signer tests, no network, no AWS
+pnpm --filter @lumenia/sponsor test:caps          # 28/28 canary caps, no network
+pnpm --filter @lumenia/sponsor test:legacy        # 9/9 legacy-contract fallback, testnet (needs SPONSOR_SECRET + USDC_ISSUER_SECRET)
+pnpm --filter @lumenia/sponsor test:watchdog      # 3/3 watchdog smoke test, testnet
 curl https://lumenia-sponsor.avakit.workers.dev/health   # live service (Cloudflare Worker)
+
+# the v2 escrow contract (Rust; see contracts/lumen-drop/README.md)
+cd contracts/lumen-drop && cargo test            # 29 unit + invariant property tests
 
 # deploy the sponsor (Cloudflare Worker):
 cd apps/sponsor && npx wrangler deploy

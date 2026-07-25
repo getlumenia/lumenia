@@ -36,6 +36,14 @@ export interface SponsorConfig {
   sorobanRpcUrl: string;
   /** The deployed v2 LumenDrop escrow contract id (C...). Unset = the v2 relayer is disabled. */
   lumendropContract?: string;
+  /**
+   * SUPERSEDED LumenDrop contract ids that still hold live drops. New escrow NEVER goes here —
+   * these are relayed for EXITS ONLY (claim / claim_share / reclaim / reclaim_pool) so links
+   * already in the wild keep working after a contract upgrade. Both are our own contracts and
+   * both enforce the same in-contract signature check, so widening the exit allowlist to them
+   * grants the relayer no new power.
+   */
+  lumendropLegacyContracts: string[];
   port: number;
 }
 
@@ -77,6 +85,7 @@ export function makeConfig(parts: {
   feeBumpMaxStroops?: string;
   sorobanRpcUrl?: string;
   lumendropContract?: string;
+  lumendropLegacyContracts?: string[];
   channelSecrets?: string[];
   port?: number;
 }): SponsorConfig {
@@ -91,9 +100,19 @@ export function makeConfig(parts: {
     feeBumpMaxStroops: parts.feeBumpMaxStroops ?? "10000", // 0.001 XLM per tx
     sorobanRpcUrl: parts.sorobanRpcUrl ?? defaultSorobanRpc(network),
     lumendropContract: parts.lumendropContract,
+    lumendropLegacyContracts: parts.lumendropLegacyContracts ?? [],
     channelSecrets: parts.channelSecrets ?? [],
     port: parts.port ?? 8787,
   };
+}
+
+/** Parse a comma/whitespace-separated list of contract ids (empty ⇒ []). */
+export function parseContractList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 /** Load config from the environment (used by the deployed HTTP service). */
@@ -104,7 +123,9 @@ export function loadConfig(): SponsorConfig {
   }
   return makeConfig({
     network,
-    sponsorSecret: required("SPONSOR_SECRET"),
+    // In KMS mode (KMS_KEY_ID set) the sponsor signs via AWS KMS and no hot secret exists —
+    // see lib/kms-signer.ts + service.getServiceAsync(). Otherwise the env hot-key is required.
+    sponsorSecret: process.env.KMS_KEY_ID ? (process.env.SPONSOR_SECRET ?? "") : required("SPONSOR_SECRET"),
     faucetSecret: process.env.FAUCET_SECRET,
     usdcIssuer: required("USDC_ISSUER"),
     usdcCode: process.env.USDC_CODE,
@@ -112,6 +133,7 @@ export function loadConfig(): SponsorConfig {
     feeBumpMaxStroops: process.env.FEE_BUMP_MAX_STROOPS,
     sorobanRpcUrl: process.env.SOROBAN_RPC_URL,
     lumendropContract: process.env.LUMENDROP_CONTRACT,
+    lumendropLegacyContracts: parseContractList(process.env.LUMENDROP_LEGACY_CONTRACTS),
     channelSecrets: parseChannelSecrets(process.env.CHANNEL_SECRETS),
     port: process.env.PORT ? Number.parseInt(process.env.PORT, 10) : undefined,
   });
