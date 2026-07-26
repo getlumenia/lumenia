@@ -22,7 +22,6 @@
       }
     ],
     "allowJs": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": [
         "./*"
