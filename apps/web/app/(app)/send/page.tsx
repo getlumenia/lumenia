@@ -35,7 +35,7 @@ import { AmountDisplay } from "../../../components/brand/AmountDisplay";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { LinkReadyCard } from "../../../components/brand/LinkReadyCard";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
 interface SentRecord {
   balanceId: string;

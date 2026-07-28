@@ -9,7 +9,7 @@
 import { useState } from "react";
 import Image from "next/image";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
 export function EmailCapture({ list, cta }: { list: "waitlist" | "cashout"; cta: string }) {
   const [email, setEmail] = useState("");

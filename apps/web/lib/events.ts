@@ -5,7 +5,7 @@
  * funnel, never enough to reconstruct a link. Fire-and-forget; it must never break
  * or delay the claim (all failures swallowed).
  */
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 /**
  * Must stay in step with ALLOWED_EVENTS in apps/sponsor/src/lib/events.ts — this list is the one
  * that decides whether a beacon is sent at all, and it had drifted: the send half of the funnel was

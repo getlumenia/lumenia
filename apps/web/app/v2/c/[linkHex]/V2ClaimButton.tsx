@@ -20,7 +20,7 @@ import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { savePhase1 } from "../../../../lib/keystore";
 import { resolveNetwork, type NetworkConfig } from "../../../../lib/network";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const explorer = (hash: string, net: NetworkConfig) =>
   `https://stellar.expert/explorer/${net.isMainnet ? "public" : "testnet"}/tx/${hash}`;
 

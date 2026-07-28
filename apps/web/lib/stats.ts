@@ -20,7 +20,7 @@
  * the ledger walk runs at most once every 5 minutes regardless of traffic.
  */
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const REVALIDATE = 300;
 /** Safety cap on pagination (200 ops/page → 4000 ops). Logged if ever hit. */
 const MAX_PAGES = 20;

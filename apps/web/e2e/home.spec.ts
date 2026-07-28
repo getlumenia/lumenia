@@ -7,7 +7,7 @@ import { rewriteSponsor } from "./sponsorRewrite";
  * → /home reads the REAL balance + activity straight from Horizon (no-mock-data).
  * Runs against a local stack (local sponsor+web) pre-deploy, or the live URLs.
  */
-const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const WEB = process.env.WEB_URL ?? "https://getlumenia.com";
 
 test("claim → persisted → /home shows the real balance + activity", async ({ page }) => {

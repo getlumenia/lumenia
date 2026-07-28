@@ -9,7 +9,7 @@ import { rewriteSponsor } from "./sponsorRewrite";
  * after a deploy. Assertions are intentionally tolerant of copy tweaks (regex),
  * strict on the mechanics (value-first paint + on-chain tx hash).
  */
-const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const WEB = process.env.WEB_URL ?? "https://getlumenia.com";
 
 test("fresh makelink → claim in a real browser → USDC lands (tx hash)", async ({ page }) => {

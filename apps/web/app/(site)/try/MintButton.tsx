@@ -17,7 +17,7 @@
 
 import { useState } from "react";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
 export function MintButton() {
   const [busy, setBusy] = useState(false);

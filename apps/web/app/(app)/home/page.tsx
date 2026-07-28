@@ -33,7 +33,7 @@ import { FeedbackDialog } from "../../../components/FeedbackDialog";
 import { copy } from "../../../lib/copy";
 import { sendEvent } from "../../../lib/events";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
 /** The home dashboard's primary actions — each a soft-3D brand icon, each a real destination.
  *  (Activity + Account live in the top nav; these are the money verbs.) */

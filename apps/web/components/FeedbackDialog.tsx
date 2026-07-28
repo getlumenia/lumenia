@@ -20,7 +20,7 @@ import { createPortal } from "react-dom";
 import { copy } from "../lib/copy";
 import "./feedback.css";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
 /** Mirrors CATEGORIES in apps/sponsor/src/lib/feedback.ts — keep in step. */
 const CATEGORIES: Array<{ value: string; label: string }> = [

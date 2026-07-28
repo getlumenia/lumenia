@@ -9,7 +9,7 @@
  */
 import type { RecoveryBox } from "./recovery";
 
-const SPONSOR_URL = (process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app").replace(/\/$/, "");
+const SPONSOR_URL = (process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev").replace(/\/$/, "");
 
 /** The box id for an email — must match the sponsor's idForEmail exactly. */
 export async function emailToId(email: string): Promise<string> {

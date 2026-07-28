@@ -17,9 +17,9 @@ import { mintClaimLink } from "./mintLink";
  * rewrite, not a stub: every byte still comes from the real sponsor code + the
  * real testnet.
  */
-const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const WEB = process.env.WEB_URL ?? "https://getlumenia.com";
-const BAKED_SPONSOR = "https://lumenia-sponsor.vercel.app";
+const BAKED_SPONSOR = "https://lumenia-sponsor.avakit.workers.dev";
 
 async function rewriteSponsor(context: BrowserContext) {
   if (SPONSOR === BAKED_SPONSOR) return;

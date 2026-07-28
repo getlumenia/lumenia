@@ -47,7 +47,7 @@ import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const explorer = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;
 /** Draft of the form, kept only for this tab so an unlock detour doesn't wipe it. */
 const DRAFT_KEY = "lumenia.sendout.draft";
@@ -535,15 +535,6 @@ export default function SendOutPage() {
       <PrimaryButton loading={checking} loadingLabel="Checking the address…" onClick={review}>
         Review the transfer
       </PrimaryButton>
-
-      {/* The one place this screen HAS to say it. On the test network a real exchange
-          address cannot be reached at all, so without this line someone could send and
-          then wait for a deposit that was never going to arrive. The check above stops
-          the transfer either way; this explains why. Same wording the send and claim
-          screens use. */}
-      <p className="text-xs text-ink-soft">
-        Test network — this money isn&apos;t real, and a real exchange can&apos;t receive it yet.
-      </p>
     </div>
   );
 }

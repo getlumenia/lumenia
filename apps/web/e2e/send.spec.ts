@@ -7,9 +7,9 @@ import { mintClaimLink } from "./mintLink";
  * itself claimable. All real testnet data. Runs against a local stack pre-deploy or
  * the live URLs.
  */
-const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const WEB = process.env.WEB_URL ?? "https://getlumenia.com";
-const BAKED_SPONSOR = "https://lumenia-sponsor.vercel.app";
+const BAKED_SPONSOR = "https://lumenia-sponsor.avakit.workers.dev";
 
 test("claim → send $7 onward → the onward link is claimable (loop closed)", async ({ page }) => {
   page.on("pageerror", (e) => console.log("[pageerror]", e.message));
