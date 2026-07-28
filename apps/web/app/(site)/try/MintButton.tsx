@@ -1,5 +1,5 @@
 /**
- * MintButton — the one action on /demo. Mints a REAL testnet claim link from the sponsor's
+ * MintButton — the one action on /demo. Mints a real claim link from the sponsor's
  * /demo-link (faucet-funded, aggressively rate-limited) and drops the visitor straight onto the
  * real claim screen.
  *
@@ -33,8 +33,8 @@ export function MintButton() {
       // blocks the call, the demo's one and only button answered "Failed to fetch". The !res.ok
       // path below — where the sponsor sends a real, human reason — is unchanged.
       const res = await fetch(`${SPONSOR_URL}/demo-link`, { method: "POST" }).catch(() => null);
-      if (!res) throw new Error("We couldn't reach the demo just now. Check your connection and try again.");
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "The demo is unavailable right now — please try again in a moment.");
+      if (!res) throw new Error("We couldn't reach it just now. Check your connection and try again.");
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "This isn't available right now. Please try again in a moment.");
       const d = (await res.json()) as { balanceId: string; bearerSecret: string; amount: string; issuer: string; from: string };
       const id = d.balanceId.slice(-8);
       const q = `a=${encodeURIComponent(d.amount)}&s=${encodeURIComponent(d.from)}&b=${d.balanceId}&i=${d.issuer}`;
@@ -49,7 +49,7 @@ export function MintButton() {
   return (
     <div className="dm-action">
       <button className="dm-btn" onClick={mint} disabled={busy}>
-        {busy ? "Making your link…" : "Send myself a demo link"}
+        {busy ? "Making your link…" : "Send myself a link"}
       </button>
       {/* aria-live so the failure is announced, not just painted. The button stays enabled after an
           error — the endpoint is rate-limited, and trying again is the right move. */}

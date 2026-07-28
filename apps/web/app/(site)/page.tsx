@@ -8,6 +8,7 @@
  * Section order (top→bottom, brand.md §12 narrative):
  *   1 Greeting + ScrubHero + HeroResolution — the hero (subtraction → "Money home, in a link.")
  *   2 Fears        — the four fears, named then struck through
+ *   2b Difference  — everyone else makes the RECEIVER do the work; we don't
  *   3 Moment       — the real human beat (treated photograph)
  *   4 HowItWorks   — pinned 3-step scroll story
  *   5 Proof        — the one Stellar-dark strip + real on-chain receipt
@@ -22,6 +23,7 @@ import { Greeting } from "../../components/site/sections/Greeting";
 import { ScrubHero } from "../../components/site/sections/ScrubHero";
 import { HeroResolution } from "../../components/site/sections/HeroResolution";
 import { Fears } from "../../components/site/sections/Fears";
+import { Difference } from "../../components/site/sections/Difference";
 import { Moment } from "../../components/site/sections/Moment";
 import { HowItWorks } from "../../components/site/sections/HowItWorks";
 import { Proof } from "../../components/site/sections/Proof";
@@ -101,8 +103,8 @@ const JSON_LD = {
       inLanguage: "en",
     },
     // WebApplication classifies the product (FinanceApplication) for engines that
-    // key on it. Still minimal and TRUE: it is free to use today (testnet pilot,
-    // receiving is free), and there are deliberately NO ratings/reviews.
+    // key on it. Still minimal and TRUE: it is free to use today (receiving is
+    // free), and there are deliberately NO ratings/reviews.
     {
       "@type": "WebApplication",
       "@id": `${SITE_URL}/#webapp`,
@@ -141,6 +143,7 @@ export default function Landing() {
           <ScrubHero />
           <HeroResolution />
           <Fears />
+          <Difference />
           <Moment />
           <HowItWorks />
           <Proof />

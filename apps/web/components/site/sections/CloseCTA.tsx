@@ -34,11 +34,11 @@ export function CloseCTA() {
       >
         <h2 className="close-h">See it for yourself.</h2>
         <p className="close-p">
-          The demo mints a real money link. No wallet, no signup, and we cover the network cost for
+          Send yourself a real money link. No wallet, no signup, and we cover the network cost for
           you. Or join the waitlist and we’ll tell you the moment it’s live for real.
         </p>
         <div className="close-cta">
-          <Link href="/demo" className="op-btn op-btn-primary">Try the live demo</Link>
+          <Link href="/try" className="op-btn op-btn-primary">See it work</Link>
           <Link href="/waitlist" className="op-btn op-btn-ghost">Join the waitlist</Link>
         </div>
       </motion.div>

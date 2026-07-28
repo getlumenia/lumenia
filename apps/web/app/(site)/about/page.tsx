@@ -71,9 +71,9 @@ export default function About() {
             it.
           </p>
           <p>
-            We build in the open and say plainly what&apos;s proven and what isn&apos;t. Right now
-            Lumenia is a <strong>pilot on a test network</strong>; turning dollars into local
-            currency will come through licensed partners, when it&apos;s genuinely reliable.
+            We build in the open and say plainly what&apos;s proven and what isn&apos;t. Turning
+            dollars into local currency will come through licensed partners, when it&apos;s genuinely
+            reliable.
           </p>
           <p>
             It&apos;s built by a small team in the Stellar Türkiye community, for the corridor we
@@ -83,13 +83,13 @@ export default function About() {
 
         <div className="ed-close">
           <p className="ed-close-p">
-            We&apos;d rather show you than tell you. The demo mints a real link on the test network,
+            We&apos;d rather show you than tell you. It mints you a real link,
             and <Link href="/how-it-works">the audit trail</Link> is where a skeptic can check every
             word above.
           </p>
           <div className="pg-cta">
-            <Link className="pg-btn pg-btn-primary" href="/demo">
-              Try the live demo
+            <Link className="pg-btn pg-btn-primary" href="/try">
+              See it work
             </Link>
             <Link className="pg-btn pg-btn-ghost" href="/roadmap">
               What&apos;s next

@@ -136,8 +136,8 @@ export default async function Guide({ params }: { params: Promise<{ slug: string
             </p>
           )}
           <div className="pg-cta">
-            <Link className="pg-btn pg-btn-primary" href="/demo">
-              Try the live demo
+            <Link className="pg-btn pg-btn-primary" href="/try">
+              See it work
             </Link>
             <Link className="pg-btn pg-btn-ghost" href="/how-it-works">
               How it works

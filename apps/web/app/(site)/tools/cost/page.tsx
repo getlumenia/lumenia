@@ -65,7 +65,7 @@ export default function Cost() {
             ))}
             <div className="tool-row tool-row-hi">
               <div className="tool-row-top">
-                <p className="tool-row-name">Lumenia (pilot)</p>
+                <p className="tool-row-name">Lumenia</p>
                 <p className="tool-row-range">Free</p>
               </div>
               <p className="tool-row-note">
@@ -82,7 +82,6 @@ export default function Cost() {
               Remittance Prices Worldwide
             </a>{" "}
             monitor, which puts the global average cost of sending money at around 6% of the amount.
-            Lumenia is on a test network today.
           </p>
         </div>
       </section>

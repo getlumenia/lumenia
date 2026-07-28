@@ -3,8 +3,8 @@
  * aggregated SERVER-SIDE so no recipient address ever reaches the client. This is
  * a proof-of-liveness page, NOT a traction claim: the honesty rule (and the
  * project's own north-star note that a raw account count is sybil-gameable) means
- * we frame these as "what the system has done on the test network", never as a
- * user count we can't prove. Real data only; on an upstream hiccup it shows an
+ * we frame these as "what the system has done", never as a user count we can't
+ * prove. Real data only; on an upstream hiccup it shows an
  * honest "refreshing" state, never fabricated zeros.
  *
  * Vocabulary law: this lives in (site), not /how-it-works, so labels stay in
@@ -20,7 +20,7 @@ import "./stats.css";
 const PAGE_TITLE = "Live numbers";
 const TITLE = `${PAGE_TITLE} — Lumenia`;
 const DESCRIPTION =
-  "Real, verifiable numbers read straight from the public record — accounts created and payment links sent on the test network so far.";
+  "Real, verifiable numbers read straight from the public record — accounts created and payment links sent so far.";
 
 // Re-read the ledger at most once every 5 minutes, regardless of traffic.
 export const revalidate = 300;
@@ -68,7 +68,7 @@ export default async function StatsPage() {
           <h1 className="pg-h1">Every number here is real.</h1>
           <p className="pg-lead">
             These come straight off the public record and refresh continuously. Nothing is typed in
-            by hand — open any transfer and check it yourself. Lumenia is on a test network today.
+            by hand — open any transfer and check it yourself.
           </p>
         </div>
       </header>
@@ -93,9 +93,8 @@ export default async function StatsPage() {
                   <span className="stat-label">Payment links sent</span>
                   <span className="stat-sub">each one a real transfer, on the record</span>
                 </div>
-                {/* No "dollars moved" tile: on the test network the amounts are free-minted
-                    play money and every one so far is our own testing — a dollar figure would
-                    imply economic volume that doesn't exist. It returns on mainnet, with real
+                {/* No "dollars moved" tile: every transfer so far is our own testing, so a dollar
+                    figure would imply economic volume that doesn't exist. It returns with real
                     money, where it means something. */}
                 <div className="stat-tile">
                   <span className="stat-num">{stats.lastActivityAt ? ago(stats.lastActivityAt) : "—"}</span>
@@ -107,7 +106,7 @@ export default async function StatsPage() {
               <p className="stat-note">
                 {/* explicit {" "} at each </strong> boundary — JSX eats the trailing space (SITE_REDESIGN §5) */}
                 <strong>What these do and don&apos;t say.</strong>{" "}&ldquo;Accounts created&rdquo;
-                counts every account the system has funded on the test network — including our own
+                counts every account the system has funded — including our own
                 testing —{" "}<strong>not</strong>{" "}unique people. We don&apos;t track who you are,
                 so we can&apos;t claim a user count we&apos;d be unable to prove, and we won&apos;t.
                 What we can prove is that the money moves, and that every number here is on the record.

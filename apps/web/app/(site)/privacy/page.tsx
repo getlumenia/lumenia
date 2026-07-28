@@ -68,7 +68,7 @@ export default function Privacy() {
 
           <p>
             We don&apos;t sell your data, and we don&apos;t want to hold anything we don&apos;t need.
-            This is a pilot; if any of this changes, we&apos;ll say so here plainly.
+            If any of this changes, we&apos;ll say so here plainly.
           </p>
         </div>
       </section>

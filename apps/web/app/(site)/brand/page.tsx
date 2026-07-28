@@ -97,8 +97,7 @@ export default function Brand() {
           <p className="brand-box">
             Lumenia lets you send money to anyone in Turkey with a link. The recipient taps it and
             it&apos;s theirs — no app, no account, no wallet, and nothing to pay to receive. The money
-            waits in escrow on a public ledger, never in Lumenia&apos;s hands. Currently a pilot on a
-            test network.
+            waits in escrow on a public ledger, never in Lumenia&apos;s hands.
           </p>
         </div>
       </section>

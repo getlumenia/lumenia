@@ -13,7 +13,7 @@ import { FeedbackDialog } from "../../FeedbackDialog";
 import { copy } from "../../../lib/copy";
 
 const COLS = [
-  { title: "Product", links: [["How it works", "/how-it-works"], ["Live demo", "/demo"], ["Tools", "/tools"], ["Waitlist", "/waitlist"], ["Cash-out", "/cash-out"]] },
+  { title: "Product", links: [["How it works", "/how-it-works"], ["See it work", "/try"], ["Tools", "/tools"], ["Waitlist", "/waitlist"], ["Cash-out", "/cash-out"]] },
   { title: "Company", links: [["About", "/about"], ["Roadmap", "/roadmap"], ["Live numbers", "/stats"], ["Developers", "/developers"], ["Brand", "/brand"]] },
   { title: "Legal", links: [["Privacy", "/privacy"], ["Terms", "/terms"]] },
 ];

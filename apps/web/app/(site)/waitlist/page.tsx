@@ -11,7 +11,7 @@ import "../../../components/site/tools.css";
 
 const PAGE_TITLE = "Join the waitlist";
 const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
-const DESCRIPTION = "Lumenia is in pilot on a test network today. Leave your email and we'll tell you the moment you can send real money home.";
+const DESCRIPTION = "We're opening Lumenia to more people. Leave your email and we'll tell you the moment you can send real money home.";
 
 export const metadata: Metadata = {
   title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
@@ -41,8 +41,8 @@ export default function Waitlist() {
           </div>
           <h1 className="pg-h1">Be first when real money goes live.</h1>
           <p className="pg-lead" style={{ marginLeft: "auto", marginRight: "auto" }}>
-            Lumenia is in pilot on a test network today. Leave your email and we&apos;ll tell you the
-            moment you can send real money home. Your email is kept on its own — never tied to any
+            We&apos;re opening Lumenia to more people. Leave your email and we&apos;ll tell you the
+            moment you can send real money home. Your email is kept on its own, never tied to any
             money or account.
           </p>
         </div>

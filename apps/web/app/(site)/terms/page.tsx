@@ -9,7 +9,7 @@ import "../../../components/site/editorial.css";
 
 const PAGE_TITLE = "Terms";
 const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
-const DESCRIPTION = "The short, honest version: a pilot on a test network, not a bank, money on a public ledger, a link is like cash, and your password is yours alone.";
+const DESCRIPTION = "The short, honest version: not a bank, money on a public ledger, a link is like cash, and your password is yours alone.";
 
 export const metadata: Metadata = {
   title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
@@ -44,8 +44,8 @@ export default function Terms() {
         <div className="ed-prose">
           <p>The short, honest version. A full legal document comes with launch.</p>
           <p>
-            <strong>This is a pilot on a test network.</strong> The money here is test money with no
-            real value. Don&apos;t send anything you can&apos;t afford to treat as a demo.
+            <strong>The money here isn&apos;t real.</strong> Anything you claim while trying it out has no
+            value. It only shows how receiving works.
           </p>
           <p>
             <strong>We are not a bank or a money-transfer business.</strong> Lumenia doesn&apos;t hold
@@ -61,8 +61,8 @@ export default function Terms() {
             forget it, nobody — including Lumenia — can recover it.
           </p>
           <p>
-            <strong>No guarantees during the pilot.</strong> We build carefully and verify in public,
-            but this is early software provided as-is while we test.
+            <strong>No guarantees yet.</strong> We build carefully and verify in public, but this is
+            early software, provided as-is.
           </p>
         </div>
       </section>

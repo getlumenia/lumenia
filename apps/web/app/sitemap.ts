@@ -19,7 +19,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumenia-chi.vercel
 const MODIFIED: Record<string, string> = {
   "/": "2026-07-15",
   "/how-it-works": "2026-07-15",
-  "/demo": "2026-07-15",
+  "/try": "2026-07-15",
   "/learn": "2026-07-15",
   "/about": "2026-07-16",
   "/developers": "2026-07-16",
@@ -48,7 +48,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     page("/", 1, "weekly"),
     page("/how-it-works", 0.9, "monthly"),
-    page("/demo", 0.8, "monthly"),
+    page("/try", 0.8, "monthly"),
     page("/learn", 0.7, "monthly"),
     ...GUIDES.map((g) => ({
       url: `${SITE_URL}/learn/${g.slug}`,

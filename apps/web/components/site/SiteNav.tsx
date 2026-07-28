@@ -84,7 +84,7 @@ export function SiteNav() {
         <div className="flex items-center gap-1.5 justify-self-end">
           <ThemeToggle />
           <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
-            <Link href="/demo">Try the demo</Link>
+            <Link href="/try">See it work</Link>
           </Button>
         </div>
       </nav>

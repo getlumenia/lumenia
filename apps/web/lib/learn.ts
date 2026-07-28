@@ -67,7 +67,7 @@ export const GUIDES: Guide[] = [
     body: [
       "Banks reliably land money in a Turkish account, but they're often the slowest and priciest, and your recipient needs an IBAN ready.",
       "Money-transfer apps are cheaper and faster, but usually your recipient needs their app or a bank account set up first.",
-      "Lumenia's angle is different: the person you send to needs nothing — no app, no account, no IBAN, and nothing to pay to receive. Today that's on a test network; turning dollars into lira in a bank will come via licensed partners.",
+      "Lumenia's angle is different: the person you send to needs nothing — no app, no account, no IBAN, and nothing to pay to receive. Turning dollars into lira in a bank will come via licensed partners.",
     ],
   },
 ];

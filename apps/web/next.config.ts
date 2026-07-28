@@ -26,6 +26,12 @@ const nextConfig: NextConfig = {
   // The bearer key rides in the #fragment (never sent to a server), but the claim
   // route must also not leak its full URL via the Referer header to the sponsor,
   // the explorer, or any third party. Cover the page and its /og sub-path.
+  // The public try-it surface moved from /demo to /try. Keep any old /demo link
+  // (shared chats, QR codes, indexed URLs) alive with a permanent redirect.
+  async redirects() {
+    return [{ source: "/demo", destination: "/try", permanent: true }];
+  },
+
   async headers() {
     // X-Robots-Tag: the claim page is FROZEN, so its missing robots meta cannot be
     // fixed on the page — the header is the layer we own. robots.txt Disallow

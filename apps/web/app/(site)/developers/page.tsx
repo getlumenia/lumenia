@@ -20,7 +20,7 @@ import "../../../components/site/editorial.css";
 const PAGE_TITLE = "Developers — payouts by link";
 const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION =
-  "Pay someone who has nothing set up yet: no wallet, no account, no address. The code that powers the pilot — the sponsor service, the anti-drain validator, the claim flow — is public.";
+  "Pay someone who has nothing set up yet: no wallet, no account, no address. The code that powers Lumenia — the sponsor service, the anti-drain validator, the claim flow — is public.";
 
 export const metadata: Metadata = {
   title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
@@ -78,7 +78,7 @@ export default function Developers() {
             wallet first.
           </p>
           <p>
-            It&apos;s early, and it&apos;s open. The code that powers the pilot is public today: the
+            It&apos;s early, and it&apos;s open. The code that powers Lumenia is public today: the
             sponsor service, the anti-drain validator, the claim flow. Real API docs will land
             alongside the API itself. We won&apos;t publish a docs site for something that
             doesn&apos;t exist yet.

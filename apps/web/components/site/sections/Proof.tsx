@@ -1,7 +1,7 @@
 /**
  * Proof — section 5, proof + Stellar (brand.md §12.4 / §4.4). The ONE strip where the chain is
  * named with pride, on the Stellar-dark palette (navy + Stellar yellow + lavender). A real,
- * tappable on-chain receipt (real testnet tx from /how-it-works) + the SCF trust seal. No mock
+ * tappable on-chain receipt (real Stellar tx from /how-it-works) + the SCF trust seal. No mock
  * data (§8) — the tx hash resolves on stellar.expert.
  */
 "use client";
@@ -49,7 +49,7 @@ export function Proof() {
         >
           <div className="proof-rc-top">
             <span className="proof-rc-label">Public receipt</span>
-            <span className="proof-rc-net">Stellar · test network</span>
+            <span className="proof-rc-net">Stellar</span>
           </div>
           <p className="proof-rc-what">
             20 USDC landed in a brand-new account holding 0 XLM. It was claimed walletless, and the

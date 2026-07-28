@@ -33,7 +33,7 @@ export function HeroResolution() {
         nothing to download. It waits in dollars until they need it.
       </motion.p>
       <motion.div className="op-after-cta" {...rise(0.24)}>
-        <Link href="/demo" className="op-btn op-btn-primary">Try the live demo</Link>
+        <Link href="/try" className="op-btn op-btn-primary">See it work</Link>
         <Link href="/how-it-works" className="op-btn op-btn-ghost">See how it works →</Link>
       </motion.div>
     </section>

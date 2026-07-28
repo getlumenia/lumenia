@@ -22,7 +22,7 @@ import "../../../components/site/editorial.css";
 const PAGE_TITLE = "Roadmap";
 const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION =
-  "Honest about the line between what works today and what's still ahead: what's proven on the test network, what we're building, and what comes next.";
+  "Honest about the line between what works today and what's still ahead: what's proven, what we're building, and what comes next.";
 
 export const metadata: Metadata = {
   title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
@@ -69,7 +69,7 @@ const GROUPS: Array<{ title: string; tone: "done" | "building" | "next"; label: 
     items: [
       "Turning dollars into local currency through licensed partners.",
       "Spending directly with a card.",
-      "Real funds, beyond the test network.",
+      "Real money, open to everyone.",
     ],
   },
 ];
@@ -119,8 +119,8 @@ export default function Roadmap() {
             public ledger. <Link href="/how-it-works">Open one and check it yourself.</Link>
           </p>
           <div className="pg-cta">
-            <Link className="pg-btn pg-btn-primary" href="/demo">
-              Try the live demo
+            <Link className="pg-btn pg-btn-primary" href="/try">
+              See it work
             </Link>
             <Link className="pg-btn pg-btn-ghost" href="/waitlist">
               Join the waitlist

@@ -72,12 +72,12 @@ export default function Learn() {
 
         <div className="ed-close">
           <p className="ed-close-p">
-            Would rather just see it? The demo sends you a real link on the test network and takes
+            Would rather just see it? It sends you a real link and takes
             about 30 seconds.
           </p>
           <div className="pg-cta">
-            <Link className="pg-btn pg-btn-primary" href="/demo">
-              Try the live demo
+            <Link className="pg-btn pg-btn-primary" href="/try">
+              See it work
             </Link>
           </div>
         </div>

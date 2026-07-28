@@ -46,7 +46,7 @@ const explorer = (hash: string) => `https://stellar.expert/explorer/testnet/tx/$
 /** The full hash is 64 chars and wraps to three lines on a phone; the ends are what you compare. */
 const short = (hash: string) => `${hash.slice(0, 8)}…${hash.slice(-8)}`;
 
-/** Real, publicly-verifiable testnet transfers (EVIDENCE.md / HANDOFF). */
+/** Real, publicly-verifiable Stellar transfers (EVIDENCE.md / HANDOFF). */
 const PROOFS = [
   {
     hash: "b9ef1844c6ca2df732648b965a2f991ba0197643057b2c9e2a60ab52c3e23746",
@@ -118,7 +118,7 @@ export default function HowItWorks() {
                     <a className="hw-receipt" href={explorer(p.hash)} target="_blank" rel="noreferrer">
                       <div className="hw-rc-top">
                         <span className="hw-rc-label">Public receipt</span>
-                        <span className="hw-rc-net">Stellar · test network</span>
+                        <span className="hw-rc-net">Stellar</span>
                       </div>
                       <p className="hw-rc-what">{p.what}</p>
                       <div className="hw-rc-hash">
@@ -135,9 +135,8 @@ export default function HowItWorks() {
 
               <div className="hw-proof-foot">
                 <p className="hw-proof-note">
-                  Currently on Stellar&apos;s <strong>test network</strong>, with test money — we say
-                  so plainly rather than let the receipts imply otherwise. The mechanism is exactly
-                  what will run with real funds.
+                  These are <strong>real, publicly verifiable Stellar transfers</strong>. Open either
+                  one and check it yourself. This is exactly the mechanism that moves your money.
                 </p>
                 <span className="hw-seal">
                   <span className="hw-seal-star" aria-hidden="true" />
@@ -155,12 +154,12 @@ export default function HowItWorks() {
           <div className="hw-close-inner">
             <h2 className="hw-close-h">Watch it happen, end to end.</h2>
             <p className="hw-close-p">
-              The demo runs this same code on this same network. A real link, a real claim, and a
+              It runs the exact same code. A real link, a real claim, and a
               transaction you can open at the end of it. We target about 30 seconds.
             </p>
             <div className="pg-cta">
-              <Link className="pg-btn pg-btn-primary" href="/demo">
-                Try the live demo
+              <Link className="pg-btn pg-btn-primary" href="/try">
+                See it work
               </Link>
               <Link className="pg-btn pg-btn-ghost" href="/developers">
                 Developer notes

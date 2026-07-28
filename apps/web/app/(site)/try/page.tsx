@@ -1,7 +1,8 @@
 /**
  * /demo — the product's best salesman is the claim page itself (FRONTEND_PLAN §1b). One tap mints
- * a REAL testnet claim link and drops the visitor straight onto the claim screen to meet the hero
- * moment alone. Real on-chain data — no fiction.
+ * a real claim link and drops the visitor straight onto the claim screen to meet the hero
+ * moment alone. Real on-chain data — no fiction. The demo money has no value, and the page says so
+ * in one plain line; that is the single honesty note, no network jargon.
  *
  * Rebuilt on the Periwinkle system and moved here from (marketing). This is the landing's CTA
  * target, so it has to feel like the next frame of it rather than a different site: the same hero
@@ -11,9 +12,9 @@
  *
  * REGISTER: this is a CONSUMER surface, so brand.md §8 applies in full — no numerals, no mono rails,
  * no parameter chips. /how-it-works earns those by being the one page that names the technology;
- * this page does not get them. The only tech word here is "test network", which the house treats as
- * an honesty term (see TestnetBanner), and the "no wallet, no signup, no gas" subtraction line,
- * which is the landing's CloseCTA promise repeated verbatim — it names what you DON'T need.
+ * this page does not get them. The only honesty note here is the one plain line that the demo money
+ * isn't real, plus the "no wallet, no signup, no gas" subtraction line, which is the landing's
+ * CloseCTA promise repeated verbatim — it names what you DON'T need.
  *
  * NO ANALYTICS, deliberately: there is no demo event in lib/events.ts's allowlist, and adding one
  * client-side without the matching entry in the sponsor's ALLOWED_EVENTS is exactly the silent-drop
@@ -25,20 +26,20 @@ import { AmbientVideo } from "../../../components/site/AmbientVideo";
 import { Footer } from "../../../components/site/sections/Footer";
 import { MintButton } from "./MintButton";
 import "../../../components/site/page.css";
-import "./demo.css";
+import "./try.css";
 
 const PAGE_TITLE = "See it work: send yourself a link";
 const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION =
-  "Tap once and we'll send you a real money link on the test network — the exact thing your recipient would get. Claim it in your browser, no wallet and no signup.";
+  "Tap once and we'll send you a real money link — the exact thing your recipient would get. Claim it in your browser, no wallet and no signup.";
 
 export const metadata: Metadata = {
   title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
   description: DESCRIPTION,
-  alternates: { canonical: "/demo" },
+  alternates: { canonical: "/try" },
   openGraph: {
     type: "website",
-    url: "/demo",
+    url: "/try",
     siteName: "Lumenia",
     title: TITLE,
     description: DESCRIPTION,
@@ -82,7 +83,7 @@ export default function Demo() {
           <div className="dm-hero-copy">
             <p className="pg-eyebrow">
               <span className="pg-dot" aria-hidden="true" />
-              The live demo
+              Try it yourself
             </p>
             <h1 className="pg-h1">Send yourself money.</h1>
             <p className="pg-lead">
@@ -92,8 +93,7 @@ export default function Demo() {
             </p>
             <MintButton />
             <p className="dm-note">
-              Lumenia is in <strong>pilot on a test network</strong> — real technology, test money.
-              Nothing you claim here is worth anything.
+              The money here isn&apos;t real. It just shows exactly how receiving works.
             </p>
           </div>
           {/* The brand's own soft-3D tap — the same illustration the landing's how-it-works story
