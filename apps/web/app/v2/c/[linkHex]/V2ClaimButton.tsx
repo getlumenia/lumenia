@@ -163,8 +163,12 @@ export default function V2ClaimButton({
       ) : locked ? (
         <>
           <p className="text-sm text-ink-soft">
-            {sender} put a password on this one. Ask them for it if you don&apos;t have it. They
-            sent it separately, not in this link.
+            {/* Explicit {" "}: the text block below contains an entity (&apos;), which splits it
+                into fragments and drops the leading space — this shipped as "Mericput a password"
+                and was caught by watching the demo film rather than by reading the code. */}
+            {sender}
+            {" "}put a password on this one. Ask them for it if you don&apos;t have it. They sent it
+            separately, not in this link.
           </p>
           <input
             type="password"
