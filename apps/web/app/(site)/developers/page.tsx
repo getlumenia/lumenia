@@ -51,9 +51,9 @@ export default function Developers() {
           </p>
           <h1 className="pg-h1">Payouts by link.</h1>
           <p className="pg-lead">
-            Pay someone who has <strong>nothing set up yet</strong> — no wallet, no account, no
-            address. We create the account, cover the network cost, and hand them the money. They
-            tap a link.
+            Pay someone who has <strong>nothing set up yet</strong>: no wallet, no seed phrase, no
+            account, no address. We create the account, cover the network cost, and hand them the
+            money. They tap a link.
           </p>
         </div>
       </header>
@@ -78,9 +78,9 @@ export default function Developers() {
             wallet first.
           </p>
           <p>
-            It&apos;s early, and it&apos;s open. The code that powers the pilot — the sponsor
-            service, the anti-drain validator, the claim flow — is public today. Real API docs will
-            land alongside the API itself; we won&apos;t publish a docs site for something that
+            It&apos;s early, and it&apos;s open. The code that powers the pilot is public today: the
+            sponsor service, the anti-drain validator, the claim flow. Real API docs will land
+            alongside the API itself. We won&apos;t publish a docs site for something that
             doesn&apos;t exist yet.
           </p>
         </div>

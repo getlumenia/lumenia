@@ -44,7 +44,8 @@ export function Moment() {
         <p className="moment-eyebrow">The moment</p>
         <h2 className="moment-h">It&rsquo;s already theirs.</h2>
         <p className="moment-p">
-          Someone you love taps the link — and the money is simply there, in their hands.
+          Someone you love taps the link, and the money is right there in their hands. What you
+          sent is what they get.
         </p>
         <div className="moment-chips">
           {REMOVED.map((r, i) => (

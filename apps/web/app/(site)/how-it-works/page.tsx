@@ -75,8 +75,8 @@ export default function HowItWorks() {
               <p className="pg-lead">
                 Everywhere else on this site we talk about money and people. Here we name the
                 technology, because <strong>a non-custodial claim is only worth something if a
-                skeptic can verify it</strong>. Nothing below is an illustration — every claim on
-                this page resolves to a real transaction you can open yourself.
+                skeptic can verify it</strong>. Nothing below is a mockup. Every claim on this page
+                resolves to a real transaction you can open yourself.
               </p>
             </div>
             {/* Empty on purpose: the ribbon is painted by CSS, from inside a min-width:1024 media
@@ -107,9 +107,9 @@ export default function HowItWorks() {
                 Open one and check it yourself.
               </h2>
               <p className="hw-proof-p">
-                Every claim writes a transaction to the public ledger — one we can&apos;t hide,
-                freeze, or quietly change. So don&apos;t take the four paragraphs above on trust.
-                Here are two real ones: open either and look at what landed, and in whose account.
+                Every claim writes a transaction to the public ledger, one we can&apos;t hide or
+                quietly change. So don&apos;t take the four paragraphs above on trust. Here are two
+                real ones. Open either, and look at what landed and in whose account.
               </p>
 
               <ul className="hw-receipts">
@@ -155,8 +155,8 @@ export default function HowItWorks() {
           <div className="hw-close-inner">
             <h2 className="hw-close-h">Watch it happen, end to end.</h2>
             <p className="hw-close-p">
-              The demo runs this same code on this same network: a real link, a real claim, and a
-              real transaction at the end of it. We target about 30 seconds.
+              The demo runs this same code on this same network. A real link, a real claim, and a
+              transaction you can open at the end of it. We target about 30 seconds.
             </p>
             <div className="pg-cta">
               <Link className="pg-btn pg-btn-primary" href="/demo">

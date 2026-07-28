@@ -27,9 +27,9 @@ export function Proof() {
           <p className="proof-eyebrow">Proof, not promises</p>
           <h2 className="proof-h">Don’t take our word for it.</h2>
           <p className="proof-p">
-            Every transfer is written to <strong>Stellar</strong> — a public ledger no single
-            company controls. We can’t hide it, freeze it, or quietly change it. Open any transfer
-            and check it yourself.
+            Every transfer is written to <strong>Stellar</strong>, a public ledger no single
+            company owns. We can’t hide it or quietly change it. Open any transfer and check it
+            against the record yourself.
           </p>
           <Badge className="proof-seal">
             <span className="proof-seal-star" aria-hidden="true" />
@@ -52,8 +52,8 @@ export function Proof() {
             <span className="proof-rc-net">Stellar · test network</span>
           </div>
           <p className="proof-rc-what">
-            20 USDC landed in a brand-new account holding 0 XLM — claimed walletless, no gas paid by
-            the recipient.
+            20 USDC landed in a brand-new account holding 0 XLM. It was claimed walletless, and the
+            recipient paid no gas.
           </p>
           <div className="proof-rc-hash">
             <span className="proof-rc-k">tx</span>

@@ -29,8 +29,8 @@ export function HeroResolution() {
       <motion.p className="op-after-eyebrow" {...rise(0)}>Nothing to set up.</motion.p>
       <motion.h1 className="op-after-h" {...rise(0.08)}>Money home, in a link.</motion.h1>
       <motion.p className="op-after-p" {...rise(0.16)}>
-        Send money by link. They tap it and it&rsquo;s theirs — no wallet, no seed phrase, no app.
-        Held in dollars until they need it.
+        Paste a link into a chat. They tap it, and the money is theirs. No wallet to make,
+        nothing to download. It waits in dollars until they need it.
       </motion.p>
       <motion.div className="op-after-cta" {...rise(0.24)}>
         <Link href="/demo" className="op-btn op-btn-primary">Try the live demo</Link>

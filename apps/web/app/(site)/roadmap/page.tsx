@@ -47,7 +47,7 @@ const GROUPS: Array<{ title: string; tone: "done" | "building" | "next"; label: 
     label: "Works today",
     items: [
       "Send money by a link; the recipient claims it walletless, with no app and no account.",
-      "The recipient holds no network asset and pays nothing to receive — we cover the network cost.",
+      "The recipient pays nothing to receive; we cover the network cost.",
       "Send money onward with a link of your own.",
       "Every transfer is publicly verifiable; unclaimed links come back after 7 days.",
     ],

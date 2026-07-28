@@ -15,7 +15,7 @@ const FEARS = [
   {
     worry: "“I don’t even have a wallet — how would I receive it?”",
     lead: "You don’t need one.",
-    rest: "Tap the link and the money is already there — no wallet, not now, not ever.",
+    rest: "Tap the link and the money is already there. No wallet, not now, not ever.",
     icon: "/brand-kit-assets/icon-hand.webp",
   },
   {
@@ -27,13 +27,13 @@ const FEARS = [
   {
     worry: "“I tap a link and money appears? That isn’t real.”",
     lead: "It’s real.",
-    rest: "The money waits on a public ledger the moment the link is made — tapping it just hands it to you.",
+    rest: "The money is set aside the moment the link is made. Tapping it hands it to you.",
     icon: "/brand-kit-assets/icon-check.webp",
   },
   {
     worry: "“What if it gets lost — is it safe?”",
-    lead: "It sits in escrow only you can open",
-    rest: "— or the sender, after seven days. Every transfer is publicly checkable, and we never hold it.",
+    lead: "Only you can open it",
+    rest: "— or it comes back to the sender after seven days. Every transfer is public to check, and your money is never ours.",
     icon: "/brand-kit-assets/icon-shield.webp",
   },
 ];

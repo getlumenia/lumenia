@@ -12,7 +12,7 @@ import { clamp } from "./utils";
 
 const HIW = [
   { img: "/brand-kit-assets/il-abstract.webp", t: "You send a link.", b: "Choose an amount and share it in a chat, like anything else. That’s the whole transfer." },
-  { img: "/brand-kit-assets/il-phone.webp", t: "They tap it.", b: "Your recipient sees the money the moment they tap — before creating anything." },
+  { img: "/brand-kit-assets/il-phone.webp", t: "They tap it.", b: "Your recipient sees the money the moment they tap, before they've made anything." },
   { img: "/brand-kit-assets/il-celebrate.webp", t: "It’s theirs.", b: "They claim it with their face or a password. Receiving is free. Done." },
 ];
 

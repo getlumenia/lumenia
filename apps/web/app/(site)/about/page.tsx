@@ -59,15 +59,16 @@ export default function About() {
         </figure>
         <div className="ed-prose">
           <p>
-            Sending money to family shouldn&apos;t require the people you love to become tech people.
-            Today the system taxes the sender&apos;s money and the recipient&apos;s dignity — app
-            installs, ID selfies, queues. We think that&apos;s backwards.
+            You send money home, and it should arrive whole. The people you love shouldn&apos;t have
+            to become tech people to receive it. Today the system taxes the sender&apos;s money and
+            the recipient&apos;s dignity: app installs, ID selfies, queues. We think that&apos;s
+            backwards.
           </p>
           <p>
             Lumenia is a simple idea taken seriously: send money with a link, and let the person
             receiving it do nothing but tap. No app, no account, no wallet, nothing to pay to
-            receive. The money waits in escrow on a public ledger — never in our hands — so we
-            can&apos;t lend it, lose it, or freeze it.
+            receive. The money waits in escrow, never in our hands, so we can&apos;t lend it or lose
+            it.
           </p>
           <p>
             We build in the open and say plainly what&apos;s proven and what isn&apos;t. Right now

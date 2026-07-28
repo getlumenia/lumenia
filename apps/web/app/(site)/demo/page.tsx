@@ -27,7 +27,7 @@ import { MintButton } from "./MintButton";
 import "../../../components/site/page.css";
 import "./demo.css";
 
-const PAGE_TITLE = "Try it — send yourself money";
+const PAGE_TITLE = "See it work: send yourself a link";
 const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION =
   "Tap once and we'll send you a real money link on the test network — the exact thing your recipient would get. Claim it in your browser, no wallet and no signup.";
@@ -87,8 +87,8 @@ export default function Demo() {
             <h1 className="pg-h1">Send yourself money.</h1>
             <p className="pg-lead">
               Tap once and we&apos;ll send <strong>you</strong> a real money link — the exact thing
-              your recipient would get. See the money, claim it right here in your browser, and check
-              it on the public record. We target about 30 seconds.
+              your recipient would get. See the money. Claim it right here in your browser, then
+              check it on the public record afterwards. We target about 30 seconds.
             </p>
             <MintButton />
             <p className="dm-note">

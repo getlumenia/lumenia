@@ -88,9 +88,9 @@ export default function Brand() {
           <p className="brand-p">
             The idea is <strong>&quot;nothing to set up.&quot;</strong> We&apos;re defined by what we
             remove — no wallet, no seed phrase, no app, no gas — until only one thing is left: tap the
-            link. Calm, plain and warm; we take fear away instead of hyping. Type is a warm serif
-            paired with a clean humanist sans — the fastest signal that this is for people, not for
-            crypto.
+            link. Calm, plain, confident and warm; we take fear away instead of hyping. Type is a warm
+            serif paired with a clean humanist sans. That's the fastest signal that this is for people,
+            not for crypto.
           </p>
 
           <h2 className="brand-h2">Boilerplate</h2>

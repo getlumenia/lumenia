@@ -31,7 +31,7 @@ import { Footer } from "../../components/site/sections/Footer";
 
 const TITLE = "Lumenia — money home, in a link";
 const DESCRIPTION =
-  "Send money by link. They tap it and it's theirs — no wallet, no seed phrase, no app. Held in dollars until they need it.";
+  "Send money by link. They tap it, and it's theirs. No wallet, no seed phrase, no app to install. Held in dollars until they need it.";
 
 /**
  * The landing's metadata. It lives here rather than in the group layout because (site) now holds
@@ -90,7 +90,7 @@ const JSON_LD = {
       url: SITE_URL,
       logo: `${SITE_URL}/icon-512.png`,
       description:
-        "Send money by link. They tap it and it's theirs — no wallet, no seed phrase, no app.",
+        "Send money by link. They tap it, and it's theirs. No wallet, no seed phrase, no app.",
     },
     {
       "@type": "WebSite",

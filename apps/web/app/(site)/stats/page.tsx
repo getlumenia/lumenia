@@ -67,7 +67,7 @@ export default async function StatsPage() {
           </p>
           <h1 className="pg-h1">Every number here is real.</h1>
           <p className="pg-lead">
-            These come straight off the public ledger and refresh continuously. Nothing is typed in
+            These come straight off the public record and refresh continuously. Nothing is typed in
             by hand — open any transfer and check it yourself. Lumenia is on a test network today.
           </p>
         </div>

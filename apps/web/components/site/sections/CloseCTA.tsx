@@ -34,8 +34,8 @@ export function CloseCTA() {
       >
         <h2 className="close-h">See it for yourself.</h2>
         <p className="close-p">
-          The demo mints a real money link — no wallet, no signup, no gas. Or join the waitlist and
-          we’ll tell you the moment it’s live for real.
+          The demo mints a real money link. No wallet, no signup, and we cover the network cost for
+          you. Or join the waitlist and we’ll tell you the moment it’s live for real.
         </p>
         <div className="close-cta">
           <Link href="/demo" className="op-btn op-btn-primary">Try the live demo</Link>

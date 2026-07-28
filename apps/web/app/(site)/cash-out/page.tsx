@@ -55,7 +55,7 @@ export default function CashOut() {
           <p className="pg-lead">
             When your local money loses value, holding dollars <strong>is</strong> the win — a lot of
             people keep them exactly as they are. So you don&apos;t have to cash out. But when you
-            want Turkish lira in your bank, here&apos;s the honest path — and the one mistake to avoid.
+            want Turkish lira in your bank, here&apos;s the honest path, and the one mistake to avoid.
           </p>
         </div>
       </header>

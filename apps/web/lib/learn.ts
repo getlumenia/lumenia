@@ -46,7 +46,7 @@ export const GUIDES: Guide[] = [
     summary: "Protection, not growth.",
     body: [
       "The amount is held in dollars so it doesn't shrink in a volatile currency or wobble with markets while it waits to be claimed or spent.",
-      "This is about keeping a promise intact: what you sent is what arrives. It is not a savings product — it earns nothing, and we'd be suspicious of anyone who told you otherwise.",
+      "This is about keeping a promise intact: what you sent is what arrives. It doesn't grow and it earns nothing, and we'd be suspicious of anyone who told you otherwise.",
       "Your recipient can hold it as dollars and send it onward whenever they like.",
     ],
   },
