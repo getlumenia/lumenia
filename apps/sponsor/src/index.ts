@@ -20,6 +20,7 @@
  *   POST /recovery-otp    → email a single-use code proving control of the box's email
  *   POST /recovery        → store a ciphertext-only recovery box (OTP-gated; isolated; signs nothing)
  *   POST /recovery-fetch  → fetch a ciphertext-only recovery box (OTP-gated)
+ *   POST /recovery-alias-fetch → fetch a box by its PRF-derived id (find-my-account; no OTP, separate namespace)
  *
  * The request handlers live in lib/* and are platform-agnostic, so the same core
  * runs behind this node:http server (local dev + CLI) and behind a Vercel function
@@ -41,7 +42,7 @@ import { demoLinkHandler } from "./lib/demo-link.js";
 import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
-import { putBox, getBox } from "./lib/recovery-store.js";
+import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
 
 const { config, signer, faucet, server, channels } = getService();
@@ -299,10 +300,27 @@ const httpServer = createServer(async (req, res) => {
       // bucket ("rec:"); signs nothing and touches no anti-drain policy.
       const rl = await enforceRateLimit(`rec:${clientIp(req)}`);
       if (rl.limited) return send(res, 429, { error: rl.reason });
-      const body = (await readJson(req)) as { id?: unknown; box?: unknown; code?: unknown };
+      const body = (await readJson(req)) as { id?: unknown; box?: unknown; code?: unknown; aliasId?: unknown };
       if (!(await verifyOtp(body.id, body.code))) return send(res, 401, { error: "invalid or expired code" });
       await putBox(body.id, body.box);
+      // Optional PRF alias behind the SAME verified code. aliasId === id is refused: it would drop
+      // an email-derived (low-entropy) id into the namespace whose fetch has no OTP.
+      if (body.aliasId !== undefined) {
+        if (body.aliasId === body.id) return send(res, 400, { error: "aliasId must differ from id" });
+        await putAliasBox(body.aliasId, body.box);
+      }
       return send(res, 200, { ok: true });
+    }
+
+    // Find-my-account: fetch by PRF-derived alias id. Never OTP-gated; reads ONLY the alias
+    // namespace. See lib/recovery-store.ts for why the separation IS the security control.
+    if (method === "POST" && url === "/recovery-alias-fetch") {
+      const body = (await readJson(req)) as { id?: unknown };
+      const rl = await enforceRateLimit(`recpk:${clientIp(req)}`, typeof body.id === "string" ? body.id : undefined);
+      if (rl.limited) return send(res, 429, { error: rl.reason });
+      const box = await getAliasBox(body.id);
+      if (!box) return send(res, 404, { error: "not found" });
+      return send(res, 200, { box });
     }
 
     if (method === "POST" && url === "/recovery-fetch") {

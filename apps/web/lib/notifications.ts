@@ -14,7 +14,14 @@
  * Unread = an item whose id you have not marked seen on this device. There is deliberately no
  * cross-device sync: a notification is a hint derived from the ledger, not a record we keep for you.
  */
-import { loadActivity, loadIncomingClaims, loadReclaimableSends, loadBalance } from "./horizon";
+import {
+  loadActivity,
+  loadIncomingClaims,
+  loadReclaimableSends,
+  loadBalance,
+  mergeActivity,
+  type ActivityItem,
+} from "./horizon";
 import { loadReclaimableV2 } from "./lumendrop";
 
 export interface Notice {
@@ -50,13 +57,25 @@ export function markAllSeen(ids: string[]): void {
 }
 
 /** Build the full notice list from the ledger, newest first. */
-export async function loadNotices(address: string): Promise<Notice[]> {
+export async function loadNotices(address: string, extraAddresses: string[] = []): Promise<Notice[]> {
   const bal = await loadBalance(address);
   const [waiting, reclaimable, reclaimableV2, activity] = await Promise.all([
     bal?.issuer ? loadIncomingClaims(address, bal.issuer) : Promise.resolve([]),
     bal?.issuer ? loadReclaimableSends(address, bal.issuer) : Promise.resolve([]),
     loadReclaimableV2(address).catch(() => []), // v2 drops are local + on-chain; never block the feed
-    loadActivity(address, 50),
+    // Money can land in a not-yet-swept per-link account too. Those only ever credit until they
+    // are consolidated, so mergeActivity drops their debits and the sweep's double entry with it.
+    (async (): Promise<ActivityItem[]> => {
+      const home = await loadActivity(address, 50, bal?.issuer).catch(() => [] as ActivityItem[]);
+      if (extraAddresses.length === 0) return home;
+      const others = await Promise.all(
+        extraAddresses.map((a) => loadActivity(a, 50, bal?.issuer).catch(() => [] as ActivityItem[])),
+      );
+      return mergeActivity(
+        [{ items: home, isHome: true }, ...others.map((items) => ({ items, isHome: false }))],
+        50,
+      );
+    })(),
   ]);
   const notices: Notice[] = [
     ...waiting.map((w) => ({

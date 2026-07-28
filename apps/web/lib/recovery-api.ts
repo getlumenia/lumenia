@@ -36,12 +36,37 @@ export async function requestRecoveryOtp(email: string): Promise<void> {
   if (!res.ok) throw new Error(await errorFrom(res, "Couldn't send the code. Try again."));
 }
 
-/** Store the ciphertext-only box for `email`, gated by the emailed code. */
-export async function storeRecoveryBox(email: string, code: string, box: RecoveryBox): Promise<void> {
+/**
+ * Store the ciphertext-only box for `email`, gated by the emailed code.
+ *
+ * `aliasId` (from recovery.ts::prfToBoxId) stores a SECOND copy under the passkey-derived id, and
+ * that copy is what "find my money with Face ID" reads later with no email and no code. It rides
+ * behind this same verified code on purpose: the backup flow already holds one, so adding the
+ * alias widens no surface.
+ */
+export async function storeRecoveryBox(
+  email: string,
+  code: string,
+  box: RecoveryBox,
+  aliasId?: string,
+): Promise<void> {
   const id = await emailToId(email);
-  const res = await post("/recovery", { id, box, code });
+  const res = await post("/recovery", { id, box, code, ...(aliasId ? { aliasId } : {}) });
   if (res.status === 401) throw new Error("That code is wrong or has expired.");
   if (!res.ok) throw new Error(await errorFrom(res, "Couldn't secure your money. Try again."));
+}
+
+/**
+ * Fetch a box by its passkey-derived id. No email, no code — the id itself is 256 bits that only a
+ * user-verified passkey ceremony on this origin can produce, and what comes back is ciphertext
+ * that the same passkey has to open. Returns null when there is no such backup.
+ */
+export async function fetchRecoveryBoxByPrfId(aliasId: string): Promise<RecoveryBox | null> {
+  const res = await post("/recovery-alias-fetch", { id: aliasId });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await errorFrom(res, "Couldn't look for your backup. Try again."));
+  const data = (await res.json()) as { box?: RecoveryBox };
+  return data.box ?? null;
 }
 
 /** Fetch the box for `email`, gated by the code. Returns null if there is no backup. */

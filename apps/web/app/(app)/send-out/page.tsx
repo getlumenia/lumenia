@@ -535,6 +535,14 @@ export default function SendOutPage() {
       <PrimaryButton loading={checking} loadingLabel="Checking the address…" onClick={review}>
         Review the transfer
       </PrimaryButton>
+
+      <p className="text-sm text-ink-soft">
+        Bringing money in instead?{" "}
+        <Link href="/add-money" className="text-money underline-offset-2 hover:underline">
+          Here&apos;s what they need
+        </Link>
+        .
+      </p>
     </div>
   );
 }

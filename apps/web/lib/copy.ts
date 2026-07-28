@@ -127,6 +127,45 @@ export const copy = {
     sendOutCta: "Send to an exchange",
     guideCta: "Read the guide",
   },
+  /**
+   * ADDITIVE (frozen-route import graph). Receiving money INTO your account — /add-money.
+   *
+   * The whole block exists to correct one belief people arrive with: that they need a memo, tag or
+   * reference, because that is what every exchange asks for. They need one to pay INTO an exchange,
+   * where thousands of customers share a single account. They need nothing to be paid here, because
+   * the account is theirs alone. Said as a reason, so it stays true if the product changes.
+   */
+  receive: {
+    title: "Add money",
+    lead: "Money can reach you two ways: someone sends you a link, or someone sends straight to your account.",
+    ownAccount: "Your money has its own account. Nobody has to say which one is yours.",
+    noMemo:
+      "So if a screen asks for a memo, a tag or a reference, leave it blank. That box exists for exchanges, where everyone shares one account. You don't share yours.",
+    networkTitle: "Pick the right network",
+    networkBody: (network: string) =>
+      `Your dollars travel on ${network}. Whoever is sending has to choose that same network. Money sent on another one never arrives, and nobody can bring it back.`,
+    reciprocal:
+      "One thing worth knowing before you try: an exchange that can't send on this network can't send here either. It's the same road in both directions.",
+    minimum:
+      "Exchanges charge a fee to send and often refuse small amounts. Check their minimum. The first time, send a couple of dollars, wait for them to land, then send the rest.",
+    testTitle: "These are practice dollars",
+    testBody:
+      "You're on a test network, so no exchange can send real money here yet. Two things do work today: someone sends you a Lumenia link, or someone else using Lumenia sends straight to the address below.",
+    testFuture:
+      "When Lumenia opens to real money, this is the screen you'll use. The practice dollars don't come with you.",
+    addressLabel: "Your account",
+    copyCta: "Copy address",
+    copied: "Copied",
+    qrShow: "Show code",
+    qrHide: "Hide code",
+    qrSep7: "For a wallet app",
+    qrPlain: "Plain address",
+    qrNote: "Scanning this fills in the address and the exact dollars. Pasting is safer at an exchange.",
+    waiting: "Watching for money to arrive.",
+    arrived: (usd: string) => `It's here. ${usd}.`,
+    checkAgain: "Check again",
+    faucetCta: "Get test money",
+  },
   errors: {
     notFound: "This link is invalid or has expired.",
     generic: "Something went wrong. Please try again.",

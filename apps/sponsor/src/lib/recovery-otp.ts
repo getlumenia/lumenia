@@ -98,11 +98,57 @@ async function sendCodeEmail(email: string, code: string): Promise<void> {
   }
 }
 
+/* PER-ID request cap (DEFERRED.md F3). The IP limiter alone does not stop the griefing shape that
+ * matters: one attacker spread across addresses can hammer a SINGLE victim's email, both as an
+ * inbox flood and as a way to keep invalidating the code the victim is trying to use. Counted per
+ * box id over a rolling window, so a normal user (a couple of tries, maybe a resend) never notices
+ * and a flood stops at the eleventh. Deliberately NOT an error that reveals anything: the caller
+ * gets the same shape as a bad email, and no email is sent. */
+const MAX_OTP_PER_WINDOW = 10;
+const OTP_WINDOW_SEC = 3600;
+const reqMem = new Map<string, { n: number; exp: number }>();
+
+async function overRequestCap(id: string): Promise<boolean> {
+  const kv = kvConfigFromEnv();
+  const key = `lumenia:recovery-otpreq:${id}`;
+  if (!kv) {
+    const now = Date.now();
+    const rec = reqMem.get(id);
+    if (!rec || now > rec.exp) {
+      reqMem.set(id, { n: 1, exp: now + OTP_WINDOW_SEC * 1000 });
+      return false;
+    }
+    rec.n += 1;
+    return rec.n > MAX_OTP_PER_WINDOW;
+  }
+  try {
+    const res = await fetch(`${kv.url}/pipeline`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
+      body: JSON.stringify([
+        ["INCR", key],
+        ["EXPIRE", key, String(OTP_WINDOW_SEC), "NX"],
+      ]),
+    });
+    if (!res.ok) return false; // the store is the limiter's problem, never the user's
+    const [first] = (await res.json()) as Array<{ result?: unknown }>;
+    return Number(first?.result ?? 0) > MAX_OTP_PER_WINDOW;
+  } catch {
+    return false;
+  }
+}
+
 /** Email a fresh single-use code for `email` and store it hashed under its box id. */
 export async function requestOtp(rawEmail: unknown): Promise<{ ok: true }> {
   const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
   if (email.length > 200 || !EMAIL_RE.test(email)) throw new Error("invalid email");
   const id = await idForEmail(email);
+  // Over the per-id cap: return the same 200 the happy path returns and send nothing. Saying
+  // "too many" here would confirm the address exists and hand the attacker a signal.
+  if (await overRequestCap(id)) {
+    console.log(`[recovery:otp] per-id cap hit for ${id.slice(0, 8)}… — no email sent`);
+    return { ok: true };
+  }
   const code = sixDigit();
   const rec: OtpRecord = { codeHash: await sha256Hex(`${id}:${code}`), exp: Date.now() + TTL_SEC * 1000, tries: 0 };
   const kv = kvConfigFromEnv();

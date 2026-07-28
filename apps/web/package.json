@@ -9,7 +9,9 @@
     "start": "next start",
     "test:e2e": "playwright test",
     "test:recovery": "tsx lib/recovery.selftest.ts",
-    "test:claimpw": "tsx lib/claim-password.selftest.ts"
+    "test:claimpw": "tsx lib/claim-password.selftest.ts",
+    "test:receive": "tsx lib/receive.selftest.ts",
+    "test:horizon": "tsx lib/horizon.selftest.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

@@ -21,6 +21,7 @@ import {
   emptyBox,
   putCopy,
   findCopy,
+  prfToBoxId,
 } from "./recovery";
 import { DEFAULT_ARGON } from "./argon";
 
@@ -100,6 +101,45 @@ async function main() {
   {
     const copy = await wrapWithPassword(seed, "shipped params", DEFAULT_ARGON);
     ok("DEFAULT_ARGON round-trip", addr(await unwrapWithPassword(copy, "shipped params")) === account);
+  }
+
+  /* ---------------------------------------------------------------------------
+   * [id] The PRF-derived box id — what makes "find my money with Face ID" possible.
+   *
+   * This id is handed to a server, so the load-bearing claim is that it leaks nothing about the
+   * key that opens the box. And it is WIRE FORMAT: the frozen vector below is the thing that
+   * fails loudly if anyone changes the HKDF label, the salt or the length, instead of silently
+   * orphaning every stored backup and telling people "no backup found" for money that is safe.
+   * ------------------------------------------------------------------------- */
+  console.log("\n[id] prfToBoxId — the passkey-derived lookup id");
+  {
+    const prfA = new Uint8Array(32).map((_, i) => i); // 0x00…0x1f
+    const prfB = new Uint8Array(32).fill(9);
+    const idA = await prfToBoxId(prfA);
+    const idA2 = await prfToBoxId(prfA);
+    const idB = await prfToBoxId(prfB);
+
+    ok("deterministic — the same passkey always finds the same backup", idA === idA2);
+    ok("64 lowercase hex (the store's id shape)", /^[0-9a-f]{64}$/.test(idA));
+    ok("a different passkey derives a different id", idA !== idB);
+    ok(
+      "FROZEN VECTOR — the wire format has not drifted",
+      idA === "14f8b0e801e85063ca99b95806f9803f1ab1ffde4a91baf8c22616e8c6d73e44",
+      idA,
+    );
+
+    // Independence: the id must not be usable as the wrap key. If HKDF's info label or salt were
+    // ever made to collide, this would start passing and the id would be leaking key material.
+    const box = putCopy(emptyBox(), await wrapWithPrf(seed, prfA));
+    const asKey = Uint8Array.from(idA.match(/../g)!.map((h) => Number.parseInt(h, 16)));
+    let opened = false;
+    try {
+      await unwrapWithPrf(findCopy(box, "prf")!, asKey);
+      opened = true;
+    } catch {
+      /* expected */
+    }
+    ok("the id is NOT the key — it cannot open the box it addresses", !opened);
   }
 
   console.log("\n============================================================");

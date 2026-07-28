@@ -9,12 +9,14 @@
  * v2 swaps the concrete signer without touching this shape.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase1, savePhase2, setHome, type Phase } from "./keystore";
+import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase1, savePhase2, setHome, isPublished, type Phase } from "./keystore";
 import { localSignerFromSeed, type Signer } from "./signer";
 import { DEFAULT_ARGON } from "./argon";
-import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, emptyBox, putCopy, findCopy, type RecoveryBox } from "./recovery";
-import { enrollPasskeyPrf, derivePasskeyPrf } from "./passkey-prf";
+import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, emptyBox, putCopy, findCopy, prfToBoxId, type RecoveryBox } from "./recovery";
+import { enrollPasskeyPrf, derivePasskeyPrf, assertPasskeyPrf } from "./passkey-prf";
+import { fetchRecoveryBoxByPrfId } from "./recovery-api";
 import { StrKey } from "@stellar/stellar-sdk";
+import { Buffer } from "buffer";
 
 export interface WalletAccount {
   address: string;
@@ -59,7 +61,16 @@ interface WalletState {
    * updated box to re-store. Requires the account to be unlocked (session seed present).
    * Degrades gracefully where passkeys/PRF are unavailable; NEVER a claim-path dependency.
    */
-  addFaceIdBackup: (box: RecoveryBox) => Promise<RecoveryBox>;
+  addFaceIdBackup: (box: RecoveryBox) => Promise<{ box: RecoveryBox; aliasId: string }>;
+  /**
+   * Find and restore this user's account from a passkey alone — no email, no code, no password.
+   * One discoverable assertion yields both the PRF (which addresses and opens the backup) and the
+   * account's public key. Throws with a plain-language reason when there is no backup for this
+   * passkey, which is NOT the same as "you have no backup".
+   */
+  findAccountWithFaceId: () => Promise<{ address: string; alreadyHere: boolean; hasPasswordCopy: boolean }>;
+  /** Lock a Phase-1 account with a password (used right after a Face-ID restore). */
+  lockWithPassword: (password: string) => Promise<void>;
   /** Restore on a fresh device via Face ID: unwrap the box's PRF copy with the passkey. */
   restoreWithFaceId: (box: RecoveryBox) => Promise<void>;
 }
@@ -137,6 +148,27 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [account, refresh, setSessionSeed],
   );
 
+  /**
+   * Adopt a restored account WITHOUT stealing the home pointer from a PUBLISHED one.
+   *
+   * A restore used to call setHome() unconditionally. That is fine until an address has been
+   * handed to somebody: /home sweeps every non-home account, and the sweep ends in accountMerge,
+   * which closes the account on-chain. So restoring a backup could silently demote the very
+   * address a user gave to an exchange, and then destroy it — the withdrawal would bounce.
+   *
+   * Rule: take home when there is no home, when it is already this account, or when the current
+   * home was never published. A published home keeps the pointer; the restored account is still
+   * fully stored, still counted in the balance, and can be made home deliberately later.
+   */
+  const adoptRestored = useCallback(async (pub: string): Promise<void> => {
+    const home = await getHome();
+    if (!home || home.pubkey === pub) {
+      await setHome(pub);
+      return;
+    }
+    if (!(await isPublished(home.pubkey))) await setHome(pub);
+  }, []);
+
   const restoreRecovery = useCallback(
     async (box: RecoveryBox, password: string): Promise<void> => {
       const copy = findCopy(box, "password");
@@ -144,23 +176,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const seed = await unwrapWithPassword(copy, password); // throws on a wrong password
       const pub = localSignerFromSeed(seed).publicKey();
       await savePhase2(pub, seed, password, DEFAULT_ARGON);
-      await setHome(pub);
+      await adoptRestored(pub);
       setSessionSeed(seed);
       await refresh();
     },
-    [refresh, setSessionSeed],
+    [adoptRestored, refresh, setSessionSeed],
   );
 
   const addFaceIdBackup = useCallback(
-    async (box: RecoveryBox): Promise<RecoveryBox> => {
+    async (box: RecoveryBox): Promise<{ box: RecoveryBox; aliasId: string }> => {
       if (!account) throw new Error("no local account");
       if (!sessionSeed.current) throw new Error("locked"); // Face ID is an upgrade over the unlocked seed
-      // A stable per-account passkey user id = the account's raw 32-byte public key.
+      // A stable per-account passkey user id = the account's raw 32-byte public key. The
+      // authenticator hands this back on every later assertion, which is what lets a fresh device
+      // learn WHICH account it just unlocked without the user typing anything.
       const userId = StrKey.decodeEd25519PublicKey(account.address);
       const { prf } = await enrollPasskeyPrf({ userId, userName: `Lumenia ${account.address.slice(0, 6)}` });
       const updated = putCopy(box, await wrapWithPrf(sessionSeed.current, prf));
+      // The second, independent value from the same PRF: where this box will be findable later
+      // with no email and no code. Derived here so the raw PRF never leaves this module.
+      const aliasId = await prfToBoxId(prf);
       prf.fill(0);
-      return updated;
+      return { box: updated, aliasId };
     },
     [account],
   );
@@ -176,16 +213,86 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // Adopt device-locally with the device key (Phase 1) — they authenticated biometrically,
       // so no separate password; the "Back up your money" card can add one later.
       await savePhase1(pub, seed);
-      await setHome(pub);
+      await adoptRestored(pub);
       setSessionSeed(seed);
       await refresh();
     },
-    [refresh, setSessionSeed],
+    [adoptRestored, refresh, setSessionSeed],
+  );
+
+  /**
+   * ZERO-TYPING restore: one Face ID tap on a phone that has never seen this account.
+   *
+   * Everything needed is already inside the passkey and, until now, went unread. A single
+   * discoverable assertion returns the PRF output AND the `userHandle` set at enrolment — the
+   * account's own raw public key. The PRF derives where the backup is stored, fetches the
+   * ciphertext with no email and no code, and opens it. The userHandle is then a free
+   * cross-check that the seed we just decrypted really is the account the passkey names.
+   *
+   * `alreadyHere` distinguishes "we brought your money back" from "you already had it here",
+   * so a second tap reads as reassurance rather than as an error.
+   */
+  const findAccountWithFaceId = useCallback(async (): Promise<{
+    address: string;
+    alreadyHere: boolean;
+    hasPasswordCopy: boolean;
+  }> => {
+    const { prf, userHandle } = await assertPasskeyPrf();
+    let seed: Uint8Array;
+    let box: RecoveryBox | null;
+    try {
+      box = await fetchRecoveryBoxByPrfId(await prfToBoxId(prf));
+      if (!box) {
+        throw new Error(
+          "We couldn't find a backup for this Face ID. If you set one up with your email, use that below.",
+        );
+      }
+      const copy = findCopy(box, "prf");
+      if (!copy) throw new Error("This backup has no Face ID key. Use your password.");
+      seed = await unwrapWithPrf(copy, prf);
+    } finally {
+      prf.fill(0);
+    }
+    const pub = localSignerFromSeed(seed).publicKey();
+    if (userHandle && userHandle.length === 32) {
+      // Belt-and-braces: AES-GCM already authenticated the ciphertext, but if these ever
+      // disagree the passkey and the box belong to different accounts and adopting would be
+      // worse than failing.
+      const named = StrKey.encodeEd25519PublicKey(Buffer.from(userHandle));
+      if (named !== pub) throw new Error("This passkey doesn't match the backup it opened.");
+    }
+    const before = await getHome();
+    await savePhase1(pub, seed);
+    await adoptRestored(pub);
+    setSessionSeed(seed);
+    await refresh();
+    return {
+      address: pub,
+      alreadyHere: before?.pubkey === pub,
+      hasPasswordCopy: Boolean(findCopy(box, "password")),
+    };
+  }, [adoptRestored, refresh, setSessionSeed]);
+
+  /**
+   * Lock a Phase-1 account with a password (Phase 2). A Face-ID restore lands at Phase 1 so a
+   * closed tab can never lose the restore, but Phase 1 means anyone holding the phone can spend —
+   * a silent downgrade from the Phase 2 it had on the original device. This is the step that
+   * undoes that, offered immediately rather than left to a card the user may never open.
+   */
+  const lockWithPassword = useCallback(
+    async (password: string): Promise<void> => {
+      if (!account) throw new Error("no local account");
+      const seed = sessionSeed.current ?? (await unlockPhase1(account.address));
+      await savePhase2(account.address, seed, password, DEFAULT_ARGON);
+      setSessionSeed(seed);
+      await refresh();
+    },
+    [account, refresh, setSessionSeed],
   );
 
   return (
     <WalletContext.Provider
-      value={{ status, account, accounts, unlocked, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId }}
+      value={{ status, account, accounts, unlocked, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword }}
     >
       {children}
     </WalletContext.Provider>

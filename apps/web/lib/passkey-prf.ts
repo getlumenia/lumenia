@@ -93,13 +93,37 @@ export async function enrollPasskeyPrf(opts: {
   return { credentialId, prf };
 }
 
+export interface PasskeyAssertion {
+  /** The PRF output — the secret that unwraps the seed, and (via prfToBoxId) addresses the box. */
+  prf: Uint8Array;
+  /**
+   * The `user.id` set at enrollment, handed back by the authenticator: the account's raw 32-byte
+   * Ed25519 public key. This is the account identity, and it has been sitting inside the
+   * credential unread since the day passkeys shipped here. StrKey.encodeEd25519PublicKey turns it
+   * into the G… address with the user typing nothing at all.
+   *
+   * Null where a browser or authenticator omits it, so treat it as a bonus rather than a
+   * requirement: AES-GCM authentication on the box is the real integrity check, and this is a
+   * cross-check and a way to show the address BEFORE anything is decrypted.
+   */
+  userHandle: Uint8Array | null;
+  credentialId: Uint8Array;
+}
+
 /**
- * Re-derive the PRF output from an existing passkey (for unwrapWithPrf on restore / fast-unlock).
- * With no `credentialId` the browser lets the user pick any discoverable Lumenia passkey (the
- * cross-device restore path, where a synced passkey may live on a fresh device).
+ * One discoverable assertion, returning everything the ceremony produced.
+ *
+ * With no `credentialId` the browser lets the user pick any discoverable Lumenia passkey — the
+ * cross-device path, where a synced passkey lives on a phone that has never seen this account.
  */
-export async function derivePasskeyPrf(credentialId?: Uint8Array): Promise<Uint8Array> {
+export async function assertPasskeyPrf(credentialId?: Uint8Array): Promise<PasskeyAssertion> {
   if (!isPasskeyCapable()) notSupported();
+  if (RP_ID && typeof location !== "undefined" && location.hostname !== RP_ID && !location.hostname.endsWith(`.${RP_ID}`)) {
+    // Without this the browser throws a bare SecurityError. Worth naming, because the usual cause
+    // is a preview deployment: a passkey enrolled there can never assert on the real site, and the
+    // symptom the user sees is "no backup found" for money that exists.
+    throw new Error(`This passkey belongs to ${RP_ID}. Open the site at that address to use Face ID.`);
+  }
   const assertion = (await navigator.credentials.get({
     publicKey: {
       ...(RP_ID ? { rpId: RP_ID } : {}),
@@ -115,5 +139,18 @@ export async function derivePasskeyPrf(credentialId?: Uint8Array): Promise<Uint8
   if (!first) {
     throw new Error("Face ID didn't return a key on this device. Your password still works.");
   }
-  return new Uint8Array(first);
+  const handle = (assertion.response as AuthenticatorAssertionResponse).userHandle;
+  return {
+    prf: new Uint8Array(first),
+    userHandle: handle ? new Uint8Array(handle) : null,
+    credentialId: new Uint8Array(assertion.rawId),
+  };
+}
+
+/**
+ * Re-derive just the PRF output from an existing passkey (for unwrapWithPrf on restore /
+ * fast-unlock). A thin wrapper over assertPasskeyPrf so existing callers are untouched.
+ */
+export async function derivePasskeyPrf(credentialId?: Uint8Array): Promise<Uint8Array> {
+  return (await assertPasskeyPrf(credentialId)).prf;
 }

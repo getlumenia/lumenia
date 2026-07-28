@@ -26,7 +26,7 @@ import { demoLinkHandler } from "./lib/demo-link.js";
 import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
-import { putBox, getBox } from "./lib/recovery-store.js";
+import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
 
 type Env = Record<string, unknown>;
@@ -259,10 +259,33 @@ export default {
       if (method === "POST" && url === "/recovery") {
         const rl = await enforceRateLimit(`rec:${clientIp(request)}`);
         if (rl.limited) return json(429, { error: rl.reason });
-        const body = (await readJson(request)) as { id?: unknown; box?: unknown; code?: unknown };
+        const body = (await readJson(request)) as { id?: unknown; box?: unknown; code?: unknown; aliasId?: unknown };
         if (!(await verifyOtp(body.id, body.code))) return json(401, { error: "invalid or expired code" });
         await putBox(body.id, body.box);
+        // Optional PRF alias, written behind the SAME verified code. Refusing aliasId === id is not
+        // defensive noise: it would drop an email-derived (low-entropy) id into the namespace whose
+        // fetch route has no OTP, which is exactly the bypass the two namespaces exist to prevent.
+        if (body.aliasId !== undefined) {
+          if (body.aliasId === body.id) return json(400, { error: "aliasId must differ from id" });
+          await putAliasBox(body.aliasId, body.box);
+        }
         return json(200, { ok: true });
+      }
+
+      /**
+       * Find-my-account: fetch a box by its PRF-derived alias id. NEVER OTP-gated, and reads ONLY
+       * the alias namespace. The id is 256 bits that only a user-verified passkey ceremony on this
+       * origin can produce, so possessing it already proves what a mailed code would prove; the box
+       * is ciphertext-only and useless without the same passkey. Its own limiter bucket so a
+       * restore storm can never eat the email-OTP budget.
+       */
+      if (method === "POST" && url === "/recovery-alias-fetch") {
+        const body = (await readJson(request)) as { id?: unknown };
+        const rl = await enforceRateLimit(`recpk:${clientIp(request)}`, typeof body.id === "string" ? body.id : undefined);
+        if (rl.limited) return json(429, { error: rl.reason });
+        const box = await getAliasBox(body.id);
+        if (!box) return json(404, { error: "not found" });
+        return json(200, { box });
       }
 
       if (method === "POST" && url === "/recovery-fetch") {

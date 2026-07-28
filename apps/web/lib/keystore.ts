@@ -42,6 +42,10 @@ const DB_VERSION = 2;
 const STORE = "keys";
 // Reserved id for the home-pointer record (a `G...` pubkey can never collide with it).
 const HOME_ID = "__home__";
+// Reserved id for the published-addresses record (see markPublished).
+const PUBLISHED_ID = "__published__";
+/** Reserved ids are NOT accounts. Anything added here must also stay out of listAccounts(). */
+const RESERVED = new Set<string>([HOME_ID, PUBLISHED_ID]);
 // The legacy single-account record id (pre-multi-account); migrated away in v2.
 const LEGACY_ID = "primary";
 
@@ -66,10 +70,16 @@ interface HomePointer {
   pubkey: string;
 }
 
-type StoredRecord = KeyRecord | HomePointer;
+/** The addresses the user has handed to somebody else (see markPublished). */
+interface PublishedRecord {
+  id: typeof PUBLISHED_ID;
+  pubkeys: string[];
+}
+
+type StoredRecord = KeyRecord | HomePointer | PublishedRecord;
 
 function isAccountRecord(r: StoredRecord): r is KeyRecord {
-  return r.id !== HOME_ID;
+  return !RESERVED.has(r.id);
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -148,7 +158,7 @@ async function idbDelete(id: string): Promise<void> {
 /** The home-pointer record, or null if no account has been adopted as home yet. */
 async function getHomePointer(): Promise<HomePointer | null> {
   const r = await idbGet(HOME_ID);
-  return r && !isAccountRecord(r) ? r : null;
+  return r && r.id === HOME_ID ? (r as HomePointer) : null;
 }
 
 /** Read one account record by pubkey, or null. */
@@ -187,6 +197,44 @@ export async function listAccounts(): Promise<{ pubkey: string; phase: Phase }[]
 /** Point home at an existing account. */
 export async function setHome(pubkey: string): Promise<void> {
   await idbPut({ id: HOME_ID, pubkey } satisfies HomePointer);
+}
+
+/* ------------------------- Published addresses ------------------------------
+ * An address becomes PUBLISHED the moment the user hands it to somebody else: pasted into an
+ * exchange's withdrawal screen, shown as a QR, written down. That changes what the app is allowed
+ * to do with it.
+ *
+ * Why this exists: /home consolidates every NON-home account into home, and that sweep ends in
+ * `accountMerge` — it CLOSES the account on-chain. Restoring a backup repoints home. So a user who
+ * published their address, then restored on a new phone, would have the published account merged
+ * away underneath them, and the withdrawal they were waiting for would bounce off an account that
+ * no longer exists. A published address is therefore never swept and never silently demoted.
+ * ---------------------------------------------------------------------------- */
+
+async function getPublishedRecord(): Promise<PublishedRecord | null> {
+  const all = await idbGetAll();
+  const rec = all.find((r) => r.id === PUBLISHED_ID);
+  return (rec as PublishedRecord | undefined) ?? null;
+}
+
+/** Remember that this address has been handed to somebody. Idempotent. */
+export async function markPublished(pubkey: string): Promise<void> {
+  const rec = await getPublishedRecord();
+  const pubkeys = new Set(rec?.pubkeys ?? []);
+  if (pubkeys.has(pubkey)) return;
+  pubkeys.add(pubkey);
+  await idbPut({ id: PUBLISHED_ID, pubkeys: [...pubkeys] } satisfies PublishedRecord);
+}
+
+/** Has this address been handed to somebody? (Consulted before any sweep.) */
+export async function isPublished(pubkey: string): Promise<boolean> {
+  const rec = await getPublishedRecord();
+  return (rec?.pubkeys ?? []).includes(pubkey);
+}
+
+/** Every address the user has handed out. */
+export async function listPublished(): Promise<string[]> {
+  return (await getPublishedRecord())?.pubkeys ?? [];
 }
 
 /**

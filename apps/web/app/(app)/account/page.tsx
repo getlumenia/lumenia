@@ -19,10 +19,11 @@ import Link from "next/link";
 import QRCode from "react-qr-code";
 import { Copy, Check, Send, HandCoins, ArrowDownLeft, ArrowUpRight, QrCode } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
-import { loadTotalUsd, loadActivity, type ActivityItem } from "../../../lib/horizon";
+import { loadTotalUsd, loadActivityForAccounts, type ActivityItem } from "../../../lib/horizon";
 import { formatUsd } from "../../../lib/money";
 import { LockMoneyCard } from "../../../components/brand/LockMoneyCard";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
+import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
 import { ThemeToggle } from "../../../components/site/ThemeToggle";
@@ -54,11 +55,22 @@ export default function AccountPage() {
     const addrs = accounts.length ? accounts.map((a) => a.address) : [account.address];
     // A brand-new account 404s on Horizon — loadTotalUsd/loadActivity return 0/[] honestly.
     loadTotalUsd(addrs)
-      .then((r) => alive && setTotal(r.usd))
-      .catch(() => alive && setTotal("0"));
-    loadActivity(account.address, 8)
-      .then((a) => alive && setActivity(a))
-      .catch(() => alive && setActivity([]));
+      .then(async (r) => {
+        if (!alive) return;
+        setTotal(r.usd);
+        // Same account set as the total, and paged so the account's own creation effects can no
+        // longer crowd the one credit that matters out of an 8-row window.
+        const acts = await loadActivityForAccounts(
+          r.perAccount.map((p) => ({ address: p.address, issuer: p.issuer, isHome: p.address === account!.address })),
+          8,
+        ).catch(() => [] as ActivityItem[]);
+        if (alive) setActivity(acts);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setTotal("0");
+        setActivity([]);
+      });
     return () => {
       alive = false;
     };
@@ -78,6 +90,8 @@ export default function AccountPage() {
             What is this?
           </Link>
         </div>
+        {/* The zero-typing path first: if they backed up with Face ID, nothing below is needed. */}
+        <FindWithFaceId />
         <MoneyCard className="p-5">
           <p className="font-semibold text-ink">Already have money on another phone?</p>
           <p className="mb-3 mt-1 text-sm text-ink-soft">
@@ -176,6 +190,13 @@ export default function AccountPage() {
             See it on the public record ↗
           </a>
         </div>
+        <p className="mt-3 text-sm text-ink-soft">
+          Having money sent here from somewhere else?{" "}
+          <Link href="/add-money" className="text-money underline-offset-2 hover:underline">
+            What they need to know
+          </Link>
+          .
+        </p>
         {/* The scannable code for handing money over in person. Drawn locally as plain SVG from the
             address already on screen — nothing is uploaded and no image service is called. The white
             plate + black pattern are fixed in both themes: a dark-on-dark code doesn't scan. */}

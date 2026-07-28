@@ -194,24 +194,124 @@ export async function loadLinkStatus(balanceId: string): Promise<"pending" | "se
   }
 }
 
-/** Money in/out for the account, newest first — derived from ledger effects. */
-export async function loadActivity(address: string, limit = 20): Promise<ActivityItem[]> {
+/**
+ * Is this effect a movement of the EXACT dollars this account holds?
+ *
+ * The issuer check is not pedantry. Anyone can issue an asset and call it USDC; matching on the
+ * code alone would render a stranger's look-alike token as money in someone's activity list.
+ * loadIncomingClaims already pins the issuer, and this now matches it. The parameter stays
+ * optional so an older call site degrades to the previous behaviour rather than throwing, but
+ * every call site in this repo passes it.
+ */
+export function isUsdcMovement(effect: unknown, issuer?: string): boolean {
+  const e = effect as { type?: string; asset_code?: string; asset_issuer?: string };
+  if (e.type !== "account_credited" && e.type !== "account_debited") return false;
+  if (e.asset_code !== "USDC") return false;
+  return issuer ? e.asset_issuer === issuer : true;
+}
+
+/** Map a matching effect to the UI shape. Pure, so the self-test can drive it with no network. */
+export function toActivityItem(effect: unknown): ActivityItem {
+  const e = effect as { id: string; type: string; amount: string; created_at: string };
+  return {
+    id: e.id,
+    direction: e.type === "account_credited" ? "in" : "out",
+    usd: e.amount,
+    at: e.created_at,
+  };
+}
+
+/**
+ * Page Horizon's effects until we have `want` MATCHES, or run out.
+ *
+ * The bug this exists to kill: Horizon applies `.limit()` on the server and the USDC filter runs
+ * here, afterwards. A freshly claimed account's newest effects are its CREATION effects
+ * (account_created, trustline_created, two sponsorship effects, signer_created), so asking for 8
+ * rows and filtering returned an empty list for an account that had just received $20 — /account
+ * said "No money in or out yet" while the balance above it said $20.
+ *
+ * Cost: the common case (an account with recent movement) still takes ONE request, because we only
+ * page when the first page came back short. maxPages bounds a noisy account so this can never spin.
+ */
+async function pageActivity(
+  address: string,
+  want: number,
+  issuer?: string,
+  maxPages = 4,
+): Promise<ActivityItem[]> {
+  const out: ActivityItem[] = [];
+  let page = await server().effects().forAccount(address).order("desc").limit(200).call();
+  for (let i = 0; i < maxPages; i++) {
+    for (const rec of page.records) {
+      if (isUsdcMovement(rec, issuer)) out.push(toActivityItem(rec));
+      if (out.length >= want) return out;
+    }
+    if (page.records.length === 0) break;
+    page = await page.next();
+  }
+  return out;
+}
+
+/**
+ * Money in/out for ONE account, newest first — derived from ledger effects.
+ * `issuer` is optional for backward compatibility; pass it (see isUsdcMovement).
+ */
+export async function loadActivity(address: string, limit = 20, issuer?: string): Promise<ActivityItem[]> {
   try {
-    const page = await server().effects().forAccount(address).order("desc").limit(limit).call();
-    return page.records
-      .filter(
-        (e) =>
-          (e.type === "account_credited" || e.type === "account_debited") &&
-          (e as { asset_code?: string }).asset_code === "USDC",
-      )
-      .map((e) => ({
-        id: e.id,
-        direction: e.type === "account_credited" ? ("in" as const) : ("out" as const),
-        usd: (e as { amount: string }).amount,
-        at: (e as { created_at: string }).created_at,
-      }));
+    return await pageActivity(address, limit, issuer);
   } catch (e) {
     if ((e as { response?: { status?: number } })?.response?.status === 404) return [];
     throw e;
   }
+}
+
+/** The most accounts we will ever read in one aggregate pass — a rate-limit guard. */
+const MAX_READ_ACCOUNTS = 8;
+
+/**
+ * Merge per-account activity into one list, newest first.
+ *
+ * The double-entry trap this handles: consolidating a per-link throwaway into home DEBITS the
+ * throwaway and CREDITS home for the same money. Both are real effects with distinct ids, so
+ * de-duplicating cannot catch it, and the user would see "Sent $20" next to "Received $20" for
+ * money that never left them. A throwaway only ever debits when sweeping home, so dropping
+ * non-home debits removes the phantom without hiding anything genuine.
+ */
+export function mergeActivity(
+  perAccount: { items: ActivityItem[]; isHome: boolean }[],
+  limit: number,
+): ActivityItem[] {
+  const seen = new Set<string>();
+  const all: ActivityItem[] = [];
+  for (const { items, isHome } of perAccount) {
+    for (const it of items) {
+      if (!isHome && it.direction === "out") continue;
+      if (seen.has(it.id)) continue;
+      seen.add(it.id);
+      all.push(it);
+    }
+  }
+  return all.sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
+}
+
+/**
+ * Money in/out across EVERY stored account, newest first.
+ *
+ * Each claim link creates its own throwaway account. Money paid to one that hasn't been swept yet
+ * is still the user's money, and reading only `home` meant it counted in the balance total but
+ * never appeared as a movement — the balance went up and the activity list stayed empty. Reads run
+ * in parallel; one account failing never blanks the whole list.
+ */
+export async function loadActivityForAccounts(
+  accounts: { address: string; issuer?: string; isHome: boolean }[],
+  limit = 20,
+): Promise<ActivityItem[]> {
+  const capped = accounts.slice(0, MAX_READ_ACCOUNTS);
+  const per = await Promise.all(
+    capped.map(async (a) => ({
+      isHome: a.isHome,
+      items: await loadActivity(a.address, limit, a.issuer).catch(() => [] as ActivityItem[]),
+    })),
+  );
+  return mergeActivity(per, limit);
 }

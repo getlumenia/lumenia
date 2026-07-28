@@ -32,8 +32,10 @@
     "test:watchdog": "tsx src/test-watchdog.ts",
     "check:live-v2": "tsx src/live-v2-check.ts",
     "check:live-payout": "tsx src/live-payout-check.ts",
+    "check:live-recovery": "tsx src/live-recovery-check.ts",
     "mainnet-demo": "tsx src/mainnet-demo.ts",
     "test:antidrain": "tsx src/test-antidrain.ts",
+    "test:recovery-store": "tsx src/test-recovery-store.ts",
     "test:integration": "tsx src/test-integration.ts"
   },
   "dependencies": {

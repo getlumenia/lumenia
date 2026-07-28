@@ -96,6 +96,40 @@ async function prfToKey(prf: Uint8Array, hkdfSalt: Uint8Array): Promise<Uint8Arr
   return new Uint8Array(bits);
 }
 
+/**
+ * A SECOND, independent value from the SAME PRF output: the server-side lookup id for this box.
+ *
+ * This is what makes "find my account with one Face ID tap" possible. The box carries no id, no
+ * address and no email, and until now could only be addressed by SHA-256(email) behind a mailed
+ * code. Derived here from the authenticator's own secret instead, the id is 256 bits that only a
+ * successful user-verified ceremony on this origin can produce.
+ *
+ * Two deliberate differences from prfToKey, both load-bearing:
+ *   - a DIFFERENT HKDF `info` label, so the id is computationally independent of the AES wrap key
+ *     and can be handed to a server without leaking a bit of it;
+ *   - a FIXED all-zero salt rather than the box's random hkdfSalt, because the id must be
+ *     computable BEFORE the box that carries that salt can be fetched. RFC 5869 allows this, and
+ *     the PRF output is already a uniformly random secret, so domain separation comes entirely
+ *     from `info`. The differing salt also yields a different PRK, so independence is doubly held.
+ *
+ * WIRE FORMAT, PERMANENT. The label, the salt and the 32-byte length can never change once one
+ * alias exists on the server: changing any of them silently orphans every stored backup and tells
+ * the user "no backup found" for money that is perfectly safe. The frozen vector in
+ * recovery.selftest.ts fails loudly if any of it drifts.
+ */
+const ID_HKDF_INFO = new TextEncoder().encode("lumenia-recovery-id-v1");
+const ID_HKDF_SALT = new Uint8Array(32); // all zeroes, on purpose (see above)
+
+export async function prfToBoxId(prf: Uint8Array): Promise<string> {
+  const ikm = await crypto.subtle.importKey("raw", bs(prf), "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt: bs(ID_HKDF_SALT), info: bs(ID_HKDF_INFO) },
+    ikm,
+    256,
+  );
+  return [...new Uint8Array(bits)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /* --------------------------------- password ---------------------------------- */
 
 export async function wrapWithPassword(

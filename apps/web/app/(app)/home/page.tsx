@@ -18,10 +18,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Split } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
-import { loadBalance, loadActivity, loadIncomingClaims, loadLinkStatus, loadTotalUsd, type ActivityItem, type IncomingClaim } from "../../../lib/horizon";
+import { loadBalance, loadActivityForAccounts, loadIncomingClaims, loadLinkStatus, loadTotalUsd, type ActivityItem, type IncomingClaim } from "../../../lib/horizon";
 import { collectIncoming } from "../../../lib/claim";
 import { sweepIntoHome } from "../../../lib/sweep";
-import { unlockPhase1, removeAccount } from "../../../lib/keystore";
+import { unlockPhase1, removeAccount, isPublished } from "../../../lib/keystore";
 import { indicativeRate, getLiveRate } from "../../../lib/rate";
 import { formatUsd } from "../../../lib/money";
 import { BalanceHeader } from "../../../components/brand/BalanceHeader";
@@ -74,12 +74,17 @@ export default function HomePage() {
     // even money stuck in a throwaway a sweep couldn't move still shows in the total,
     // so nothing is ever hidden or lost (RECOVERY_ARCHITECTURE §3.1).
     const addresses = accounts.length > 0 ? accounts.map((a) => a.address) : [account.address];
-    const [total, acts] = await Promise.all([
-      loadTotalUsd(addresses),
-      loadActivity(account.address),
-    ]);
+    const total = await loadTotalUsd(addresses);
     setUsd(total.usd);
-    setActivity(acts);
+    // Activity follows the SAME account set as the total. Reading only home meant money paid
+    // straight to a not-yet-swept per-link account raised the balance and showed no movement at
+    // all — the balance said $20 and the list said nothing had happened. Each account's issuer
+    // comes from its own trustline, so a look-alike token can never pose as money.
+    setActivity(
+      await loadActivityForAccounts(
+        total.perAccount.map((p) => ({ address: p.address, issuer: p.issuer, isHome: p.address === account.address })),
+      ),
+    );
     // The home trustline's own issuer pins the exact asset — a look-alike token can't
     // pose as money waiting. No trustline yet → nothing to collect into.
     const home = total.perAccount.find((p) => p.address === account.address);
@@ -117,6 +122,11 @@ export default function HomePage() {
       for (const other of others) {
         if (cancelled) break;
         try {
+          // NEVER sweep an address the user has handed to somebody else. The sweep ends in
+          // accountMerge, which CLOSES the account on-chain; an exchange withdrawal already on
+          // its way to it would bounce off an account that no longer exists. Publishing is
+          // recorded locally by /add-money (keystore.markPublished).
+          if (await isPublished(other.address)) continue;
           // Drive off the USDC BALANCE: the frozen /c/[id] route already claimed the
           // incoming CB into the throwaway, so the money sits as plain USDC (no open
           // CB) — the production bug case. Sweep that balance home with the claim-less
@@ -343,9 +353,18 @@ export default function HomePage() {
         <p className="font-semibold text-ink">{copy.cashOut.title}</p>
         <p className="mt-1 text-sm text-ink-soft">{copy.cashOut.liveRow}</p>
         <div className="mt-3 flex flex-wrap gap-2">
+          {/* Inbound sits beside outbound rather than in the action tiles above: on the test
+              network an exchange deposit cannot arrive, and a hero tile would promise more than
+              the product can do. It becomes a tile on the mainnet cut. */}
+          <Link
+            href="/add-money"
+            className="inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+          >
+            {copy.receive.title}
+          </Link>
           <Link
             href="/send-out"
-            className="inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+            className="inline-flex h-10 items-center rounded-full border border-line px-4 text-sm font-medium text-ink"
           >
             {copy.cashOut.sendOutCta}
           </Link>

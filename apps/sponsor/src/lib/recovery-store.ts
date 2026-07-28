@@ -82,8 +82,27 @@ function validateId(id: unknown): string {
   return id;
 }
 
-/** Store (or replace) the box for `id`. Ciphertext-only; validated strictly. */
-export async function putBox(rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
+/* ---------------------------------------------------------------------------
+ * TWO NAMESPACES, and the separation IS the security control.
+ *
+ * The email-keyed id is SHA-256(email): LOW entropy. Know somebody's email and you know their id,
+ * so the mailed OTP is the only thing standing between an attacker and their box. It must stay
+ * OTP-gated forever.
+ *
+ * The alias id is HKDF over a WebAuthn PRF output (apps/web/lib/recovery.ts::prfToBoxId): 256 bits
+ * that only a user-verified passkey ceremony on this origin can produce. Possessing it already
+ * proves what an OTP would prove, so the alias FETCH is deliberately not OTP-gated — that is what
+ * makes "find my account with one Face ID tap, no email, no code" possible.
+ *
+ * Both are 64 lowercase hex and the server cannot tell them apart. So the distinction can NEVER be
+ * a flag on a shared route: an un-OTP'd fetch that read the email namespace would hand any box to
+ * anyone who knows the victim's email address. It has to be a different key prefix behind a
+ * different route, and test-recovery-store.ts asserts the isolation in both directions.
+ * --------------------------------------------------------------------------- */
+const KEY_EMAIL = "lumenia:recovery:";
+const KEY_ALIAS = "lumenia:recovery-pk:";
+
+async function putBoxAt(prefix: string, rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
   const id = validateId(rawId);
   const box = validateBox(rawBox);
   const json = JSON.stringify(box);
@@ -91,11 +110,11 @@ export async function putBox(rawId: unknown, rawBox: unknown): Promise<{ ok: tru
 
   const kv = kvConfigFromEnv();
   if (!kv) {
-    mem.set(id, json);
-    console.log(`[recovery:put] ${id.slice(0, 8)}… (no KV — in-memory fallback)`);
+    mem.set(prefix + id, json);
+    console.log(`[recovery:put] ${prefix}${id.slice(0, 8)}… (no KV — in-memory fallback)`);
     return { ok: true };
   }
-  const res = await fetch(`${kv.url}/set/lumenia:recovery:${id}`, {
+  const res = await fetch(`${kv.url}/set/${prefix}${id}`, {
     method: "POST",
     headers: { authorization: `Bearer ${kv.token}` },
     body: json, // Upstash SET: the raw request body is the value
@@ -104,18 +123,44 @@ export async function putBox(rawId: unknown, rawBox: unknown): Promise<{ ok: tru
   return { ok: true };
 }
 
-/** Fetch the box for `id`, or null if none. (OTP-gating on this path lands in §12 step 3.) */
-export async function getBox(rawId: unknown): Promise<RecoveryBox | null> {
+async function getBoxAt(prefix: string, rawId: unknown): Promise<RecoveryBox | null> {
   const id = validateId(rawId);
   const kv = kvConfigFromEnv();
   if (!kv) {
-    const v = mem.get(id);
+    const v = mem.get(prefix + id);
     return v ? (JSON.parse(v) as RecoveryBox) : null;
   }
-  const res = await fetch(`${kv.url}/get/lumenia:recovery:${id}`, {
+  const res = await fetch(`${kv.url}/get/${prefix}${id}`, {
     headers: { authorization: `Bearer ${kv.token}` },
   });
   if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
   const data = (await res.json()) as { result?: string | null };
   return data.result ? (JSON.parse(data.result) as RecoveryBox) : null;
+}
+
+/** Store (or replace) the EMAIL-keyed box. Always OTP-gated at the route. */
+export async function putBox(rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
+  return putBoxAt(KEY_EMAIL, rawId, rawBox);
+}
+
+/** Fetch the EMAIL-keyed box, or null. Always OTP-gated at the route. */
+export async function getBox(rawId: unknown): Promise<RecoveryBox | null> {
+  return getBoxAt(KEY_EMAIL, rawId);
+}
+
+/**
+ * Store the PRF-alias copy of a box. Written only from /recovery, i.e. behind the same OTP the
+ * email copy is: the backup flow already holds a verified code, so piggybacking widens no surface.
+ * The box is DUPLICATED rather than stored as a pointer — a pointer looks tidier but breaks the
+ * moment the user re-backs-up from a device with no Face ID, leaving somebody who just passed Face
+ * ID staring at "this backup has no Face ID key". A stale duplicate is harmless: the seed never
+ * rotates, so an older box still restores the correct account.
+ */
+export async function putAliasBox(rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
+  return putBoxAt(KEY_ALIAS, rawId, rawBox);
+}
+
+/** Fetch the PRF-alias box, or null. Read by the un-OTP'd alias route ONLY. */
+export async function getAliasBox(rawId: unknown): Promise<RecoveryBox | null> {
+  return getBoxAt(KEY_ALIAS, rawId);
 }
