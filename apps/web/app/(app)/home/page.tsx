@@ -31,6 +31,7 @@ import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
 import { copy } from "../../../lib/copy";
+import { sendEvent } from "../../../lib/events";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
 
@@ -191,8 +192,8 @@ export default function HomePage() {
           {copy.claim.ctaRequest}
         </Link>
         {/* A first-timer who deep-linked here needs a path INTO the product, not a wall. */}
-        <Link href="/demo" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
-          Try the demo — receive real test money
+        <Link href="/try" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
+          See how receiving works
         </Link>
         <Link href="/how-it-works" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
           See how it works
@@ -333,11 +334,29 @@ export default function HomePage() {
         )}
       </section>
 
-      {/* Cash-out — delegated to a licensed partner; Lumenia never converts. Stated as an
-          info row, not dead buttons: no affordance is promised that can't be tapped. */}
+      {/* Cash-out — the first leg is now a real step (/send-out), so this card carries
+          actions instead of a "coming soon" note. Lumenia still never converts to lira;
+          that stays a licensed exchange's job, which the copy keeps saying. Reachable
+          from here as well as /account: someone looking at their balance and wanting
+          cash shouldn't have to find a settings screen first. */}
       <MoneyCard className="p-5">
         <p className="font-semibold text-ink">{copy.cashOut.title}</p>
-        <p className="mt-1 text-sm text-ink-soft">{copy.cashOut.infoRow}</p>
+        <p className="mt-1 text-sm text-ink-soft">{copy.cashOut.liveRow}</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link
+            href="/send-out"
+            className="inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+          >
+            {copy.cashOut.sendOutCta}
+          </Link>
+          <Link
+            href="/cash-out"
+            onClick={() => account && void sendEvent("cashout_guide_opened", account.address)}
+            className="inline-flex h-10 items-center rounded-full border border-line px-4 text-sm font-medium text-ink"
+          >
+            {copy.cashOut.guideCta}
+          </Link>
+        </div>
       </MoneyCard>
     </div>
   );

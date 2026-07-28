@@ -37,6 +37,11 @@ const ALLOWED = new Set([
   // content to hold dollars (the dollarization thesis), instead of asserting it.
   // Carries the hashed account. Must stay in step with apps/sponsor/src/lib/events.ts.
   "cashout_guide_opened",
+  // The off-ramp step actually TAKEN (/send-out): dollars sent to an exchange deposit
+  // address. cashout_guide_opened measures curiosity; this measures follow-through, and
+  // the gap between them is the honest answer to "do people want to off-ramp?".
+  // Carries the hashed account. Must stay in step with apps/sponsor/src/lib/events.ts.
+  "cashout_sent",
 ]);
 
 /** Short, non-reversible id for funnel correlation — SHA-256, first 8 bytes. */

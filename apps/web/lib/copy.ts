@@ -117,6 +117,15 @@ export const copy = {
     // lowercased "Turkish lira" mid-sentence.
     infoRow:
       "Spending with a card and converting to Turkish lira arrive through a licensed partner — coming soon. Until then, your dollars stay yours to send.",
+    // ADDITIVE (frozen-route import graph — never edit the keys above). The card on
+    // /home stopped being a placeholder once /send-out shipped: the first leg of a
+    // cash-out is now a real, tappable step, so the copy says what you can do rather
+    // than what is coming. The lira conversion itself is still someone else's job,
+    // which is exactly what the second line keeps saying.
+    liveRow:
+      "You can move your dollars to a licensed exchange from here, and turn them into lira there. We never touch lira ourselves, and the guide walks the whole route.",
+    sendOutCta: "Send to an exchange",
+    guideCta: "Read the guide",
   },
   errors: {
     notFound: "This link is invalid or has expired.",
