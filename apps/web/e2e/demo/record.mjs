@@ -22,10 +22,12 @@ import { mkdir, rm, readdir, rename } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { CURSOR_SCRIPT, moveTo, click, type, scrollBy, scrollTo, beat, sleep } from "./cursor.mjs";
+import { budgetFor } from "./timing.mjs";
 
 const WEB = (process.env.WEB_URL ?? "https://getlumenia.com").replace(/\/$/, "");
 const OUT = path.resolve("e2e/demo/.raw");
 const VIEWPORT = { width: 1440, height: 900 };
+
 
 const scenes = [];
 const PROFILES = path.join(os.tmpdir(), "lumenia-demo-profiles");
@@ -40,6 +42,9 @@ const PROFILES = path.join(os.tmpdir(), "lumenia-demo-profiles");
  */
 async function scene(name, profile, fn) {
   const dir = path.join(OUT, name);
+  // Shoot to the narration's window (timing.mjs). build.mjs conforms the clip afterwards, so an
+  // overrun here costs nothing but a warning — it just means this scene has no idle tail left.
+  const budget = budgetFor(name);
   await mkdir(dir, { recursive: true });
   const context = await chromium.launchPersistentContext(path.join(PROFILES, profile), {
     viewport: VIEWPORT,
@@ -58,13 +63,19 @@ async function scene(name, profile, fn) {
     await context.close().catch(() => {});
     throw e;
   }
+  // Hold the last shot until the narration moves on. Idling is better than padding with motion:
+  // the voice is still talking about what is already on screen.
+  const spent = (Date.now() - started) / 1000;
+  if (budget > 0 && spent < budget) await sleep((budget - spent) * 1000);
   const secs = ((Date.now() - started) / 1000).toFixed(1);
+  const over = Number(secs) - budget;
+  if (budget > 0 && over > 0.6) console.log(`    (over budget by ${over.toFixed(1)}s — trim this scene's beats)`);
   await context.close(); // flushes the video
   // Playwright names videos by an internal id; give each scene a sortable filename.
   const files = (await readdir(dir)).filter((f) => f.endsWith(".webm"));
   if (files[0]) await rename(path.join(dir, files[0]), path.join(OUT, `${name}.webm`));
   scenes.push({ name, secs });
-  console.log(`  + ${name}  ${secs}s`);
+  console.log(`  + ${name}  ${secs}s / ${budget.toFixed(1)}s budget`);
 }
 
 /** Land on a page with the pointer already in frame, so nothing pops in. */

@@ -132,4 +132,6 @@ contracts/lumen-drop/test_snapshots/test/global_solvency_exact_over_mixed_popula
 # would bloat every clone and go stale the moment the product moves.
 lumenia-demo.mp4
 lumenia-demo-script.txt
+lumenia-pitch-voice.opus
+lumenia-pitch-voice.json
 apps/web/e2e/demo/.raw/
