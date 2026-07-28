@@ -125,7 +125,6 @@ async function main() {
     ok(
       "FROZEN VECTOR — the wire format has not drifted",
       idA === "14f8b0e801e85063ca99b95806f9803f1ab1ffde4a91baf8c22616e8c6d73e44",
-      idA,
     );
 
     // Independence: the id must not be usable as the wrap key. If HKDF's info label or salt were
