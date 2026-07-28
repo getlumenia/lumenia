@@ -10,7 +10,7 @@ export const copy = {
   appName: "Lumenia",
   landing: {
     headline: "Send money, hold dollars.",
-    sub: "Send dollars to the people you love with a link — they receive it in one tap. No app, no setup.",
+    sub: "Send dollars to the people you love with a link, and they receive it in one tap. No app, no setup.",
     cta: "How does it work?",
   },
   claim: {
@@ -25,7 +25,7 @@ export const copy = {
     receipt: "See the public record",
     error: (name: string) => `We couldn't finish — your money from ${name} is still safe. Try again.`,
     retry: "Try again",
-    holdHint: "Your dollars stay right here — spend them whenever you like.",
+    holdHint: "Your dollars stay right here, to spend whenever you like.",
     // post-claim next action (the north-star hand-off)
     ctaSend: "Send money to someone",
     ctaRequest: "Ask someone to pay you",
@@ -48,12 +48,12 @@ export const copy = {
     // Honest notes about what happens after — different per asker (§5.1).
     noteWithAccount: "When they pay, the money lands here for you to collect.",
     noteWithoutAccount:
-      "When they pay, they'll send a money link back in the same chat — tap it and the money is yours.",
+      "When they pay, they'll send a money link back in the same chat. Tap it and the money is yours.",
     readyTitle: "Your request is ready",
     shareCta: "Share on WhatsApp",
     recentTitle: "Your recent asks",
     waText: (name: string, amount: string, link: string) =>
-      `Hi, it's ${name} — could you send me ${amount}? You can pay it here: ${link}`,
+      `Hi, it's ${name}. Could you send me ${amount}? You can pay it here: ${link}`,
   },
   /** The payer's side of a request — /r/[id]. */
   pay: {
@@ -66,7 +66,7 @@ export const copy = {
     noMoneyBody: "Money here arrives as a link. When someone sends you one, you can come back and pay this.",
     // The WhatsApp webview has its own separate storage — a payer whose money
     // lives in their real browser must not be told they have none (webview law).
-    browserHint: "Received money here before? This chat window can't see it — open this page in your usual browser.",
+    browserHint: "Received money here before? This chat window can't see it. Open this page in your usual browser.",
     copyPageLink: "Copy this page's link",
     tryDemo: "Try it out first",
     invalid: "This request link is incomplete. Ask them to send it again.",
@@ -74,9 +74,9 @@ export const copy = {
     doublePayNote: (name: string) => `If someone else may have paid this already, check with ${name} first.`,
     // Self-pay: her own request opened on her own device.
     ownRequestTitle: "This is your own request",
-    ownRequestBody: "Share the link with the person you're asking — when they pay, the money shows up on your home screen.",
+    ownRequestBody: "Share the link with the person you're asking. When they pay, the money shows up on your home screen.",
     directNote: (name: string, tail: string) => `Goes straight to ${name}'s account (ending ${tail}).`,
-    paidDirectTitle: "Paid — it's on its way",
+    paidDirectTitle: "Paid, and on its way",
     paidDirectBody: (name: string) =>
       `${name} will find it waiting the next time they open Lumenia. If it isn't collected, it comes back to you after 7 days.`,
     sendBackTitle: (name: string) => `Now send this link back to ${name}`,
@@ -111,12 +111,12 @@ export const copy = {
     spendCard: "Spend with a card",
     toTry: "Convert to Turkish lira",
     soon: "Coming soon",
-    delegatedNote: "Conversion is handled by a licensed provider — coming soon.",
+    delegatedNote: "Conversion is handled by a licensed provider, coming soon.",
     // ADDITIVE (this file is in the frozen claim route's import graph): the /home
     // info row as ONE written sentence — composing it from the labels above
     // lowercased "Turkish lira" mid-sentence.
     infoRow:
-      "Spending with a card and converting to Turkish lira arrive through a licensed partner — coming soon. Until then, your dollars stay yours to send.",
+      "Spending with a card and converting to Turkish lira arrive through a licensed partner, coming soon. Until then, your dollars stay yours to send.",
     // ADDITIVE (frozen-route import graph — never edit the keys above). The card on
     // /home stopped being a placeholder once /send-out shipped: the first leg of a
     // cash-out is now a real, tappable step, so the copy says what you can do rather
@@ -133,11 +133,11 @@ export const copy = {
     // For failed sends/pays: technical reasons (Horizon extras, status codes) must
     // never reach a money surface (vocabulary law). Honest: a rejected inner tx
     // means nothing moved.
-    moneySafe: "We couldn't finish — your money hasn't moved. Try again.",
+    moneySafe: "We couldn't finish. Your money hasn't moved. Try again.",
     // Collect: the waiting money is already GONE (collected earlier, or the sender
     // reclaimed it after 7 days). Terminal, not retryable — the list refreshes so
     // the stale item disappears. Told calmly, never as "try again forever".
-    collectGone: "This money is no longer waiting — it may already be in your account, or the sender took it back.",
+    collectGone: "This money is no longer waiting. It may already be in your account, or the sender took it back.",
   },
   /**
    * Feedback — the "report a problem" channel (FeedbackDialog → sponsor /feedback,
@@ -148,7 +148,7 @@ export const copy = {
     linkLabel: "Report a problem",
     somethingWrong: "Something wrong? Tell us.",
     title: "Report a problem",
-    sub: "Tell us what went wrong — we read every note.",
+    sub: "Tell us what went wrong. We read every note.",
     categoryLabel: "What is it about?",
     catClaim: "Receiving money",
     catSend: "Sending money",
@@ -159,12 +159,12 @@ export const copy = {
     messageLabel: "What happened?",
     messagePlaceholder: "The more detail, the faster we can help.",
     contactLabel: "How can we reach you? (optional)",
-    contactPlaceholder: "Email or phone — only if you want a reply",
+    contactPlaceholder: "Email or phone, only if you want a reply",
     submit: "Send it",
     sending: "Sending…",
     cancel: "Cancel",
     close: "Done",
-    done: "Thank you — we got it.",
+    done: "Thank you, we got it.",
     doneSub: "If you left a way to reach you, we'll follow up.",
     error: "We couldn't send that. Please try again.",
   },

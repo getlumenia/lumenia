@@ -9,7 +9,7 @@ import type { Metadata } from "next";
 import { RequestClient } from "./RequestClient";
 
 export const metadata: Metadata = {
-  title: "Ask for money — Lumenia",
+  title: "Ask for money | Lumenia",
   description: "Make a link that asks someone to pay you. Share it in any chat.",
   robots: { index: false },
 };

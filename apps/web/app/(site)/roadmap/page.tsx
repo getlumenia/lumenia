@@ -20,12 +20,12 @@ import "../../../components/site/page.css";
 import "../../../components/site/editorial.css";
 
 const PAGE_TITLE = "Roadmap";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION =
   "Honest about the line between what works today and what's still ahead: what's proven, what we're building, and what comes next.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/roadmap" },
   openGraph: {
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -83,7 +83,7 @@ export default function Roadmap() {
             <span className="pg-dot" aria-hidden="true" />
             Roadmap
           </p>
-          <h1 className="pg-h1">What works today — and what doesn&apos;t yet.</h1>
+          <h1 className="pg-h1">What works today, and what doesn&apos;t yet.</h1>
           <p className="pg-lead">
             Most roadmaps are a wish list with the dates removed. This one draws the line instead:
             everything under <strong>Proven</strong> you can go and check right now, and everything
@@ -115,7 +115,7 @@ export default function Roadmap() {
 
         <div className="ed-close">
           <p className="ed-close-p">
-            The &ldquo;Proven&rdquo; list isn&apos;t a claim — it&apos;s a set of transactions on a
+            The &ldquo;Proven&rdquo; list isn&apos;t a claim. It&apos;s a set of transactions on a
             public ledger. <Link href="/how-it-works">Open one and check it yourself.</Link>
           </p>
           <div className="pg-cta">

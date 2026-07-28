@@ -18,16 +18,16 @@ import "../../../components/site/page.css";
 import "../../../components/site/tools.css";
 
 export const metadata: Metadata = {
-  title: "You just received money", // the (site) layout template appends “ — Lumenia”
+  title: "You just received money", // the (site) layout template appends “ | Lumenia”
   description: "You received money with Lumenia. Here's what that means.",
   robots: { index: false },
 };
 
 const POINTS: Array<{ title: string; body: string }> = [
-  { title: "It's yours.", body: "Once you've claimed it, it's yours to keep — nobody can take it back." },
+  { title: "It's yours.", body: "Once you've claimed it, it's yours to keep, and nobody can take it back." },
   { title: "It's held in dollars.", body: "The amount doesn't melt away or wobble. Hold it as long as you like." },
-  { title: "No app, no account.", body: "You claimed it right in your browser — nothing to install." },
-  { title: "You can pass it on.", body: "Send money onward with a link of your own, or ask someone to pay you — the same way this reached you." },
+  { title: "No app, no account.", body: "You claimed it right in your browser. Nothing to install." },
+  { title: "You can pass it on.", body: "Send money onward with a link of your own, or ask someone to pay you, the same way this reached you." },
 ];
 
 export default function Claimed() {

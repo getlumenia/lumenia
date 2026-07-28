@@ -9,11 +9,11 @@ import "../../../components/site/page.css";
 import "../../../components/site/editorial.css";
 
 const PAGE_TITLE = "Privacy";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION = "Plain language: exactly what Lumenia holds and what it doesn't. Your money lives on a public ledger, never in a Lumenia account; your password never leaves your phone.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/privacy" },
   openGraph: {
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -56,12 +56,12 @@ export default function Privacy() {
           <ul>
             <li>
               If you choose to lock your money with a password, an <strong>encrypted backup</strong>{" "}
-              of your key — scrambled with your password, which we don&apos;t have. To us it&apos;s
+              of your key, scrambled with your password, which we don&apos;t have. To us it&apos;s
               meaningless noise; only your password unlocks it.
             </li>
             <li>
               If you join the waitlist or ask to be notified about cash-out, your{" "}
-              <strong>email</strong> — kept on its own, never tied to your money or any account.
+              <strong>email</strong>, kept on its own, never tied to your money or any account.
             </li>
             <li>Basic, non-identifying counts to see whether the product works (e.g. did a claim succeed).</li>
           </ul>

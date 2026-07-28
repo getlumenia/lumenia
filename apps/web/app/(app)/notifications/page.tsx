@@ -67,7 +67,7 @@ export default function NotificationsPage() {
       <div className="flex flex-col items-center gap-3 py-16 text-center">
         <h1 className="text-xl font-bold text-ink">Nothing here yet</h1>
         <p className="max-w-xs text-ink-soft">
-          When money arrives or is waiting for you, you&apos;ll see it here — straight from the public
+          When money arrives or is waiting for you, you&apos;ll see it here, straight from the public
           record.
         </p>
         <Link href="/home" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
@@ -124,14 +124,14 @@ export default function NotificationsPage() {
     <div className="flex flex-col gap-4 py-4">
       <header>
         <h1 className="text-xl font-bold text-ink">Notifications</h1>
-        <p className="mt-1 text-sm text-ink-soft">Money in, waiting, and coming back to you — from the public record.</p>
+        <p className="mt-1 text-sm text-ink-soft">Money in, waiting, and coming back to you, all from the public record.</p>
       </header>
 
       {loading && notices.length === 0 ? (
         <p className="py-6 text-center text-sm text-ink-soft">Loading…</p>
       ) : notices.length === 0 ? (
         <p className="py-10 text-center text-sm text-ink-soft">
-          Nothing yet — when money arrives, you&apos;ll see it here.
+          Nothing yet. When money arrives, you&apos;ll see it here.
         </p>
       ) : (
         <div className="flex flex-col gap-3">

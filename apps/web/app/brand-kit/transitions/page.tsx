@@ -1,11 +1,11 @@
 /**
- * /brand-kit/transitions — a sandbox comparing professional section-transition styles for the
+ * /brand-kit/transitions, a sandbox comparing professional section-transition styles for the
  * Lumenia landing. The LOCKED default is "overlay" (the next section scrolls up over the pinned
- * one — same as /brand-kit/opening's greeting→scrub). This page also demos three variants:
+ * one: same as /brand-kit/opening's greeting→scrub). This page also demos three variants:
  * recede, cross-dissolve, and iris/clip. Uniform layout per unit: A pinned (sticky z0), B pinned
  * over it (sticky z1, overlapping), unit 200vh for scroll room; a rAF reads each unit's scroll
  * progress and drives B's transform/opacity/clip (recede also transforms A). Reduced-motion falls
- * back to normal stacked flow. ISOLATED workspace route — never touches the live landing.
+ * back to normal stacked flow. ISOLATED workspace route, never touches the live landing.
  */
 "use client";
 
@@ -15,8 +15,8 @@ import SmoothScroll from "../../../components/brand/SmoothScroll";
 type Kind = "overlay" | "recede" | "dissolve" | "clip";
 const UNITS: { kind: Kind; n: string; name: string; desc: string; a: string; b: string }[] = [
   { kind: "overlay", n: "01", name: "Overlay reveal", desc: "The next section scrolls up over the pinned one. This is the locked default for every section on the landing.", a: "bg-paper", b: "bg-accent" },
-  { kind: "recede", n: "02", name: "Recede + overlay", desc: "As the next section covers it, the pinned one scales back, dims and blurs — receding into depth.", a: "bg-accent", b: "bg-paper" },
-  { kind: "dissolve", n: "03", name: "Cross-dissolve", desc: "The section dissolves into the next in place — a soft opacity cross-fade, no motion.", a: "bg-paper", b: "bg-dark" },
+  { kind: "recede", n: "02", name: "Recede + overlay", desc: "As the next section covers it, the pinned one scales back, dims and blurs, receding into depth.", a: "bg-accent", b: "bg-paper" },
+  { kind: "dissolve", n: "03", name: "Cross-dissolve", desc: "The section dissolves into the next in place, a soft opacity cross-fade, no motion.", a: "bg-paper", b: "bg-dark" },
   { kind: "clip", n: "04", name: "Iris reveal", desc: "The next section irises in from the centre via an expanding circular mask.", a: "bg-dark", b: "bg-accent" },
 ];
 
@@ -91,7 +91,7 @@ function Sandbox() {
 
       <footer className="trx-outro bg-paper">
         <h2 className="trx-name">Default everywhere: overlay.</h2>
-        <p className="trx-desc">Each landing section is <code>position:sticky; top:0</code> with a rising z-index — the next slides over the pinned one.</p>
+        <p className="trx-desc">Each landing section is <code>position:sticky; top:0</code> with a rising z-index: the next slides over the pinned one.</p>
       </footer>
     </div>
   );

@@ -56,7 +56,7 @@ export async function isPlatformAuthenticatorAvailable(): Promise<boolean> {
 }
 
 function notSupported(): never {
-  throw new Error("Face ID isn't available on this device — your password still works.");
+  throw new Error("Face ID isn't available on this device. Your password still works.");
 }
 
 /**
@@ -113,7 +113,7 @@ export async function derivePasskeyPrf(credentialId?: Uint8Array): Promise<Uint8
   const ext = assertion.getClientExtensionResults() as PrfExtOutput;
   const first = ext.prf?.results?.first;
   if (!first) {
-    throw new Error("Face ID didn't return a key on this device — your password still works.");
+    throw new Error("Face ID didn't return a key on this device. Your password still works.");
   }
   return new Uint8Array(first);
 }

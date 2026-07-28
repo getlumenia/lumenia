@@ -1,10 +1,10 @@
 /**
- * /brand-kit/object — ISOLATED three.js inspector for the Meshy hero GLB. Nothing
+ * /brand-kit/object: ISOLATED three.js inspector for the Meshy hero GLB. Nothing
  * here touches the live landing or the frozen claim route. We view the generated
  * object directly (react-three-fiber + drei) over the Periwinkle ground.
  *
  * FINDING: Meshy's PBR refine baked GARBLED TEXT onto the face (it turned the
- * "debossed checkmark" instruction into nonsense glyphs) — a brand.md §8 violation.
+ * "debossed checkmark" instruction into nonsense glyphs), a brand.md §8 violation.
  * So we DISCARD the baked texture and drive the surface ourselves: the matte-cream
  * ceramic is a three.js material override on the (lighter, 688 KB) preview mesh, and
  * the checkmark is a canvas-drawn accent Decal (no AI). The "Raw Meshy PBR" tab is
@@ -159,7 +159,7 @@ export default function ObjectInspector() {
 
       <div className="oi-head">
         <span className="oi-mark">Lumenia</span>
-        <span className="oi-sub">Hero object — three.js inspector</span>
+        <span className="oi-sub">Hero object: three.js inspector</span>
         <div className="oi-tabs">
           {["Mascot (V2)", "Bubble (clean)", "Bubble (raw)"].map((label, i) => (
             <button

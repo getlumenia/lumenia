@@ -121,7 +121,7 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
       <p className="text-sm font-medium text-money">
         {secure
           ? "Your money is backed up. On a new phone, your email and password bring it back."
-          : "Welcome back — your money is here."}
+          : "Welcome back. Your money is here."}
       </p>
     );
   }
@@ -172,7 +172,7 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
                 <p className="text-xs text-danger">{pwCheck.reason}</p>
               )}
               <p className="text-xs text-ink-soft">
-                Remember it — it can&apos;t be reset. It is the only key to your money.
+                Remember it, because it can&apos;t be reset. It is the only key to your money.
               </p>
               {faceCapable && (
                 <label className="flex items-center gap-2 text-sm text-ink">

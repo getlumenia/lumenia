@@ -18,15 +18,15 @@ import "../../../components/site/page.css";
 import "./stats.css";
 
 const PAGE_TITLE = "Live numbers";
-const TITLE = `${PAGE_TITLE} — Lumenia`;
+const TITLE = `${PAGE_TITLE} | Lumenia`;
 const DESCRIPTION =
-  "Real, verifiable numbers read straight from the public record — accounts created and payment links sent so far.";
+  "Real, verifiable numbers read straight from the public record: accounts created and payment links sent so far.";
 
 // Re-read the ledger at most once every 5 minutes, regardless of traffic.
 export const revalidate = 300;
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/stats" },
   openGraph: {
@@ -36,7 +36,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -68,7 +68,7 @@ export default async function StatsPage() {
           <h1 className="pg-h1">Every number here is real.</h1>
           <p className="pg-lead">
             These come straight off the public record and refresh continuously. Nothing is typed in
-            by hand — open any transfer and check it yourself.
+            by hand. Open any transfer and check it yourself.
           </p>
         </div>
       </header>
@@ -77,7 +77,7 @@ export default async function StatsPage() {
         <div className="stat-inner">
           {stats === null ? (
             <p className="stat-refreshing">
-              The live numbers are refreshing — check back in a moment. We only show what we can read
+              The live numbers are refreshing. Check back in a moment. We only show what we can read
               from the public record, so this space stays empty rather than guessing.
             </p>
           ) : (
@@ -97,7 +97,7 @@ export default async function StatsPage() {
                     figure would imply economic volume that doesn't exist. It returns with real
                     money, where it means something. */}
                 <div className="stat-tile">
-                  <span className="stat-num">{stats.lastActivityAt ? ago(stats.lastActivityAt) : "—"}</span>
+                  <span className="stat-num">{stats.lastActivityAt ? ago(stats.lastActivityAt) : "not yet"}</span>
                   <span className="stat-label">Last activity</span>
                   <span className="stat-sub">the system is live and running</span>
                 </div>
@@ -106,8 +106,8 @@ export default async function StatsPage() {
               <p className="stat-note">
                 {/* explicit {" "} at each </strong> boundary — JSX eats the trailing space (SITE_REDESIGN §5) */}
                 <strong>What these do and don&apos;t say.</strong>{" "}&ldquo;Accounts created&rdquo;
-                counts every account the system has funded — including our own
-                testing —{" "}<strong>not</strong>{" "}unique people. We don&apos;t track who you are,
+                counts every account the system has funded, including our own
+                testing, and{" "}<strong>not</strong>{" "}unique people. We don&apos;t track who you are,
                 so we can&apos;t claim a user count we&apos;d be unable to prove, and we won&apos;t.
                 What we can prove is that the money moves, and that every number here is on the record.
               </p>

@@ -82,7 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <TestnetBanner />
       <header className="app-nav">
         <div className="app-nav-inner">
-          <Link href="/home" aria-label="Lumenia — home">
+          <Link href="/home" aria-label="Lumenia home">
             {/* Wordmark swaps per theme (paper-filled counters only read on light). */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand-kit-assets/logo-wordmark-t.svg" alt="Lumenia" className="app-wordmark site-wordmark-light" />

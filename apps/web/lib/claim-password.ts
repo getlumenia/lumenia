@@ -130,7 +130,7 @@ export async function unlockLink(
  */
 export function claimPasswordProblem(pw: string): string | null {
   if (pw.length < 6) return "Use at least 6 characters.";
-  if (/^\d+$/.test(pw) && pw.length < 8) return "A short number is easy to guess — make it longer, or add letters.";
-  if (/^(.)\1+$/.test(pw)) return "That's one character repeated — pick something else.";
+  if (/^\d+$/.test(pw) && pw.length < 8) return "A short number is easy to guess. Make it longer, or add letters.";
+  if (/^(.)\1+$/.test(pw)) return "That's one character repeated. Pick something else.";
   return null;
 }

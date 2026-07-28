@@ -30,7 +30,7 @@ const BEATS = [
     body: (
       <>
         Lumenia is built on <strong>Stellar</strong>, a fast, low-cost public ledger, and the money is{" "}
-        <strong>USDC</strong> — a dollar-denominated asset. Lumenia never takes custody. There is no
+        <strong>USDC</strong>, a dollar-denominated asset. Lumenia never takes custody. There is no
         Lumenia account holding your money on your behalf; it sits on the ledger, in a balance we
         have no power to move.
       </>
@@ -47,7 +47,7 @@ const BEATS = [
       <>
         When you send, the amount is locked into a <strong>Claimable Balance</strong> with exactly
         two claimants: your recipient, who can claim it at any time, and you, who can reclaim it
-        after 7 days if they never do. Nobody else is on that list — Lumenia included.
+        after 7 days if they never do. Nobody else is on that list, Lumenia included.
       </>
     ),
     chips: [
@@ -63,7 +63,7 @@ const BEATS = [
       <>
         A new Stellar account normally needs a reserve of the network&apos;s native asset (XLM)
         before it can hold anything, plus a fee for every transaction. Lumenia&apos;s sponsor
-        service covers both — <strong>sponsored reserves</strong> for the account and its trustline,
+        service covers both: <strong>sponsored reserves</strong> for the account and its trustline,
         and a <strong>fee-bump</strong> wrapped around the claim. The recipient ends up holding 0 XLM
         and pays nothing to receive.
       </>

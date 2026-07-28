@@ -168,7 +168,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const restoreWithFaceId = useCallback(
     async (box: RecoveryBox): Promise<void> => {
       const copy = findCopy(box, "prf");
-      if (!copy) throw new Error("This backup has no Face ID key — use your password.");
+      if (!copy) throw new Error("This backup has no Face ID key. Use your password.");
       const prf = await derivePasskeyPrf();
       const seed = await unwrapWithPrf(copy, prf); // throws on a wrong passkey / tampered copy
       prf.fill(0);

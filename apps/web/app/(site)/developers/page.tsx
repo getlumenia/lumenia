@@ -17,13 +17,13 @@ import { Footer } from "../../../components/site/sections/Footer";
 import "../../../components/site/page.css";
 import "../../../components/site/editorial.css";
 
-const PAGE_TITLE = "Developers — payouts by link";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
+const PAGE_TITLE = "Developers: payouts by link";
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION =
-  "Pay someone who has nothing set up yet: no wallet, no account, no address. The code that powers Lumenia — the sponsor service, the anti-drain validator, the claim flow — is public.";
+  "Pay someone who has nothing set up yet: no wallet, no account, no address. The code that powers Lumenia is public: the sponsor service, the anti-drain validator, the claim flow.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/developers" },
   openGraph: {
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -69,7 +69,7 @@ export default function Developers() {
         <div className="ed-prose">
           <p>
             That primitive is useful well beyond consumer transfers. Refunds, earnings, rewards, gig
-            payouts — anywhere you owe money to someone who never signed up for the rails you happen
+            payouts. Anywhere you owe money to someone who never signed up for the rails you happen
             to use.
           </p>
           <p>

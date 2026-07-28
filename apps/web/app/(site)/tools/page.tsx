@@ -12,11 +12,11 @@ import "../../../components/site/page.css";
 import "../../../components/site/editorial.css";
 
 const PAGE_TITLE = "Tools";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
-const DESCRIPTION = "Small, free tools — no account needed. Verify a transfer, check a money link, estimate USD to lira, or see what sending money home usually costs.";
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
+const DESCRIPTION = "Small, free tools, no account needed. Verify a transfer, check a money link, estimate USD to lira, or see what sending money home usually costs.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/tools" },
   openGraph: {
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -35,7 +35,7 @@ const TOOLS: Array<{ href: string; t: string; b: string }> = [
   { href: "/tools/verify", t: "Verify a transfer", b: "Paste a transfer code and see the real, public record behind it." },
   { href: "/tools/link-check", t: "Check a money link", b: "Paste a link to see if it's still waiting, claimed, or returned." },
   { href: "/tools/usd-try", t: "USD ↔ TRY", b: "An indicative dollar-to-lira estimate." },
-  { href: "/tools/cost", t: "What it costs", b: "What sending money home usually costs — and what Lumenia costs today." },
+  { href: "/tools/cost", t: "What it costs", b: "What sending money home usually costs, and what Lumenia costs today." },
 ];
 
 export default function Tools() {
@@ -48,7 +48,7 @@ export default function Tools() {
             Tools
           </p>
           <h1 className="pg-h1">Small, free tools.</h1>
-          <p className="pg-lead">No account, no sign-up — just a few things worth checking for yourself.</p>
+          <p className="pg-lead">No account, no sign-up. Just a few things worth checking for yourself.</p>
         </div>
       </header>
 

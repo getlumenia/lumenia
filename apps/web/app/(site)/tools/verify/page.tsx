@@ -9,11 +9,11 @@ import "../../../../components/site/page.css";
 import "../../../../components/site/tools.css";
 
 const PAGE_TITLE = "Verify a transfer";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION = "Every transfer produces a public record you can check yourself. Paste a transfer code and see the real record behind it.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/tools/verify" },
   openGraph: {
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };

@@ -9,11 +9,11 @@ import "../../../../components/site/page.css";
 import "../../../../components/site/tools.css";
 
 const PAGE_TITLE = "What it costs";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
-const DESCRIPTION = "What sending money home usually costs — and what Lumenia costs today (receiving is free; we cover the small network cost).";
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
+const DESCRIPTION = "What sending money home usually costs, and what Lumenia costs today (receiving is free; we cover the small network cost).";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/tools/cost" },
   openGraph: {
@@ -23,15 +23,15 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
 
 const INCUMBENTS: Array<{ name: string; range: string; note: string }> = [
-  { name: "Bank transfer (SEPA/SWIFT → Turkey)", range: "€6 – €15+", note: "plus an exchange spread, and often days to arrive" },
-  { name: "Money-transfer apps", range: "€2 – €10", note: "cheaper and faster, but your recipient needs their app or a bank account" },
-  { name: "Cash pickup services", range: "€5 – €20", note: "ubiquitous, but a branch visit and higher fees" },
+  { name: "Bank transfer (SEPA/SWIFT → Turkey)", range: "€6 to €15+", note: "plus an exchange spread, and often days to arrive" },
+  { name: "Money-transfer apps", range: "€2 to €10", note: "cheaper and faster, but your recipient needs their app or a bank account" },
+  { name: "Cash pickup services", range: "€5 to €20", note: "ubiquitous, but a branch visit and higher fees" },
 ];
 
 export default function Cost() {
@@ -46,7 +46,7 @@ export default function Cost() {
           <h1 className="pg-h1">What sending money home usually costs.</h1>
           <p className="pg-lead">
             Typical published ranges for sending money to Turkey. Families pay these fees every
-            month — that&apos;s the market telling you the job matters.
+            month. That&apos;s the market telling you the job matters.
           </p>
         </div>
       </header>
@@ -69,7 +69,7 @@ export default function Cost() {
                 <p className="tool-row-range">Free</p>
               </div>
               <p className="tool-row-note">
-                Receiving is free — your recipient never pays to accept money, and we cover the small
+                Receiving is free. Your recipient never pays to accept money, and we cover the small
                 network cost. When we introduce a sending fee, it will be one number shown before you
                 confirm.
               </p>

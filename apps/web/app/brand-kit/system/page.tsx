@@ -1,12 +1,12 @@
 /**
- * /brand-kit/system — the LOCKED Lumenia brand kit rendered: the Periwinkle system
- * (Stellar's lavender, warmed), Sentient + Switzer, and the component set — the
+ * /brand-kit/system: the LOCKED Lumenia brand kit rendered: the Periwinkle system
+ * (Stellar's lavender, warmed), Sentient + Switzer, and the component set, the
  * visual companion to brand.md. Server component; real product copy, no mock data.
  * Inherits the Fontshare faces from the /brand-kit layout.
  */
 import type { CSSProperties } from "react";
 
-export const metadata = { title: "Brand Kit — System (Periwinkle)" };
+export const metadata = { title: "Brand Kit: System (Periwinkle)" };
 
 const LIGHT: Array<[string, string, string]> = [
   ["--paper", "#F5F3EF", "page ground"],
@@ -14,7 +14,7 @@ const LIGHT: Array<[string, string, string]> = [
   ["--ink", "#1E1B22", "primary text"],
   ["--muted", "#67626E", "secondary text"],
   ["--line", "#E5DFE8", "hairlines"],
-  ["--accent", "#6E5FCE", "periwinkle — actions"],
+  ["--accent", "#6E5FCE", "periwinkle: actions"],
   ["--accent-hover", "#5F50C2", "button hover"],
   ["--accent-pressed", "#4E40A8", "button active"],
   ["--accent-soft", "#E8E3F7", "chips, tints"],
@@ -33,12 +33,12 @@ const DARK: Array<[string, string, string]> = [
 ];
 
 const TYPE_SCALE: Array<[string, string, string]> = [
-  ["Display", "clamp(40–88px) · Sentient 600", "Money, minus the setup."],
-  ["H1", "clamp(34–60px) · Sentient 600", "No wallet. No seed phrase."],
-  ["H2", "clamp(26–40px) · Sentient 600", "It can’t get lost."],
+  ["Display", "clamp(40-88px) · Sentient 600", "Money, minus the setup."],
+  ["H1", "clamp(34-60px) · Sentient 600", "No wallet. No seed phrase."],
+  ["H2", "clamp(26-40px) · Sentient 600", "It can’t get lost."],
   ["H3", "22px · Sentient 600", "Backed by Stellar."],
-  ["Lead", "19px · Switzer 400", "Tap the link — the money is already yours."],
-  ["Body", "16px · Switzer 400", "You send a link. They tap it and it’s theirs — no app, no seed phrase, no fees taken from what you sent."],
+  ["Lead", "19px · Switzer 400", "Tap the link: the money is already yours."],
+  ["Body", "16px · Switzer 400", "You send a link. They tap it and it’s theirs, no app, no seed phrase, no fees taken from what you sent."],
   ["Caption", "12.5px · Switzer 600 · 0.06em", "BACKED BY THE STELLAR COMMUNITY FUND"],
 ];
 
@@ -52,12 +52,12 @@ export default function BrandSystemPage() {
         <p className="bs-kick"><span className="bs-seal-dot" />Backed by the Stellar Community Fund</p>
         <h1 className="bs-title">Lumenia Brand Kit</h1>
         <p className="bs-lead">
-          Direction <strong>Periwinkle</strong> — Stellar’s lavender, warmed for consumers.
+          Direction <strong>Periwinkle</strong>: Stellar’s lavender, warmed for consumers.
           Type <strong>Sentient + Switzer</strong>. Concept <strong>“Nothing to set up.”</strong>
         </p>
       </header>
 
-      {/* HERO — the payoff */}
+      {/* HERO: the payoff */}
       <Section idx="01" title="Hero" hint="the concept, in one screen">
         <div className="bs-hero">
           <div className="bs-hero-copy">
@@ -66,7 +66,7 @@ export default function BrandSystemPage() {
               No <s>wallet</s>. No <s>seed&nbsp;phrase</s>. No <s>app</s>.{" "}
               <span className="bs-keep">Just a link.</span>
             </h2>
-            <p className="bs-hero-sub">Tap the link — the money is already yours.</p>
+            <p className="bs-hero-sub">Tap the link: the money is already yours.</p>
             <div className="bs-row">
               <span className="bs-btn">See it work</span>
               <span className="bs-ghost">How it works →</span>
@@ -79,7 +79,7 @@ export default function BrandSystemPage() {
               <path d="M60 136 v20 l26 -20 z" fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth="6" strokeLinejoin="round" />
               <path d="M84 82 l20 20 l40 -44" fill="none" stroke="var(--accent)" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <span className="bs-art-note">Meshy object (message + check) — placeholder, not a logo</span>
+            <span className="bs-art-note">Meshy object (message + check), placeholder, not a logo</span>
           </div>
         </div>
       </Section>
@@ -88,7 +88,7 @@ export default function BrandSystemPage() {
       <Section idx="02" title="Colour" hint="warm off-white + one periwinkle">
         <div className="bs-two">
           <div>
-            <p className="bs-sub-h">Light — primary</p>
+            <p className="bs-sub-h">Light: primary</p>
             <div className="bs-tokens">
               {LIGHT.map(([tok, hex, role]) => (
                 <div key={tok} className="bs-token">
@@ -103,7 +103,7 @@ export default function BrandSystemPage() {
             </div>
           </div>
           <div className="bs-darkpanel">
-            <p className="bs-sub-h" style={{ color: "#A59DB2" }}>Dark — system alternate</p>
+            <p className="bs-sub-h" style={{ color: "#A59DB2" }}>Dark: system alternate</p>
             <div className="bs-tokens">
               {DARK.map(([tok, hex, role]) => (
                 <div key={tok} className="bs-token bs-token-d">
@@ -138,7 +138,7 @@ export default function BrandSystemPage() {
         </div>
         <p className="bs-note">
           Funder echo: Stellar’s own pairing is <em>Lora + Inter</em> (see the 4th specimen on
-          <code> /brand-kit</code>) — instant alignment, but Inter is the generic default we avoid. Not our pick.
+          <code> /brand-kit</code>): instant alignment, but Inter is the generic default we avoid. Not our pick.
         </p>
       </Section>
 
@@ -187,7 +187,7 @@ export default function BrandSystemPage() {
       <Section idx="05" title="Motion, 3D & assets" hint="the rules live in brand.md">
         <ul className="bs-list">
           <li><b>Signature motion:</b> the hero “subtraction” (struck words dissolve → “Just a link.”), once, reduced-motion safe. Motion + GSAP + Lenis.</li>
-          <li><b>3D:</b> one Meshy hero object — matte cream-to-periwinkle link-loop, no chrome/neon.</li>
+          <li><b>3D:</b> one Meshy hero object: matte cream-to-periwinkle link-loop, no chrome/neon.</li>
           <li><b>Assets:</b> warm grain + periwinkle glow; human presence = treated real photography (periwinkle duotone), not raw AI faces. Lock one style ref, generate the set from it.</li>
           <li><b>Icons:</b> Phosphor. <b>Prompts</b> (Meshy / Ideogram / Flux / human): see <code>brand.md §11</code>.</li>
         </ul>

@@ -1,5 +1,5 @@
 /**
- * /brand-kit/avatars — the 5 Lumenia avatars (the messenger + 4 pose variations), live
+ * /brand-kit/avatars: the 5 Lumenia avatars (the messenger + 4 pose variations), live
  * in three.js with procedural idle motion. ISOLATED workspace route; never touches the
  * live landing or the frozen claim route. WebGL is client-only (dynamic, ssr:false).
  */
@@ -18,9 +18,9 @@ export default function AvatarsPage() {
       <header className="ava-head">
         <span className="ava-mark">Lumenia</span>
         <div>
-          <h1 className="ava-title">The avatar — the messenger &amp; variations</h1>
+          <h1 className="ava-title">The avatar: the messenger &amp; variations</h1>
           <p className="ava-sub">
-            One locked character, seven living poses — all Meshy image→3D, smoothed and animated
+            One locked character, seven living poses, all Meshy image→3D, smoothed and animated
             with procedural idle motion in three.js (Meshy skeletal rigging can’t rig a stylised
             non-humanoid blob). Each is a real model, drag-free idle by default. Reused across the
             hero, onboarding, the claim moment, request, and success states.

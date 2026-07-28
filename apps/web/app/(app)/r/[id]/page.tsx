@@ -21,8 +21,8 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   const ask = parseAsk(id, await searchParams);
   return {
     title: ask
-      ? `${ask.name} is asking for ${formatUsd(ask.amount)} — Lumenia`
-      : "Money request — Lumenia",
+      ? `${ask.name} is asking for ${formatUsd(ask.amount)} | Lumenia`
+      : "Money request | Lumenia",
     description: copy.pay.sub,
     robots: { index: false },
   };

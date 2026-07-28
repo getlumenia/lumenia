@@ -71,9 +71,9 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const g = getGuide((await params).slug);
   if (!g) return { title: "Learn" };
-  const title = `${g.title} — Lumenia`; // OG/Twitter keep the full branded form
+  const title = `${g.title} | Lumenia`; // OG/Twitter keep the full branded form
   return {
-    title: g.title, // the (site) layout template appends “ — Lumenia”
+    title: g.title, // the (site) layout template appends “ | Lumenia”
     description: g.summary,
     alternates: { canonical: `/learn/${g.slug}` },
     openGraph: {
@@ -83,7 +83,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
       title,
       description: g.summary,
       locale: "en_US",
-      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
     },
     twitter: { card: "summary_large_image", title, description: g.summary, images: ["/og.png"] },
   };

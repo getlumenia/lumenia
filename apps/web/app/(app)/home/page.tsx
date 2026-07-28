@@ -323,7 +323,7 @@ export default function HomePage() {
           <p className="py-6 text-center text-sm text-ink-soft">Loading…</p>
         ) : activity.length === 0 ? (
           <p className="py-6 text-center text-sm text-ink-soft">
-            No activity yet — send your first link.
+            No activity yet. Send your first link.
           </p>
         ) : (
           <div className="rounded-[20px] border border-line bg-surface px-4">

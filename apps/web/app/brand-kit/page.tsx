@@ -1,20 +1,20 @@
 /**
- * Brand workspace — type pairings (real Fontshare faces) + 20 palette DIRECTIONS,
+ * Brand workspace: type pairings (real Fontshare faces) + 20 palette DIRECTIONS,
  * each shown NOT as a single swatch card but as a FULL landing layout: app-bar,
  * hero, the three-fears row, a proof/stat band, a colour-field CTA band, component
- * states (buttons/badge/input) and a dark-mode block — so every palette is judged
+ * states (buttons/badge/input) and a dark-mode block, so every palette is judged
  * in real layout, in context. All copy is real product copy; no mock numbers.
- * Server component — no client JS. Derived surfaces come from color-mix so each
+ * Server component: no client JS. Derived surfaces come from color-mix so each
  * direction only carries its base tokens.
  */
 import type { CSSProperties } from "react";
 
 const HEADLINE = "No wallet. No seed phrase. Just a link.";
-const SUB = "Tap the link — the money is already yours.";
+const SUB = "Tap the link: the money is already yours.";
 
 const FEARS = [
   { t: "No wallet needed", b: "The link is how you receive. Nothing to download, nothing to open." },
-  { t: "Nothing to memorize", b: "No seed phrase, no twelve words. Your face or a password — that’s it." },
+  { t: "Nothing to memorize", b: "No seed phrase, no twelve words. Your face or a password, that’s it." },
   { t: "It can’t get lost", b: "Not claimed within 7 days? The money returns to the sender, automatically." },
 ];
 
@@ -29,22 +29,22 @@ type Pairing = { id: string; name: string; note: string; display: string; body: 
 const PAIRINGS: Pairing[] = [
   {
     id: "sentient", name: "Sentient + Switzer",
-    note: "Warm modern serif — the human-trust, non-crypto signal (my pick).",
+    note: "Warm modern serif: the human-trust, non-crypto signal (my pick).",
     display: '"Sentient", Georgia, serif', body: '"Switzer", system-ui, sans-serif',
   },
   {
     id: "clash", name: "Clash Display + Satoshi",
-    note: "Confident grotesk — Base/Polygon energy, warmer than Geist.",
+    note: "Confident grotesk: Base/Polygon energy, warmer than Geist.",
     display: '"Clash Display", system-ui, sans-serif', body: '"Satoshi", system-ui, sans-serif',
   },
   {
     id: "cabinet", name: "Cabinet Grotesk + General Sans",
-    note: "Friendly, approachable — least intimidating, least premium.",
+    note: "Friendly, approachable: least intimidating, least premium.",
     display: '"Cabinet Grotesk", system-ui, sans-serif', body: '"General Sans", system-ui, sans-serif',
   },
   {
     id: "lora", name: "Lora + Inter (Stellar’s own)",
-    note: "The funder’s exact pairing from the 2026 guidelines — instant Stellar alignment, but Inter is the generic default we’ve been avoiding.",
+    note: "The funder’s exact pairing from the 2026 guidelines, instant Stellar alignment, but Inter is the generic default we’ve been avoiding.",
     display: '"Lora", Georgia, serif', body: '"Inter", system-ui, sans-serif',
   },
 ];
@@ -56,8 +56,8 @@ type Palette = {
 };
 
 const PALETTES: Palette[] = [
-  { id: "periwinkle", name: "Periwinkle — the selected direction", ground: "warm paper + periwinkle", rec: "Locked",
-    personality: "Stellar's lavender warmed into a consumer periwinkle — soft, friendly, distinctly non-crypto, still a nod to the funder (#B7ACE8 as the dark-mode pop). This is the locked brand direction; the full spec lives in brand.md and /brand-kit/system.",
+  { id: "periwinkle", name: "Periwinkle: the selected direction", ground: "warm paper + periwinkle", rec: "Locked",
+    personality: "Stellar's lavender warmed into a consumer periwinkle, soft, friendly, distinctly non-crypto, still a nod to the funder (#B7ACE8 as the dark-mode pop). This is the locked brand direction; the full spec lives in brand.md and /brand-kit/system.",
     p: "#F5F3EF", ink: "#1E1B22", mut: "#67626E", ln: "#E5DFE8", acc: "#6E5FCE", btnfg: "#F4F2FB", ghost: "#6E5FCE",
     dbg: "#14121A", dfg: "#EDEAF3", dacc: "#B7ACE8" },
 ];
@@ -89,9 +89,9 @@ export default function BrandKitPage() {
         <p className="bk-kick">Lumenia · internal brand workspace · not public</p>
         <h1>Brand Kit</h1>
         <p className="bk-lede">
-          Concept: <strong>“Nothing to set up.”</strong> Palette is <strong>LOCKED — Periwinkle</strong>
-          {" "}(the other explored directions were removed). It is shown below as a full landing layout —
-          app-bar, hero, the three fears, a proof band, a colour CTA and component states — so you see the
+          Concept: <strong>“Nothing to set up.”</strong> Palette is <strong>LOCKED: Periwinkle</strong>
+          {" "}(the other explored directions were removed). It is shown below as a full landing layout, 
+          app-bar, hero, the three fears, a proof band, a colour CTA and component states, so you see the
           selected colour in context. Full spec: <code>brand.md</code> · <code>/brand-kit/system</code>.
         </p>
       </header>
@@ -112,7 +112,7 @@ export default function BrandKitPage() {
               </div>
               <p className="bk-pair-display" style={{ fontFamily: f.display }}>{HEADLINE}</p>
               <p className="bk-pair-body" style={{ fontFamily: f.body }}>
-                You send a link. The person receiving it needs no wallet, no seed phrase and no app —
+                You send a link. The person receiving it needs no wallet, no seed phrase and no app, 
                 they tap it and the money is theirs. If nobody claims it within seven days, it comes back to you.
               </p>
               <p className="bk-pair-label" style={{ fontFamily: f.body }}>

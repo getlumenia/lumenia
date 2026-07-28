@@ -321,7 +321,7 @@ export default function SendOutPage() {
           <ul className="mt-2 flex list-disc flex-col gap-2 pl-5 text-sm text-ink-soft">
             <li>
               <strong className="text-ink">The wrong network.</strong>{" "}These are Stellar dollars.
-              On the exchange, pick Stellar (XLM) as the deposit network — not Ethereum, not Tron.
+              On the exchange, pick Stellar (XLM) as the deposit network, not Ethereum and not Tron.
               Money sent on the wrong network is gone, and nobody can bring it back.
             </li>
             {destination?.muxed ? (

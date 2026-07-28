@@ -25,7 +25,7 @@ import { AppShell } from "../../components/brand/AppShell";
  */
 export const metadata: Metadata = {
   robots: { index: false, follow: false },
-  title: { default: "Lumenia", template: "%s — Lumenia" },
+  title: { default: "Lumenia", template: "%s | Lumenia" },
 };
 
 /**

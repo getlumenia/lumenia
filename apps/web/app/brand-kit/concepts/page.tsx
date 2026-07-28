@@ -1,12 +1,12 @@
 /**
- * /brand-kit/concepts — ISOLATED direction board for the hero 3D object. Nothing here
+ * /brand-kit/concepts: ISOLATED direction board for the hero 3D object. Nothing here
  * touches the live landing or the frozen claim route. Direction chosen: the COMPANION
- * MASCOT (avatar). These are three refined, more professional Meshy renders of it —
+ * MASCOT (avatar). These are three refined, more professional Meshy renders of it, 
  * pick one, then it goes to image→3D and into the hero.
  */
 import Image from "next/image";
 
-export const metadata = { title: "Brand Kit — Mascot directions" };
+export const metadata = { title: "Brand Kit: Mascot directions" };
 
 type Concept = {
   id: string;
@@ -24,7 +24,7 @@ const CONCEPTS: Concept[] = [
     src: "/brand-kit-concepts/mascot-v2.png",
     tag: "Our avatar · the messenger",
     title: "The messenger",
-    blurb: "The locked Lumenia avatar — a friendly character holding a lavender envelope (money home, in a link). Built to 3D and living on the hero + brand book.",
+    blurb: "The locked Lumenia avatar, a friendly character holding a lavender envelope (money home, in a link). Built to 3D and living on the hero + brand book.",
     pros: ["Clearest story: holding the envelope", "Big expressive eyes, open warm smile", "Simplest, most brandable silhouette"],
     cons: ["Variations (poses / actions) generated separately in the Asset kit", "The little-courier and bear directions are retired"],
   },
@@ -37,7 +37,7 @@ export default function ConceptsPage() {
       <header className="cp-head">
         <span className="cp-mark">Lumenia</span>
         <div>
-          <h1 className="cp-title">Our avatar — the messenger</h1>
+          <h1 className="cp-title">Our avatar: the messenger</h1>
           <p className="cp-sub">
             Locked. The little-courier and bear directions are retired; the messenger is the Lumenia
             avatar, built to 3D. Different variations (poses, actions) are generated as their own

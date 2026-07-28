@@ -40,9 +40,9 @@ import "../../../components/site/page.css";
 import "./cashout.css";
 
 const PAGE_TITLE = "Turning dollars into lira";
-const TITLE = `${PAGE_TITLE} — Lumenia`;
+const TITLE = `${PAGE_TITLE} | Lumenia`;
 const DESCRIPTION =
-  "You're holding real dollars — you don't have to cash out. When you want Turkish lira in your bank, here's the honest path, what to watch for, and the one mistake that loses money.";
+  "You're holding real dollars, so you don't have to cash out. When you want Turkish lira in your bank, here's the honest path, what to watch for, and the one mistake that loses money.";
 
 export const metadata: Metadata = {
   title: PAGE_TITLE,
@@ -55,7 +55,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };

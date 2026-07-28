@@ -44,7 +44,7 @@ export function EmailCapture({ list, cta }: { list: "waitlist" | "cashout"; cta:
           <span className="pg-mascot-glow" />
           <Image className="pg-mascot pg-mascot-sm" src="/brand-kit-assets/mascot-thumbsup-cut.webp" alt="" width={108} height={135} />
         </div>
-        <p className="cap-done">Thanks — you&apos;re on the list. We&apos;ll be in touch.</p>
+        <p className="cap-done">Thanks, you&apos;re on the list. We&apos;ll be in touch.</p>
       </div>
     );
   }

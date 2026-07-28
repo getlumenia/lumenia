@@ -19,9 +19,9 @@ import type { Group } from "three";
 export type AvatarDef = { url: string; label: string; note: string; tex?: string };
 
 export const AVATARS: AvatarDef[] = [
-  { url: "/models/mascot.glb", tex: "/models/mascot-tex.png", label: "The messenger", note: "hands you the envelope — the hero" },
+  { url: "/models/mascot.glb", tex: "/models/mascot-tex.png", label: "The messenger", note: "hands you the envelope, the hero" },
   { url: "/models/avatar-wave.glb", label: "Wave", note: "welcome / onboarding" },
-  { url: "/models/avatar-phone.glb", label: "Tap", note: "tap the link — the claim moment" },
+  { url: "/models/avatar-phone.glb", label: "Tap", note: "tap the link, the claim moment" },
   { url: "/models/avatar-celebrate.glb", label: "Celebrate", note: "money received" },
   { url: "/models/avatar-thumbsup.glb", label: "Thumbs-up", note: "trust / all good" },
   { url: "/models/avatar-point.glb", label: "Point", note: "guiding / onboarding" },

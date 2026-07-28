@@ -40,7 +40,7 @@ export default async function V2ClaimPage({
         )}
       </div>
       <V2ClaimButton linkHex={linkHex} amount={amount} sender={sender} />
-      <p className="text-xs text-ink-soft">Test network — this money isn&apos;t real.</p>
+      <p className="text-xs text-ink-soft">Test network. This money isn&apos;t real.</p>
     </main>
   );
 }

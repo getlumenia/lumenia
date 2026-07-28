@@ -1,8 +1,8 @@
 /**
- * /brand-kit/brand — the Lumenia brand book, in the STELLAR "Brand Guidelines 2026"
- * template. Pages 01–07 are the guidelines proper (cover · wordmark/type/colour ·
+ * /brand-kit/brand: the Lumenia brand book, in the STELLAR "Brand Guidelines 2026"
+ * template. Pages 01-07 are the guidelines proper (cover · wordmark/type/colour ·
  * graphics/highlights · icon guidelines · icons · our 3D asset). Pages 08+ carry every
- * OTHER brand-kit route in verbatim, page by page, each behind a P.0X plate — so the
+ * OTHER brand-kit route in verbatim, page by page, each behind a P.0X plate, so the
  * whole workspace reads as one sequential document. The individual routes are NOT
  * deleted; this is the single consolidated "brand" route.
  *
@@ -11,7 +11,7 @@
  * wrapper (ModelStage) so the doc itself stays a Server Component. Brand CSS is scoped
  * under .bg; the embedded routes live OUTSIDE .bg and keep their own (prefixed) styles.
  *
- * Isolated workspace route — it never touches the live landing or the frozen claim route.
+ * Isolated workspace route, it never touches the live landing or the frozen claim route.
  */
 import type { Metadata } from "next";
 import ModelStage from "../../../components/brand3d/ModelStage";
@@ -25,7 +25,7 @@ import AssetKit from "../assets/page";
 import AvatarsStatic from "../../../components/brand3d/AvatarsStatic";
 
 export const metadata: Metadata = {
-  title: "Lumenia — Brand Guidelines 2026",
+  title: "Lumenia: Brand Guidelines 2026",
   robots: { index: false, follow: false },
 };
 
@@ -49,19 +49,19 @@ const DARK: Array<[string, string, string]> = [
 ];
 
 const SEMANTIC: Array<[string, string, string]> = [
-  ["Success", "#6E5FCE", "the accent + a check — never green"],
+  ["Success", "#6E5FCE", "the accent + a check: never green"],
   ["Warning", "#D98A2B", "functional only"],
   ["Danger", "#C4362B", "functional only"],
 ];
 
 // The other routes, moved in page by page from page 08 onward.
 const PLATES: Array<[string, string, React.ComponentType]> = [
-  ["08", "Explore — directions", ExplorePage],
+  ["08", "Explore: directions", ExplorePage],
   ["09", "Design system", BrandSystemPage],
-  ["10", "Marks — sketches", MarksPage],
+  ["10", "Marks: sketches", MarksPage],
   ["11", "Hero-object directions", ConceptsPage],
   ["12", "Landing hero", HeroPreview],
-  ["13", "Object — three.js inspector", ObjectInspector],
+  ["13", "Object: three.js inspector", ObjectInspector],
   ["14", "Asset kit", AssetKit],
   ["15", "Avatars", AvatarsStatic],
 ];
@@ -90,7 +90,7 @@ export default function BrandBook() {
           <div className="cols3">
             <div>
               <h2 className="sec-h">Brand wordmark</h2>
-              <p className="sec-p">The wordmark <em>is</em> the identity — set in Sentient. Any symbol is hand-drawn vector, never AI-generated.</p>
+              <p className="sec-p">The wordmark <em>is</em> the identity: set in Sentient. Any symbol is hand-drawn vector, never AI-generated.</p>
               <div className="logo-plate"><span className="logo-word">Lumenia</span></div>
               <div className="logo-plate logo-plate-inv"><span className="logo-word">Lumenia</span></div>
               <p className="seal"><span className="seal-dot" />Backed by the Stellar Community Fund</p>
@@ -98,22 +98,22 @@ export default function BrandBook() {
 
             <div>
               <h2 className="sec-h">Typography</h2>
-              <p className="sec-p">A warm serif display + a clean humanist sans — the fastest non-crypto, human-trust signal.</p>
+              <p className="sec-p">A warm serif display + a clean humanist sans, the fastest non-crypto, human-trust signal.</p>
               <div className="type-row">
                 <span className="type-serif">Sentient</span>
-                <span className="type-note">Display — 500/600. Hero clamp(40–88px), tracking −0.02em, balance.</span>
+                <span className="type-note">Display: 500/600. Hero clamp(40-88px), tracking −0.02em, balance.</span>
               </div>
               <div className="type-row">
                 <span className="type-sans">Switzer</span>
-                <span className="type-note">Body/UI — 400/500/600. Lead 18–20, body 16, tabular-nums on figures.</span>
+                <span className="type-note">Body/UI: 400/500/600. Lead 18-20, body 16, tabular-nums on figures.</span>
               </div>
               <p className="type-specimen">No wallet. No seed phrase. Just a link.</p>
             </div>
 
             <div>
-              <h2 className="sec-h">Colour — Periwinkle</h2>
+              <h2 className="sec-h">Colour: Periwinkle</h2>
               <p className="sec-p">Warm off-white ground, one periwinkle accent. Light is primary; dark is a system alternate whose accent is Stellar’s lavender.</p>
-              <p className="sub-lab">Primary — light</p>
+              <p className="sub-lab">Primary: light</p>
               <div className="sw-list">
                 {LIGHT.map(([name, hex, rgb]) => (
                   <div className="sw" key={name}>
@@ -124,7 +124,7 @@ export default function BrandBook() {
                   </div>
                 ))}
               </div>
-              <p className="sub-lab">Secondary — dark alternate</p>
+              <p className="sub-lab">Secondary: dark alternate</p>
               <div className="sw-list">
                 {DARK.map(([name, hex, rgb]) => (
                   <div className="sw" key={name}>
@@ -155,7 +155,7 @@ export default function BrandBook() {
           <div className="cols2">
             <div>
               <h2 className="sec-h">Graphics</h2>
-              <p className="sec-p">Warm paper grain, a soft periwinkle glow, and fine noise for depth and calm atmosphere — never crypto gradients, neon, or glass.</p>
+              <p className="sec-p">Warm paper grain, a soft periwinkle glow, and fine noise for depth and calm atmosphere, never crypto gradients, neon, or glass.</p>
               <div className="gfx-grid">
                 <div className="gfx gfx-glow" />
                 <div className="gfx gfx-grain" />
@@ -165,7 +165,7 @@ export default function BrandBook() {
             </div>
             <div>
               <h2 className="sec-h">Highlights</h2>
-              <p className="sec-p">The signature motif is <em>subtraction</em> — the scary steps struck through, until only “a link” remains — plus the arrival check.</p>
+              <p className="sec-p">The signature motif is <em>subtraction</em>: the scary steps struck through, until only “a link” remains, plus the arrival check.</p>
               <div className="hl-box">
                 <p className="hl-line"><s>wallet</s> <s>seed&nbsp;phrase</s> <s>app</s> <s>gas</s></p>
                 <p className="hl-keep">Just a <span className="hl-accent">link</span>.</p>
@@ -184,7 +184,7 @@ export default function BrandBook() {
             <div>
               <h2 className="sec-h">Icon guidelines</h2>
               <p className="sec-p"><b>Grid.</b> 128×128 base, icons fit the square or its inner rectangles. Optical adjustments allowed.</p>
-              <p className="sec-p"><b>Stroke.</b> 1.5–2px, rounded joins (Phosphor — warmer than Lucide). Accent used sparingly, for action + arrival only.</p>
+              <p className="sec-p"><b>Stroke.</b> 1.5-2px, rounded joins (Phosphor, warmer than Lucide). Accent used sparingly, for action + arrival only.</p>
               <p className="sec-p"><b>Texture.</b> On light, marks are Ink #1E1B22; on dark, Accent #B7ACE8. No coin/token clichés.</p>
               <div className="icon-palette">
                 {[["#FBFAF8", "surface"], ["#6E5FCE", "accent"], ["#B7ACE8", "lavender"], ["#1E1B22", "ink"]].map(([c, l]) => (
@@ -207,9 +207,9 @@ export default function BrandBook() {
         {/* ─────────────────── 05 · ICON SET ─────────────────── */}
         <section className="pg">
           <Head n="05" />
-          <h2 className="sec-h">Icons — light &amp; dark</h2>
+          <h2 className="sec-h">Icons: light &amp; dark</h2>
           <p className="sec-p sec-p-wide">
-            The full icon set is <b>in production</b> — generated as a matched family (Meshy + hand vector),
+            The full icon set is <b>in production</b>: generated as a matched family (Meshy + hand vector),
             light and dark variants, following the guidelines on the previous page. Placeholders below are
             honest empties, not mock art.
           </p>
@@ -223,21 +223,21 @@ export default function BrandBook() {
           <p className="sec-note">In production · light on #FBFAF8 · dark on #15121C.</p>
         </section>
 
-        {/* ─────────────────── 07 · OUR ASSET — THE MASCOT ─────────────────── */}
+        {/* ─────────────────── 07 · OUR ASSET, THE MASCOT ─────────────────── */}
         <section className="pg pg-model">
           <Head n="07" />
           <div className="model-wrap">
             <div className="model-copy">
-              <h2 className="sec-h">Our asset — the messenger</h2>
+              <h2 className="sec-h">Our asset: the messenger</h2>
               <p className="sec-p">
-                The Lumenia mascot: a warm ceramic companion who hands you the money — the envelope is the
+                The Lumenia mascot: a warm ceramic companion who hands you the money, the envelope is the
                 link. Built Meshy concept → image→3D → three.js (smooth normals + envelope pulled to the
                 accent). This is a live model, not a picture.
               </p>
               <ul className="model-facts">
                 <li>Matte ceramic · warm cream + Periwinkle envelope</li>
                 <li>react-three-fiber · lazy-loaded · idle float</li>
-                <li>Reused on the hero; more assets (icon set, scroll video) next — via Meshy</li>
+                <li>Reused on the hero; more assets (icon set, scroll video) next, via Meshy</li>
               </ul>
             </div>
             <div className="model-stage">
@@ -256,7 +256,7 @@ export default function BrandBook() {
       ))}
 
       <footer style={FOOT_STYLE}>
-        Lumenia Brand Guidelines 2026 · in the Stellar template · pages 01–07 are the guidelines; 08+ are
+        Lumenia Brand Guidelines 2026 · in the Stellar template · pages 01-07 are the guidelines; 08+ are
         the workspace routes moved in, page by page · full spec in <code style={CODE_STYLE}>brand.md</code>.
       </footer>
     </>

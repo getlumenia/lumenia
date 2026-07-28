@@ -67,7 +67,7 @@ export default function UnlockPage() {
         Unlock
       </PrimaryButton>
       <p className="text-center text-xs text-ink-soft">
-        Only this phone can unlock it. There's no password reset — that's what keeps it yours.
+        Only this phone can unlock it. There's no password reset, and that's what keeps it yours.
       </p>
     </div>
   );

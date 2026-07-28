@@ -3,7 +3,7 @@ import Link from "next/link";
 import { copy } from "../lib/copy";
 
 export const metadata: Metadata = {
-  title: "Page not found — Lumenia",
+  title: "Page not found | Lumenia",
   robots: { index: false },
 };
 

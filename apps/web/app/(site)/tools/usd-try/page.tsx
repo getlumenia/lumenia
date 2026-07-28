@@ -10,11 +10,11 @@ import "../../../../components/site/page.css";
 import "../../../../components/site/tools.css";
 
 const PAGE_TITLE = "USD ↔ TRY";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
-const DESCRIPTION = "An indicative estimate of what dollars are worth in Turkish lira — a guide, not a quote.";
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
+const DESCRIPTION = "An indicative estimate of what dollars are worth in Turkish lira. A guide, not a quote.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/tools/usd-try" },
   openGraph: {
@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -40,7 +40,7 @@ export default function UsdTry() {
           </p>
           <h1 className="pg-h1">USD ↔ TRY.</h1>
           <p className="pg-lead">
-            An <strong>indicative</strong> estimate of what dollars are worth in Turkish lira — a
+            An <strong>indicative</strong> estimate of what dollars are worth in Turkish lira. A
             guide, not a quote.
           </p>
         </div>

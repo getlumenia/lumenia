@@ -116,7 +116,7 @@ export default function AccountPage() {
         <p className="mt-1 text-4xl font-bold tabular-nums text-ink">
           {total === null ? "…" : formatUsd(total)}
         </p>
-        <p className="mt-1 text-sm text-ink-soft">Held in dollars — yours to send whenever you like.</p>
+        <p className="mt-1 text-sm text-ink-soft">Held in dollars, yours to send whenever you like.</p>
       </MoneyCard>
 
       {/* Do something with it — the two things you can do today, one tap each. */}
@@ -254,7 +254,7 @@ export default function AccountPage() {
         <p className="font-semibold text-ink">Back up your money</p>
         <p className="mb-3 mt-1 text-sm text-ink-soft">
           Set a password and your email, and you can bring your money back on a new phone. We keep a
-          sealed copy only your password can open — we can never see inside it.
+          sealed copy only your password can open, and we can never see inside it.
         </p>
         <RecoveryFlow mode="secure" />
       </MoneyCard>
@@ -266,8 +266,8 @@ export default function AccountPage() {
         <p className="mt-1 text-sm text-ink-soft">
           Your money is never ours. It waits on the public record, not in a Lumenia account, so we
           can&apos;t lend it, freeze it, or lose it. Back it up above and your email plus your password
-          bring it back on any phone. But the password can&apos;t be reset: if you forget it, nobody —
-          including us — can open your money. That&apos;s what keeps it yours.
+          bring it back on any phone. But the password can&apos;t be reset: if you forget it, nobody can
+          open your money, us included. That&apos;s what keeps it yours.
         </p>
       </MoneyCard>
 
@@ -307,7 +307,7 @@ export default function AccountPage() {
         <div className="mt-3 flex items-center justify-between border-b border-line pb-3">
           <div>
             <p className="text-sm font-medium text-ink">Appearance</p>
-            <p className="text-xs text-ink-soft">Light or dark — follows your phone by default.</p>
+            <p className="text-xs text-ink-soft">Light or dark. Follows your phone by default.</p>
           </div>
           <ThemeToggle />
         </div>

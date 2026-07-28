@@ -25,7 +25,7 @@ export const GUIDES: Guide[] = [
     title: "How sending money by a link works",
     summary: "The whole idea in three sentences.",
     body: [
-      "You choose an amount and get a link. You share that link on WhatsApp, just like you'd share anything else. That's the transfer — no forms, no account numbers.",
+      "You choose an amount and get a link. You share that link on WhatsApp, just like you'd share anything else. That's the transfer. No forms, no account numbers.",
       "Your recipient taps the link and sees the money right away, before creating anything. Then they claim it in their browser with their face or a password they choose.",
       "The exact amount arrives, held in dollars. Receiving is free. If nobody claims the link within 7 days, the money comes back to you.",
     ],
@@ -33,10 +33,10 @@ export const GUIDES: Guide[] = [
   {
     slug: "where-is-my-money-before-its-claimed",
     title: "Where is my money before it's claimed?",
-    summary: "Not with us — and that's the whole point.",
+    summary: "Not with us, and that's the whole point.",
     body: [
-      "The moment you send, your money moves into escrow on a public ledger — a shared record no single company controls. Lumenia never holds it, so we can't lend it, invest it, or lose it.",
-      "Only two people can move it: your recipient, who can claim it any time, and you, who can take it back if it isn't claimed within 7 days. Nobody else — including us.",
+      "The moment you send, your money moves into escrow on a public ledger, a shared record no single company controls. Lumenia never holds it, so we can't lend it, invest it, or lose it.",
+      "Only two people can move it: your recipient, who can claim it any time, and you, who can take it back if it isn't claimed within 7 days. Nobody else, including us.",
       "Every transfer produces a public record you can check yourself. You don't have to trust a page; you can verify it.",
     ],
   },
@@ -52,11 +52,11 @@ export const GUIDES: Guide[] = [
   },
   {
     slug: "is-lumenia-a-bank",
-    title: "Is Lumenia a bank? (No — here's why that's good)",
+    title: "Is Lumenia a bank? (No, and here's why that's good)",
     summary: "Banks hold your money. We never do.",
     body: [
       "Lumenia is not a bank and doesn't want to be one. We don't take deposits, we don't pay interest, and your money is never sitting in an account with our name on it.",
-      "Because we never hold your money, there's nothing for us to freeze, lose, or lend. If Lumenia disappeared tomorrow, your money wouldn't — it lives on a public ledger under your recipient's control, or yours for unclaimed links.",
+      "Because we never hold your money, there's nothing for us to freeze, lose, or lend. If Lumenia disappeared tomorrow, your money wouldn't. It lives on a public ledger under your recipient's control, or yours for unclaimed links.",
       "We're a way to move money from you to someone you love, and then we get out of the way.",
     ],
   },
@@ -67,7 +67,7 @@ export const GUIDES: Guide[] = [
     body: [
       "Banks reliably land money in a Turkish account, but they're often the slowest and priciest, and your recipient needs an IBAN ready.",
       "Money-transfer apps are cheaper and faster, but usually your recipient needs their app or a bank account set up first.",
-      "Lumenia's angle is different: the person you send to needs nothing — no app, no account, no IBAN, and nothing to pay to receive. Turning dollars into lira in a bank will come via licensed partners.",
+      "Lumenia's angle is different: the person you send to needs nothing: no app, no account, no IBAN, and nothing to pay to receive. Turning dollars into lira in a bank will come via licensed partners.",
     ],
   },
 ];

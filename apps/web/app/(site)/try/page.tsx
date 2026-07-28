@@ -29,12 +29,12 @@ import "../../../components/site/page.css";
 import "./try.css";
 
 const PAGE_TITLE = "See it work: send yourself a link";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION =
-  "Tap once and we'll send you a real money link — the exact thing your recipient would get. Claim it in your browser, no wallet and no signup.";
+  "Tap once and we'll send you a real money link, the exact thing your recipient would get. Claim it in your browser, no wallet and no signup.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/try" },
   openGraph: {
@@ -44,7 +44,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -87,7 +87,7 @@ export default function Demo() {
             </p>
             <h1 className="pg-h1">Send yourself money.</h1>
             <p className="pg-lead">
-              Tap once and we&apos;ll send <strong>you</strong> a real money link — the exact thing
+              Tap once and we&apos;ll send <strong>you</strong> a real money link, the exact thing
               your recipient would get. See the money. Claim it right here in your browser, then
               check it on the public record afterwards. We target about 30 seconds.
             </p>

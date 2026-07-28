@@ -14,11 +14,11 @@ import "../../../components/site/page.css";
 import "../../../components/site/tools.css";
 
 const PAGE_TITLE = "Brand";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION = "A press kit and the basics for writing about us: the name, the Periwinkle palette, the design concept, and boilerplate.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/brand" },
   openGraph: {
@@ -28,14 +28,14 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
 
 // The LOCKED Periwinkle palette (brand.md §4.1) — the light tokens every (site) page renders.
 const COLORS: Array<{ name: string; value: string; use: string }> = [
-  { name: "Paper", value: "#F5F3EF", use: "page ground — warm off-white" },
+  { name: "Paper", value: "#F5F3EF", use: "page ground, warm off-white" },
   { name: "Surface", value: "#FBFAF8", use: "raised cards" },
   { name: "Ink", value: "#1E1B22", use: "primary text" },
   { name: "Muted", value: "#67626E", use: "secondary text" },
@@ -53,7 +53,7 @@ export default function Brand() {
             Brand
           </p>
           <h1 className="pg-h1">Writing about us.</h1>
-          <p className="pg-lead">A press kit and the basics — the name, the colours, the idea.</p>
+          <p className="pg-lead">A press kit and the basics: the name, the colours, the idea.</p>
         </div>
       </header>
 
@@ -61,7 +61,7 @@ export default function Brand() {
         <div className="tool-inner" style={{ maxWidth: "760px" }}>
           <h2 className="brand-h2">Name</h2>
           <p className="brand-p">
-            It&apos;s <strong>Lumenia</strong> — one word, capital L. Not &quot;Luminia&quot;, not
+            It&apos;s <strong>Lumenia</strong>, one word, capital L. Not &quot;Luminia&quot;, not
             &quot;Lumeria&quot;.
           </p>
 
@@ -80,14 +80,14 @@ export default function Brand() {
             ))}
           </div>
           <p className="tool-fine">
-            Warm off-white ground, one periwinkle accent — a nod to Stellar&apos;s lavender, warmed so
+            Warm off-white ground, one periwinkle accent, a nod to Stellar&apos;s lavender, warmed so
             it reads friendly, never crypto. Dark mode is a system-aware alternate.
           </p>
 
           <h2 className="brand-h2">Design</h2>
           <p className="brand-p">
             The idea is <strong>&quot;nothing to set up.&quot;</strong> We&apos;re defined by what we
-            remove — no wallet, no seed phrase, no app, no gas — until only one thing is left: tap the
+            remove. No wallet, no seed phrase, no app, no gas, until only one thing is left: tap the
             link. Calm, plain, confident and warm; we take fear away instead of hyping. Type is a warm
             serif paired with a clean humanist sans. That's the fastest signal that this is for people,
             not for crypto.
@@ -96,7 +96,7 @@ export default function Brand() {
           <h2 className="brand-h2">Boilerplate</h2>
           <p className="brand-box">
             Lumenia lets you send money to anyone in Turkey with a link. The recipient taps it and
-            it&apos;s theirs — no app, no account, no wallet, and nothing to pay to receive. The money
+            it&apos;s theirs. No app, no account, no wallet, and nothing to pay to receive. The money
             waits in escrow on a public ledger, never in Lumenia&apos;s hands.
           </p>
         </div>

@@ -31,7 +31,7 @@ import { Trust } from "../../components/site/sections/Trust";
 import { CloseCTA } from "../../components/site/sections/CloseCTA";
 import { Footer } from "../../components/site/sections/Footer";
 
-const TITLE = "Lumenia — money home, in a link";
+const TITLE = "Lumenia: money home, in a link";
 const DESCRIPTION =
   "Send money by link. They tap it, and it's theirs. No wallet, no seed phrase, no app to install. Held in dollars until they need it.";
 
@@ -64,7 +64,7 @@ export const metadata: Metadata = {
         url: "/og.png",
         width: 1200,
         height: 630,
-        alt: "Lumenia — money home, in a link. The Lumenia messenger holding an envelope.",
+        alt: "Lumenia. Money home, in a link. The Lumenia messenger holding an envelope.",
       },
     ],
   },

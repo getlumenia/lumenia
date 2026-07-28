@@ -1,9 +1,9 @@
 /**
- * /brand-kit/motion — the MOTION gallery. A single isolated home for every AI
+ * /brand-kit/motion: the MOTION gallery. A single isolated home for every AI
  * image→video (I2V) asset produced for Lumenia: the launch sizzle reel, the 4
  * story beats (share → travel → tap → received), plus in-progress backgrounds.
  * Pipeline: Hugging Face Wan 2.2 14B I2V (free, ZeroGPU, watermark-free) → seamless
- * crossfade-loop + 720p encode. ISOLATED workspace route — never touches the live
+ * crossfade-loop + 720p encode. ISOLATED workspace route, never touches the live
  * landing group or the frozen claim route. Fonts (Sentient/Switzer) come from the
  * /brand-kit layout.
  */
@@ -37,7 +37,7 @@ export default function MotionGalleryPage() {
         <h1 className="mo-h1">Stills, brought to life.</h1>
         <p className="mo-sub">
           Every frame here started as a static brand render, then was animated with an
-          open image→video model (Wan 2.2) — free, and watermark-free. Subtle, premium,
+          open image→video model (Wan 2.2), free, and watermark-free. Subtle, premium,
           on-brand motion only.
         </p>
       </header>
@@ -48,59 +48,59 @@ export default function MotionGalleryPage() {
         <p className="mo-note">
           Two paths, one look. The faithful aurora came from <em>Canva Magic Media</em> (kept it
           abstract, higher-res). The Wan model, given the near-empty hero glow, invented
-          blooming flowers — pretty, on-palette, but a reinterpretation. Hybrid pipeline: Wan for
+          blooming flowers: pretty, on-palette, but a reinterpretation. Hybrid pipeline: Wan for
           characters/story, Canva for clean abstract backgrounds.
         </p>
         <div className="mo-grid">
           <figure className="mo-cell">
             <div className="mo-frame mo-frame-16"><Vid src="/brand-kit-assets/video/bg-howitworks.mp4" /></div>
             <figcaption>
-              <span className="mo-t">bg-howitworks — aurora <span className="mo-tag">Canva · faithful</span></span>
+              <span className="mo-t">bg-howitworks: aurora <span className="mo-tag">Canva · faithful</span></span>
               <span className="mo-b">Flowing periwinkle ribbon. Candidate for the scroll-opening band.</span>
             </figcaption>
           </figure>
           <figure className="mo-cell">
             <div className="mo-frame mo-frame-16"><Vid src="/brand-kit-assets/video/bg-cta.mp4" /></div>
             <figcaption>
-              <span className="mo-t">bg-cta — glow <span className="mo-tag">Canva · faithful</span></span>
+              <span className="mo-t">bg-cta: glow <span className="mo-tag">Canva · faithful</span></span>
               <span className="mo-b">Draped surface undulates; the warm-centered glow breathes.</span>
             </figcaption>
           </figure>
           <figure className="mo-cell">
             <div className="mo-frame mo-frame-16"><Vid src="/brand-kit-assets/video/bg-footer.mp4" /></div>
             <figcaption>
-              <span className="mo-t">bg-footer — mist <span className="mo-tag">Canva · faithful</span></span>
+              <span className="mo-t">bg-footer: mist <span className="mo-tag">Canva · faithful</span></span>
               <span className="mo-b">Periwinkle fog drifts and rises against the dark slab.</span>
             </figcaption>
           </figure>
           <figure className="mo-cell">
             <div className="mo-frame mo-frame-16"><Vid src="/brand-kit-assets/video/bg-soft.mp4" /></div>
             <figcaption>
-              <span className="mo-t">bg-soft — fluid <span className="mo-tag">Canva · faithful</span></span>
+              <span className="mo-t">bg-soft: fluid <span className="mo-tag">Canva · faithful</span></span>
               <span className="mo-b">Periwinkle-and-cream fluid morphs and flows.</span>
             </figcaption>
           </figure>
           <figure className="mo-cell">
             <div className="mo-frame mo-frame-16"><Vid src="/brand-kit-assets/video/bg-hero-bloom.mp4" /></div>
             <figcaption>
-              <span className="mo-t">bg-hero — “bloom” <span className="mo-tag mo-tag-warn">experimental</span></span>
+              <span className="mo-t">bg-hero: “bloom” <span className="mo-tag mo-tag-warn">experimental</span></span>
               <span className="mo-b">Wan hallucinated flowers from the abstract glow. Direction TBD.</span>
             </figcaption>
           </figure>
         </div>
       </section>
 
-      {/* Coming next — honest queue */}
+      {/* Coming next: honest queue */}
       <section className="mo-sec">
         <h2 className="mo-h2">Queued (waiting on free GPU quota)</h2>
         <ul className="mo-queue">
-          <li><b>Backgrounds ✓</b> — cta, footer, howitworks, soft all done via Canva (watermark-free, 1376×768).</li>
-          <li><b>bg-hero, faithful re-roll</b> — abstract-constrained vs the bloom, side by side.</li>
-          <li><b>Mascot reactions</b> — wave, celebrate, thumbs-up, heart (i2v fills the gap where the skeletal rig failed on the blob).</li>
-          <li><b>8 illustration micro-motions</b> — celebrate, request, phone, home, trust…</li>
+          <li><b>Backgrounds ✓</b>: cta, footer, howitworks, soft all done via Canva (watermark-free, 1376×768).</li>
+          <li><b>bg-hero, faithful re-roll</b>: abstract-constrained vs the bloom, side by side.</li>
+          <li><b>Mascot reactions</b>: wave, celebrate, thumbs-up, heart (i2v fills the gap where the skeletal rig failed on the blob).</li>
+          <li><b>8 illustration micro-motions</b>: celebrate, request, phone, home, trust…</li>
         </ul>
         <p className="mo-foot">
-          Free ZeroGPU resets daily (~3–4 clips/day at these settings). Resuming in batches.
+          Free ZeroGPU resets daily (~3-4 clips/day at these settings). Resuming in batches.
         </p>
       </section>
     </div>

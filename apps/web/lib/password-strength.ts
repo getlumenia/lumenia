@@ -27,17 +27,17 @@ export interface Strength {
 /** True if the recovery password is strong enough to be the offline-crack floor for the seed. */
 export function passwordStrength(pw: string): Strength {
   const p = pw;
-  if (p.length < 10) return { ok: false, reason: "Use at least 10 characters — this is the only key to your money." };
+  if (p.length < 10) return { ok: false, reason: "Use at least 10 characters. This is the only key to your money." };
   const lower = p.toLowerCase();
-  if (COMMON.has(lower)) return { ok: false, reason: "That's a very common password — pick something only you would choose." };
-  if (/^(.)\1+$/.test(p)) return { ok: false, reason: "Too easy to guess — don't repeat one character." };
+  if (COMMON.has(lower)) return { ok: false, reason: "That's a very common password. Pick something only you would choose." };
+  if (/^(.)\1+$/.test(p)) return { ok: false, reason: "Too easy to guess. Don't repeat one character." };
   if (/^(?:0123456789|1234567890|abcdefghij|qwertyuiop)/i.test(p)) {
-    return { ok: false, reason: "Too easy to guess — avoid keyboard or number runs." };
+    return { ok: false, reason: "Too easy to guess. Avoid keyboard or number runs." };
   }
   // Variety OR a long passphrase. A single character class under 14 chars is weak.
   const classes = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((re) => re.test(p)).length;
   if (classes < 2 && p.length < 14) {
-    return { ok: false, reason: "Mix in a capital, a number or a symbol — or make it a longer phrase." };
+    return { ok: false, reason: "Mix in a capital, a number or a symbol, or make it a longer phrase." };
   }
   return { ok: true };
 }

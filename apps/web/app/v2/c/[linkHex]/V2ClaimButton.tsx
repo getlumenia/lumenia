@@ -74,7 +74,7 @@ export default function V2ClaimButton({
   async function claimWith(secret: string) {
     setState("claiming");
     try {
-      if (!net) throw new Error("Still loading — please tap again.");
+      if (!net) throw new Error("Still loading. Please tap again.");
       const r = await claimV2ToSponsoredAccount({
         linkSecret: secret,
         sponsorUrl: net.isMainnet ? net.sponsorUrl : SPONSOR_URL,
@@ -163,7 +163,7 @@ export default function V2ClaimButton({
       ) : locked ? (
         <>
           <p className="text-sm text-ink-soft">
-            {sender} put a password on this one. Ask them for it if you don&apos;t have it — they
+            {sender} put a password on this one. Ask them for it if you don&apos;t have it. They
             sent it separately, not in this link.
           </p>
           <input
@@ -206,7 +206,7 @@ export default function V2ClaimButton({
         <p className="text-sm text-danger">
           {error.includes("mainnet is not configured")
             ? "This link is for a network this site cannot reach right now."
-            : `${sender}'s money is still safe — please try again.`}
+            : `${sender}'s money is still safe. Please try again.`}
         </p>
       )}
     </div>

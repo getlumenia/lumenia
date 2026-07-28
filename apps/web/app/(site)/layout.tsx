@@ -28,11 +28,11 @@ import { SiteNav } from "../../components/site/SiteNav";
 import { ThemeProvider } from "../../components/site/ThemeProvider";
 
 /** Group-wide only. Everything route-specific (title/description/canonical/OG) lives in page.tsx.
- *  The title TEMPLATE enforces the " — Lumenia" suffix pages used to append by hand (drift risk);
+ *  The title TEMPLATE enforces the " | Lumenia" suffix pages used to append by hand (drift risk);
  *  pages now declare only their base title. It lives HERE, not in the root layout, because the
  *  root also wraps the frozen /c/[id], whose dynamic "X sent you $Y" title must stay untouched. */
 export const metadata: Metadata = {
-  title: { default: "Lumenia", template: "%s — Lumenia" },
+  title: { default: "Lumenia", template: "%s | Lumenia" },
   robots: {
     index: true,
     follow: true,

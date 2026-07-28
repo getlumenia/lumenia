@@ -75,12 +75,12 @@ export function LinkReadyCard({
 
       {locked ? (
         <p className="text-xs text-ink-soft">
-          Now send them the password a different way — a call, or another app. In the same chat as
+          Now send them the password a different way: a call, or another app. In the same chat as
           the link, it protects nothing. If nobody claims it, the money comes back to you after 7 days.
         </p>
       ) : (
         <p className="text-xs text-ink-soft">
-          Share it privately with the person it&apos;s for — whoever holds the link can claim it, like cash in an
+          Share it privately with the person it&apos;s for. Whoever holds the link can claim it, like cash in an
           envelope. If nobody claims it, the money comes back to you after 7 days.
         </p>
       )}

@@ -8,11 +8,11 @@ import "../../../components/site/page.css";
 import "../../../components/site/editorial.css";
 
 const PAGE_TITLE = "Terms";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION = "The short, honest version: not a bank, money on a public ledger, a link is like cash, and your password is yours alone.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/terms" },
   openGraph: {
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -49,7 +49,7 @@ export default function Terms() {
           </p>
           <p>
             <strong>We are not a bank or a money-transfer business.</strong> Lumenia doesn&apos;t hold
-            your money — it moves between people on a public ledger. We provide the software that sets
+            your money. It moves between people on a public ledger. We provide the software that sets
             up accounts and covers network costs.
           </p>
           <p>
@@ -58,7 +58,7 @@ export default function Terms() {
           </p>
           <p>
             <strong>Your password is yours alone.</strong> If you lock your money with a password and
-            forget it, nobody — including Lumenia — can recover it.
+            forget it, nobody can recover it, Lumenia included.
           </p>
           <p>
             <strong>No guarantees yet.</strong> We build carefully and verify in public, but this is

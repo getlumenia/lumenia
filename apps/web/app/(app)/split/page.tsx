@@ -85,7 +85,7 @@ export default function SplitPage() {
       <header>
         <h1 className="text-xl font-bold text-ink">Split a bill</h1>
         <p className="mt-1 text-sm text-ink-soft">
-          Divide a total between people — each gets a link to pay their share.
+          Divide a total between people. Each gets a link to pay their share.
         </p>
       </header>
 
@@ -148,7 +148,7 @@ export default function SplitPage() {
 
 function ShareRow({ share, name }: { share: Share; name: string }) {
   const [copied, setCopied] = useState(false);
-  const waText = encodeURIComponent(`Hi, it's ${name} — your share is ${formatUsd(share.amount)}. Pay it here: ${share.link}`);
+  const waText = encodeURIComponent(`Hi, it's ${name}. Your share is ${formatUsd(share.amount)}. Pay it here: ${share.link}`);
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(share.link);

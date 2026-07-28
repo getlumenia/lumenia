@@ -1,16 +1,16 @@
 /**
- * /brand-kit/hero — ISOLATED preview of the REAL landing hero in the LOCKED
+ * /brand-kit/hero: ISOLATED preview of the REAL landing hero in the LOCKED
  * Periwinkle system (brand.md). Nothing here touches the live (marketing) landing
  * or the frozen claim route; it inherits Sentient + Switzer from the /brand-kit
  * layout (Fontshare) and carries its own Periwinkle tokens inline.
  *
- * Signature moment (brand.md §9): the "subtraction" — "No wallet. No seed phrase.
+ * Signature moment (brand.md §9): the "subtraction": "No wallet. No seed phrase.
  * No app." is struck through on load, the struck list dissolves, and the payoff
  * "Just a link." settles in. Motion only (motion/react); GSAP/Lenis arrive with the
  * full scroll narrative, not the hero. prefers-reduced-motion renders the settled
  * final state (struck list muted + payoff), which is also the no-JS/SSR meaning.
  *
- * The 3D object is a CSS placeholder for now — the Meshy GLB (brand.md §11.1, a soft
+ * The 3D object is a CSS placeholder for now, the Meshy GLB (brand.md §11.1, a soft
  * message bubble with a debossed check) drops into this slot after the composition
  * is approved, to avoid spending credits on the wrong object.
  */
@@ -45,7 +45,7 @@ export default function HeroPreview() {
       await new Promise((r) => setTimeout(r, 340));
       if (cancelled) return;
 
-      // 1 — draw each strike-through, left→right, staggered
+      // 1: draw each strike-through, left→right, staggered
       await animate(
         ".lh-strike",
         { scaleX: 1 },
@@ -53,7 +53,7 @@ export default function HeroPreview() {
       );
       if (cancelled) return;
 
-      // 2 — the struck list dissolves (fades, softens, drifts up)
+      // 2: the struck list dissolves (fades, softens, drifts up)
       await animate(
         ".lh-removed",
         { opacity: 0.4, filter: "blur(1.2px)", y: -3 },
@@ -62,7 +62,7 @@ export default function HeroPreview() {
       animate(".lh-word", { color: "var(--muted)" }, { duration: 0.5 });
       if (cancelled) return;
 
-      // 3 — the payoff settles in as the survivor
+      // 3: the payoff settles in as the survivor
       await animate(
         ".lh-payoff",
         { opacity: 1, y: 0, scale: 1 },
@@ -80,7 +80,7 @@ export default function HeroPreview() {
     <div className="lh" ref={scope}>
       <style>{CSS}</style>
 
-      {/* top app-bar — wordmark is the primary identity (Sentient) */}
+      {/* top app-bar: wordmark is the primary identity (Sentient) */}
       <header className="lh-bar">
         <span className="lh-mark">Lumenia</span>
         <nav className="lh-nav">
@@ -92,7 +92,7 @@ export default function HeroPreview() {
 
       <main className="lh-hero">
         <div className="lh-copy">
-          <p className="lh-eyebrow"><span className="lh-dot" />Money by link — no crypto to learn</p>
+          <p className="lh-eyebrow"><span className="lh-dot" />Money by link: no crypto to learn</p>
 
           <h1 className="lh-h">
             <span className="lh-removed" aria-hidden="true">
@@ -111,12 +111,12 @@ export default function HeroPreview() {
               Just a <span className="lh-link">link</span>.
             </span>
             <span className="lh-sr">
-              No wallet, no seed phrase, no app — just a link.
+              No wallet, no seed phrase, no app, just a link.
             </span>
           </h1>
 
           <p className="lh-sub">
-            Send money to someone and they tap the link — it&apos;s already theirs.
+            Send money to someone and they tap the link, it&apos;s already theirs.
             Nothing to install, nothing to memorise, nothing taken from what you sent.
           </p>
 
@@ -128,7 +128,7 @@ export default function HeroPreview() {
           <p className="lh-trust">Free to receive · held in dollars · yours in a tap</p>
         </div>
 
-        {/* 3D object slot — the real Meshy GLB (brand.md §11.1), lazy react-three-fiber */}
+        {/* 3D object slot: the real Meshy GLB (brand.md §11.1), lazy react-three-fiber */}
         <div className="lh-art" aria-hidden="true">
           <div className="lh-glow" />
           <div className="lh-canvas"><HeroBubble /></div>

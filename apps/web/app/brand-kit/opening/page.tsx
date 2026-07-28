@@ -1,12 +1,12 @@
 /**
- * /brand-kit/opening — Apple-style scroll-scrub opening. The 9s launch reel is exploded
+ * /brand-kit/opening: Apple-style scroll-scrub opening. The 9s launch reel is exploded
  * into an image sequence (public/brand-kit-assets/opening-frames/) and drawn frame-by-frame
- * to a <canvas> as you scroll — NO <video> currentTime seeking, so there is zero decode jank.
+ * to a <canvas> as you scroll: NO <video> currentTime seeking, so there is zero decode jank.
  * Frames are motion-interpolated to 60fps (ffmpeg minterpolate) for buttery scrubbing.
  * All 536 frames are preloaded + decoded before scrubbing is enabled; a requestAnimationFrame
  * loop reads the (Lenis-smoothed) window scroll and draws the nearest frame. Scroll progress
  * 0→1 covers the full 9 seconds. Headline beats fade in over the scrub; a reduced-motion
- * fallback plays the reel as a plain looping video. ISOLATED workspace route — never touches
+ * fallback plays the reel as a plain looping video. ISOLATED workspace route, never touches
  * the live landing or the frozen claim route. Fonts come from the /brand-kit layout.
  */
 "use client";
@@ -14,11 +14,11 @@
 import { useEffect, useRef, useState } from "react";
 import SmoothScroll from "../../../components/brand/SmoothScroll";
 
-const N = 536; // frame count (f_001..f_536) — reel motion-interpolated to 60fps
+const N = 536; // frame count (f_001..f_536), reel motion-interpolated to 60fps
 const SCRUB_VH = 560; // pinned section height; scrollable = SCRUB_VH - 100
 const framePath = (i: number) => `/brand-kit-assets/opening-frames/f_${String(i).padStart(3, "0")}.webp`;
 
-// Headline beats — the "subtraction". {a,b,c,d} = progress ramp: 0→1 over [a,b], hold [b,c], 1→0 over [c,d].
+// Headline beats: the "subtraction". {a,b,c,d} = progress ramp: 0→1 over [a,b], hold [b,c], 1→0 over [c,d].
 const BEATS = [
   { text: "No wallet.", a: 0.05, b: 0.11, c: 0.18, d: 0.24 },
   { text: "No seed phrase.", a: 0.25, b: 0.31, c: 0.38, d: 0.44 },
@@ -133,7 +133,7 @@ function ScrubHero() {
         draw(idx);
         lastIdx = idx;
       }
-      // overlays (write directly — no React re-render per frame)
+      // overlays (write directly, no React re-render per frame)
       let maxBeat = 0;
       for (let k = 0; k < BEATS.length; k++) {
         const o = beatOpacity(p, BEATS[k]);
@@ -350,7 +350,7 @@ export default function OpeningPage() {
           <section className="op-after">
             <h2 className="op-after-h">Money home, in a link.</h2>
             <p className="op-after-p">
-              The recipient claims it walletless, seedless, and pays no gas — in a target ~30s.
+              The recipient claims it walletless, seedless, and pays no gas, in a target ~30s.
             </p>
           </section>
         </div>

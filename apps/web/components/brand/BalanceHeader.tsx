@@ -1,7 +1,7 @@
 /**
  * BalanceHeader — the north-star surface's headline number: the money you hold,
  * huge and tabular, with an indicative ₺ line and an HONEST custody label
- * (Phase 1 = "Not locked — anyone with this phone can spend this"; Phase 2 =
+ * (Phase 1 = "Not locked. Anyone with this phone can spend this"; Phase 2 =
  * "Locked with your password"). Real balance only (no-mock-data).
  */
 import { AmountDisplay } from "./AmountDisplay";
@@ -26,7 +26,7 @@ export function BalanceHeader({
       </p>
       {phase === 1 ? (
         <p className="mt-2 rounded-full bg-secondary px-3 py-1 text-xs text-ink-soft">
-          Not locked — anyone with this phone can spend this
+          Not locked. Anyone with this phone can spend this
         </p>
       ) : (
         <p className="mt-2 rounded-full bg-money/10 px-3 py-1 text-xs text-money">

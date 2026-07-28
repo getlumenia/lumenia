@@ -33,7 +33,7 @@ async function errorFrom(res: Response, fallback: string): Promise<string> {
 /** Email a single-use code proving control of `email`. */
 export async function requestRecoveryOtp(email: string): Promise<void> {
   const res = await post("/recovery-otp", { email });
-  if (!res.ok) throw new Error(await errorFrom(res, "Couldn't send the code — try again."));
+  if (!res.ok) throw new Error(await errorFrom(res, "Couldn't send the code. Try again."));
 }
 
 /** Store the ciphertext-only box for `email`, gated by the emailed code. */
@@ -41,7 +41,7 @@ export async function storeRecoveryBox(email: string, code: string, box: Recover
   const id = await emailToId(email);
   const res = await post("/recovery", { id, box, code });
   if (res.status === 401) throw new Error("That code is wrong or has expired.");
-  if (!res.ok) throw new Error(await errorFrom(res, "Couldn't secure your money — try again."));
+  if (!res.ok) throw new Error(await errorFrom(res, "Couldn't secure your money. Try again."));
 }
 
 /** Fetch the box for `email`, gated by the code. Returns null if there is no backup. */
@@ -50,7 +50,7 @@ export async function fetchRecoveryBox(email: string, code: string): Promise<Rec
   const res = await post("/recovery-fetch", { id, code });
   if (res.status === 404) return null;
   if (res.status === 401) throw new Error("That code is wrong or has expired.");
-  if (!res.ok) throw new Error(await errorFrom(res, "Couldn't restore your money — try again."));
+  if (!res.ok) throw new Error(await errorFrom(res, "Couldn't restore your money. Try again."));
   const data = (await res.json()) as { box?: RecoveryBox };
   return data.box ?? null;
 }

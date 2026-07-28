@@ -1,5 +1,5 @@
 /**
- * /dev — scratch preview of the core-six brand components on warm paper.
+ * /dev: scratch preview of the core-six brand components on warm paper.
  * Development-only: 404 in production (never ships to the live product).
  */
 import { notFound } from "next/navigation";
@@ -22,7 +22,7 @@ export default function DevPreview() {
       <div className="mx-auto flex max-w-md flex-col gap-8 px-5 py-10">
         <header>
           <h1 className="text-2xl font-bold text-ink">Brand components</h1>
-          <p className="text-ink-soft">Warm paper, serious money — Stage 1 preview.</p>
+          <p className="text-ink-soft">Warm paper, serious money, Stage 1 preview.</p>
         </header>
 
         <section className="flex flex-col gap-3">

@@ -67,7 +67,7 @@ export function SiteNav() {
           the third sat empty. The bar read as logo-left, buttons-adrift-in-the-middle, nothing right.
           Declaring the columns the page actually has puts the actions back on the right edge. */}
       <nav className="grid w-full max-w-[clamp(64rem,58vw,90rem)] grid-cols-[1fr_auto] md:grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-2xl border border-border/70 bg-background/75 px-4 py-2.5 shadow-[0_16px_44px_-24px_rgba(110,95,206,0.55)] backdrop-blur-xl">
-        <Link href="/" className="group justify-self-start px-1" aria-label="Lumenia — home">
+        <Link href="/" className="group justify-self-start px-1" aria-label="Lumenia home">
           {/* Wordmark swaps per theme (paper-filled counters only read on light). */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand-kit-assets/logo-wordmark-t.svg" alt="" className="site-wordmark-light h-5 w-auto transition-transform duration-300 group-hover:scale-[1.04]" />

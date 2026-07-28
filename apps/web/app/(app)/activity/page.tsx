@@ -39,7 +39,7 @@ export default function ActivityPage() {
       <div className="flex flex-col items-center gap-3 py-16 text-center">
         <h1 className="text-xl font-bold text-ink">No activity yet</h1>
         <p className="max-w-xs text-ink-soft">
-          When money comes in or goes out, every movement shows up here — straight from the public
+          When money comes in or goes out, every movement shows up here, straight from the public
           record.
         </p>
         <Link href="/home" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
@@ -60,7 +60,7 @@ export default function ActivityPage() {
         <p className="py-6 text-center text-sm text-ink-soft">Loading…</p>
       ) : items.length === 0 ? (
         <p className="py-10 text-center text-sm text-ink-soft">
-          Nothing yet — when money comes in or goes out, you&apos;ll see it here.
+          Nothing yet. When money comes in or goes out, you&apos;ll see it here.
         </p>
       ) : (
         <div className="rounded-[20px] border border-line bg-surface px-4">

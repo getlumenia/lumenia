@@ -64,7 +64,7 @@ export function LockMoneyCard() {
         className="mt-3 w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-ink"
       />
       <p className="mt-2 text-xs text-ink-soft">
-        If you forget this password, nobody — including Lumenia — can recover this money.
+        If you forget this password, nobody can recover this money, Lumenia included.
       </p>
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       <div className="mt-3">

@@ -36,7 +36,7 @@ export function LinkCheckForm() {
   return (
     <>
       <div className="tool-notice">
-        This check happens entirely in your browser. We only look at the public part of the link — the
+        This check happens entirely in your browser. We only look at the public part of the link. The
         secret key part is never sent anywhere. Still, treat a money link like cash: keep it private.
       </div>
       <form onSubmit={check} className="tool-form" style={{ marginTop: "18px" }}>
@@ -62,7 +62,7 @@ export function LinkCheckForm() {
       {state === "settled" && (
         <div className="tool-card">
           <p className="tool-note">
-            ✓ This link is done — the money has been claimed or returned to the sender.
+            ✓ This link is done. The money has been claimed or returned to the sender.
           </p>
         </div>
       )}

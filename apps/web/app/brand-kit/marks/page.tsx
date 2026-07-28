@@ -1,11 +1,11 @@
 /**
- * /brand-kit/marks — hand-drawn Lumenia mark sketches (vector, NOT AI-generated —
+ * /brand-kit/marks: hand-drawn Lumenia mark sketches (vector, NOT AI-generated, 
  * image models reproduce existing crypto logos). Four original directions in the
  * Periwinkle palette, each shown large, in the wordmark lockup, at favicon sizes,
  * and reversed on the accent. Concept "Nothing to set up": letter/gesture-based,
- * warm, non-crypto — no chain-links, rings, hexagons, coins.
+ * warm, non-crypto: no chain-links, rings, hexagons, coins.
  */
-export const metadata = { title: "Brand Kit — Marks (sketches)" };
+export const metadata = { title: "Brand Kit: Marks (sketches)" };
 
 type Mark = { id: string; name: string; note: string; svg: React.ReactNode };
 
@@ -14,7 +14,7 @@ const MARKS: Mark[] = [
   {
     id: "l-lumen",
     name: "L · lumen",
-    note: "A monogram “L” whose path ends and a small lumen (light/value) lifts off — letter-based = instantly ownable, never crypto. Best at tiny sizes.",
+    note: "A monogram “L” whose path ends and a small lumen (light/value) lifts off, letter-based = instantly ownable, never crypto. Best at tiny sizes.",
     svg: (
       <>
         <path d="M34 22 V68 H60" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
@@ -25,7 +25,7 @@ const MARKS: Mark[] = [
   {
     id: "cupped",
     name: "Cupped light",
-    note: "Cupped hands / a bowl holding a lumen — the warmest, most human mark. “Money received, held.” Reads giving-and-receiving, not tech.",
+    note: "Cupped hands / a bowl holding a lumen, the warmest, most human mark. “Money received, held.” Reads giving-and-receiving, not tech.",
     svg: (
       <>
         <path d="M26 48 a22 22 0 0 0 44 0" fill="none" stroke="currentColor" strokeWidth="12" strokeLinecap="round" />
@@ -36,7 +36,7 @@ const MARKS: Mark[] = [
   {
     id: "tap-echo",
     name: "Tap · echo",
-    note: "A tap point with a single echo arc — the gesture of tapping the link and value answering back. Distinct from a wifi/signal glyph (one arc, offset).",
+    note: "A tap point with a single echo arc, the gesture of tapping the link and value answering back. Distinct from a wifi/signal glyph (one arc, offset).",
     svg: (
       <>
         <circle cx="42" cy="52" r="11" fill="currentColor" />
@@ -47,7 +47,7 @@ const MARKS: Mark[] = [
   {
     id: "streak",
     name: "Lumen streak",
-    note: "A lumen arriving along a curved streak — “light (value) travels by link, and lands.” A quiet nod to Stellar’s lumens without any crypto shape.",
+    note: "A lumen arriving along a curved streak, “light (value) travels by link, and lands.” A quiet nod to Stellar’s lumens without any crypto shape.",
     svg: (
       <>
         <path d="M22 70 Q46 58 54 46" fill="none" stroke="currentColor" strokeWidth="11" strokeLinecap="round" />
@@ -70,10 +70,10 @@ export default function MarksPage() {
 
       <header className="mk-head">
         <p className="mk-kick">Lumenia · brand kit · mark sketches</p>
-        <h1>Marks — hand-drawn</h1>
+        <h1>Marks: hand-drawn</h1>
         <p className="mk-lede">
           Vector sketches, <strong>not</strong> AI (models reproduce crypto logos). Four original
-          directions in Periwinkle — letter- or gesture-based, warm, non-crypto: no chain-links, rings,
+          directions in Periwinkle, letter- or gesture-based, warm, non-crypto: no chain-links, rings,
           hexagons, coins. Shown large, in the wordmark lockup, at favicon sizes, and reversed.
         </p>
       </header>

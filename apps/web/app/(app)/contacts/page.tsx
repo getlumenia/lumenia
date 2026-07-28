@@ -28,7 +28,7 @@ export default function ContactsPage() {
       <div className="flex flex-col items-center gap-3 py-16 text-center">
         <h1 className="text-xl font-bold text-ink">No people yet</h1>
         <p className="max-w-xs text-ink-soft">
-          When you pay someone&apos;s request, they show up here — so you can pay or ask them again in
+          When you pay someone&apos;s request, they show up here, so you can pay or ask them again in
           a tap.
         </p>
         <Link href="/home" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
@@ -67,7 +67,7 @@ export default function ContactsPage() {
                   person implied a continuity the link doesn't carry). */}
               <Link
                 href="/request"
-                aria-label="Create a link that asks for money — share it with anyone"
+                aria-label="Create a link that asks for money, and share it with anyone"
                 className="flex h-10 flex-1 items-center justify-center rounded-full border border-line text-sm font-semibold text-ink"
               >
                 Ask for money

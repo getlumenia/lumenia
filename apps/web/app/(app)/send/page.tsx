@@ -251,7 +251,7 @@ export default function SendPage() {
   if (ready?.kind === "link") {
     return (
       <div className="flex flex-col gap-4 py-4">
-        <h1 className="text-xl font-bold text-ink">Done — share the link</h1>
+        <h1 className="text-xl font-bold text-ink">Done. Share the link</h1>
         <LinkReadyCard
           link={ready.link}
           balanceId={ready.balanceId}
@@ -310,7 +310,7 @@ export default function SendPage() {
           <PrimaryButton loading={faucetBusy} loadingLabel="Getting test money…" onClick={getTestMoney}>
             Get test money
           </PrimaryButton>
-          <p className="text-xs text-ink-soft">Test network — this money isn&apos;t real.</p>
+          <p className="text-xs text-ink-soft">Test network. This money isn&apos;t real.</p>
         </div>
       ) : (
         <>
@@ -373,7 +373,7 @@ export default function SendPage() {
                     className="w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-ink"
                   />
                   <p className="text-xs text-ink-soft">
-                    Tell them the password some other way — a call, or a different app. Put it in
+                    Tell them the password some other way: a call, or a different app. Put it in
                     the same chat as the link and it protects nothing. Pick something a stranger
                     wouldn&apos;t guess: whoever gets hold of the link can keep trying.
                   </p>

@@ -13,7 +13,7 @@ import { AmbientVideo } from "../AmbientVideo";
 // being taken down: receive-without-a-wallet (hand), no-seed-words (key), it's-real (check), safe (shield).
 const FEARS = [
   {
-    worry: "“I don’t even have a wallet — how would I receive it?”",
+    worry: "“I don’t even have a wallet. How would I receive it?”",
     lead: "You don’t need one.",
     rest: "Tap the link and the money is already there. No wallet, not now, not ever.",
     icon: "/brand-kit-assets/icon-hand.webp",
@@ -31,9 +31,9 @@ const FEARS = [
     icon: "/brand-kit-assets/icon-check.webp",
   },
   {
-    worry: "“What if it gets lost — is it safe?”",
+    worry: "“What if it gets lost? Is it safe?”",
     lead: "Only you can open it",
-    rest: "— or it comes back to the sender after seven days. Every transfer is public to check, and your money is never ours.",
+    rest: ", or it comes back to the sender after seven days. Every transfer is public to check, and your money is never ours.",
     icon: "/brand-kit-assets/icon-shield.webp",
   },
 ];

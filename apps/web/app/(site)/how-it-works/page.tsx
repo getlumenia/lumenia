@@ -21,13 +21,13 @@ import { Beats } from "./Beats";
 import "../../../components/site/page.css";
 import "./how-it-works.css";
 
-const PAGE_TITLE = "How it works — the audit trail";
-const TITLE = `${PAGE_TITLE} — Lumenia`; // OG/Twitter keep the full branded form
+const PAGE_TITLE = "How it works: the audit trail";
+const TITLE = `${PAGE_TITLE} | Lumenia`; // OG/Twitter keep the full branded form
 const DESCRIPTION =
   "The honest, technical account: how a walletless claim works, why the recipient pays no gas, and how to verify a real transfer yourself.";
 
 export const metadata: Metadata = {
-  title: PAGE_TITLE, // the (site) layout template appends “ — Lumenia”
+  title: PAGE_TITLE, // the (site) layout template appends “ | Lumenia”
   description: DESCRIPTION,
   alternates: { canonical: "/how-it-works" },
   openGraph: {
@@ -37,7 +37,7 @@ export const metadata: Metadata = {
     title: TITLE,
     description: DESCRIPTION,
     locale: "en_US",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia — money home, in a link." }],
+    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Lumenia. Money home, in a link." }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
@@ -71,7 +71,7 @@ export default function HowItWorks() {
                 <span className="pg-dot" aria-hidden="true" />
                 The audit trail
               </p>
-              <h1 className="pg-h1">How it works — and how to check it.</h1>
+              <h1 className="pg-h1">How it works, and how to check it.</h1>
               <p className="pg-lead">
                 Everywhere else on this site we talk about money and people. Here we name the
                 technology, because <strong>a non-custodial claim is only worth something if a

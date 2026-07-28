@@ -1,8 +1,8 @@
 /**
- * /brand-kit — INTERNAL brand workspace (not linked in nav, noindex). We explore
+ * /brand-kit: INTERNAL brand workspace (not linked in nav, noindex). We explore
  * type pairings + palette directions here, with the REAL candidate faces, BEFORE
  * touching the landing. Stands OUTSIDE the (site) group on purpose: no SiteNav,
- * no testnet banner, no theme provider — its own chrome, its own fonts.
+ * no testnet banner, no theme provider, its own chrome, its own fonts.
  *
  * Fonts load from the Fontshare CSS API (candidate faces only live on this route,
  * so nothing here reaches the webfont-free claim route). If the CDN is blocked the
@@ -12,7 +12,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 export const metadata: Metadata = {
-  title: "Brand Kit — Lumenia (internal)",
+  title: "Brand Kit: Lumenia (internal)",
   robots: { index: false, follow: false },
 };
 
@@ -29,10 +29,10 @@ const FONTSHARE =
   "&display=swap";
 
 export default function BrandKitLayout({ children }: { children: React.ReactNode }) {
-  // Internal design workspace — the same production gate app/dev uses. Gating the
+  // Internal design workspace, the same production gate app/dev uses. Gating the
   // shared layout 404s all 12 /brand-kit routes in prod at once (they pull the
   // heavy 3D model viewers and Fontshare/Google webfonts, and are noindex + not in
-  // nav — no live (site)/(app) surface links to them, only code comments do). Stays
+  // nav: no live (site)/(app) surface links to them, only code comments do). Stays
   // fully available in local dev for brand exploration.
   if (process.env.NODE_ENV === "production") notFound();
 
@@ -40,7 +40,7 @@ export default function BrandKitLayout({ children }: { children: React.ReactNode
     <>
       {/* eslint-disable-next-line @next/next/no-page-custom-font */}
       <link rel="stylesheet" href={FONTSHARE} />
-      {/* Stellar's own pairing (Lora + Inter) — shown as a funder-alignment option. */}
+      {/* Stellar's own pairing (Lora + Inter), shown as a funder-alignment option. */}
       {/* eslint-disable-next-line @next/next/no-page-custom-font */}
       <link
         rel="stylesheet"

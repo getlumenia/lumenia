@@ -58,7 +58,7 @@ export default function SentPage() {
       <div className="py-16 text-center">
         <h1 className="text-xl font-bold text-ink">Link not found on this device</h1>
         <p className="mt-2 text-ink-soft">
-          We only keep your links on the phone you sent them from — we never store them on a server.
+          We only keep your links on the phone you sent them from. They are never stored on a server.
         </p>
         <div className="mt-4 flex flex-col items-center gap-2">
           <Link href="/home" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
@@ -124,7 +124,7 @@ export default function SentPage() {
       {linkStatus === "settled" && (
         <p className="text-center text-ink-soft">
           {rec.toName
-            ? `This is settled — ${rec.toName} collected it, or it came back to you after 7 days. Nothing more to do.`
+            ? `This is settled. ${rec.toName} collected it, or it came back to you after 7 days. Nothing more to do.`
             : "This money has been received. Nothing more to do."}
         </p>
       )}
