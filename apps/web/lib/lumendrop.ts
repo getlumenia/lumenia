@@ -25,6 +25,7 @@ import {
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
 import { resolveNetwork, type NetworkConfig } from "./network";
+import { deriveLinkKey, makeLinkSeed, passwordFragment } from "./claim-password";
 
 /**
  * Every v2 call takes an optional network. Omitting it means TESTNET — the product's default —
@@ -70,6 +71,11 @@ export interface V2Link {
  * Deposit `amount` USDC behind a fresh link — GASLESS. The SENDER signs the invoke (authorizes the
  * USDC transfer into the escrow) but pays no gas: the sponsor FEE-BUMPS it via /v2-deposit, so even
  * a 0-XLM sender can create a link (proven: the gasless-deposit spike, 5/5).
+ *
+ * With `password`, the link key is DERIVED from a random seed plus that password instead of being
+ * random (see ./claim-password.ts): the fragment then carries only half the key, so intercepting
+ * the link is no longer enough to take the money. The escrow, the deposit and the reclaim path are
+ * identical either way — only where the key comes from changes.
  */
 export async function createV2Link(opts: {
   signer: Signer;
@@ -80,9 +86,14 @@ export async function createV2Link(opts: {
   sponsorUrl: string;
   /** unix seconds; default now + 7 days (the reclaim window) */
   expiry?: number;
+  /** optional claim password — the recipient must know it before the money will move */
+  password?: string;
 }): Promise<V2Link> {
   const server = new rpc.Server(RPC_URL);
-  const link = Keypair.random(); // ephemeral Ed25519 link key
+  // No password ⇒ a random ephemeral key that IS the fragment (the fast default).
+  // A password ⇒ a key derived from a random seed + the password; the seed is the fragment.
+  const seed = opts.password ? makeLinkSeed() : null;
+  const link = seed ? await deriveLinkKey(seed, opts.password!) : Keypair.random();
   const linkHex = Buffer.from(link.rawPublicKey()).toString("hex");
   const sender = opts.signer.publicKey();
   const expiry = BigInt(opts.expiry ?? Math.floor(Date.now() / 1000) + 7 * 24 * 3600);
@@ -117,8 +128,11 @@ export async function createV2Link(opts: {
   if (!res.ok) throw new Error(`/v2-deposit → ${res.status}: ${text}`);
   const { hash } = JSON.parse(text) as { hash: string };
 
-  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}`;
-  const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${link.secret()}`;
+  // `p=1` lets the claim screen ask for the password BEFORE it reads the fragment, so a
+  // recipient sees "this one needs the password" rather than a button that quietly fails.
+  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}`;
+  const fragment = seed ? passwordFragment(seed) : link.secret();
+  const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
   return { link: url, linkHex, hash };
 }
 

@@ -17,12 +17,15 @@ export function LinkReadyCard({
   balanceId,
   from,
   requestName,
+  locked = false,
 }: {
   link: string;
   balanceId: string;
   from: string;
   /** set when this link answers an ask — the share text sends it BACK to the asker. */
   requestName?: string;
+  /** the sender put a claim password on this link (lib/claim-password.ts). */
+  locked?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const sentId = balanceId.slice(-8);
@@ -70,10 +73,17 @@ export function LinkReadyCard({
         {copied ? "Copied" : "Copy link"}
       </button>
 
-      <p className="text-xs text-ink-soft">
-        Share it privately with the person it's for — whoever holds the link can claim it, like cash in an
-        envelope. If nobody claims it, the money comes back to you after 7 days.
-      </p>
+      {locked ? (
+        <p className="text-xs text-ink-soft">
+          Now send them the password a different way — a call, or another app. In the same chat as
+          the link, it protects nothing. If nobody claims it, the money comes back to you after 7 days.
+        </p>
+      ) : (
+        <p className="text-xs text-ink-soft">
+          Share it privately with the person it&apos;s for — whoever holds the link can claim it, like cash in an
+          envelope. If nobody claims it, the money comes back to you after 7 days.
+        </p>
+      )}
       <Link href={`/sent/${sentId}`} className="text-sm font-semibold text-money underline-offset-2 hover:underline">
         Track this link →
       </Link>

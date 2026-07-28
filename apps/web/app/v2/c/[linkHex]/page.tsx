@@ -20,6 +20,9 @@ export default async function V2ClaimPage({
   const sp = await searchParams;
   const amount = typeof sp.a === "string" ? sp.a : "";
   const sender = (typeof sp.s === "string" ? sp.s : "").trim() || "Someone";
+  // `p=1` marks a password-locked link, so the page can say so up front instead of
+  // letting someone tap a button that then asks for something they weren't expecting.
+  const locked = sp.p === "1";
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-8 px-6 py-12 text-center">
@@ -29,6 +32,11 @@ export default async function V2ClaimPage({
           <p className="text-6xl font-bold tabular-nums text-money">{formatUsd(amount)}</p>
         ) : (
           <p className="text-2xl font-semibold text-ink">You have money to claim</p>
+        )}
+        {locked && (
+          <p className="mt-2 text-sm text-ink-soft">
+            This one is locked. You&apos;ll need the password {sender} gave you.
+          </p>
         )}
       </div>
       <V2ClaimButton linkHex={linkHex} amount={amount} sender={sender} />

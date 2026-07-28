@@ -26,6 +26,7 @@ import { useWallet } from "../../../lib/wallet";
 import { loadBalance } from "../../../lib/horizon";
 import { payToAddress } from "../../../lib/send";
 import { createV2Link } from "../../../lib/lumendrop";
+import { claimPasswordProblem } from "../../../lib/claim-password";
 import { isValidAddress } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
 import { formatUsd } from "../../../lib/money";
@@ -57,7 +58,7 @@ interface RequestCtx {
 }
 
 type Ready =
-  | { kind: "link"; link: string; balanceId: string }
+  | { kind: "link"; link: string; balanceId: string; locked: boolean }
   | { kind: "direct"; balanceId: string; toName: string };
 
 function saveSent(id: string, rec: SentRecord) {
@@ -82,6 +83,10 @@ export default function SendPage() {
   const [amount, setAmount] = useState("");
   const [from, setFrom] = useState("");
   const [request, setRequest] = useState<RequestCtx | null>(null);
+  // Optional claim password (lib/claim-password.ts). Off by default: the hero flow is a
+  // link you tap, and adding a step to every send would cost more than it buys.
+  const [wantPassword, setWantPassword] = useState(false);
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [error, setError] = useState("");
@@ -148,6 +153,11 @@ export default function SendPage() {
     if (balance !== null && amt > Number.parseFloat(balance)) return setError("That's more than you have.");
     const directTo = request?.to; // paying a returning asker straight to her account
     if (!directTo && !from.trim()) return setError("Add your name so they know who it's from.");
+    const lockWith = !directTo && wantPassword ? password : "";
+    if (!directTo && wantPassword) {
+      const problem = claimPasswordProblem(password);
+      if (problem) return setError(problem);
+    }
 
     setBusy(true);
     try {
@@ -197,6 +207,7 @@ export default function SendPage() {
         amount: amt.toFixed(2),
         from: from.trim(),
         webOrigin: window.location.origin,
+        password: lockWith || undefined,
       });
       saveSent(result.linkHex.slice(-8), {
         balanceId: result.linkHex, // the v2 drop id (the link key); reused by "my links"
@@ -210,7 +221,8 @@ export default function SendPage() {
       // up with a link they can share.
       void sendEvent("send_link_created", account!.address);
       if (request?.nonce) void sendEvent("request_paid", request.nonce);
-      setReady({ kind: "link", link: result.link, balanceId: result.linkHex });
+      setPassword(""); // it lives in the link's derivation now; keep it out of memory
+      setReady({ kind: "link", link: result.link, balanceId: result.linkHex, locked: Boolean(lockWith) });
     } catch (e) {
       // Technical reasons (status codes, ledger result codes) must never reach a
       // money surface (vocabulary law); a rejected inner tx means nothing moved.
@@ -245,6 +257,7 @@ export default function SendPage() {
           balanceId={ready.balanceId}
           from={from.trim()}
           requestName={request?.name}
+          locked={ready.locked}
         />
       </div>
     );
@@ -327,6 +340,49 @@ export default function SendPage() {
                 className="mt-1 w-full rounded-[14px] border border-line bg-surface px-3 py-3 text-ink"
               />
             </label>
+          )}
+          {/* Optional lock. Only for a bearer LINK — a direct pay already lands in one
+              named account, so a password there would protect nothing. Off by default;
+              the copy names the failure mode (same chat = no protection) rather than
+              implying the password is strong on its own. */}
+          {!request?.to && (
+            <div className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface p-4">
+              <label className="flex items-start gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={wantPassword}
+                  onChange={(e) => setWantPassword(e.target.checked)}
+                  className="mt-1 size-4"
+                />
+                <span>
+                  <span className="font-medium text-ink">Lock it with a password</span>
+                  <span className="block text-ink-soft">
+                    Only someone who knows it can claim the link.
+                  </span>
+                </span>
+              </label>
+              {wantPassword && (
+                <>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                    placeholder="Something they'll know"
+                    aria-label="Claim password"
+                    className="w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-ink"
+                  />
+                  <p className="text-xs text-ink-soft">
+                    Tell them the password some other way — a call, or a different app. Put it in
+                    the same chat as the link and it protects nothing. Pick something a stranger
+                    wouldn&apos;t guess: whoever gets hold of the link can keep trying.
+                  </p>
+                  <p className="text-xs text-ink-soft">
+                    Forget it and the money isn&apos;t stuck. It comes back to you after 7 days.
+                  </p>
+                </>
+              )}
+            </div>
           )}
           {error && <p className="text-sm text-danger">{error}</p>}
           {/* Held until the balance is known when paying an ask: the amount

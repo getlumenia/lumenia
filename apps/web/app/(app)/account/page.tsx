@@ -1,31 +1,68 @@
 "use client";
 
 /**
- * /account — who you are on the public record, in plain terms. Real data only (no-mock): the account
- * address comes from the local keystore via useWallet; the custody phase is the real Phase-1/Phase-2
- * state; the explorer link resolves to the real on-chain account. No invented settings, no toggles
- * that do nothing.
+ * /account — everything about your money in one place: your balance, how to receive, what's moved
+ * in and out, how it's secured, how to back it up, how to turn it into local cash, and your
+ * settings. Real data only (no-mock): balance + activity are live Horizon reads; the account
+ * address + custody phase come from the local keystore via useWallet; the explorer links resolve to
+ * the real on-chain account. No invented settings, no toggles that do nothing.
  *
- * Vocabulary-law clean (money + people, "public record"): we say "your account" and "public record",
- * never wallet / crypto / address-as-jargon. The one honest hard truth — there is no password reset —
- * is stated plainly, because softening it would be a lie about what we can do.
+ * Vocabulary-law clean (money + people, "public record"): "your money" / "your account" / "public
+ * record", never wallet / crypto / address-as-jargon. The one honest hard truth — there is no
+ * password reset — is stated plainly, because softening it would be a lie about what we can do.
+ *
+ * Built as the account "home" the extension / desktop / mobile shells will reuse: each concern is a
+ * self-contained card, data comes from lib/horizon + useWallet, so the same surface ports cleanly.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Copy, Check } from "lucide-react";
+import QRCode from "react-qr-code";
+import { Copy, Check, Send, HandCoins, ArrowDownLeft, ArrowUpRight, QrCode } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
+import { loadTotalUsd, loadActivity, type ActivityItem } from "../../../lib/horizon";
+import { formatUsd } from "../../../lib/money";
 import { LockMoneyCard } from "../../../components/brand/LockMoneyCard";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
+import { ThemeToggle } from "../../../components/site/ThemeToggle";
 import { sendEvent } from "../../../lib/events";
 import { copy } from "../../../lib/copy";
 
 const explorer = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
 
+function fmtDate(iso: string): string {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
 export default function AccountPage() {
-  const { status, account } = useWallet();
+  const { status, account, accounts } = useWallet();
   const [copied, setCopied] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  // null = still loading; a value = the real Horizon result (empty is an honest empty).
+  const [total, setTotal] = useState<string | null>(null);
+  const [activity, setActivity] = useState<ActivityItem[] | null>(null);
+
+  useEffect(() => {
+    if (!account) return;
+    let alive = true;
+    const addrs = accounts.length ? accounts.map((a) => a.address) : [account.address];
+    // A brand-new account 404s on Horizon — loadTotalUsd/loadActivity return 0/[] honestly.
+    loadTotalUsd(addrs)
+      .then((r) => alive && setTotal(r.usd))
+      .catch(() => alive && setTotal("0"));
+    loadActivity(account.address, 8)
+      .then((a) => alive && setActivity(a))
+      .catch(() => alive && setActivity([]));
+    return () => {
+      alive = false;
+    };
+  }, [account, accounts]);
 
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
 
@@ -69,17 +106,46 @@ export default function AccountPage() {
     <div className="flex flex-col gap-5 py-4">
       <header>
         <h1 className="text-xl font-bold text-ink">Account</h1>
-        <p className="mt-1 text-sm text-ink-soft">Who you are on the public record.</p>
+        <p className="mt-1 text-sm text-ink-soft">Everything about your money, in one place.</p>
       </header>
 
-      {/* Your account — the real address, copyable + verifiable on the explorer. */}
+      {/* Your money — the real total, live from the public record. One number; the split across
+          accounts is plumbing (loadTotalUsd), never shown. Honest $0.00 for a fresh account. */}
+      <MoneyCard className="p-5">
+        <p className="text-sm font-medium text-ink-soft">Your money</p>
+        <p className="mt-1 text-4xl font-bold tabular-nums text-ink">
+          {total === null ? "…" : formatUsd(total)}
+        </p>
+        <p className="mt-1 text-sm text-ink-soft">Held in dollars — yours to send whenever you like.</p>
+      </MoneyCard>
+
+      {/* Do something with it — the two things you can do today, one tap each. */}
+      <div className="grid grid-cols-2 gap-3">
+        <Link
+          href="/send"
+          className="flex flex-col items-start gap-2 rounded-[16px] border border-line bg-surface p-4 transition-colors hover:border-money"
+        >
+          <Send className="size-5 text-money" />
+          <span className="font-semibold text-ink">Send money</span>
+        </Link>
+        <Link
+          href="/request"
+          className="flex flex-col items-start gap-2 rounded-[16px] border border-line bg-surface p-4 transition-colors hover:border-money"
+        >
+          <HandCoins className="size-5 text-money" />
+          <span className="font-semibold text-ink">Ask to be paid</span>
+        </Link>
+      </div>
+
+      {/* Receive — your account on the public record, copyable + verifiable. Someone can send
+          straight to this, or you just receive a link like everyone else. */}
       <MoneyCard className="p-5">
         <div className="app-krow" style={{ borderBottom: 0, paddingTop: 0 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img className="app-kicon" src="/brand-kit-assets/icon-key.webp" alt="" />
           <div className="app-krow-body">
             <p className="app-krow-t">Your account</p>
-            <p className="app-krow-s">This is where your money lives on the public record.</p>
+            <p className="app-krow-s">Where your money lives on the public record.</p>
           </div>
         </div>
         <p className="mt-3 break-all rounded-[12px] border border-line bg-paper px-3 py-2 font-mono text-xs text-ink-soft">
@@ -93,6 +159,14 @@ export default function AccountPage() {
             {copied ? <Check className="size-4 text-money" /> : <Copy className="size-4" />}
             {copied ? "Copied" : "Copy"}
           </button>
+          <button
+            onClick={() => setShowQr((v) => !v)}
+            aria-expanded={showQr}
+            className="flex h-10 items-center gap-2 rounded-full border border-line px-4 text-sm font-medium text-ink"
+          >
+            <QrCode className="size-4" />
+            {showQr ? "Hide code" : "Show code"}
+          </button>
           <a
             href={explorer(account.address)}
             target="_blank"
@@ -101,6 +175,55 @@ export default function AccountPage() {
           >
             See it on the public record ↗
           </a>
+        </div>
+        {/* The scannable code for handing money over in person. Drawn locally as plain SVG from the
+            address already on screen — nothing is uploaded and no image service is called. The white
+            plate + black pattern are fixed in both themes: a dark-on-dark code doesn't scan. */}
+        {showQr && (
+          <div className="mt-4 flex flex-col items-center gap-2">
+            <div className="rounded-[16px] bg-white p-4">
+              <QRCode value={account.address} size={168} bgColor="#FFFFFF" fgColor="#000000" level="M" />
+            </div>
+            <p className="text-center text-xs text-ink-soft">
+              Let them point their camera at this. It sends money here.
+            </p>
+          </div>
+        )}
+      </MoneyCard>
+
+      {/* Recent activity — money in and out, straight from the ledger. Honest empty for a new
+          account; no invented rows. */}
+      <MoneyCard className="p-5">
+        <p className="font-semibold text-ink">Recent activity</p>
+        {activity === null ? (
+          <p className="mt-2 text-sm text-ink-soft">Loading…</p>
+        ) : activity.length === 0 ? (
+          <p className="mt-2 text-sm text-ink-soft">No money in or out yet. When it moves, you&apos;ll see it here.</p>
+        ) : (
+          <ul className="mt-3 flex flex-col divide-y divide-line">
+            {activity.map((a) => (
+              <li key={a.id} className="flex items-center gap-3 py-2.5">
+                <span
+                  className={`flex size-8 shrink-0 items-center justify-center rounded-full ${
+                    a.direction === "in" ? "bg-accent-soft text-money" : "border border-line text-ink-soft"
+                  }`}
+                >
+                  {a.direction === "in" ? <ArrowDownLeft className="size-4" /> : <ArrowUpRight className="size-4" />}
+                </span>
+                <span className="flex-1 text-sm text-ink">{a.direction === "in" ? "Received" : "Sent"}</span>
+                <span className="text-right text-sm text-ink-soft">{fmtDate(a.at)}</span>
+                <span className={`w-20 text-right font-semibold tabular-nums ${a.direction === "in" ? "text-money" : "text-ink"}`}>
+                  {a.direction === "in" ? "+" : "−"}
+                  {formatUsd(a.usd)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-3">
+          <Link href="/activity" className="text-sm font-medium text-money underline-offset-2 hover:underline">
+            See all activity →
+          </Link>
         </div>
       </MoneyCard>
 
@@ -141,7 +264,7 @@ export default function AccountPage() {
       <MoneyCard className="p-5">
         <p className="font-semibold text-ink">Your password is the key</p>
         <p className="mt-1 text-sm text-ink-soft">
-          Your money is never ours — it waits on the public record, not in a Lumenia account, so we
+          Your money is never ours. It waits on the public record, not in a Lumenia account, so we
           can&apos;t lend it, freeze it, or lose it. Back it up above and your email plus your password
           bring it back on any phone. But the password can&apos;t be reset: if you forget it, nobody —
           including us — can open your money. That&apos;s what keeps it yours.
@@ -154,10 +277,10 @@ export default function AccountPage() {
       <MoneyCard className="p-5">
         <p className="font-semibold text-ink">Turning dollars into cash</p>
         <p className="mt-1 text-sm text-ink-soft">
-          You can hold your dollars as long as you like. When you want local money in your bank,
-          here&apos;s the honest path — and the one mistake to avoid.
+          Hold your dollars as long as you like. When you want local money in your bank, here&apos;s
+          the honest path, and the one mistake to avoid.
         </p>
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap gap-2">
           <Link
             href="/cash-out"
             onClick={() => account && void sendEvent("cashout_guide_opened", account.address)}
@@ -165,6 +288,41 @@ export default function AccountPage() {
           >
             How to turn dollars into lira →
           </Link>
+          {/* The step itself. Kept separate from /send (a person gets a link; an exchange gets a
+              payment with a reference tag, and a wrong tag is how people lose money). */}
+          <Link
+            href="/send-out"
+            className="inline-flex h-10 items-center rounded-full border border-line px-4 text-sm font-medium text-ink"
+          >
+            Send to an exchange
+          </Link>
+        </div>
+      </MoneyCard>
+
+      {/* Settings — real, honest controls only. Appearance is a live theme toggle; the device note
+          points to backup rather than pretending an account lives in the cloud; language states the
+          truth (English today, more later). No dead switches. */}
+      <MoneyCard className="p-5">
+        <p className="font-semibold text-ink">Settings</p>
+        <div className="mt-3 flex items-center justify-between border-b border-line pb-3">
+          <div>
+            <p className="text-sm font-medium text-ink">Appearance</p>
+            <p className="text-xs text-ink-soft">Light or dark — follows your phone by default.</p>
+          </div>
+          <ThemeToggle />
+        </div>
+        <div className="flex items-center justify-between border-b border-line py-3">
+          <div>
+            <p className="text-sm font-medium text-ink">This phone</p>
+            <p className="text-xs text-ink-soft">Your money lives on this device. Back it up above to use it elsewhere.</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-between pt-3">
+          <div>
+            <p className="text-sm font-medium text-ink">Language</p>
+            <p className="text-xs text-ink-soft">English. More languages are on the way.</p>
+          </div>
+          <span className="text-sm text-ink-soft">English</span>
         </div>
       </MoneyCard>
 
