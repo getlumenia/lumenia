@@ -126,3 +126,9 @@ contracts/lumen-drop/test_snapshots/test/single_drop_pays_exactly_once.*.json
 contracts/lumen-drop/test_snapshots/test/signature_never_pays_a_different_payout.*.json
 contracts/lumen-drop/test_snapshots/test/pool_conservation_holds.*.json
 contracts/lumen-drop/test_snapshots/test/global_solvency_exact_over_mixed_population.*.json
+
+# The demo film and its raw scene recordings. The GENERATOR is committed
+# (apps/web/e2e/demo) so anyone can re-record it; the output is a 14 MB binary that
+# would bloat every clone and go stale the moment the product moves.
+lumenia-demo.mp4
+apps/web/e2e/demo/.raw/
