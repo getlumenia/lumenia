@@ -18,6 +18,7 @@ import { runWatchdog } from "./lib/watchdog.js";
 import { createAccountHandler } from "./lib/create-account.js";
 import { feebumpHandler } from "./lib/feebump.js";
 import { sendLinkHandler } from "./lib/send.js";
+import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
 import { relayClaimHandler, relayDepositHandler, relayReclaimHandler } from "./lib/soroban-relay.js";
 import { faucetHandler } from "./lib/faucet.js";
@@ -72,6 +73,7 @@ const VALUE_ROUTES = new Set([
   "/create-account",
   "/feebump",
   "/send-link",
+  "/payout",
   "/sweep",
   "/v2-claim",
   "/v2-deposit",
@@ -137,6 +139,23 @@ export default {
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
         return json(200, await sendLinkHandler(server, config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey }));
+      }
+
+      if (method === "POST" && url === "/payout") {
+        const body = (await readJson(request)) as {
+          xdr?: string; senderPublicKey?: string; destination?: string; amount?: string;
+        };
+        if (!body.xdr || !body.senderPublicKey || !body.destination || !body.amount) {
+          return json(400, { error: "xdr, senderPublicKey, destination and amount are required" });
+        }
+        const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
+        if (rl.limited) return json(429, { error: rl.reason });
+        return json(200, await payoutHandler(server, config, signer, {
+          xdr: body.xdr,
+          senderPublicKey: body.senderPublicKey,
+          destination: body.destination,
+          amount: body.amount,
+        }));
       }
 
       if (method === "POST" && url === "/sweep") {

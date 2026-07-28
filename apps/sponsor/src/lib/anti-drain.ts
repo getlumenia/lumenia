@@ -12,7 +12,7 @@
  * `payment` to an arbitrary destination all drain the sponsor while passing a
  * type-only check. So we validate every op's SOURCE and its sensitive PARAMETERS.
  *
- * Covered by test-antidrain.ts (44/44) — the same file that tests the deployed gate.
+ * Covered by test-antidrain.ts (57/57) — the same file that tests the deployed gate.
  * Includes an exact op-SEQUENCE matcher (defense-in-depth) + a GOLDEN-policy snapshot
  * that fails CI if any allowlist silently widens.
  */
@@ -270,6 +270,84 @@ export function validateInnerTransaction(
       }
       // endSponsoringFutureReserves: no extra params to check (source already enforced).
     }
+  }
+
+  return { ok: true };
+}
+
+/* ============================================================================
+ * PAYOUT policy — the user sends their OWN USDC straight out to an address they
+ * name (an exchange deposit address, a friend's account). A SEPARATE, tight
+ * allowlist: the claim, send and sweep policies above are never touched.
+ *
+ * Why this can't reuse the /send-link shape: a Claimable Balance is not a
+ * payment. Exchanges credit a deposit when a `payment` operation with the right
+ * MEMO lands on their address; a Claimable Balance addressed to them just sits
+ * there unclaimed. So a payout has to be a real payment op, which is its own
+ * policy — and the memo has to survive the sponsor's fee-bump untouched (a
+ * fee-bump wraps the inner transaction whole, memo included; asserted in
+ * test-antidrain.ts).
+ *
+ * What the sponsor risks here is the FEE and nothing else: the USDC is the
+ * user's own, the sponsor sources no op, and the asset is pinned to the one
+ * configured USDC. It never enforces the memo — the network doesn't either
+ * (SEP-29 memo-required is a client-side convention), which is exactly why the
+ * web flow makes the memo mandatory and checks the destination for the flag.
+ * ============================================================================ */
+
+export const ALLOWED_PAYOUT_OP_TYPES = new Set<string>(["payment"]);
+
+export interface PayoutPolicy {
+  /** The user's account: the tx source AND the payment's op source. */
+  sender: string;
+  /** Sponsor account — sources NOTHING here (it only fee-bumps). */
+  sponsor: string;
+  /** The one asset a payout may move (the configured USDC). */
+  usdc: Asset;
+  /** The destination the client declared — a G… account or a muxed M… address. */
+  expectedDestination: string;
+  /** The exact amount the client declared. */
+  expectedAmount: string;
+}
+
+/**
+ * Validate a payout inner tx before the sponsor fee-bumps it: exactly one
+ * sender-sourced `payment`, in the configured USDC, to the declared destination,
+ * for the declared amount. Anything else = REJECT.
+ */
+export function validatePayoutTransaction(tx: Transaction, policy: PayoutPolicy): ValidationResult {
+  const ops = tx.operations;
+  if (ops.length !== 1) {
+    return { ok: false, reason: `payout must be exactly one payment op, got ${ops.length}` };
+  }
+  const op = ops[0]!;
+  if (!ALLOWED_PAYOUT_OP_TYPES.has(op.type)) {
+    return { ok: false, reason: `disallowed op type: ${op.type}` };
+  }
+  if (tx.source !== policy.sender) {
+    return { ok: false, reason: `unexpected tx source ${tx.source}` };
+  }
+  const src = opSource(op as { source?: string }, tx.source);
+  if (src === policy.sponsor) {
+    return { ok: false, reason: "payout payment sourced from sponsor (drain attempt)" };
+  }
+  if (src !== policy.sender) {
+    return { ok: false, reason: `payout payment must be sourced by the sender, got ${src}` };
+  }
+
+  const pay = op as { destination?: string; asset?: Asset; amount?: string };
+  if (!pay.destination || pay.destination !== policy.expectedDestination) {
+    return { ok: false, reason: `payout destination ${pay.destination} != declared destination` };
+  }
+  if (!pay.asset || typeof (pay.asset as Asset).equals !== "function" || !policy.usdc.equals(pay.asset as Asset)) {
+    return { ok: false, reason: "payout asset is not the expected USDC" };
+  }
+  const amount = Number.parseFloat(pay.amount ?? "0");
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, reason: `payout amount ${pay.amount} must be greater than zero` };
+  }
+  if (amount !== Number.parseFloat(policy.expectedAmount)) {
+    return { ok: false, reason: `payout amount ${pay.amount} != declared ${policy.expectedAmount}` };
   }
 
   return { ok: true };

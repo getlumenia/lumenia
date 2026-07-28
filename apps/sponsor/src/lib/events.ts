@@ -19,6 +19,10 @@ const ALLOWED_EVENTS = new Set<string>([
   // Measures off-ramp demand vs. hold-dollars behavior. Carries the hashed account.
   // Must stay in step with apps/web/lib/events.ts.
   "cashout_guide_opened",
+  // The off-ramp step actually TAKEN — dollars sent out to an exchange deposit
+  // address (/send-out). Paired with cashout_guide_opened it separates people who
+  // read about cashing out from people who did it. Carries the hashed account.
+  "cashout_sent",
 ]);
 
 export interface EventInput {

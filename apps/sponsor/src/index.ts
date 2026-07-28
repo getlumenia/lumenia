@@ -8,6 +8,7 @@
  *   POST /create-account  → sponsored 0-XLM account + USDC trustline (sponsor-signed XDR)
  *   POST /feebump         → validate (anti-drain CLAIM policy) + fee-bump + submit the claim
  *   POST /send-link       → validate (anti-drain SEND policy) + sponsor-sign + fee-bump the onward CB
+ *   POST /payout          → validate (anti-drain PAYOUT policy) + fee-bump a plain USDC payment out (memo intact)
  *   POST /sweep           → validate (anti-drain SWEEP policy) + fee-bump: consolidate a per-link account into home
  *   POST /v2-claim        → relay a v2 (Soroban LumenDrop) claim: submit + pay the Soroban fee (walletless/gasless)
  *   POST /v2-deposit      → relay a v2 deposit: fee-bump the sender-signed deposit so a 0-XLM sender pays no gas
@@ -32,6 +33,7 @@ import { isHalted } from "./lib/kill-switch.js";
 import { createAccountHandler } from "./lib/create-account.js";
 import { feebumpHandler } from "./lib/feebump.js";
 import { sendLinkHandler } from "./lib/send.js";
+import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
 import { relayClaimHandler, relayDepositHandler, relayReclaimHandler } from "./lib/soroban-relay.js";
 import { faucetHandler } from "./lib/faucet.js";
@@ -95,7 +97,7 @@ const httpServer = createServer(async (req, res) => {
 
   // Kill-switch parity with the Worker: one flip halts every value-moving route.
   const VALUE_ROUTES = new Set([
-    "/create-account", "/feebump", "/send-link", "/sweep",
+    "/create-account", "/feebump", "/send-link", "/payout", "/sweep",
     "/v2-claim", "/v2-deposit", "/v2-reclaim", "/faucet", "/demo-link",
   ]);
   if (method === "POST" && VALUE_ROUTES.has(url) && (await isHalted())) {
@@ -143,6 +145,27 @@ const httpServer = createServer(async (req, res) => {
       const result = await sendLinkHandler(server, config, signer, {
         xdr: body.xdr,
         senderPublicKey: body.senderPublicKey,
+      });
+      return send(res, 200, result);
+    }
+
+    if (method === "POST" && url === "/payout") {
+      const body = (await readJson(req)) as {
+        xdr?: string;
+        senderPublicKey?: string;
+        destination?: string;
+        amount?: string;
+      };
+      if (!body.xdr || !body.senderPublicKey || !body.destination || !body.amount) {
+        return send(res, 400, { error: "xdr, senderPublicKey, destination and amount are required" });
+      }
+      const rl = await enforceRateLimit(clientIp(req), body.senderPublicKey);
+      if (rl.limited) return send(res, 429, { error: rl.reason });
+      const result = await payoutHandler(server, config, signer, {
+        xdr: body.xdr,
+        senderPublicKey: body.senderPublicKey,
+        destination: body.destination,
+        amount: body.amount,
       });
       return send(res, 200, result);
     }

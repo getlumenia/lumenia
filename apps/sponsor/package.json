@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "build:vercel": "node build-vercel.mjs",
     "bootstrap": "tsx src/cli/bootstrap.ts",
     "faucet-bootstrap": "tsx src/cli/faucet-bootstrap.ts",
     "create-account": "tsx src/cli/create-account.ts",
@@ -32,6 +31,7 @@
     "test:legacy": "tsx src/test-legacy-fallback.ts",
     "test:watchdog": "tsx src/test-watchdog.ts",
     "check:live-v2": "tsx src/live-v2-check.ts",
+    "check:live-payout": "tsx src/live-payout-check.ts",
     "mainnet-demo": "tsx src/mainnet-demo.ts",
     "test:antidrain": "tsx src/test-antidrain.ts",
     "test:integration": "tsx src/test-integration.ts"

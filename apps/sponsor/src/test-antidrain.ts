@@ -9,7 +9,7 @@
  *  not enough; the validator must check op SOURCE and sensitive PARAMETERS.
  *  These cases prove the hardened validator accepts the legit claim + send + sweep
  *  shapes and rejects every reserve/principal drain vector we could think of
- *  (44/44 = 18 claim + 7 send + 12 sweep + 4 op-sequence + 3 golden-policy). The sweep policy (validateSweepTransaction)
+ *  (57/57 = 18 claim + 7 send + 12 sweep + 12 payout + 4 op-sequence + 4 golden-policy). The sweep policy (validateSweepTransaction)
  *  is a SEPARATE tight allowlist — the claim/send allowlists are never widened.
  *
  *  RUN:
@@ -25,21 +25,27 @@ import {
   Asset,
   Claimant,
   Keypair,
+  Memo,
+  MuxedAccount,
   Networks,
   Operation,
   TransactionBuilder,
   BASE_FEE,
+  type FeeBumpTransaction,
   type Transaction,
   type xdr,
 } from "@stellar/stellar-sdk";
 // the deployed validator (same module the live /feebump imports)
 import {
   validateInnerTransaction,
+  validatePayoutTransaction,
   validateSweepTransaction,
   ALLOWED_INNER_OP_TYPES,
   ALLOWED_SEND_OP_TYPES,
+  ALLOWED_PAYOUT_OP_TYPES,
   ALLOWED_SWEEP_OP_TYPES,
   type InnerTxPolicy,
+  type PayoutPolicy,
   type SweepPolicy,
 } from "./lib/anti-drain.js";
 
@@ -512,6 +518,113 @@ check(
   "destination",
 );
 
+/* ---- /payout SHAPE: the user sends their OWN dollars out to an address they name ----
+ * A SEPARATE tight policy (validatePayoutTransaction): exactly ONE sender-sourced
+ * `payment` in the configured USDC, to the declared destination, for the declared
+ * amount. This is the cash-out leg — an exchange credits a deposit from a payment
+ * op carrying a MEMO, so a Claimable Balance (the /send-link shape) is useless here
+ * and the memo must survive the sponsor's fee-bump. */
+
+const exchange = Keypair.random(); // an exchange deposit address (G…)
+// A muxed M… deposit address: the memo is carried INSIDE the address (SEP-23), so
+// there is no memo field to get wrong — the safest shape an exchange can hand out.
+const exchangeMuxed = new MuxedAccount(new Account(exchange.publicKey(), "0"), "42").accountId();
+const PAYOUT_AMOUNT = "25.50";
+
+function payoutOps(opts: { dest?: string; asset?: Asset; amount?: string; source?: string } = {}): xdr.Operation[] {
+  return [
+    Operation.payment({
+      destination: opts.dest ?? exchange.publicKey(),
+      asset: opts.asset ?? USDC,
+      amount: opts.amount ?? PAYOUT_AMOUNT,
+      source: opts.source ?? recipient.publicKey(),
+    }),
+  ];
+}
+const payoutPolicy: PayoutPolicy = {
+  sender: recipient.publicKey(),
+  sponsor: sponsor.publicKey(),
+  usdc: USDC,
+  expectedDestination: exchange.publicKey(),
+  expectedAmount: PAYOUT_AMOUNT,
+};
+function checkPayout(
+  name: string,
+  ops: xdr.Operation[],
+  wantOk: boolean,
+  reasonIncludes?: string,
+  policy: PayoutPolicy = payoutPolicy,
+  source: string = recipient.publicKey(),
+) {
+  check(name, validatePayoutTransaction(buildTx(source, ops), policy), wantOk, reasonIncludes);
+}
+
+checkPayout("PAYOUT-G1 valid payout (sender-sourced USDC payment, declared dest + amount)", payoutOps(), true);
+checkPayout(
+  "PAYOUT-G2 valid payout to a muxed M… deposit address (memo embedded in the address)",
+  payoutOps({ dest: exchangeMuxed }),
+  true,
+  undefined,
+  { ...payoutPolicy, expectedDestination: exchangeMuxed },
+);
+// The invariant an exchange deposit lives or dies on: a fee-bump wraps the inner tx
+// WHOLE, so the memo the user typed is the memo that lands. If this ever breaks,
+// every memo-required deposit through /payout silently goes to the omnibus.
+{
+  const inner = new TransactionBuilder(new Account(recipient.publicKey(), "123456789"), {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK,
+  })
+    .addOperation(Operation.payment({ destination: exchange.publicKey(), asset: USDC, amount: PAYOUT_AMOUNT, source: recipient.publicKey() }))
+    .addMemo(Memo.text("EXCHANGE-DEPOSIT-9137"))
+    .setTimeout(180)
+    .build();
+  const bumped = TransactionBuilder.fromXDR(
+    TransactionBuilder.buildFeeBumpTransaction(sponsor.publicKey(), "1000", inner, NETWORK).toXDR(),
+    NETWORK,
+  ) as FeeBumpTransaction;
+  const carried = bumped.innerTransaction.memo;
+  check(
+    "PAYOUT-G3 the memo survives the sponsor's fee-bump (deposit-credit invariant)",
+    {
+      ok: carried.type === "text" && carried.value?.toString() === "EXCHANGE-DEPOSIT-9137",
+      reason: `fee-bumped inner memo is ${carried.type}:${String(carried.value)} — the deposit would land with no/wrong memo`,
+    },
+    true,
+  );
+}
+checkPayout("PAYOUT-R1 destination differs from the declared one (swap attack)", payoutOps({ dest: attacker.publicKey() }), false, "destination");
+checkPayout("PAYOUT-R2 wrong asset", payoutOps({ asset: WRONG }), false, "usdc");
+checkPayout("PAYOUT-R3 amount differs from the declared one", payoutOps({ amount: "999" }), false, "declared");
+checkPayout("PAYOUT-R4 payment sourced by the sponsor (spends the sponsor's USDC)", payoutOps({ source: sponsor.publicKey() }), false, "sponsor");
+checkPayout("PAYOUT-R5 tx sourced by someone other than the sender", payoutOps(), false, "tx source", payoutPolicy, attacker.publicKey());
+checkPayout("PAYOUT-R6 two payment ops (only one is ever allowed)", [...payoutOps(), ...payoutOps()], false, "exactly one");
+checkPayout(
+  "PAYOUT-R7 a non-payment op (accountMerge) in the payout slot",
+  [Operation.accountMerge({ destination: attacker.publicKey(), source: recipient.publicKey() })],
+  false,
+  "disallowed op type",
+);
+// The SDK refuses to BUILD a zero-amount payment, so a zero can only arrive as
+// hand-rolled XDR. Simulate that by overwriting the parsed op — the validator must
+// still fail closed rather than trust that the client used the SDK.
+{
+  const tx = buildTx(recipient.publicKey(), payoutOps());
+  (tx.operations[0] as { amount?: string }).amount = "0";
+  check(
+    "PAYOUT-R8 zero amount (hand-rolled XDR the SDK would never build)",
+    validatePayoutTransaction(tx, { ...payoutPolicy, expectedAmount: "0" }),
+    false,
+    "greater than zero",
+  );
+}
+check(
+  "PAYOUT-R9 the CLAIM policy still rejects this payout (allowlist not widened)",
+  validateInnerTransaction(buildTx(recipient.publicKey(), payoutOps()), basePolicy),
+  false,
+  "non-allowlisted destination",
+);
+
 /* ---- OP-SEQUENCE MATCHER: pin the exact ORDERED shape (defense-in-depth) ----
  * A reordering of individually-allowed ops (each passing source/param checks) must
  * still be rejected. The live claim policy pins [claim]; the send policy pins
@@ -584,6 +697,7 @@ goldenSet("send (ALLOWED_SEND_OP_TYPES)", ALLOWED_SEND_OP_TYPES, [
   "createClaimableBalance",
   "endSponsoringFutureReserves",
 ]);
+goldenSet("payout (ALLOWED_PAYOUT_OP_TYPES)", ALLOWED_PAYOUT_OP_TYPES, ["payment"]);
 goldenSet("sweep (ALLOWED_SWEEP_OP_TYPES)", ALLOWED_SWEEP_OP_TYPES, [
   "claimClaimableBalance",
   "payment",
