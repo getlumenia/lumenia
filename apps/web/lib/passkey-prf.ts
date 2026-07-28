@@ -124,15 +124,26 @@ export async function assertPasskeyPrf(credentialId?: Uint8Array): Promise<Passk
     // symptom the user sees is "no backup found" for money that exists.
     throw new Error(`This passkey belongs to ${RP_ID}. Open the site at that address to use Face ID.`);
   }
-  const assertion = (await navigator.credentials.get({
-    publicKey: {
-      ...(RP_ID ? { rpId: RP_ID } : {}),
-      challenge: bs(crypto.getRandomValues(new Uint8Array(32))),
-      allowCredentials: credentialId ? [{ type: "public-key", id: bs(credentialId) }] : [],
-      userVerification: "required",
-      extensions: { prf: { eval: { first: bs(PRF_SALT) } } } as PrfExtInput,
-    },
-  })) as PublicKeyCredential | null;
+  let assertion: PublicKeyCredential | null;
+  try {
+    assertion = (await navigator.credentials.get({
+      publicKey: {
+        ...(RP_ID ? { rpId: RP_ID } : {}),
+        challenge: bs(crypto.getRandomValues(new Uint8Array(32))),
+        allowCredentials: credentialId ? [{ type: "public-key", id: bs(credentialId) }] : [],
+        userVerification: "required",
+        extensions: { prf: { eval: { first: bs(PRF_SALT) } } } as PrfExtInput,
+      },
+    })) as PublicKeyCredential | null;
+  } catch (e) {
+    // The browser throws the SAME NotAllowedError whether the person cancelled the prompt or there
+    // is no Lumenia passkey on this device — deliberately, so a site cannot probe what you have.
+    // Its message is a spec URL, and a spec URL has no business on a screen about somebody's money.
+    if ((e as { name?: string }).name === "NotAllowedError") {
+      throw new Error("Face ID didn't go through. Either it was cancelled, or this phone has no Lumenia Face ID set up yet.");
+    }
+    throw e;
+  }
   if (!assertion) notSupported();
   const ext = assertion.getClientExtensionResults() as PrfExtOutput;
   const first = ext.prf?.results?.first;

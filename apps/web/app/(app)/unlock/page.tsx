@@ -8,18 +8,26 @@
  * holds only a blob it cannot open). Verifying the password decrypts the seed;
  * holding it for signing lands in Stage 5 (send).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { unlockPhase2 } from "../../../lib/keystore";
+import { isPlatformAuthenticatorAvailable } from "../../../lib/passkey-prf";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 
 export default function UnlockPage() {
-  const { status, account, setSessionSeed } = useWallet();
+  const { status, account, setSessionSeed, unlockWithFaceId } = useWallet();
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [faceCapable, setFaceCapable] = useState(false);
+  const [faceBusy, setFaceBusy] = useState(false);
+  const [showFace, setShowFace] = useState(false);
+
+  useEffect(() => {
+    void isPlatformAuthenticatorAvailable().then(setFaceCapable);
+  }, []);
 
   if (status === "loading") {
     return <p className="py-10 text-center text-ink-soft">Loading…</p>;
@@ -45,6 +53,21 @@ export default function UnlockPage() {
     }
   }
 
+  /** Same destination as the password path — only the way in differs. */
+  async function unlockFace() {
+    setFaceBusy(true);
+    setError("");
+    try {
+      await unlockWithFaceId();
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.replace(next && next.startsWith("/") ? next : "/home");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setFaceBusy(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4 py-10">
       <header className="text-center">
@@ -66,6 +89,40 @@ export default function UnlockPage() {
       <PrimaryButton loading={busy} loadingLabel="Unlocking…" onClick={unlock}>
         Unlock
       </PrimaryButton>
+
+      {/* Face ID as the SECONDARY way in, never the primary button.
+          It grants nothing new — whoever can pass Face ID on this phone could already clear the
+          site's data and restore from the no-account screen. What it removes is a speed bump, and
+          that is a real trade: better against somebody reading your password over your shoulder,
+          worse against somebody who can hold the phone to your face. So it stays behind a
+          deliberate tap and says what it does, rather than sitting there inviting the easy path. */}
+      {faceCapable && (
+        <div className="text-center">
+          {showFace ? (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-ink-soft">
+                Face ID can open it instead, using the backup you made. Your password still works,
+                and it stays the way this phone locks.
+              </p>
+              <button
+                onClick={unlockFace}
+                disabled={faceBusy}
+                className="mx-auto h-10 rounded-full border border-money px-5 text-sm font-medium text-money disabled:opacity-50"
+              >
+                {faceBusy ? "Checking…" : "Use Face ID"}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowFace(true)}
+              className="text-xs text-ink-soft underline-offset-2 hover:underline"
+            >
+              Forgot your password?
+            </button>
+          )}
+        </div>
+      )}
+
       <p className="text-center text-xs text-ink-soft">
         Only this phone can unlock it. There's no password reset, and that's what keeps it yours.
       </p>

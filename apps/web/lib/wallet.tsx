@@ -71,6 +71,12 @@ interface WalletState {
   findAccountWithFaceId: () => Promise<{ address: string; alreadyHere: boolean; hasPasswordCopy: boolean }>;
   /** Lock a Phase-1 account with a password (used right after a Face-ID restore). */
   lockWithPassword: (password: string) => Promise<void>;
+  /**
+   * Unlock THIS SESSION with Face ID instead of the password, for an account that is already on
+   * this device and already password-locked. Deliberately NOT findAccountWithFaceId: it writes
+   * nothing, so the account stays Phase 2 and the password still governs the next session.
+   */
+  unlockWithFaceId: () => Promise<void>;
   /** Restore on a fresh device via Face ID: unwrap the box's PRF copy with the passkey. */
   restoreWithFaceId: (box: RecoveryBox) => Promise<void>;
 }
@@ -290,9 +296,46 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [account, refresh, setSessionSeed],
   );
 
+  /**
+   * Unlock this session with Face ID when the password is the thing that's been forgotten.
+   *
+   * Writes NOTHING. findAccountWithFaceId adopts an account onto a device and lands it at Phase 1;
+   * running that here would quietly demote an already-locked account to "anyone holding this phone
+   * can spend it", which is the opposite of what somebody unlocking wants. This only puts the seed
+   * in memory for the session, so the password still governs the next one.
+   *
+   * On capability: this grants nothing new. Whoever can pass Face ID on this phone could already
+   * clear the site's data and restore from scratch on the no-account screen. What it removes is a
+   * speed bump, which is worth being explicit about in the UI rather than quiet about — it trades
+   * shoulder-surfing resistance for coercion resistance, and that is the user's trade to know.
+   */
+  const unlockWithFaceId = useCallback(async (): Promise<void> => {
+    if (!account) throw new Error("no local account");
+    const { prf } = await assertPasskeyPrf();
+    let seed: Uint8Array;
+    try {
+      const box = await fetchRecoveryBoxByPrfId(await prfToBoxId(prf));
+      if (!box) {
+        throw new Error("We couldn't find a Face ID backup for this money. Your password still works.");
+      }
+      const copy = findCopy(box, "prf");
+      if (!copy) throw new Error("This backup has no Face ID key. Use your password.");
+      seed = await unwrapWithPrf(copy, prf);
+    } finally {
+      prf.fill(0);
+    }
+    // The passkey may legitimately open a DIFFERENT account's backup (a second Lumenia passkey on
+    // the same phone). Unlocking this one with that seed would sign for the wrong account, so it
+    // fails loudly instead.
+    if (localSignerFromSeed(seed).publicKey() !== account.address) {
+      throw new Error("That Face ID belongs to different money on this phone.");
+    }
+    setSessionSeed(seed);
+  }, [account, setSessionSeed]);
+
   return (
     <WalletContext.Provider
-      value={{ status, account, accounts, unlocked, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword }}
+      value={{ status, account, accounts, unlocked, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
     >
       {children}
     </WalletContext.Provider>
