@@ -37,14 +37,14 @@
     "test:integration": "tsx src/test-integration.ts"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "16.0.1",
+    "@stellar/stellar-sdk": "16.1.0",
     "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "esbuild": "^0.28.1",
     "tsx": "^4.23.1",
-    "typescript": "^5.6.0"
+    "typescript": "^6.0.3"
   },
   "type": "module"
 }

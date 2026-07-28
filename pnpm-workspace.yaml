@@ -2,10 +2,15 @@ packages:
   - "apps/*"
   - "packages/*"
 
-# Security floors for transitive deps (mirrors package.json "pnpm.overrides" — newer pnpm
-# reads them from here instead). Keep both in sync until the package.json copy is dropped.
+# Security floors for transitive deps. THE ONLY SOURCE — the package.json "pnpm.overrides"
+# copy is gone; pnpm 9+ ignored it anyway, and keeping two lists is what broke CI: Dependabot
+# wrote postcss 8.5.24 into the lockfile's overrides while this file still pinned 8.5.19, and
+# `pnpm install --frozen-lockfile` refused the mismatch.
+#
+# Every entry is a FLOOR (>=), never an exact pin. A pinned override fights every future bump
+# of that package and turns a routine dependency PR into a red build.
 overrides:
-  postcss: 8.5.19
+  postcss: ">=8.5.24"
   axios: ">=1.18.0"
   brace-expansion: ">=5.0.8"
   "@hono/node-server": ">=2.0.5"

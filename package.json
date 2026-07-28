@@ -15,15 +15,5 @@
     "spike1c": "pnpm --filter @lumenia/sponsor spike1c",
     "spike4": "pnpm --filter @lumenia/sponsor spike4",
     "test:antidrain": "pnpm --filter @lumenia/sponsor test:antidrain"
-  },
-  "pnpm": {
-    "overrides": {
-      "postcss": "8.5.19",
-      "axios": ">=1.18.0",
-      "brace-expansion": ">=5.0.8",
-      "@hono/node-server": ">=2.0.5",
-      "fast-uri": "^3.1.4",
-      "sharp": "^0.35.0"
-    }
   }
 }
