@@ -438,6 +438,12 @@ export default function SendOutPage() {
           </Link>
           .
         </p>
+        <Link
+          href="/cash-out"
+          className="mt-3 inline-flex h-9 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+        >
+          See the route ↗
+        </Link>
       </div>
 
       <label className="text-sm text-ink-soft">
