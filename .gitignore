@@ -108,7 +108,6 @@ DEFERRED.md
 OPEN_ITEMS.md
 SECURITY_HARDENING.md
 CCTP_OFFRAMP_PLAN.md
-DEMO_SCRIPT.md
 PRE_MAINNET_HARDENING_BRIEF.md
 MAINNET_EVIDENCE.md
 AUDIT_BANK_PACKAGE.md
@@ -132,4 +131,5 @@ contracts/lumen-drop/test_snapshots/test/global_solvency_exact_over_mixed_popula
 # (apps/web/e2e/demo) so anyone can re-record it; the output is a 14 MB binary that
 # would bloat every clone and go stale the moment the product moves.
 lumenia-demo.mp4
+lumenia-demo-script.txt
 apps/web/e2e/demo/.raw/
