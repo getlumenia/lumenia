@@ -1,0 +1,15 @@
+# Lumenia gitleaks config — extends the default ruleset, allowlists PUBLIC Stellar
+# identifiers (which are not secrets). Secret keys (S…) are NEVER allowlisted, so a real
+# leaked sponsor/owner key is still caught.
+title = "Lumenia"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public Stellar identifiers are not secrets: contract ids (C…) and account ids (G…). Secret keys (S…) are intentionally NOT allowlisted."
+regexTarget = "match"
+regexes = [
+  # 56-char base32 strings beginning with C (contract) or G (account) are public identifiers.
+  '''\b[CG][A-Z2-7]{55}\b''',
+]

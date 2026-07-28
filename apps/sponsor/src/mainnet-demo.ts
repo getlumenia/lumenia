@@ -107,12 +107,30 @@ async function links(count: number, perDrop: string) {
   }
 
   const out: Array<{ link: string; hash: string }> = [];
+  let lastSeq: string | null = null;
+
+  /** Horizon-sourced account, waited until its sequence moved past the previous drop's. */
+  async function freshAccount(pub: string) {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const acc = await HZ.loadAccount(pub);
+      if (!lastSeq || acc.sequenceNumber() !== lastSeq) {
+        return new (await import("@stellar/stellar-sdk")).Account(pub, acc.sequenceNumber());
+      }
+      await sleep(2000);
+    }
+    throw new Error("account sequence never advanced — the network is lagging, try again");
+  }
+
   for (let i = 0; i < count; i++) {
+   try {
     const link = Keypair.random();
     const linkHex = Buffer.from(link.rawPublicKey()).toString("hex");
     const expiry = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 3600);
 
-    const source = await RPC.getAccount(sender.publicKey());
+    // The RPC's account view lags a just-submitted transaction, so building the next deposit
+    // from it yields a stale sequence and txBadSeq. Horizon is authoritative and current — take
+    // the sequence from there and wait until it has actually advanced past the last drop.
+    const source = await freshAccount(sender.publicKey());
     const tx = new TransactionBuilder(source, { fee: "2000000", networkPassphrase: NET })
       .addOperation(
         new Contract(contract).call(
@@ -142,9 +160,18 @@ async function links(count: number, perDrop: string) {
 
     // `n=public` is what tells the claim page this link lives on mainnet.
     const q = `a=${encodeURIComponent(perDrop)}&s=${encodeURIComponent("Lumenia")}&n=public`;
-    out.push({ link: `${WEB}/v2/c/${linkHex}?${q}#${link.secret()}`, hash });
-    console.log(`  [${i + 1}/${count}] deposited ${perDrop} USDC — tx ${hash.slice(0, 12)}…`);
-    await sleep(1000);
+    const url = `${WEB}/v2/c/${linkHex}?${q}#${link.secret()}`;
+    out.push({ link: url, hash });
+    // Print the link IMMEDIATELY. The secret exists only in this process, so batching the
+    // output means a later failure strands the escrow behind a key nobody has.
+    console.log(`  [${i + 1}/${count}] ${perDrop} USDC — tx ${hash.slice(0, 12)}…`);
+    console.log(`        ${url}`);
+    lastSeq = source.sequenceNumber();
+   } catch (e) {
+    // One failed drop must not abort the run — the already-created links are real money and
+    // their secrets live only here.
+    console.log(`  [${i + 1}/${count}] FAILED: ${(e as Error).message}`);
+   }
   }
 
   console.log("\n--- CLAIM LINKS (each is real money; the #fragment IS the key) ---");

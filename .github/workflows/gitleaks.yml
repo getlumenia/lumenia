@@ -1,0 +1,25 @@
+name: gitleaks
+
+# Scans the repo (and full history) for committed secrets on every push and PR.
+# License-free: installs the gitleaks binary directly instead of the org-licensed action.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so a secret in any past commit is caught
+      - name: Install gitleaks
+        run: |
+          VER=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+          gitleaks version
+      - name: Scan for secrets
+        run: gitleaks detect --redact --no-banner

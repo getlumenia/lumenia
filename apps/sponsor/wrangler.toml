@@ -69,11 +69,12 @@ ALLOWED_ORIGIN = "https://getlumenia.com"
 # Circle's USDC on mainnet (verified on Horizon: auth_revocable=true, clawback disabled — Circle
 # can freeze for compliance, and no one can seize).
 USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-# Set after `stellar contract deploy --network mainnet` (runbook step 4).
-LUMENDROP_CONTRACT = ""
+# Deployed 2026-07-26 (wasm upload 22.41 XLM + instance 0.05 XLM — mainnet rent is far higher
+# than testnet's, budget accordingly).
+LUMENDROP_CONTRACT = "CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4"
 LUMENDROP_LEGACY_CONTRACTS = ""
-# Set to the sha256 of the deployed wasm so the watchdog can detect an unexpected upgrade.
-LUMENDROP_WASM_HASH = ""
+# The wasm the escrow is expected to run; the watchdog pages if the deployed bytecode differs.
+LUMENDROP_WASM_HASH = "38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a"
 # Canary caps — real money. Raise only after an audit and a soak period.
 MAX_DROP_USDC = "5"
 MAX_DAY_USDC = "50"

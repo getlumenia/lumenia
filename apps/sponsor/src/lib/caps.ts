@@ -63,9 +63,14 @@ export function stroopsToUsdc(stroops: bigint): string {
   return frac ? `${whole}.${frac}` : `${whole}`;
 }
 
-/** The UTC-day bucket key. A day boundary resets the budget; no sliding window needed. */
-export function dayKey(now: number): string {
-  return `caps:day:${new Date(now).toISOString().slice(0, 10)}`;
+/**
+ * The UTC-day bucket key. A day boundary resets the budget; no sliding window needed.
+ *
+ * Namespaced by network: a testnet and a mainnet sponsor may share one Upstash store, and an
+ * un-namespaced key would let testnet traffic consume the mainnet day budget (or the reverse).
+ */
+export function dayKey(now: number, network = process.env.STELLAR_NETWORK ?? "testnet"): string {
+  return `caps:${network}:day:${new Date(now).toISOString().slice(0, 10)}`;
 }
 
 export interface CapVerdict {
