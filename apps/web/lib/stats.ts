@@ -19,7 +19,9 @@
  * Server-only: called from the /stats server component with `revalidate = 300`, so
  * the ledger walk runs at most once every 5 minutes regardless of traffic.
  */
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
+import { ACTIVE } from "./network";
+
+const HORIZON_URL = ACTIVE.horizonUrl;
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const REVALIDATE = 300;
 /** Safety cap on pagination (200 ops/page → 4000 ops). Logged if ever hit. */

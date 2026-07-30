@@ -5,8 +5,9 @@
  * account that doesn't exist yet returns an honest null / empty list.
  */
 import { Horizon } from "@stellar/stellar-sdk";
+import { ACTIVE } from "./network";
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
+const HORIZON_URL = ACTIVE.horizonUrl;
 
 export interface Balance {
   /** USDC balance the recipient holds, as a decimal string. */

@@ -20,13 +20,13 @@ import {
   BASE_FEE,
   Horizon,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
+import { ACTIVE } from "./network";
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
-const NETWORK = Networks.TESTNET;
+const HORIZON_URL = ACTIVE.horizonUrl;
+const NETWORK = ACTIVE.passphrase;
 
 export interface SweepOptions {
   sponsorUrl: string;

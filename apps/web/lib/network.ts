@@ -84,3 +84,24 @@ export function resolveNetwork(param?: string | null): NetworkConfig {
 
 /** Is a mainnet link servable by this deployment at all? (for UI that wants to hide/label it) */
 export const MAINNET_CONFIGURED = Boolean(MAINNET.contract && MAINNET.sponsorUrl);
+
+/**
+ * The network the v1 CLASSIC value path (link-send / claim / sweep / cash-out) and the
+ * home/stats ledger reads operate on for THIS deployment. Testnet by default; a mainnet
+ * deployment sets `NEXT_PUBLIC_STELLAR_NETWORK=mainnet`. This is a build-wide choice, not a
+ * per-link one — unlike the v2 (LumenDrop) claim route, which carries its network in the URL
+ * (`?n=public`) and resolves it with `resolveNetwork`. Value libs read `ACTIVE.horizonUrl` /
+ * `ACTIVE.passphrase` from here instead of hardcoding testnet.
+ */
+export const ACTIVE: NetworkConfig =
+  process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? MAINNET : TESTNET;
+
+/** stellar.expert transaction link on the deployment's active network. */
+export function explorerTx(hash: string): string {
+  return `https://stellar.expert/explorer/${ACTIVE.id}/tx/${hash}`;
+}
+
+/** stellar.expert account link on the deployment's active network. */
+export function explorerAccount(address: string): string {
+  return `https://stellar.expert/explorer/${ACTIVE.id}/account/${address}`;
+}

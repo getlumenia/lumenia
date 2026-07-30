@@ -9,11 +9,12 @@
  * Not to be confused with the claim-LINK flow (lib/sponsor.ts::runClaim), which
  * onboards a brand-new bearer account first. Here the account already exists.
  */
-import { BASE_FEE, Horizon, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
+import { BASE_FEE, Horizon, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
+import { ACTIVE } from "./network";
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
-const NETWORK = Networks.TESTNET;
+const HORIZON_URL = ACTIVE.horizonUrl;
+const NETWORK = ACTIVE.passphrase;
 
 export async function collectIncoming(opts: {
   sponsorUrl: string;

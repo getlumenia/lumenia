@@ -29,8 +29,9 @@ import { FeedbackDialog } from "../../../components/FeedbackDialog";
 import { ThemeToggle } from "../../../components/site/ThemeToggle";
 import { sendEvent } from "../../../lib/events";
 import { copy } from "../../../lib/copy";
+import { explorerAccount } from "../../../lib/network";
 
-const explorer = (a: string) => `https://stellar.expert/explorer/testnet/account/${a}`;
+const explorer = explorerAccount;
 
 function fmtDate(iso: string): string {
   if (!iso) return "";

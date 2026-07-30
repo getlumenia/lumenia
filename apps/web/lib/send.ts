@@ -20,14 +20,14 @@ import {
   Claimant,
   Horizon,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
+import { ACTIVE } from "./network";
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
-const NETWORK = Networks.TESTNET;
+const HORIZON_URL = ACTIVE.horizonUrl;
+const NETWORK = ACTIVE.passphrase;
 const RECLAIM_AFTER_SECONDS = (7 * 24 * 60 * 60).toString(); // money comes back after 7 days
 
 export interface SendResult {

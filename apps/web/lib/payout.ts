@@ -26,15 +26,15 @@ import {
   Horizon,
   Memo,
   MuxedAccount,
-  Networks,
   Operation,
   StrKey,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
+import { ACTIVE } from "./network";
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
-const NETWORK = Networks.TESTNET;
+const HORIZON_URL = ACTIVE.horizonUrl;
+const NETWORK = ACTIVE.passphrase;
 
 /** Stellar text memos are capped at 28 bytes; longer input is a typo, not a memo. */
 export const MEMO_TEXT_MAX_BYTES = 28;

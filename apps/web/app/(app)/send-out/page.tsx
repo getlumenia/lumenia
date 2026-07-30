@@ -46,9 +46,10 @@ import { sendEvent } from "../../../lib/events";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
+import { explorerTx } from "../../../lib/network";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
-const explorer = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;
+const explorer = explorerTx;
 /** Draft of the form, kept only for this tab so an unlock detour doesn't wipe it. */
 const DRAFT_KEY = "lumenia.sendout.draft";
 /**
