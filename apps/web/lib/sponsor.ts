@@ -14,10 +14,7 @@ import {
   TransactionBuilder,
   type Transaction,
 } from "@stellar/stellar-sdk";
-import { ACTIVE } from "./network";
-
-const HORIZON_URL = ACTIVE.horizonUrl;
-const NETWORK = ACTIVE.passphrase;
+import { activeNetwork } from "./network";
 
 export interface ClaimParams {
   sponsorUrl: string;
@@ -43,6 +40,7 @@ async function postJson(url: string, body: unknown): Promise<Record<string, unkn
 }
 
 export async function runClaim({ sponsorUrl, bearerSecret, balanceId }: ClaimParams): Promise<ClaimOutcome> {
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
   const server = new Horizon.Server(HORIZON_URL);
   const claimKey = Keypair.fromSecret(bearerSecret);
   const pub = claimKey.publicKey();

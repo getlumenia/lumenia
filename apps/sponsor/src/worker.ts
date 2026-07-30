@@ -28,7 +28,7 @@ import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
-import { pilotEnabled, enforcePilot } from "./lib/pilot.js";
+import { pilotEnabled, enforcePilot, pilotStatus } from "./lib/pilot.js";
 import { notifyPilotRequest } from "./lib/pilot-request.js";
 
 type Env = Record<string, unknown>;
@@ -253,6 +253,20 @@ export default {
 
       // A wallet asking into the mainnet pilot. NOT a value route (moves no money) — it just
       // emails the owner, who approves with the pilot CLI. Rate-limited by pubkey to stop spam.
+      // Client asks "is this account approved for mainnet?" — read-only, moves nothing. When the
+      // pilot is off (every testnet deployment) it answers a plain "not a pilot", so the client
+      // simply stays on testnet. The real gate is still the allowlist enforced on value routes.
+      if (method === "GET" && url === "/pilot-status") {
+        const pubkey = new URL(request.url).searchParams.get("pubkey");
+        if (!pubkey) return json(400, { error: "pubkey is required" });
+        if (!pilotEnabled()) return json(200, { pilot: false, approved: false });
+        try {
+          return json(200, { pilot: true, ...(await pilotStatus(pubkey)) });
+        } catch {
+          return json(200, { pilot: true, approved: false });
+        }
+      }
+
       if (method === "POST" && url === "/pilot-request") {
         const body = (await readJson(request)) as { pubkey?: string; email?: string };
         if (!body.pubkey || !body.email) return json(400, { error: "pubkey and email are required" });

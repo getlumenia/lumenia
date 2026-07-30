@@ -31,10 +31,7 @@ import {
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
-import { ACTIVE } from "./network";
-
-const HORIZON_URL = ACTIVE.horizonUrl;
-const NETWORK = ACTIVE.passphrase;
+import { activeNetwork } from "./network";
 
 /** Stellar text memos are capped at 28 bytes; longer input is a typo, not a memo. */
 export const MEMO_TEXT_MAX_BYTES = 28;
@@ -149,6 +146,7 @@ export interface DestinationCheck {
  * actually checks.
  */
 export async function checkDestination(address: string, issuer: string): Promise<DestinationCheck> {
+  const { horizonUrl: HORIZON_URL } = activeNetwork();
   const underlying = StrKey.isValidMed25519PublicKey(address)
     ? MuxedAccount.fromAddress(address, "0").baseAccount().accountId()
     : address;
@@ -193,6 +191,7 @@ export interface PayoutResult {
  * mismatch between the signed bytes and the request is rejected rather than submitted.
  */
 export async function sendOut(opts: PayoutInput): Promise<PayoutResult> {
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
   const base = opts.sponsorUrl.replace(/\/$/, "");
   const health = (await (await fetch(`${base}/health`)).json()) as {
     usdcIssuer: string;

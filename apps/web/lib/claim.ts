@@ -11,16 +11,14 @@
  */
 import { BASE_FEE, Horizon, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
-import { ACTIVE } from "./network";
-
-const HORIZON_URL = ACTIVE.horizonUrl;
-const NETWORK = ACTIVE.passphrase;
+import { activeNetwork } from "./network";
 
 export async function collectIncoming(opts: {
   sponsorUrl: string;
   signer: Signer;
   balanceId: string;
 }): Promise<{ hash: string }> {
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
   const server = new Horizon.Server(HORIZON_URL);
   const me = opts.signer.publicKey();
   const acc = await server.loadAccount(me);

@@ -24,10 +24,8 @@ import {
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
-import { ACTIVE } from "./network";
+import { activeNetwork } from "./network";
 
-const HORIZON_URL = ACTIVE.horizonUrl;
-const NETWORK = ACTIVE.passphrase;
 const RECLAIM_AFTER_SECONDS = (7 * 24 * 60 * 60).toString(); // money comes back after 7 days
 
 export interface SendResult {
@@ -59,6 +57,7 @@ async function submitSponsoredCB(opts: {
   amount: string;
   claimantDestination: string;
 }): Promise<{ hash: string; balanceId: string; usdcIssuer: string }> {
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
   const base = opts.sponsorUrl.replace(/\/$/, "");
   const health = (await (await fetch(`${base}/health`)).json()) as {
     sponsorPublicKey: string;

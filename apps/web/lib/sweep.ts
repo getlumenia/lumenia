@@ -23,10 +23,7 @@ import {
   Operation,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
-import { ACTIVE } from "./network";
-
-const HORIZON_URL = ACTIVE.horizonUrl;
-const NETWORK = ACTIVE.passphrase;
+import { activeNetwork } from "./network";
 
 export interface SweepOptions {
   sponsorUrl: string;
@@ -55,6 +52,7 @@ export interface SweepOptions {
  *   - with-claim (`balanceId` present):  claim → payment(→home) → changeTrust(0) → accountMerge(→home)
  */
 export async function sweepIntoHome(opts: SweepOptions): Promise<{ hash: string }> {
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
   const base = opts.sponsorUrl.replace(/\/$/, "");
   const health = (await (await fetch(`${base}/health`)).json()) as {
     usdcCode: string;

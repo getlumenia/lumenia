@@ -5,9 +5,7 @@
  * account that doesn't exist yet returns an honest null / empty list.
  */
 import { Horizon } from "@stellar/stellar-sdk";
-import { ACTIVE } from "./network";
-
-const HORIZON_URL = ACTIVE.horizonUrl;
+import { activeNetwork } from "./network";
 
 export interface Balance {
   /** USDC balance the recipient holds, as a decimal string. */
@@ -38,7 +36,7 @@ export interface ReclaimableSend {
 }
 
 function server(): Horizon.Server {
-  return new Horizon.Server(HORIZON_URL);
+  return new Horizon.Server(activeNetwork().horizonUrl);
 }
 
 // USDC carries 7 decimals; sum in integer stroops so many small balances add up

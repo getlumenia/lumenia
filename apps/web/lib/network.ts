@@ -85,6 +85,11 @@ export function resolveNetwork(param?: string | null): NetworkConfig {
 /** Is a mainnet link servable by this deployment at all? (for UI that wants to hide/label it) */
 export const MAINNET_CONFIGURED = Boolean(MAINNET.contract && MAINNET.sponsorUrl);
 
+/** The mainnet config IF this deployment is configured for it, else null (used to ask "am I approved?"). */
+export function mainnetConfig(): NetworkConfig | null {
+  return MAINNET_CONFIGURED ? MAINNET : null;
+}
+
 /**
  * The network the v1 CLASSIC value path (link-send / claim / sweep / cash-out) and the
  * home/stats ledger reads operate on for THIS deployment. Testnet by default; a mainnet
@@ -96,12 +101,41 @@ export const MAINNET_CONFIGURED = Boolean(MAINNET.contract && MAINNET.sponsorUrl
 export const ACTIVE: NetworkConfig =
   process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? MAINNET : TESTNET;
 
-/** stellar.expert transaction link on the deployment's active network. */
-export function explorerTx(hash: string): string {
-  return `https://stellar.expert/explorer/${ACTIVE.id}/tx/${hash}`;
+const NETWORK_KEY = "lumenia.network";
+
+/**
+ * The network the classic value path uses RIGHT NOW on THIS device. The product is testnet for
+ * everyone by default; a whitelisted user the owner has approved may switch to mainnet. This
+ * client flag only decides which network the UI builds and signs for — the real gate is the
+ * sponsor's pilot allowlist, so a user who flips this by hand still cannot move mainnet money
+ * without an approval. Server-side reads (e.g. /stats) fall back to the build-time ACTIVE.
+ */
+export function activeNetwork(): NetworkConfig {
+  if (typeof window === "undefined") return ACTIVE;
+  try {
+    if (window.localStorage.getItem(NETWORK_KEY) === "public" && MAINNET_CONFIGURED) return MAINNET;
+  } catch {
+    /* storage blocked — stay on the safe testnet default */
+  }
+  return TESTNET;
 }
 
-/** stellar.expert account link on the deployment's active network. */
+/** Switch this device's active network. Mainnet only sticks if this deployment is configured for it. */
+export function setActiveNetwork(id: NetworkId): void {
+  try {
+    if (id === "public" && !MAINNET_CONFIGURED) return;
+    window.localStorage.setItem(NETWORK_KEY, id);
+  } catch {
+    /* storage blocked — no-op */
+  }
+}
+
+/** stellar.expert transaction link on the active network. */
+export function explorerTx(hash: string): string {
+  return `https://stellar.expert/explorer/${activeNetwork().id}/tx/${hash}`;
+}
+
+/** stellar.expert account link on the active network. */
 export function explorerAccount(address: string): string {
-  return `https://stellar.expert/explorer/${ACTIVE.id}/account/${address}`;
+  return `https://stellar.expert/explorer/${activeNetwork().id}/account/${address}`;
 }

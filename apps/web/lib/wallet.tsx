@@ -11,6 +11,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase1, savePhase2, setHome, isPublished, type Phase } from "./keystore";
 import { localSignerFromSeed, type Signer } from "./signer";
+import { activeNetwork, setActiveNetwork, mainnetConfig, type NetworkId } from "./network";
 import { DEFAULT_ARGON } from "./argon";
 import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, emptyBox, putCopy, findCopy, prfToBoxId, type RecoveryBox } from "./recovery";
 import { enrollPasskeyPrf, derivePasskeyPrf, assertPasskeyPrf } from "./passkey-prf";
@@ -79,6 +80,12 @@ interface WalletState {
   unlockWithFaceId: () => Promise<void>;
   /** Restore on a fresh device via Face ID: unwrap the box's PRF copy with the passkey. */
   restoreWithFaceId: (box: RecoveryBox) => Promise<void>;
+  /** The network the classic value path uses right now on this device (testnet unless switched). */
+  network: NetworkId;
+  /** true when THIS account is on the mainnet pilot allowlist — the only case mainnet may be picked. */
+  mainnetApproved: boolean;
+  /** Switch this device's active network (mainnet only sticks if approved + configured); reloads. */
+  switchNetwork: (id: NetworkId) => void;
 }
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -88,6 +95,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<WalletAccount | null>(null);
   const [accounts, setAccounts] = useState<WalletAccount[]>([]);
   const [unlocked, setUnlocked] = useState(false);
+  const [network, setNetworkState] = useState<NetworkId>("testnet");
+  const [mainnetApproved, setMainnetApproved] = useState(false);
   const sessionSeed = useRef<Uint8Array | null>(null);
 
   const refresh = useCallback(async () => {
@@ -106,6 +115,40 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Reflect the device's chosen network once mounted (localStorage is client-only, not at SSR).
+  useEffect(() => {
+    setNetworkState(activeNetwork().id);
+  }, []);
+
+  // Ask the mainnet sponsor whether THIS account is on the pilot allowlist. Only an approved
+  // account may switch to mainnet; the sponsor enforces it regardless — this just gates the UI.
+  useEffect(() => {
+    const mainnet = mainnetConfig();
+    if (!account || !mainnet) {
+      setMainnetApproved(false);
+      return;
+    }
+    let alive = true;
+    fetch(`${mainnet.sponsorUrl.replace(/\/$/, "")}/pilot-status?pubkey=${account.address}`)
+      .then((r) => r.json() as Promise<{ approved?: boolean }>)
+      .then((d) => alive && setMainnetApproved(Boolean(d.approved)))
+      .catch(() => alive && setMainnetApproved(false));
+    return () => {
+      alive = false;
+    };
+  }, [account]);
+
+  // A network switch changes which chain every value call builds for. Reload so every module
+  // re-reads it cleanly and a stale unlocked session never carries across networks.
+  const switchNetwork = useCallback(
+    (id: NetworkId) => {
+      if (id === "public" && !mainnetApproved) return; // UI guard; the sponsor is the real gate
+      setActiveNetwork(id);
+      window.location.reload();
+    },
+    [mainnetApproved],
+  );
 
   const setSessionSeed = useCallback((seed: Uint8Array) => {
     sessionSeed.current = seed;
@@ -343,7 +386,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <WalletContext.Provider
-      value={{ status, account, accounts, unlocked, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
+      value={{ status, account, accounts, unlocked, network, mainnetApproved, switchNetwork, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
     >
       {children}
     </WalletContext.Provider>

@@ -23,6 +23,7 @@ import { loadTotalUsd, loadActivityForAccounts, type ActivityItem } from "../../
 import { formatUsd } from "../../../lib/money";
 import { LockMoneyCard } from "../../../components/brand/LockMoneyCard";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
+import { NetworkSwitcher } from "../../../components/brand/NetworkSwitcher";
 import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
@@ -268,6 +269,8 @@ export default function AccountPage() {
       </MoneyCard>
 
       {account.phase === 1 && <LockMoneyCard />}
+
+      <NetworkSwitcher />
 
       {/* Back up your money — set a password + email so it can be restored on any device
           (RECOVERY_ARCHITECTURE §12). The password locks it locally AND wraps a sealed copy the
