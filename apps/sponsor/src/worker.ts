@@ -28,6 +28,7 @@ import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
+import { pilotEnabled, enforcePilot } from "./lib/pilot.js";
 
 type Env = Record<string, unknown>;
 
@@ -63,6 +64,18 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   } catch {
     return {};
   }
+}
+
+/**
+ * Pilot gate. On the mainnet pilot Worker (PILOT_MODE=1) only owner-approved wallets, each
+ * with a per-wallet tx budget, may run a value op (lib/pilot.ts). A no-op everywhere else, so
+ * it never touches the open testnet product. Returns a 403 body to return, or null to proceed.
+ * Fail-closed: a store outage rejects rather than admits.
+ */
+async function pilotGate(pubkey: string): Promise<{ error: string } | null> {
+  if (!pilotEnabled()) return null;
+  const p = await enforcePilot(pubkey);
+  return p.ok ? null : { error: p.reason ?? "not admitted to the pilot" };
 }
 
 /**
@@ -116,6 +129,8 @@ export default {
         if (!body.recipientPublicKey) return json(400, { error: "recipientPublicKey is required" });
         const rl = await enforceRateLimit(clientIp(request), body.recipientPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
+        const pg = await pilotGate(body.recipientPublicKey);
+        if (pg) return json(403, pg);
         return json(200, await createAccountHandler(server, config, signer, { recipientPublicKey: body.recipientPublicKey }, channels));
       }
 
@@ -126,6 +141,8 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.recipientPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
+        const pg = await pilotGate(body.recipientPublicKey);
+        if (pg) return json(403, pg);
         return json(200, await feebumpHandler(server, config, signer, {
           xdr: body.xdr,
           recipientPublicKey: body.recipientPublicKey,
@@ -138,6 +155,8 @@ export default {
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
+        const pg = await pilotGate(body.senderPublicKey);
+        if (pg) return json(403, pg);
         return json(200, await sendLinkHandler(server, config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey }));
       }
 
@@ -150,6 +169,8 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
+        const pg = await pilotGate(body.senderPublicKey);
+        if (pg) return json(403, pg);
         return json(200, await payoutHandler(server, config, signer, {
           xdr: body.xdr,
           senderPublicKey: body.senderPublicKey,
@@ -167,6 +188,8 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.throwawayPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
+        const pg = await pilotGate(body.homePublicKey);
+        if (pg) return json(403, pg);
         return json(200, await sweepHandler(server, config, signer, {
           xdr: body.xdr,
           throwawayPublicKey: body.throwawayPublicKey,
@@ -183,6 +206,8 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.payout);
         if (rl.limited) return json(429, { error: rl.reason });
+        const pg = await pilotGate(body.payout);
+        if (pg) return json(403, pg);
         return json(200, await relayClaimHandler(config, signer, {
           method: body.method, linkHex: body.linkHex, payout: body.payout, sigHex: body.sigHex,
           contract: body.contract, // optional: a superseded escrow, for links minted pre-upgrade
@@ -194,6 +219,8 @@ export default {
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
+        const pg = await pilotGate(body.senderPublicKey);
+        if (pg) return json(403, pg);
         return json(200, await relayDepositHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey }));
       }
 
@@ -202,6 +229,8 @@ export default {
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
+        const pg = await pilotGate(body.senderPublicKey);
+        if (pg) return json(403, pg);
         return json(200, await relayReclaimHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey }));
       }
 

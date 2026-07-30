@@ -26,6 +26,7 @@
     "provision-channels": "tsx src/cli/provision-channels.ts",
     "concurrency-check": "tsx src/cli/concurrency-check.ts",
     "reserve-report": "tsx src/cli/reserve-report.ts",
+    "pilot": "tsx src/cli/pilot.ts",
     "test:kms": "tsx src/test-kms-signer.ts",
     "test:caps": "tsx src/test-caps.ts",
     "test:legacy": "tsx src/test-legacy-fallback.ts",

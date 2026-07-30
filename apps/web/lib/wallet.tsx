@@ -114,6 +114,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const getSigner = useCallback(async (): Promise<Signer> => {
     if (!account) throw new Error("no local account");
+    // Pilot rule: mainnet money must never sit under a Phase-1 account (a device key with no
+    // password — anyone holding the unlocked phone can spend). When NEXT_PUBLIC_REQUIRE_PHASE2=1
+    // (set only on the pilot build), every value action refuses until the account is locked to a
+    // password (Phase 2). The LockMoneyCard on /home performs that one-time upgrade. A no-op on
+    // the open testnet build, so it never adds friction there.
+    if (account.phase === 1 && process.env.NEXT_PUBLIC_REQUIRE_PHASE2 === "1") {
+      throw new Error("Lock your money with a password first, then try again.");
+    }
     let signer: Signer;
     if (account.phase === 1) {
       // Unlock the HOME account specifically (defaults to home, pinned for clarity).
