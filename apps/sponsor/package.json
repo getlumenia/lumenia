@@ -29,6 +29,7 @@
     "pilot": "tsx src/cli/pilot.ts",
     "test:kms": "tsx src/test-kms-signer.ts",
     "test:caps": "tsx src/test-caps.ts",
+    "test:pilot": "tsx src/test-pilot.ts",
     "test:legacy": "tsx src/test-legacy-fallback.ts",
     "test:watchdog": "tsx src/test-watchdog.ts",
     "check:live-v2": "tsx src/live-v2-check.ts",

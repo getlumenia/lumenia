@@ -29,6 +29,7 @@ import { handleEvent } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
 import { pilotEnabled, enforcePilot } from "./lib/pilot.js";
+import { notifyPilotRequest } from "./lib/pilot-request.js";
 
 type Env = Record<string, unknown>;
 
@@ -67,10 +68,13 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
 }
 
 /**
- * Pilot gate. On the mainnet pilot Worker (PILOT_MODE=1) only owner-approved wallets, each
- * with a per-wallet tx budget, may run a value op (lib/pilot.ts). A no-op everywhere else, so
- * it never touches the open testnet product. Returns a 403 body to return, or null to proceed.
- * Fail-closed: a store outage rejects rather than admits.
+ * Pilot gate. On the mainnet pilot Worker (PILOT_MODE=1) only owner-approved wallets, each with
+ * a per-wallet tx budget, may DEPOSIT pilot money — the value-IN routes (/send-link, /v2-deposit).
+ * The recipient side is deliberately OPEN: claiming and cashing out that money (create-account,
+ * feebump, v2-claim, payout, reclaim, sweep) need NO approval, because a friend receiving the
+ * money is not a pilot user, and no NEW money can enter the pilot except through an approved
+ * wallet's deposit. A no-op everywhere off the pilot Worker. Returns a 403 body, or null to
+ * proceed. Fail-closed: a store outage rejects rather than admits.
  */
 async function pilotGate(pubkey: string): Promise<{ error: string } | null> {
   if (!pilotEnabled()) return null;
@@ -129,8 +133,6 @@ export default {
         if (!body.recipientPublicKey) return json(400, { error: "recipientPublicKey is required" });
         const rl = await enforceRateLimit(clientIp(request), body.recipientPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        const pg = await pilotGate(body.recipientPublicKey);
-        if (pg) return json(403, pg);
         return json(200, await createAccountHandler(server, config, signer, { recipientPublicKey: body.recipientPublicKey }, channels));
       }
 
@@ -141,8 +143,6 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.recipientPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        const pg = await pilotGate(body.recipientPublicKey);
-        if (pg) return json(403, pg);
         return json(200, await feebumpHandler(server, config, signer, {
           xdr: body.xdr,
           recipientPublicKey: body.recipientPublicKey,
@@ -169,8 +169,6 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        const pg = await pilotGate(body.senderPublicKey);
-        if (pg) return json(403, pg);
         return json(200, await payoutHandler(server, config, signer, {
           xdr: body.xdr,
           senderPublicKey: body.senderPublicKey,
@@ -188,8 +186,6 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.throwawayPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        const pg = await pilotGate(body.homePublicKey);
-        if (pg) return json(403, pg);
         return json(200, await sweepHandler(server, config, signer, {
           xdr: body.xdr,
           throwawayPublicKey: body.throwawayPublicKey,
@@ -206,8 +202,6 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.payout);
         if (rl.limited) return json(429, { error: rl.reason });
-        const pg = await pilotGate(body.payout);
-        if (pg) return json(403, pg);
         return json(200, await relayClaimHandler(config, signer, {
           method: body.method, linkHex: body.linkHex, payout: body.payout, sigHex: body.sigHex,
           contract: body.contract, // optional: a superseded escrow, for links minted pre-upgrade
@@ -229,8 +223,6 @@ export default {
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        const pg = await pilotGate(body.senderPublicKey);
-        if (pg) return json(403, pg);
         return json(200, await relayReclaimHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey }));
       }
 
@@ -257,6 +249,20 @@ export default {
         if (!body.list || !body.email) return json(400, { error: "list and email are required" });
         await saveContact(body.list, body.email);
         return json(200, { ok: true });
+      }
+
+      // A wallet asking into the mainnet pilot. NOT a value route (moves no money) — it just
+      // emails the owner, who approves with the pilot CLI. Rate-limited by pubkey to stop spam.
+      if (method === "POST" && url === "/pilot-request") {
+        const body = (await readJson(request)) as { pubkey?: string; email?: string };
+        if (!body.pubkey || !body.email) return json(400, { error: "pubkey and email are required" });
+        const rl = await enforceRateLimit(clientIp(request), body.pubkey);
+        if (rl.limited) return json(429, { error: rl.reason });
+        try {
+          return json(200, await notifyPilotRequest(body.pubkey, body.email));
+        } catch (e) {
+          return json(400, { error: (e as Error).message });
+        }
       }
 
       if (method === "POST" && url === "/feedback") {
