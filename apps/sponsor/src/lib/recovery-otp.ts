@@ -85,7 +85,7 @@ async function sendCodeEmail(email: string, code: string): Promise<void> {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify({
-        from: "Lumenia <onboarding@resend.dev>",
+        from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
         to: [email],
         subject: `Your Lumenia code: ${code}`,
         html,

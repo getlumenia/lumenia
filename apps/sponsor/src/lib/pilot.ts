@@ -37,6 +37,7 @@ function net(): string {
 // approval flag + spend counter, namespaced by network.
 const apprKey = (pk: string) => `pilot:${net()}:appr:${pk}`;
 const txKey = (pk: string) => `pilot:${net()}:tx:${pk}`;
+const emailKey = (pk: string) => `pilot:${net()}:email:${pk}`;
 
 interface Kv {
   url: string;
@@ -114,6 +115,25 @@ export async function approvePilot(pubkey: string): Promise<void> {
     ["SET", apprKey(pubkey), "1"],
     ["SET", txKey(pubkey), "0"],
   ]);
+}
+
+/**
+ * Remember a pilot applicant's contact email so approval can notify them. Best-effort and
+ * separate from the allowlist flag: a missing store just means the owner acts on the
+ * notification email by hand. Namespaced by network like everything else here.
+ */
+export async function storePilotEmail(pubkey: string, email: string): Promise<void> {
+  const kv = kvConfigFromEnv();
+  if (!kv) return;
+  await pipe(kv, [["SET", emailKey(pubkey), email]]).catch(() => {});
+}
+
+/** The applicant's stored email, if any — used to send the "you're in" mail on approval. */
+export async function getPilotEmail(pubkey: string): Promise<string | null> {
+  const kv = kvConfigFromEnv();
+  if (!kv) return null;
+  const [v] = await pipe(kv, [["GET", emailKey(pubkey)]]).catch(() => [null]);
+  return typeof v === "string" && v ? v : null;
 }
 
 /** Owner-only: remove a wallet from the pilot allowlist (its counter is left as an audit trail). */

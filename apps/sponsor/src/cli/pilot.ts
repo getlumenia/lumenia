@@ -14,7 +14,8 @@
  *          an allowlist flag, it never touches money.
  */
 import { StrKey } from "@stellar/stellar-sdk";
-import { approvePilot, revokePilot, pilotStatus } from "../lib/pilot.js";
+import { approvePilot, revokePilot, pilotStatus, getPilotEmail } from "../lib/pilot.js";
+import { notifyPilotApproved } from "../lib/pilot-request.js";
 
 async function main(): Promise<void> {
   const [cmd, pubkey] = process.argv.slice(2);
@@ -35,6 +36,13 @@ async function main(): Promise<void> {
       const s = await pilotStatus(pubkey);
       console.log(`approved for the ${net} pilot: ${pubkey}`);
       console.log(`  budget: ${s.limit} transactions`);
+      const email = await getPilotEmail(pubkey);
+      if (email) {
+        await notifyPilotApproved(pubkey, email);
+        console.log(`  emailed:  ${email}`);
+      } else {
+        console.log(`  (no stored email — approved silently; they'll see it on /account)`);
+      }
       break;
     }
     case "revoke": {

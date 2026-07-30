@@ -105,7 +105,7 @@ async function notifyByEmail(category: string, message: string, contact: string,
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify({
-        from: "Lumenia Feedback <onboarding@resend.dev>",
+        from: process.env.RESEND_FROM ?? "Lumenia Feedback <onboarding@resend.dev>",
         to: [to],
         subject: `[Lumenia] Problem report — ${category}`,
         html,

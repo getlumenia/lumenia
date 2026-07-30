@@ -308,7 +308,7 @@ async function emailAlerts(alerts: Alert[]): Promise<void> {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify({
-        from: "Lumenia Watchdog <onboarding@resend.dev>",
+        from: process.env.RESEND_FROM ?? "Lumenia Watchdog <onboarding@resend.dev>",
         to: [to],
         subject: `Lumenia alert: ${alerts[0]!.title}${alerts.length > 1 ? ` (+${alerts.length - 1} more)` : ""}`,
         text: body,

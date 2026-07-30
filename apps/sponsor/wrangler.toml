@@ -81,6 +81,8 @@ MAX_DAY_USDC = "50"
 CAPS_FAIL_CLOSED = "1"
 # The float is meant to be tiny; alert well before it runs out.
 SPONSOR_MIN_XLM = "3"
+# Pilot mode ON for mainnet: only owner-approved wallets may move value here.
+PILOT_MODE = "1"
 
 [env.mainnet.triggers]
 crons = ["*/15 * * * *"]
