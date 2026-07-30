@@ -161,6 +161,52 @@ Worth sending alongside the links:
 - Leave the mainnet Worker deployed or `wrangler delete --env mainnet`; it costs nothing idle.
 - The watchdog is already running on 15-minute cron against the mainnet contract and sponsor.
 
+## 10. (Alternative goal) End-to-end cash-out — inside Lumenia, on the live site
+
+Steps 1–9 prove a **claim link** on mainnet. This proves the **other half**: sending *inside*
+Lumenia and cashing **out** to an exchange (Binance Global), on the classic value path
+(send / claim / cash-out).
+
+The product is **testnet for everyone**; a user the owner **approves** switches to mainnet at
+runtime, gated by the pilot allowlist. So there is no separate build: you add two mainnet vars to
+the **production** site and it gains a runtime "practice vs real money" switch that unlocks only
+for approved accounts.
+
+1. **Deploy the mainnet Worker with the pilot enforced:**
+   ```bash
+   cd apps/sponsor
+   wrangler secret put SPONSOR_SECRET    --env mainnet   # if not already set
+   wrangler secret put KV_REST_API_URL   --env mainnet
+   wrangler secret put KV_REST_API_TOKEN --env mainnet
+   wrangler deploy --env mainnet --var PILOT_MODE:1
+   ```
+
+2. **Point the production site at it.** Add to Vercel (Production) and redeploy. Do NOT add
+   `NEXT_PUBLIC_STELLAR_NETWORK`: these suffixed vars keep the site testnet-default and only
+   enable a runtime switch for approved users.
+   ```
+   NEXT_PUBLIC_SPONSOR_URL_MAINNET        = https://lumenia-sponsor-mainnet.<sub>.workers.dev
+   NEXT_PUBLIC_LUMENDROP_CONTRACT_MAINNET = CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4
+   ```
+
+3. **Approve your own account.** In the app (still testnet), open **/pilot** and join with your
+   account + email, then approve it by hand:
+   ```bash
+   STELLAR_NETWORK=mainnet pnpm --filter @lumenia/sponsor pilot approve <your G… address>
+   ```
+
+4. **Switch to real money and run the flow** (within the caps: 5 USDC/drop, 50/day):
+   - On **/account**, the network card now offers **"Switch to real money"**. Tap it; the app
+     reloads on mainnet (the account explorer link should read `/public/`, not `/testnet/`).
+   - Send a link to a second device/browser and claim it (walletless, sponsored account).
+   - On the recipient, open **"Send to an exchange"**, paste your **Binance Global Stellar-USDC
+     deposit address + its MEMO** (the screen forces the memo). **Send $0.50 first**, confirm it
+     lands, then the rest. A memo typo is the one irreversible mistake here.
+   - Watch it arrive in Binance Global, then convert USDC to XLM, to Binance TR, to TRY.
+
+The money that lands in Binance Global is the evidence that the whole loop, walletless claim
+through to a real exchange, works on mainnet on the live site, gated by the allowlist.
+
 ## If something looks wrong
 
 ```bash
