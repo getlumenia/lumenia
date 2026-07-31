@@ -24,6 +24,7 @@ import { useWallet } from "../../../lib/wallet";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
+import { mainnetConfig } from "../../../lib/network";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
@@ -49,7 +50,11 @@ export default function PilotPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch(`${SPONSOR_URL}/pilot-request`, {
+      // The pilot allowlist lives on the MAINNET worker, so join requests must go there (same
+      // namespace the owner approves in). Falls back to the default sponsor only if mainnet
+      // isn't configured for this deployment yet.
+      const target = mainnetConfig()?.sponsorUrl ?? SPONSOR_URL;
+      const res = await fetch(`${target}/pilot-request`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ pubkey: account!.address, email }),
