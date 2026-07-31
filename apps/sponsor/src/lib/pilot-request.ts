@@ -13,7 +13,7 @@ import { storePilotEmail } from "./pilot.js";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export async function notifyPilotRequest(pubkey: string, email: string): Promise<{ ok: true }> {
+export async function notifyPilotRequest(pubkey: string, email: string, origin?: string): Promise<{ ok: true }> {
   if (!StrKey.isValidEd25519PublicKey(pubkey)) throw new Error("invalid pubkey");
   const clean = email.trim().toLowerCase();
   if (clean.length > 200 || !EMAIL_RE.test(clean)) throw new Error("invalid email");
@@ -25,6 +25,12 @@ export async function notifyPilotRequest(pubkey: string, email: string): Promise
   const key = process.env.RESEND_API_KEY;
   const network = process.env.STELLAR_NETWORK ?? "testnet";
   const approveCmd = `STELLAR_NETWORK=${network} pnpm --filter @lumenia/sponsor pilot approve ${pubkey}`;
+  // One-tap approve link for the owner's email — only built when a token is configured.
+  const token = process.env.PILOT_APPROVE_TOKEN;
+  const approveUrl =
+    origin && token
+      ? `${origin.replace(/\/$/, "")}/pilot-approve?pubkey=${pubkey}&token=${encodeURIComponent(token)}`
+      : null;
 
   if (!to || !key) {
     // No mailer configured — log it so the owner can still see the request and approve by hand.
@@ -39,7 +45,19 @@ export async function notifyPilotRequest(pubkey: string, email: string): Promise
       from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
       to: [to],
       subject: `Lumenia pilot request (${network})`,
-      text: `A wallet asked to join the ${network} pilot.\n\nWallet:  ${pubkey}\nContact: ${clean}\n\nApprove with:\n  ${approveCmd}\n`,
+      text: `A wallet asked to join the ${network} pilot.\n\nWallet:  ${pubkey}\nContact: ${clean}\n\n${
+        approveUrl ? `Approve in one tap:\n  ${approveUrl}\n\nor via CLI:\n  ${approveCmd}\n` : `Approve with:\n  ${approveCmd}\n`
+      }`,
+      ...(approveUrl
+        ? {
+            html: `<div style="font-family:system-ui,sans-serif;line-height:1.6;color:#1a1a2e">
+<p>A wallet asked to join the <b>${network}</b> pilot.</p>
+<p style="margin:0"><b>Wallet:</b> <code>${pubkey}</code><br><b>Contact:</b> ${clean}</p>
+<p style="margin:1.5rem 0"><a href="${approveUrl}" style="display:inline-block;background:#6b5cff;color:#fff;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:600">Approve this wallet</a></p>
+<p style="color:#6b6b80;font-size:13px">Only your emailed link can trigger this. Prefer the terminal? <code>${approveCmd}</code></p>
+</div>`,
+          }
+        : {}),
     }),
   });
   if (!res.ok) console.log(`[pilot:request] resend ${res.status} — wallet ${pubkey} — ${clean}`);

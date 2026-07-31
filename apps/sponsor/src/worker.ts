@@ -28,8 +28,9 @@ import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
-import { pilotEnabled, enforcePilot, pilotStatus } from "./lib/pilot.js";
-import { notifyPilotRequest } from "./lib/pilot-request.js";
+import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, getPilotEmail } from "./lib/pilot.js";
+import { notifyPilotRequest, notifyPilotApproved } from "./lib/pilot-request.js";
+import { StrKey } from "@stellar/stellar-sdk";
 
 type Env = Record<string, unknown>;
 
@@ -49,6 +50,14 @@ function json(status: number, body: unknown): Response {
     status,
     headers: { "content-type": "application/json", ...corsHeaders() },
   });
+}
+
+/** A tiny HTML page — for the one-tap approve link the owner opens from their email. */
+function html(status: number, inner: string): Response {
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lumenia pilot</title><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:14vh auto;padding:0 1.5rem;color:#1a1a2e;line-height:1.6">${inner}</body>`,
+    { status, headers: { "content-type": "text/html; charset=utf-8", ...corsHeaders() } },
+  );
 }
 
 function clientIp(request: Request): string {
@@ -267,13 +276,34 @@ export default {
         }
       }
 
+      // One-tap approve from the owner's email. Guarded by a shared secret in the link
+      // (PILOT_APPROVE_TOKEN) so ONLY the owner's mail can trigger it: it adds the wallet to the
+      // allowlist and sends the "you're in" mail — no terminal needed.
+      if (method === "GET" && url === "/pilot-approve") {
+        const u = new URL(request.url);
+        const pubkey = u.searchParams.get("pubkey") ?? "";
+        const token = u.searchParams.get("token") ?? "";
+        const expected = process.env.PILOT_APPROVE_TOKEN;
+        if (!expected) return html(503, "<h2>Approve-by-link isn’t set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
+        if (token !== expected) return html(403, "<h2>Not authorized</h2><p>This approval link is invalid.</p>");
+        if (!StrKey.isValidEd25519PublicKey(pubkey)) return html(400, "<h2>Invalid wallet address</h2>");
+        try {
+          await approvePilot(pubkey);
+          const email = await getPilotEmail(pubkey);
+          if (email) await notifyPilotApproved(pubkey, email).catch(() => {});
+          return html(200, `<h2>✓ Approved</h2><p><code>${pubkey.slice(0, 8)}…${pubkey.slice(-6)}</code> is now in the mainnet pilot.</p><p>${email ? `We emailed <b>${email}</b>.` : "No stored email — they’ll see it on their account."}</p>`);
+        } catch (e) {
+          return html(500, `<h2>Couldn’t approve</h2><p>${(e as Error).message}</p>`);
+        }
+      }
+
       if (method === "POST" && url === "/pilot-request") {
         const body = (await readJson(request)) as { pubkey?: string; email?: string };
         if (!body.pubkey || !body.email) return json(400, { error: "pubkey and email are required" });
         const rl = await enforceRateLimit(clientIp(request), body.pubkey);
         if (rl.limited) return json(429, { error: rl.reason });
         try {
-          return json(200, await notifyPilotRequest(body.pubkey, body.email));
+          return json(200, await notifyPilotRequest(body.pubkey, body.email, new URL(request.url).origin));
         } catch (e) {
           return json(400, { error: (e as Error).message });
         }
