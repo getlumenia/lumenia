@@ -28,8 +28,8 @@ import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
-import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, getPilotEmail } from "./lib/pilot.js";
-import { notifyPilotRequest, notifyPilotApproved } from "./lib/pilot-request.js";
+import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState } from "./lib/pilot.js";
+import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected } from "./lib/pilot-request.js";
 import { StrKey } from "@stellar/stellar-sdk";
 
 type Env = Record<string, unknown>;
@@ -288,12 +288,37 @@ export default {
         if (token !== expected) return html(403, "<h2>Not authorized</h2><p>This approval link is invalid.</p>");
         if (!StrKey.isValidEd25519PublicKey(pubkey)) return html(400, "<h2>Invalid wallet address</h2>");
         try {
-          await approvePilot(pubkey);
+          // Idempotent: tapping the emailed Approve link twice must not re-send "you're in".
+          const prev = await getPilotState(pubkey);
+          await approvePilot(pubkey); // SET is idempotent — safe to re-run.
+          if (prev === "approved") {
+            return html(200, `<h2>✓ Already approved</h2><p><code>${pubkey.slice(0, 8)}…${pubkey.slice(-6)}</code> is already in the mainnet pilot — no second email sent.</p>`);
+          }
           const email = await getPilotEmail(pubkey);
           if (email) await notifyPilotApproved(pubkey, email).catch(() => {});
           return html(200, `<h2>✓ Approved</h2><p><code>${pubkey.slice(0, 8)}…${pubkey.slice(-6)}</code> is now in the mainnet pilot.</p><p>${email ? `We emailed <b>${email}</b>.` : "No stored email — they’ll see it on their account."}</p>`);
         } catch (e) {
           return html(500, `<h2>Couldn’t approve</h2><p>${(e as Error).message}</p>`);
+        }
+      }
+
+      // One-tap DECLINE from the owner's email — same token guard as approve. Marks the wallet
+      // rejected and sends the gentle "not yet" mail (TASK 2).
+      if (method === "GET" && url === "/pilot-reject") {
+        const u = new URL(request.url);
+        const pubkey = u.searchParams.get("pubkey") ?? "";
+        const token = u.searchParams.get("token") ?? "";
+        const expected = process.env.PILOT_APPROVE_TOKEN;
+        if (!expected) return html(503, "<h2>Decline-by-link isn’t set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
+        if (token !== expected) return html(403, "<h2>Not authorized</h2><p>This link is invalid.</p>");
+        if (!StrKey.isValidEd25519PublicKey(pubkey)) return html(400, "<h2>Invalid wallet address</h2>");
+        try {
+          await rejectPilot(pubkey);
+          const email = await getPilotEmail(pubkey);
+          if (email) await notifyPilotRejected(pubkey, email).catch(() => {});
+          return html(200, `<h2>Declined</h2><p><code>${pubkey.slice(0, 8)}…${pubkey.slice(-6)}</code> was declined${email ? `, and we emailed <b>${email}</b> gently` : ""}.</p>`);
+        } catch (e) {
+          return html(500, `<h2>Couldn’t decline</h2><p>${(e as Error).message}</p>`);
         }
       }
 

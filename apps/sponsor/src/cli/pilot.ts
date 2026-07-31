@@ -9,20 +9,20 @@
  *
  *   RUN:  STELLAR_NETWORK=mainnet KV_REST_API_URL=… KV_REST_API_TOKEN=… \
  *           pnpm --filter @lumenia/sponsor pilot approve G...
- *         …pilot revoke G...    |    …pilot status G...
+ *         …pilot reject G...    |    …pilot revoke G...    |    …pilot status G...
  *   NEEDS: KV_REST_API_URL / KV_REST_API_TOKEN (Upstash). No signing keys — this only writes
  *          an allowlist flag, it never touches money.
  */
 import { StrKey } from "@stellar/stellar-sdk";
-import { approvePilot, revokePilot, pilotStatus, getPilotEmail } from "../lib/pilot.js";
-import { notifyPilotApproved } from "../lib/pilot-request.js";
+import { approvePilot, rejectPilot, revokePilot, pilotStatus, getPilotEmail } from "../lib/pilot.js";
+import { notifyPilotApproved, notifyPilotRejected } from "../lib/pilot-request.js";
 
 async function main(): Promise<void> {
   const [cmd, pubkey] = process.argv.slice(2);
   const net = process.env.STELLAR_NETWORK ?? "testnet";
 
-  if (!cmd || !["approve", "revoke", "status"].includes(cmd) || !pubkey) {
-    console.error("usage: pilot <approve|revoke|status> <G...pubkey>");
+  if (!cmd || !["approve", "reject", "revoke", "status"].includes(cmd) || !pubkey) {
+    console.error("usage: pilot <approve|reject|revoke|status> <G...pubkey>");
     process.exit(1);
   }
   if (!StrKey.isValidEd25519PublicKey(pubkey)) {
@@ -45,6 +45,18 @@ async function main(): Promise<void> {
       }
       break;
     }
+    case "reject": {
+      await rejectPilot(pubkey);
+      console.log(`declined from the ${net} pilot: ${pubkey}`);
+      const email = await getPilotEmail(pubkey);
+      if (email) {
+        await notifyPilotRejected(pubkey, email);
+        console.log(`  emailed:  ${email}`);
+      } else {
+        console.log(`  (no stored email — declined silently)`);
+      }
+      break;
+    }
     case "revoke": {
       await revokePilot(pubkey);
       console.log(`revoked from the ${net} pilot: ${pubkey}`);
@@ -53,6 +65,7 @@ async function main(): Promise<void> {
     case "status": {
       const s = await pilotStatus(pubkey);
       console.log(`${net} pilot — ${pubkey}`);
+      console.log(`  state:    ${s.state}`);
       console.log(`  approved: ${s.approved}`);
       console.log(`  used:     ${s.used} / ${s.limit}`);
       break;

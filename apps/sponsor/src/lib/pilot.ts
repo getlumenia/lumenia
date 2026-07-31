@@ -38,6 +38,8 @@ function net(): string {
 const apprKey = (pk: string) => `pilot:${net()}:appr:${pk}`;
 const txKey = (pk: string) => `pilot:${net()}:tx:${pk}`;
 const emailKey = (pk: string) => `pilot:${net()}:email:${pk}`;
+const statusKey = (pk: string) => `pilot:${net()}:status:${pk}`;
+const seenEmailKey = (email: string) => `pilot:${net()}:seen:${email.trim().toLowerCase()}`;
 
 interface Kv {
   url: string;
@@ -107,13 +109,63 @@ export async function enforcePilot(pubkey: string): Promise<PilotVerdict> {
   };
 }
 
-/** Owner-only: add a wallet to the pilot allowlist with a fresh (zero) budget. */
+/** The lifecycle of a pilot application. */
+export type PilotState = "none" | "pending" | "approved" | "rejected";
+
+/**
+ * Idempotent join request (TASK 1). Records a `pending` application UNLESS this wallet already
+ * has a state, OR this email already applied on any wallet — in which case it returns
+ * {created:false} so the caller sends NO duplicate owner-mail. Fail-open only when there's no
+ * store (so the owner still sees the log and can act by hand).
+ */
+export async function startPilotRequest(
+  pubkey: string,
+  email: string,
+): Promise<{ created: boolean; state: PilotState }> {
+  const kv = kvConfigFromEnv();
+  if (!kv) return { created: true, state: "pending" };
+  const clean = email.trim().toLowerCase();
+  const [st, seen] = await pipe(kv, [
+    ["GET", statusKey(pubkey)],
+    ["GET", seenEmailKey(clean)],
+  ]);
+  const existing = (typeof st === "string" ? st : "none") as PilotState;
+  if (existing !== "none") return { created: false, state: existing };
+  if (seen === "1") return { created: false, state: "pending" }; // email already used elsewhere
+  await pipe(kv, [
+    ["SET", statusKey(pubkey), "pending"],
+    ["SET", seenEmailKey(clean), "1"],
+    ["SET", emailKey(pubkey), clean],
+  ]);
+  return { created: true, state: "pending" };
+}
+
+/** A wallet's application state (none/pending/approved/rejected). */
+export async function getPilotState(pubkey: string): Promise<PilotState> {
+  const kv = kvConfigFromEnv();
+  if (!kv) return "none";
+  const [st] = await pipe(kv, [["GET", statusKey(pubkey)]]).catch(() => [null]);
+  return (typeof st === "string" ? st : "none") as PilotState;
+}
+
+/** Owner-only: add a wallet to the pilot allowlist with a fresh (zero) budget; marks state approved. */
 export async function approvePilot(pubkey: string): Promise<void> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
   await pipe(kv, [
     ["SET", apprKey(pubkey), "1"],
     ["SET", txKey(pubkey), "0"],
+    ["SET", statusKey(pubkey), "approved"],
+  ]);
+}
+
+/** Owner-only: decline a wallet (state rejected, allowlist flag removed). They can be re-approved later. */
+export async function rejectPilot(pubkey: string): Promise<void> {
+  const kv = kvConfigFromEnv();
+  if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
+  await pipe(kv, [
+    ["SET", statusKey(pubkey), "rejected"],
+    ["DEL", apprKey(pubkey)],
   ]);
 }
 
@@ -143,15 +195,18 @@ export async function revokePilot(pubkey: string): Promise<void> {
   await pipe(kv, [["DEL", apprKey(pubkey)]]);
 }
 
-/** Read a wallet's pilot status — for the owner CLI and audits. */
+/** Read a wallet's pilot status — for the client status endpoint, owner CLI and audits. */
 export async function pilotStatus(
   pubkey: string,
-): Promise<{ approved: boolean; used: number; limit: number }> {
+): Promise<{ state: PilotState; approved: boolean; used: number; limit: number }> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
-  const [appr, tx] = await pipe(kv, [
+  const [appr, tx, st] = await pipe(kv, [
     ["GET", apprKey(pubkey)],
     ["GET", txKey(pubkey)],
+    ["GET", statusKey(pubkey)],
   ]);
-  return { approved: appr === "1", used: Number(tx ?? 0), limit: maxTx() };
+  const approved = appr === "1";
+  const state = (typeof st === "string" ? st : approved ? "approved" : "none") as PilotState;
+  return { state, approved, used: Number(tx ?? 0), limit: maxTx() };
 }
