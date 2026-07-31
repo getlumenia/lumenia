@@ -81,7 +81,7 @@ jobs:
       - name: Unit + invariant property tests
         run: cargo test
       - name: Install cargo-audit + cargo-deny + cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.3
         with:
           tool: cargo-audit,cargo-deny,cargo-llvm-cov
       - name: cargo audit (RustSec advisories)
