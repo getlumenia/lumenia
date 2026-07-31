@@ -24,6 +24,7 @@ import { useWallet } from "../../../lib/wallet";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
+import { PilotStatusBadge } from "../../../components/brand/PilotStatusBadge";
 import { mainnetConfig } from "../../../lib/network";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
@@ -33,7 +34,7 @@ export default function PilotPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
+  const [view, setView] = useState<"form" | "received" | "already">("form");
   const [error, setError] = useState("");
 
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
@@ -59,8 +60,11 @@ export default function PilotPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ pubkey: account!.address, email }),
       });
-      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Please try again.");
-      setDone(true);
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; already?: boolean; error?: string };
+      if (!res.ok) throw new Error(body.error ?? "Please try again.");
+      // Task 1 is idempotent: a repeat ask for the same account returns { already: true } instead of
+      // a fresh submission — reassure the user rather than pretend it was newly sent.
+      setView(body.already ? "already" : "received");
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -68,7 +72,23 @@ export default function PilotPage() {
     }
   }
 
-  if (done) {
+  if (view === "already") {
+    return (
+      <div className="flex flex-col gap-4 py-8">
+        <h1 className="text-xl font-bold text-ink">You&apos;ve already asked to join</h1>
+        <p className="text-ink-soft">
+          We&apos;ve got your request for this account — no need to send it again. We&apos;ll email
+          you the moment your spot opens.
+        </p>
+        <PilotStatusBadge />
+        <Link href="/home" className="text-sm text-money underline-offset-2 hover:underline">
+          Back home
+        </Link>
+      </div>
+    );
+  }
+
+  if (view === "received") {
     return (
       <div className="flex flex-col gap-4 py-8">
         <h1 className="text-xl font-bold text-ink">Request sent</h1>

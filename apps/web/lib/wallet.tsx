@@ -24,6 +24,14 @@ export interface WalletAccount {
   phase: Phase;
 }
 
+/** This account's standing in the mainnet pilot — the sponsor's /pilot-status `state`. */
+export type PilotState = "none" | "pending" | "approved" | "rejected";
+
+/** Narrow an untrusted /pilot-status `state` to a known value; anything else fails soft to 'none'. */
+function isPilotState(s: unknown): s is PilotState {
+  return s === "none" || s === "pending" || s === "approved" || s === "rejected";
+}
+
 interface WalletState {
   status: "loading" | "ready";
   /** The ONE persistent home account — the address the app sends from + shows as identity. */
@@ -84,6 +92,13 @@ interface WalletState {
   network: NetworkId;
   /** true when THIS account is on the mainnet pilot allowlist — the only case mainnet may be picked. */
   mainnetApproved: boolean;
+  /**
+   * This account's standing in the mainnet pilot, straight from the sponsor's /pilot-status `state`:
+   * 'none' (never asked), 'pending' (asked, waiting), 'approved' (may switch up), 'rejected' (not
+   * this round — the UI never says so in those words). Fail-soft 'none' when mainnet isn't configured
+   * or the status call fails, so the UI degrades to "practice money" cleanly.
+   */
+  pilotState: PilotState;
   /** Switch this device's active network (mainnet only sticks if approved + configured); reloads. */
   switchNetwork: (id: NetworkId) => void;
 }
@@ -97,6 +112,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [unlocked, setUnlocked] = useState(false);
   const [network, setNetworkState] = useState<NetworkId>("testnet");
   const [mainnetApproved, setMainnetApproved] = useState(false);
+  const [pilotState, setPilotState] = useState<PilotState>("none");
   const sessionSeed = useRef<Uint8Array | null>(null);
 
   const refresh = useCallback(async () => {
@@ -127,13 +143,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const mainnet = mainnetConfig();
     if (!account || !mainnet) {
       setMainnetApproved(false);
+      setPilotState("none");
       return;
     }
     let alive = true;
     fetch(`${mainnet.sponsorUrl.replace(/\/$/, "")}/pilot-status?pubkey=${account.address}`)
-      .then((r) => r.json() as Promise<{ approved?: boolean }>)
-      .then((d) => alive && setMainnetApproved(Boolean(d.approved)))
-      .catch(() => alive && setMainnetApproved(false));
+      .then((r) => r.json() as Promise<{ approved?: boolean; state?: string }>)
+      .then((d) => {
+        if (!alive) return;
+        setMainnetApproved(Boolean(d.approved));
+        setPilotState(isPilotState(d.state) ? d.state : "none");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setMainnetApproved(false);
+        setPilotState("none");
+      });
     return () => {
       alive = false;
     };
@@ -386,7 +411,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <WalletContext.Provider
-      value={{ status, account, accounts, unlocked, network, mainnetApproved, switchNetwork, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
+      value={{ status, account, accounts, unlocked, network, mainnetApproved, pilotState, switchNetwork, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
     >
       {children}
     </WalletContext.Provider>
