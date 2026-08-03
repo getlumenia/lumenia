@@ -46,9 +46,8 @@ import { sendEvent } from "../../../lib/events";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
-import { explorerTx } from "../../../lib/network";
+import { activeNetwork, explorerTx } from "../../../lib/network";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const explorer = explorerTx;
 /** Draft of the form, kept only for this tab so an unlock detour doesn't wipe it. */
 const DRAFT_KEY = "lumenia.sendout.draft";
@@ -137,9 +136,12 @@ export default function SendOutPage() {
   }, [raw]);
 
   // The exact dollars we hold — needed to tell whether the destination can receive them.
+  // Mainnet-aware: an approved user on real money must read the issuer from the MAINNET
+  // sponsor (its own USDC), not testnet — otherwise the destination check runs against the
+  // wrong asset. activeNetwork() is testnet by default, so nothing changes for practice money.
   useEffect(() => {
     let alive = true;
-    fetch(`${SPONSOR_URL.replace(/\/$/, "")}/health`)
+    fetch(`${activeNetwork().sponsorUrl.replace(/\/$/, "")}/health`)
       .then((r) => r.json() as Promise<{ usdcIssuer?: string }>)
       .then((h) => alive && setIssuer(h.usdcIssuer ?? null))
       .catch(() => alive && setIssuer(null));
@@ -225,7 +227,8 @@ export default function SendOutPage() {
         return;
       }
       const result = await sendOut({
-        sponsorUrl: SPONSOR_URL,
+        // Real-money users hit the mainnet sponsor; practice users the testnet one.
+        sponsorUrl: activeNetwork().sponsorUrl,
         signer,
         amount: (Math.round(Number.parseFloat(amount) * 100) / 100).toFixed(2),
         destination: destination.address,
