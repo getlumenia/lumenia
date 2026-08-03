@@ -15,6 +15,7 @@ import {
   type Transaction,
 } from "@stellar/stellar-sdk";
 import { activeNetwork } from "./network";
+import type { Signer } from "./signer";
 
 export interface ClaimParams {
   sponsorUrl: string;
@@ -66,4 +67,30 @@ export async function runClaim({ sponsorUrl, bearerSecret, balanceId }: ClaimPar
   })) as { hash: string };
 
   return { hash: feebump.hash, publicKey: pub };
+}
+
+/**
+ * Prepare an existing wallet's account to hold real dollars — the create-account half of runClaim,
+ * on its own. The sponsor opens a 0-XLM account with a USDC trustline (its own reserve), the
+ * account's OWN key co-signs the trustline op, and it submits. This lets an approved mainnet user
+ * bring dollars in from an outside wallet — which needs the trustline to already exist — without
+ * first having to receive a Lumenia link. The account holds 0 XLM; the sponsor covers reserve + fee.
+ */
+export async function prepareAccount({
+  sponsorUrl,
+  signer,
+}: {
+  sponsorUrl: string;
+  signer: Signer;
+}): Promise<{ hash: string }> {
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
+  const server = new Horizon.Server(HORIZON_URL);
+  const base = sponsorUrl.replace(/\/$/, "");
+  const created = (await postJson(`${base}/create-account`, {
+    recipientPublicKey: signer.publicKey(),
+  })) as { xdr: string };
+  const sandwich = TransactionBuilder.fromXDR(created.xdr, NETWORK) as Transaction;
+  await signer.sign(sandwich);
+  const res = await server.submitTransaction(sandwich);
+  return { hash: (res as { hash: string }).hash };
 }

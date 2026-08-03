@@ -36,6 +36,7 @@ import { formatUsd } from "../../../lib/money";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { NetworkSwitcher } from "../../../components/brand/NetworkSwitcher";
 import { PilotStatusChip } from "../../../components/brand/PilotStatusChip";
+import { ActivateMainnet } from "../../../components/brand/ActivateMainnet";
 import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
@@ -208,6 +209,11 @@ export default function AccountPage() {
       {/* 3. Network state — practice vs. real money, up near the top so it's never buried. The
           component already handles every pilot state (none / pending / approved / rejected / on-mainnet). */}
       <NetworkSwitcher />
+
+      {/* 3b. On real money only, and only until the account can hold dollars: the one-time step that
+          opens the account + USDC trustline so an outside wallet/exchange can send here. Self-removes
+          once the trustline exists. */}
+      <ActivateMainnet />
 
       {/* ── below this line: the less-frequent stuff ── */}
 
