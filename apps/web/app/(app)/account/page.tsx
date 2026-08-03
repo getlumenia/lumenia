@@ -186,6 +186,19 @@ export default function AccountPage() {
           {total === null ? "…" : formatUsd(total)}
         </p>
         <p className="mt-1 text-sm text-ink-soft">Held in dollars, yours to send whenever you like.</p>
+        {/* Quick copy of the account address, right where the balance is — this is what you paste
+            into an outside wallet or exchange to receive here. Copies the FULL address; the QR +
+            explorer live in the Receive card below. */}
+        <div className="mt-4 flex items-center gap-2 border-t border-line pt-4">
+          <code className="min-w-0 flex-1 truncate font-mono text-xs text-ink-soft">{account.address}</code>
+          <button
+            onClick={copyAddress}
+            className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-sm font-medium text-ink"
+          >
+            {copied ? <Check className="size-4 text-money" /> : <Copy className="size-4" />}
+            {copied ? "Copied" : "Copy address"}
+          </button>
+        </div>
       </MoneyCard>
 
       {/* 2. Actions — the two things you can do today, one tap each. */}
