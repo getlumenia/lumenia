@@ -35,6 +35,7 @@ import { loadTotalUsd, loadActivityForAccounts, type ActivityItem } from "../../
 import { formatUsd } from "../../../lib/money";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { NetworkSwitcher } from "../../../components/brand/NetworkSwitcher";
+import { PilotStatusChip } from "../../../components/brand/PilotStatusChip";
 import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
@@ -167,7 +168,12 @@ export default function AccountPage() {
       </Suspense>
 
       <header>
-        <h1 className="text-xl font-bold text-ink">Account</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-xl font-bold text-ink">Account</h1>
+          {/* Glanceable pilot standing — "am I approved for real money yet?" before you scroll to
+              the NetworkSwitcher card below. */}
+          <PilotStatusChip />
+        </div>
         <p className="mt-1 text-sm text-ink-soft">Everything about your money, in one place.</p>
       </header>
 
