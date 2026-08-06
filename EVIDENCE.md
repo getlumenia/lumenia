@@ -47,7 +47,7 @@ capture remains valid evidence; this newer one shows the metric holds on today's
 |---|---|
 | On-chain claim | tx `b9ef1844…` above (the binary metric), re-proven on today's stack by `21816364…` |
 | Live claim page | <https://getlumenia.com> — value-first: the amount is shown **before** any credential or action; the bearer key travels in the URL `#fragment` and is never sent to a server |
-| 60-second demo video | *to be attached with submission* |
+| 60-second demo video | <https://youtu.be/eGqJDv0C0mk> — a phone opening the claim link on the live page, USDC arriving with no wallet, no setup and no gas (the SOW-scoped **testnet** v1 flow) |
 | Flow | link tap → value-first page → "Claim my money" → `/create-account` → client-signed claim → `/feebump` → on-screen explorer tx link |
 | SOW-scoped route | This D2 claim is the **v1 classic Claimable Balance** route (`/c/[id]`) — the frozen grant-evidence path (webfont-free, unchanged mechanics). Since the sprint, the app's **default shareable link-send** is a v2 Soroban escrow with a separate claim route (`/v2/c/[…]`, see "Beyond the SOW"); both run side by side, and this SOW is evidenced entirely on the v1 route. |
 
