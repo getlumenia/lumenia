@@ -24,7 +24,7 @@ jobs:
         with:
           workspaces: contracts/lumen-drop
       - name: Cache cargo-installed binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin
           key: cargo-bin-scout-${{ runner.os }}-v1
@@ -40,7 +40,7 @@ jobs:
           cargo scout-audit -o sarif --output-path scout.sarif || true
           cargo scout-audit -o md --output-path scout.md || true
           cargo scout-audit
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: scout-reports
@@ -60,7 +60,7 @@ jobs:
           cargo build --release --manifest-path /tmp/oz-scanner/Cargo.toml --workspace
           SCANNER=$(find /tmp/oz-scanner/target/release -maxdepth 1 -type f -name "soroban-scanner" | head -1)
           "$SCANNER" scan contracts/lumen-drop/src | tee soroban-scanner.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: soroban-scanner-report
@@ -86,7 +86,7 @@ jobs:
           tool: cargo-fuzz
       - name: Fuzz escrow solvency (10 minutes)
         run: cargo fuzz run escrow_solvency -- -max_total_time=600
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fuzz-artifacts
@@ -109,7 +109,7 @@ jobs:
           tool: cargo-mutants
       - name: Run mutants on the contract (proptest cases capped for speed)
         run: PROPTEST_CASES=16 cargo mutants -f src/lib.rs --timeout 120 -j 2 || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutants-report
