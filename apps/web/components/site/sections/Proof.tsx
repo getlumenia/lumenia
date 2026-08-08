@@ -10,6 +10,8 @@ import { motion } from "motion/react";
 import { Badge } from "@/components/ui/badge";
 
 const PROOF_TX = "b9ef1844c6ca2df732648b965a2f991ba0197643057b2c9e2a60ab52c3e23746";
+// Pinned to testnet on purpose: this is a specific historical transaction, and which
+// network it lives on is a fact about the transaction, not about the reader's current setting.
 const PROOF_URL = `https://stellar.expert/explorer/testnet/tx/${PROOF_TX}`;
 const PROOF_SHORT = "b9ef1844…c3e23746";
 

@@ -73,7 +73,7 @@ export function checkRateLimit(
   cfg: RateLimitConfig,
   now: number,
 ): RateLimitVerdict {
-  if (ipStore(`ip:${ip}`, cfg.ipCap, cfg.ipWindowMs, now)) {
+  if (ipStore(`ip:${ipBucket(ip)}`, cfg.ipCap, cfg.ipWindowMs, now)) {
     return { limited: true, reason: "per-IP rate limit exceeded" };
   }
   if (account && accountStore(`acct:${account}`, cfg.accountCap, cfg.accountWindowMs, now)) {
@@ -87,6 +87,25 @@ export function checkRateLimit(
 interface KvConfig {
   url: string;
   token: string;
+}
+
+/**
+ * Collapse an address to the unit an operator actually controls, so "per-IP" means something.
+ *
+ * A single residential IPv6 allocation is a /64 — 18 quintillion addresses. Keying the full
+ * address let one attacker present a fresh "IP" per request, which quietly turned every per-IP cap
+ * in this service into no cap at all (and that is what made the OTP and free-account limits worth
+ * attacking). IPv4 is already one address per host, so it passes through unchanged.
+ */
+export function ipBucket(ip: string): string {
+  if (!ip.includes(":")) return ip; // IPv4, or "unknown"
+  const addr = ip.split("%")[0]!.toLowerCase(); // drop any zone index
+  const [head, tail] = addr.includes("::") ? addr.split("::") : [addr, undefined];
+  const headGroups = head ? head.split(":").filter(Boolean) : [];
+  const tailGroups = tail ? tail.split(":").filter(Boolean) : [];
+  const missing = 8 - headGroups.length - tailGroups.length;
+  const full = [...headGroups, ...Array(Math.max(0, missing)).fill("0"), ...tailGroups];
+  return `${full.slice(0, 4).join(":")}::/64`;
 }
 
 /** Vercel KV exposes the Upstash REST pair under KV_*; plain Upstash under UPSTASH_*. */
@@ -127,7 +146,7 @@ export async function checkRateLimitDurable(
   const kv = kvConfigFromEnv();
   if (!kv) return checkRateLimit(ip, account, cfg, now);
   try {
-    if (await kvLimited(kv, `ip:${ip}`, cfg.ipCap, cfg.ipWindowMs, now)) {
+    if (await kvLimited(kv, `ip:${ipBucket(ip)}`, cfg.ipCap, cfg.ipWindowMs, now)) {
       return { limited: true, reason: "per-IP rate limit exceeded" };
     }
     if (account && (await kvLimited(kv, `acct:${account}`, cfg.accountCap, cfg.accountWindowMs, now))) {

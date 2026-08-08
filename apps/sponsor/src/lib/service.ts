@@ -58,11 +58,23 @@ export async function getServiceAsync(): Promise<Service> {
   return cached;
 }
 
+/**
+ * CORS. `ALLOWED_ORIGIN` is set in both deployed environments, but the `*` fallback meant a deploy
+ * that simply forgot the var would silently open every value route to any site on the internet —
+ * a missing variable should not be a security decision. On mainnet the fallback is the app's own
+ * origin instead of a wildcard; elsewhere `*` stays, because local dev and the CLI spikes call
+ * these endpoints from arbitrary origins.
+ *
+ * `Vary: Origin` because this header depends on configuration a shared cache cannot see.
+ */
 export function corsHeaders(): Record<string, string> {
+  const configured = process.env.ALLOWED_ORIGIN;
+  const fallback = process.env.STELLAR_NETWORK === "mainnet" ? "https://getlumenia.com" : "*";
   return {
-    "access-control-allow-origin": process.env.ALLOWED_ORIGIN ?? "*",
+    "access-control-allow-origin": configured || fallback,
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-headers": "content-type",
+    vary: "Origin",
   };
 }
 

@@ -16,6 +16,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { activeNetwork } from "./network";
 import type { Signer } from "./signer";
+import { assertSponsoredOnboarding } from "./tx-guard";
 
 export interface ClaimParams {
   sponsorUrl: string;
@@ -41,7 +42,8 @@ async function postJson(url: string, body: unknown): Promise<Record<string, unkn
 }
 
 export async function runClaim({ sponsorUrl, bearerSecret, balanceId }: ClaimParams): Promise<ClaimOutcome> {
-  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
+  const net = activeNetwork();
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = net;
   const server = new Horizon.Server(HORIZON_URL);
   const claimKey = Keypair.fromSecret(bearerSecret);
   const pub = claimKey.publicKey();
@@ -50,6 +52,7 @@ export async function runClaim({ sponsorUrl, bearerSecret, balanceId }: ClaimPar
   // 1. Sponsor creates the 0-XLM account + USDC trustline; the bearer key co-signs.
   const created = (await postJson(`${base}/create-account`, { recipientPublicKey: pub })) as { xdr: string };
   const sandwich = TransactionBuilder.fromXDR(created.xdr, NETWORK) as Transaction;
+  assertSponsoredOnboarding(sandwich, pub, net.id);
   sandwich.sign(claimKey);
   await server.submitTransaction(sandwich);
 
@@ -83,13 +86,16 @@ export async function prepareAccount({
   sponsorUrl: string;
   signer: Signer;
 }): Promise<{ hash: string }> {
-  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
+  const net = activeNetwork();
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = net;
   const server = new Horizon.Server(HORIZON_URL);
   const base = sponsorUrl.replace(/\/$/, "");
   const created = (await postJson(`${base}/create-account`, {
     recipientPublicKey: signer.publicKey(),
   })) as { xdr: string };
   const sandwich = TransactionBuilder.fromXDR(created.xdr, NETWORK) as Transaction;
+  // This key holds the user's real balance — never sign a server-built tx unexamined.
+  assertSponsoredOnboarding(sandwich, signer.publicKey(), net.id);
   await signer.sign(sandwich);
   const res = await server.submitTransaction(sandwich);
   return { hash: (res as { hash: string }).hash };

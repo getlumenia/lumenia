@@ -32,6 +32,7 @@ import {
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
 import { activeNetwork } from "./network";
+import { assertHealthMatchesPin, pinnedUsdcIssuer } from "./tx-guard";
 
 /** Stellar text memos are capped at 28 bytes; longer input is a typo, not a memo. */
 export const MEMO_TEXT_MAX_BYTES = 28;
@@ -191,13 +192,17 @@ export interface PayoutResult {
  * mismatch between the signed bytes and the request is rejected rather than submitted.
  */
 export async function sendOut(opts: PayoutInput): Promise<PayoutResult> {
-  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
+  const net = activeNetwork();
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = net;
   const base = opts.sponsorUrl.replace(/\/$/, "");
+  // The asset comes from this build, never from the wire: a swapped /health would otherwise pick
+  // which token leaves the user's account, and this one goes to a real exchange deposit address.
   const health = (await (await fetch(`${base}/health`)).json()) as {
     usdcIssuer: string;
     usdcCode: string;
   };
-  const USDC = new Asset(health.usdcCode, health.usdcIssuer);
+  assertHealthMatchesPin(health, net.id);
+  const USDC = new Asset("USDC", pinnedUsdcIssuer(net.id));
   const sender = opts.signer.publicKey();
 
   const server = new Horizon.Server(HORIZON_URL);

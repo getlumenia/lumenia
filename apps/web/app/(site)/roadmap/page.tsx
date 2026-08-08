@@ -50,6 +50,8 @@ const GROUPS: Array<{ title: string; tone: "done" | "building" | "next"; label: 
       "The recipient pays nothing to receive; we cover the network cost.",
       "Send money onward with a link of your own.",
       "Every transfer is publicly verifiable; unclaimed links come back after 7 days.",
+      "Ask someone to pay you with a link, and split a bill between several people.",
+      "Lock your money to you with a password, and unlock it with Face ID.",
     ],
   },
   {
@@ -57,8 +59,7 @@ const GROUPS: Array<{ title: string; tone: "done" | "building" | "next"; label: 
     tone: "building",
     label: "In progress",
     items: [
-      "Lock your money to you with a password (recovery on a new device).",
-      "Ask someone to pay you with a link (request money).",
+      "Getting your money back on a new phone, tested on real devices.",
       "A smoother first-time experience on the cheapest phones.",
     ],
   },

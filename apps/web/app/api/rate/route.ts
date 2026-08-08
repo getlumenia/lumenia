@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { indicativeRate } from "../../../lib/rate";
+import { getServerRate } from "../../../lib/rate";
 
 /**
  * GET /api/rate — server-side proxy for the indicative USD→TRY reference rate
@@ -11,20 +11,12 @@ import { indicativeRate } from "../../../lib/rate";
  * Next's fetch cache + the route's revalidate keep the upstream call to at most
  * once an hour. On any failure the labeled fallback constant is returned with
  * live:false so the UI keeps the honest "indicative" wording.
+ *
+ * The fetch itself lives in lib/rate.ts so the server-rendered claim page can read
+ * the same cached value without going through HTTP.
  */
 export const revalidate = 3600;
 
 export async function GET(): Promise<NextResponse> {
-  try {
-    const res = await fetch("https://api.frankfurter.dev/v1/latest?base=USD&symbols=TRY", {
-      next: { revalidate: 3600 },
-    });
-    if (!res.ok) throw new Error(String(res.status));
-    const data = (await res.json()) as { rates?: { TRY?: number } };
-    const rate = data.rates?.TRY;
-    if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) throw new Error("bad rate");
-    return NextResponse.json({ rate, live: true });
-  } catch {
-    return NextResponse.json({ rate: indicativeRate(), live: false });
-  }
+  return NextResponse.json(await getServerRate());
 }

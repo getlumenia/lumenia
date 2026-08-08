@@ -705,6 +705,39 @@ goldenSet("sweep (ALLOWED_SWEEP_OP_TYPES)", ALLOWED_SWEEP_OP_TYPES, [
   "accountMerge",
 ]);
 
+/* ---- MUXED ADDRESSES: every source check in the validator is a string ===, and a muxed M…
+   wrapping the sponsor's own key is a DIFFERENT string, so the "sponsor may not source this op"
+   drain check would never fire. The validator refuses the ambiguity outright rather than relying
+   on the accident that today's op shapes happen not to allow it. ---- */
+const MUXED_SPONSOR = new MuxedAccount(new Account(sponsor.publicKey(), "0"), "1").accountId();
+
+check(
+  "MUX-1 a muxed tx source is rejected (no === comparison against a G… is meaningful)",
+  validateInnerTransaction(
+    buildTx(recipient.publicKey(), [Operation.claimClaimableBalance({ balanceId: BALANCE_ID })]),
+    { ...basePolicy, expectedSource: MUXED_SPONSOR },
+  ),
+  false,
+);
+check(
+  "MUX-2 a muxed SPONSOR in the policy is rejected before any drain check runs",
+  validateInnerTransaction(
+    buildTx(recipient.publicKey(), [Operation.claimClaimableBalance({ balanceId: BALANCE_ID })]),
+    { ...basePolicy, sponsor: MUXED_SPONSOR },
+  ),
+  false,
+);
+check(
+  "MUX-3 a muxed OP source is rejected",
+  validateInnerTransaction(
+    buildTx(recipient.publicKey(), [
+      Operation.claimClaimableBalance({ balanceId: BALANCE_ID, source: MUXED_SPONSOR }),
+    ]),
+    basePolicy,
+  ),
+  false,
+);
+
 console.log("\n============================================================");
 console.log(failed === 0 ? ` ✅ ANTI-DRAIN TESTS PASS (${passed}/${passed + failed})` : ` ❌ ANTI-DRAIN TESTS FAIL (${failed} failed)`);
 console.log("============================================================");

@@ -33,12 +33,81 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
+    /**
+     * Content-Security-Policy. This app keeps a raw Ed25519 seed in IndexedDB and decrypts it in
+     * the page, and its most sensitive screen is deliberately completed inside the WhatsApp
+     * in-app browser — the least trustworthy place it runs. One injected script there is total
+     * loss, so the two directives that carry the weight are `script-src` (no remote code) and
+     * `connect-src` (an allowlist, so injected code has nowhere to send a stolen key).
+     *
+     * `'unsafe-inline'` is still required for scripts: Next inlines its hydration payload and the
+     * theme-flash guard, and eliminating it needs a per-request nonce from middleware. Honest
+     * limitation — this blocks remote loading and exfiltration, not inline injection. A
+     * nonce-based policy is the next step up.
+     *
+     * The connect allowlist is derived from the SAME env vars lib/network.ts reads, so a
+     * deployment that repoints its sponsor or Horizon does not silently lose its own backend.
+     */
+    const dev = process.env.NODE_ENV !== "production";
+    const origin = (u: string | undefined): string[] => {
+      if (!u) return [];
+      try {
+        return [new URL(u).origin];
+      } catch {
+        return [];
+      }
+    };
+    const connect = [
+      "'self'",
+      ...origin(process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev"),
+      ...origin(process.env.NEXT_PUBLIC_SPONSOR_URL_MAINNET),
+      ...origin(process.env.NEXT_PUBLIC_HORIZON ?? "https://horizon-testnet.stellar.org"),
+      ...origin(process.env.NEXT_PUBLIC_HORIZON_MAINNET ?? "https://horizon.stellar.org"),
+      ...origin(process.env.NEXT_PUBLIC_SOROBAN_RPC ?? "https://soroban-testnet.stellar.org"),
+      ...origin(process.env.NEXT_PUBLIC_SOROBAN_RPC_MAINNET ?? "https://mainnet.sorobanrpc.com"),
+      // Only reachable from the spike harness, which is build-gated off in production.
+      ...(dev ? ["https://friendbot.stellar.org"] : []),
+    ];
+    // /brand-kit pulls Fontshare + Google Fonts, and 404s in production — so those hosts are
+    // allowed in development only, and the shipped policy never mentions them.
+    const styleExtra = dev ? " https://api.fontshare.com https://fonts.googleapis.com" : "";
+    const fontExtra = dev ? " https://cdn.fontshare.com https://fonts.gstatic.com" : "";
+
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      `style-src 'self' 'unsafe-inline'${styleExtra}`,
+      `font-src 'self' data:${fontExtra}`,
+      "img-src 'self' data: blob:",
+      `connect-src ${[...new Set(connect)].join(" ")}`,
+      "worker-src 'self' blob:",
+      "manifest-src 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "object-src 'none'",
+      "upgrade-insecure-requests",
+    ].join("; ");
+
+    const baseline = [
+      { key: "Content-Security-Policy", value: csp },
+      // Clickjacking: an overlay on the "Send" button of /send-out is a real cash-out attack.
+      { key: "X-Frame-Options", value: "DENY" },
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+      { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+    ];
+
     // X-Robots-Tag: the claim page is FROZEN, so its missing robots meta cannot be
     // fixed on the page — the header is the layer we own. robots.txt Disallow
     // alone can leave a link-discovered claim URL indexed (URL-only, exposing
     // amount/sender in the query); noindex at the header level closes that.
     return [
+      { source: "/:path*", headers: baseline },
       {
+        // The claim routes carry a bearer key: they keep the stricter no-referrer. Next emits
+        // both entries, and the last Referrer-Policy wins, so this overrides the baseline here.
         source: "/c/:id",
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },
@@ -47,6 +116,14 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/c/:id/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+      {
+        // Same reasoning for the v2 claim route — its #fragment is the money too.
+        source: "/v2/c/:linkHex",
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Robots-Tag", value: "noindex, nofollow" },

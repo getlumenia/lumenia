@@ -48,10 +48,10 @@ export async function storeRecoveryBox(
   email: string,
   code: string,
   box: RecoveryBox,
-  aliasId?: string,
+  alias?: { aliasId: string; aliasProof: string },
 ): Promise<void> {
   const id = await emailToId(email);
-  const res = await post("/recovery", { id, box, code, ...(aliasId ? { aliasId } : {}) });
+  const res = await post("/recovery", { id, box, code, ...(alias ?? {}) });
   if (res.status === 401) throw new Error("That code is wrong or has expired.");
   if (!res.ok) throw new Error(await errorFrom(res, "Couldn't secure your money. Try again."));
 }

@@ -16,6 +16,7 @@
  * Includes an exact op-SEQUENCE matcher (defense-in-depth) + a GOLDEN-policy snapshot
  * that fails CI if any allowlist silently widens.
  */
+import { StrKey } from "@stellar/stellar-sdk";
 import type { Asset, Transaction } from "@stellar/stellar-sdk";
 
 export const ALLOWED_INNER_OP_TYPES = new Set<string>([
@@ -111,6 +112,24 @@ function opSource(op: { source?: string }, txSource: string): string {
   return op.source ?? txSource;
 }
 
+/**
+ * Every source and destination check in this file is a string `===` against a `G…` account. A
+ * MUXED address (`M…`, SEP-23) wraps the same underlying ed25519 key in a different string, so
+ * `M…(sponsor) === policy.sponsor` is false and the "sponsor may not source this op" check —
+ * the drain check — would simply not fire.
+ *
+ * That is not exploitable today, for reasons that are luck rather than design: the two policies
+ * that could carry it never get the sponsor's signature on the inner transaction, and the one that
+ * does (`/send-link`) is saved because `beginSponsoringFutureReserves.sponsoredId` is an XDR
+ * `AccountID`, which cannot hold a muxed address at all. Relying on an accident is how a later
+ * refactor turns a non-issue into a drain, so this rejects the ambiguity outright: this validator
+ * only reasons about plain ed25519 accounts, and anything else is refused before comparison.
+ */
+function assertPlainAccount(label: string, value: string): ValidationResult | null {
+  if (StrKey.isValidEd25519PublicKey(value)) return null;
+  return { ok: false, reason: `${label} must be a plain G… account, got ${value.slice(0, 12)}…` };
+}
+
 export function validateInnerTransaction(
   tx: Transaction,
   policy: InnerTxPolicy,
@@ -127,6 +146,16 @@ export function validateInnerTransaction(
   }
   if (tx.source !== policy.expectedSource) {
     return { ok: false, reason: `unexpected tx source ${tx.source}` };
+  }
+
+  // Refuse muxed/non-ed25519 addresses before any === comparison happens (see assertPlainAccount).
+  for (const [label, value] of [
+    ["tx source", tx.source],
+    ["expectedSource", policy.expectedSource],
+    ["sponsor", policy.sponsor],
+  ] as const) {
+    const bad = assertPlainAccount(label, value);
+    if (bad) return bad;
   }
 
   // Exact op-sequence match (when pinned): the tx must be its known ORDERED shape, not
@@ -146,6 +175,8 @@ export function validateInnerTransaction(
     }
 
     const src = opSource(op as { source?: string }, tx.source);
+    const badSrc = assertPlainAccount(`op '${op.type}' source`, src);
+    if (badSrc) return badSrc;
 
     // Sponsor may only be the source of begin/createAccount. Any other
     // sponsor-sourced op (payment, changeTrust, ...) drains the sponsor.

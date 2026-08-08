@@ -114,6 +114,14 @@ export async function relayClaimHandler(
     if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-claim simulation failed: ${sim.error}`);
     const prepared = rpc.assembleTransaction(tx, sim).build();
 
+    // The sponsor pays this fee, and until now nothing bounded it: the amount came straight out of
+    // simulation, so a claim crafted to be expensive to execute billed the sponsor whatever it
+    // cost. /v2-deposit and /v2-reclaim already refuse an inner fee over this ceiling — the
+    // relayed claim is the same spend and gets the same ceiling.
+    if (Number.parseInt(prepared.fee, 10) > V2_DEPOSIT_FEE_CAP) {
+      throw new Error(`v2-claim fee ${prepared.fee} exceeds cap ${V2_DEPOSIT_FEE_CAP}`);
+    }
+
     let submitTx: Transaction | FeeBumpTransaction;
     if (lease) {
       prepared.sign(lease.keypair); // channel = tx source (lends its sequence)

@@ -38,14 +38,26 @@ export default function UnlockPage() {
     return null;
   }
 
+  /**
+   * Where to land after unlocking. `startsWith("/")` is not enough: `//evil.com` and `/\evil.com`
+   * both start with a slash and both are protocol-relative URLs browsers happily leave the site
+   * for. This is the worst page to get that wrong on — the user has just typed the password that
+   * unlocks their money, so a redirect to a lookalike is a ready-made phishing handoff.
+   */
+  function safeNext(): string {
+    const next = new URLSearchParams(window.location.search).get("next");
+    if (!next || !/^\/[A-Za-z0-9\-._~/?#[\]@!$&'()*+,;=%]*$/.test(next)) return "/home";
+    if (next.startsWith("//") || next.startsWith("/\\")) return "/home";
+    return next;
+  }
+
   async function unlock() {
     setBusy(true);
     setError("");
     try {
       const { seed } = await unlockPhase2(password);
       setSessionSeed(seed); // hold in memory for the session (send needs to sign)
-      const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(next && next.startsWith("/") ? next : "/home");
+      router.replace(safeNext());
     } catch {
       setError("That password didn't work. Try again.");
     } finally {
@@ -59,8 +71,7 @@ export default function UnlockPage() {
     setError("");
     try {
       await unlockWithFaceId();
-      const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(next && next.startsWith("/") ? next : "/home");
+      router.replace(safeNext());
     } catch (e) {
       setError((e as Error).message);
     } finally {

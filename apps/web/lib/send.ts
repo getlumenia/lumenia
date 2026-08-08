@@ -25,6 +25,7 @@ import {
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
 import { activeNetwork } from "./network";
+import { assertHealthMatchesPin, pinnedUsdcIssuer } from "./tx-guard";
 
 const RECLAIM_AFTER_SECONDS = (7 * 24 * 60 * 60).toString(); // money comes back after 7 days
 
@@ -57,14 +58,19 @@ async function submitSponsoredCB(opts: {
   amount: string;
   claimantDestination: string;
 }): Promise<{ hash: string; balanceId: string; usdcIssuer: string }> {
-  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
+  const net = activeNetwork();
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = net;
   const base = opts.sponsorUrl.replace(/\/$/, "");
+  // Pinned, not reported: the sender is signing away real dollars here, so the asset is a
+  // compile-time constant and /health only gets to disagree loudly.
   const health = (await (await fetch(`${base}/health`)).json()) as {
     sponsorPublicKey: string;
     usdcIssuer: string;
     usdcCode: string;
   };
-  const USDC = new Asset(health.usdcCode, health.usdcIssuer);
+  assertHealthMatchesPin(health, net.id);
+  const issuer = pinnedUsdcIssuer(net.id);
+  const USDC = new Asset("USDC", issuer);
   const sender = opts.signer.publicKey();
 
   const server = new Horizon.Server(HORIZON_URL);
@@ -86,7 +92,7 @@ async function submitSponsoredCB(opts: {
     senderPublicKey: sender,
   })) as { hash: string; balanceId: string };
 
-  return { hash: res.hash, balanceId: res.balanceId, usdcIssuer: health.usdcIssuer };
+  return { hash: res.hash, balanceId: res.balanceId, usdcIssuer: issuer };
 }
 
 export async function createSendLink(opts: {

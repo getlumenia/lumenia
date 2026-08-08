@@ -18,7 +18,7 @@
  * NOT read WebAuthn — the blob-store client (PUT/GET /recovery/{id}, §12 step 2) and the
  * actual PRF extraction (Spike #2, real hardware, §12 step 5) sit on top of it.
  */
-import { deriveKek, DEFAULT_ARGON, type ArgonParams } from "./argon";
+import { assertArgonInBounds, deriveKek, DEFAULT_ARGON, type ArgonParams } from "./argon";
 
 /* base64 helpers — portable across the browser and Node (btoa/atob are global in both). */
 const b64 = {
@@ -121,9 +121,27 @@ const ID_HKDF_INFO = new TextEncoder().encode("lumenia-recovery-id-v1");
 const ID_HKDF_SALT = new Uint8Array(32); // all zeroes, on purpose (see above)
 
 export async function prfToBoxId(prf: Uint8Array): Promise<string> {
+  return hkdfHex(prf, ID_HKDF_INFO);
+}
+
+/**
+ * The value that proves this passkey OWNS its alias row, so the server can refuse a write from
+ * anyone else (see putAliasBox in apps/sponsor/src/lib/recovery-store.ts).
+ *
+ * A different HKDF info label over the same PRF secret: independent of the box id, so knowing
+ * someone's alias id gives no way to compute their proof. Like the id above, this label is part of
+ * the permanent wire format — changing it locks every existing owner out of updating their own box.
+ */
+const PROOF_HKDF_INFO = new TextEncoder().encode("lumenia-recovery-alias-proof-v1");
+
+export async function prfToAliasProof(prf: Uint8Array): Promise<string> {
+  return hkdfHex(prf, PROOF_HKDF_INFO);
+}
+
+async function hkdfHex(prf: Uint8Array, info: Uint8Array): Promise<string> {
   const ikm = await crypto.subtle.importKey("raw", bs(prf), "HKDF", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: bs(ID_HKDF_SALT), info: bs(ID_HKDF_INFO) },
+    { name: "HKDF", hash: "SHA-256", salt: bs(ID_HKDF_SALT), info: bs(info) },
     ikm,
     256,
   );
@@ -146,6 +164,9 @@ export async function wrapWithPassword(
 
 /** Re-derive the seed. Throws on a wrong password or tampered ciphertext. */
 export async function unwrapWithPassword(copy: PasswordCopy, password: string): Promise<Uint8Array> {
+  // `copy` came off the wire, so its KDF parameters are input, not configuration — check them
+  // before spending the device's memory on them (see ARGON_BOUNDS).
+  assertArgonInBounds(copy.argon);
   const kek = await deriveKek(password, b64.dec(copy.salt), copy.argon);
   try {
     return await aesGcmDecrypt(kek, b64.dec(copy.iv), b64.dec(copy.ct));

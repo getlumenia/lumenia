@@ -11,7 +11,7 @@
  */
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
-import { indicativeRate } from "../../../lib/rate";
+import { getServerRate } from "../../../lib/rate";
 import { formatUsd, usdToTryIndicative } from "../../../lib/money";
 import { copy } from "../../../lib/copy";
 import { PersonChip } from "../../../components/brand/PersonChip";
@@ -65,6 +65,10 @@ export default async function ClaimPage({
   const { id } = await params;
   const claim = readClaim(await searchParams);
   if (!claim) notFound();
+  // The live ECB reference rate, cached for an hour by Next's fetch cache; falls back to the
+  // labeled constant if the feed is unreachable. No client JS, no webfont — the route's budget is
+  // untouched.
+  const { rate } = await getServerRate();
 
   return (
     <main className="claim-pw flex min-h-dvh flex-col items-center justify-center bg-paper px-6 py-10 text-ink">
@@ -77,7 +81,7 @@ export default async function ClaimPage({
           {formatUsd(claim.usd)}
         </div>
         <p className="text-sm text-ink-soft">
-          ≈ {usdToTryIndicative(claim.usd, indicativeRate())} <span className="opacity-70">indicative</span>
+          ≈ {usdToTryIndicative(claim.usd, rate)} <span className="opacity-70">indicative</span>
         </p>
 
         <div className="mt-4 w-full">

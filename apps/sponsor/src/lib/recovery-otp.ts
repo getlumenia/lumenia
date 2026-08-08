@@ -20,16 +20,35 @@ const ID_RE = /^[0-9a-f]{64}$/;
 const TTL_SEC = 600; // 10 minutes
 const MAX_TRIES = 5;
 
+/* PER-ID VERIFY BUDGET (F3). `tries` inside the record is not a limit an attacker has to respect:
+ * it was a read-modify-write, so N concurrent verifies all read tries=0 and all wrote back tries=1
+ * — the 5-try cap simply did not exist under parallelism. It also reset to 0 on every new code, so
+ * requesting a fresh code bought another 5 guesses. Both holes close the same way: a SEPARATE
+ * counter, incremented ATOMICALLY (one Redis INCR, no read-modify-write), living on its OWN rolling
+ * window so re-requesting a code cannot reset it. 6 digits stays (bank-standard, and 8 would hurt
+ * the one flow a scared user runs); what makes 6 safe is that the budget below is hard. */
+const MAX_VERIFY_PER_WINDOW = 12;
+const VERIFY_WINDOW_SEC = 3600;
+
 interface OtpRecord {
   codeHash: string;
   exp: number;
   tries: number;
 }
 const mem = new Map<string, OtpRecord>(); // local/test fallback (no KV)
+const tryMem = new Map<string, { n: number; exp: number }>(); // ditto, for the verify budget
 
 async function sha256Hex(s: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Compare two hex digests without an early exit, so response time carries no information. */
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 /** The box id for an email — SHA-256(normalized email). The client computes the identical value. */
@@ -67,8 +86,14 @@ async function kvDel(kv: { url: string; token: string }, key: string): Promise<v
 async function sendCodeEmail(email: string, code: string): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
-    // Local/dev with no mailer — log the code so the flow is testable. Never in prod.
-    console.log(`[recovery:otp] (no RESEND_API_KEY) code for ${email.slice(0, 3)}…: ${code}`);
+    // "Never in prod" was a comment, not a control: a Worker deployed or rotated without the
+    // mailer secret printed every recovery code into the log stream while still storing a valid
+    // one, so anyone with log access could open any box. Now a deployed environment refuses
+    // outright, and only an explicitly-flagged local run prints anything.
+    if (process.env.RECOVERY_ALLOW_MEMORY_STORE !== "1") {
+      throw new Error("recovery email is not configured");
+    }
+    console.log(`[recovery:otp] (local, no RESEND_API_KEY) code for ${email.slice(0, 3)}…: ${code}`);
     return;
   }
   const html = `<!doctype html><html><body style="margin:0;background:#F5F3EF;">
@@ -158,11 +183,52 @@ export async function requestOtp(rawEmail: unknown): Promise<{ ok: true }> {
   return { ok: true };
 }
 
+/**
+ * Spend one unit of the per-id verify budget, ATOMICALLY, and report whether the budget is now
+ * blown. Counted BEFORE the code is compared, so a wrong guess and a right guess cost the same —
+ * an attacker cannot buy attempts by racing, and cannot reset the counter by requesting a new code
+ * (this key has its own window and `requestOtp` never touches it).
+ */
+async function overVerifyBudget(id: string): Promise<boolean> {
+  const kv = kvConfigFromEnv();
+  const key = `lumenia:recovery-otptry:${id}`;
+  if (!kv) {
+    const now = Date.now();
+    const rec = tryMem.get(id);
+    if (!rec || now > rec.exp) {
+      tryMem.set(id, { n: 1, exp: now + VERIFY_WINDOW_SEC * 1000 });
+      return false;
+    }
+    rec.n += 1;
+    return rec.n > MAX_VERIFY_PER_WINDOW;
+  }
+  try {
+    const res = await fetch(`${kv.url}/pipeline`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
+      body: JSON.stringify([
+        ["INCR", key],
+        ["EXPIRE", key, String(VERIFY_WINDOW_SEC), "NX"],
+      ]),
+    });
+    // A store outage must not open the door: this counter IS the brute-force defence, so it fails
+    // CLOSED. The cost is that an outage pauses recovery; the alternative is unlimited guessing.
+    if (!res.ok) return true;
+    const [first] = (await res.json()) as Array<{ result?: unknown }>;
+    return Number(first?.result ?? 0) > MAX_VERIFY_PER_WINDOW;
+  } catch {
+    return true;
+  }
+}
+
 /** Verify AND consume the code for `id`. Returns true only on a correct, unexpired, unused code. */
 export async function verifyOtp(rawId: unknown, rawCode: unknown): Promise<boolean> {
   const id = typeof rawId === "string" && ID_RE.test(rawId) ? rawId : "";
   const code = typeof rawCode === "string" ? rawCode.trim() : "";
   if (!id || !/^\d{6}$/.test(code)) return false;
+  // The hard cap comes first — before any store read, so a flood costs the attacker a budget unit
+  // whatever else happens.
+  if (await overVerifyBudget(id)) return false;
   const kv = kvConfigFromEnv();
   const key = otpKey(id);
   const rec = kv ? await kvGetJson(kv, key) : (mem.get(id) ?? null);
@@ -172,7 +238,7 @@ export async function verifyOtp(rawId: unknown, rawCode: unknown): Promise<boole
     else mem.delete(id);
     return false;
   }
-  if ((await sha256Hex(`${id}:${code}`)) !== rec.codeHash) {
+  if (!timingSafeEqualHex(await sha256Hex(`${id}:${code}`), rec.codeHash)) {
     rec.tries += 1;
     const remainSec = Math.max(1, Math.ceil((rec.exp - Date.now()) / 1000));
     if (kv) await kvSetJson(kv, key, rec, remainSec);

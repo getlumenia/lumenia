@@ -31,15 +31,23 @@ import { isValidAddress } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
 import { formatUsd } from "../../../lib/money";
 import { copy } from "../../../lib/copy";
+import { rememberLink } from "../../../lib/sent-links";
 import { AmountDisplay } from "../../../components/brand/AmountDisplay";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { LinkReadyCard } from "../../../components/brand/LinkReadyCard";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
+/**
+ * The metadata half of a sent link. The LINK ITSELF is deliberately absent: its #fragment is a
+ * bearer key, and this record lives in plain localStorage. The link goes to `sent-links.ts`,
+ * encrypted under a non-extractable device key, and `hasLink` is the flag this record keeps so
+ * the UI knows a re-copy is possible without holding the secret to prove it.
+ */
 interface SentRecord {
   balanceId: string;
-  link: string;
+  /** true when a bearer link was stored (encrypted); false for a pay-to-address send. */
+  hasLink: boolean;
   amount: string;
   from: string;
   at: string;
@@ -186,7 +194,7 @@ export default function SendPage() {
         });
         saveSent(result.balanceId.slice(-8), {
           balanceId: result.balanceId,
-          link: "", // no bearer link exists — the money is already the asker's to collect
+          hasLink: false, // no bearer link exists — the money is already the asker's to collect
           amount: amt.toFixed(2),
           from: "",
           toName: request!.name,
@@ -209,9 +217,12 @@ export default function SendPage() {
         webOrigin: window.location.origin,
         password: lockWith || undefined,
       });
-      saveSent(result.linkHex.slice(-8), {
+      const sentId = result.linkHex.slice(-8);
+      // The link is kept encrypted, separately from this record — see lib/sent-links.ts.
+      await rememberLink(sentId, result.link);
+      saveSent(sentId, {
         balanceId: result.linkHex, // the v2 drop id (the link key); reused by "my links"
-        link: result.link,
+        hasLink: true,
         amount: amt.toFixed(2),
         from: from.trim(),
         at: new Date().toISOString(),

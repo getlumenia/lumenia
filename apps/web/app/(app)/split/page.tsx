@@ -13,6 +13,7 @@ import { useWallet } from "../../../lib/wallet";
 import { buildRequestLink, clampAskName, makeNonce, saveAsk } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
 import { formatUsd } from "../../../lib/money";
+import { shareMoneyLink } from "../../../lib/share";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 
@@ -148,7 +149,9 @@ export default function SplitPage() {
 
 function ShareRow({ share, name }: { share: Share; name: string }) {
   const [copied, setCopied] = useState(false);
-  const waText = encodeURIComponent(`Hi, it's ${name}. Your share is ${formatUsd(share.amount)}. Pay it here: ${share.link}`);
+  // The share sheet appends the link itself, so it stays out of this text — and out of any
+  // third-party server's logs (see lib/share.ts).
+  const shareText = `Hi, it's ${name}. Your share is ${formatUsd(share.amount)}. Pay it here:`;
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(share.link);
@@ -158,20 +161,24 @@ function ShareRow({ share, name }: { share: Share; name: string }) {
       /* clipboard blocked */
     }
   }
+  async function doShare() {
+    if ((await shareMoneyLink({ text: shareText, link: share.link })) !== "shared") {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  }
   return (
     <MoneyCard className="flex items-center gap-3 p-4">
       <span className="grid size-9 place-items-center rounded-full bg-secondary text-sm font-semibold text-ink">
         {share.n}
       </span>
       <p className="flex-1 font-semibold tabular-nums text-ink">{formatUsd(share.amount)}</p>
-      <a
-        href={`https://wa.me/?text=${waText}`}
-        target="_blank"
-        rel="noreferrer"
+      <button
+        onClick={doShare}
         className="flex h-9 items-center rounded-full bg-money px-3 text-xs font-semibold text-primary-foreground"
       >
         Share
-      </a>
+      </button>
       <button
         onClick={copyLink}
         className="flex size-9 items-center justify-center rounded-full border border-line text-ink"

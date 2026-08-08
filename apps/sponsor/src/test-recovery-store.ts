@@ -36,6 +36,8 @@ async function rejects(name: string, fn: () => Promise<unknown>, expect?: string
 const hex = (c: string) => c.repeat(64);
 const EMAIL_ID = hex("a");
 const ALIAS_ID = hex("b");
+const PROOF = hex("9"); // stands in for HKDF(prf, "…alias-proof-v1")
+const OTHER_PROOF = hex("8");
 const BOX = {
   formatVersion: 1,
   copies: [
@@ -56,7 +58,7 @@ async function main(): Promise<void> {
     (await getAliasBox(EMAIL_ID)) === null,
   );
 
-  await putAliasBox(ALIAS_ID, BOX);
+  await putAliasBox(ALIAS_ID, BOX, PROOF);
   ok(
     "an ALIAS box is NOT readable through the email route (namespaces are separate)",
     (await getBox(ALIAS_ID)) === null,
@@ -67,24 +69,44 @@ async function main(): Promise<void> {
   ok("a missing alias id returns null, not an error", (await getAliasBox(hex("c"))) === null);
 
   /* ---- The alias path reuses the SAME validation, not a looser copy of it ---- */
-  await rejects("alias put rejects a non-hex id", () => putAliasBox("not-a-hex-id", BOX), "64-char hex");
-  await rejects("alias put rejects a short id", () => putAliasBox("abc", BOX), "64-char hex");
+  await rejects("alias put rejects a non-hex id", () => putAliasBox("not-a-hex-id", BOX, PROOF), "64-char hex");
+  await rejects("alias put rejects a short id", () => putAliasBox("abc", BOX, PROOF), "64-char hex");
   await rejects("alias fetch rejects a non-hex id", () => getAliasBox("../../etc/passwd"), "64-char hex");
   await rejects(
     "alias put rejects a box carrying an extra field (the ciphertext-only guarantee)",
-    () => putAliasBox(hex("d"), { ...BOX, seed: "oops" }),
+    () => putAliasBox(hex("d"), { ...BOX, seed: "oops" }, PROOF),
     "unexpected fields",
   );
   await rejects(
     "alias put rejects a copy with a plaintext-looking extra key",
-    () => putAliasBox(hex("e"), { formatVersion: 1, copies: [{ kind: "prf", iv: "A", ct: "B", hkdfSalt: "C", password: "hunter2" }] }),
+    () => putAliasBox(hex("e"), { formatVersion: 1, copies: [{ kind: "prf", iv: "A", ct: "B", hkdfSalt: "C", password: "hunter2" }] }, PROOF),
     "invalid shape",
   );
   await rejects(
     "alias put rejects a weak Argon2id floor (a box that would be cheap to crack offline)",
-    () => putAliasBox(hex("f"), { formatVersion: 1, copies: [{ kind: "password", iv: "A", ct: "B", salt: "C", argon: { memMiB: 1, time: 1, parallelism: 1 } }] }),
+    () => putAliasBox(hex("f"), { formatVersion: 1, copies: [{ kind: "password", iv: "A", ct: "B", salt: "C", argon: { memMiB: 1, time: 1, parallelism: 1 } }] }, PROOF),
     "invalid shape",
   );
+
+  /* ---- ALIAS OWNERSHIP: an OTP proves control of an EMAIL, never of an alias id ---- */
+  await rejects(
+    "a DIFFERENT passkey cannot overwrite an existing alias box (the write-IDOR fix)",
+    () => putAliasBox(ALIAS_ID, BOX, OTHER_PROOF),
+    "different passkey",
+  );
+  ok(
+    "the rejected overwrite left the original box intact",
+    JSON.stringify(await getAliasBox(ALIAS_ID)) === JSON.stringify(BOX),
+  );
+  ok(
+    "the SAME passkey may still update its own alias box (re-backup keeps working)",
+    await putAliasBox(ALIAS_ID, BOX, PROOF).then(
+      () => true,
+      () => false,
+    ),
+  );
+  await rejects("alias put requires a proof at all", () => putAliasBox(hex("1"), BOX, undefined), "aliasProof");
+  await rejects("alias put rejects a malformed proof", () => putAliasBox(hex("2"), BOX, "nope"), "aliasProof");
 
   /* ---- validateBox is genuinely SHARED, not re-implemented per namespace ---- */
   ok("validateBox accepts the good box", (() => {

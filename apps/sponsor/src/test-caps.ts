@@ -46,6 +46,7 @@ function clearKv() {
 }
 
 const CAPS: CapsConfig = {
+  minDropStroops: usdc(0.01),
   maxDropStroops: usdc(20),
   maxDayStroops: usdc(50),
   failClosed: false,
@@ -65,6 +66,13 @@ async function main() {
   check("the rejection names both the amount and the cap", /20\.01.*20 USDC/.test(over.reason ?? ""), over.reason);
   check("a zero amount is rejected", !(await checkCaps(0n, CAPS)).ok);
   check("a negative amount is rejected", !(await checkCaps(-1n, CAPS)).ok);
+
+  // A FLOOR as well as a ceiling. The sponsor's cost per escrow is a fixed ~1 XLM reserve lock
+  // that does not scale with the amount, so a dust send passed every cap while costing full price.
+  const dust = await checkCaps(1n, CAPS); // one stroop = 0.0000001 USDC
+  check("a one-stroop dust send is rejected (it locks a full reserve for nothing)", !dust.ok);
+  check("the rejection names the minimum", /minimum of 0\.01 USDC/.test(dust.reason ?? ""), dust.reason);
+  check("an amount exactly AT the minimum passes", (await checkCaps(usdc(0.01), CAPS)).ok);
 
   console.log("[2] per-day cap — a shared rolling total across senders");
   const kv = installFakeKv();

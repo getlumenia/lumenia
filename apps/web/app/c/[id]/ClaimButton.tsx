@@ -130,9 +130,14 @@ export default function ClaimButton({
           >
             {copy.claim.ctaSend}
           </Link>
-          <button disabled title="Coming soon" className="h-11 w-full rounded-full text-sm text-ink-soft opacity-60">
-            {copy.claim.ctaRequest} · {copy.claim.soon}
-          </button>
+          {/* /request shipped — this was still a disabled "soon" button long after it went live. */}
+          <Link
+            href="/request"
+            prefetch={false}
+            className="flex h-11 w-full items-center justify-center rounded-full border border-line text-sm font-medium text-ink"
+          >
+            {copy.claim.ctaRequest}
+          </Link>
         </div>
       </div>
     );

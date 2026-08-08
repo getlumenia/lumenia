@@ -24,6 +24,7 @@ import {
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import { activeNetwork } from "./network";
+import { assertHealthMatchesPin, pinnedUsdcIssuer } from "./tx-guard";
 
 export interface SweepOptions {
   sponsorUrl: string;
@@ -52,13 +53,17 @@ export interface SweepOptions {
  *   - with-claim (`balanceId` present):  claim → payment(→home) → changeTrust(0) → accountMerge(→home)
  */
 export async function sweepIntoHome(opts: SweepOptions): Promise<{ hash: string }> {
-  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = activeNetwork();
+  const net = activeNetwork();
+  const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = net;
   const base = opts.sponsorUrl.replace(/\/$/, "");
+  // Pinned: a wrong issuer here makes changeTrust(0) target the wrong line, the accountMerge then
+  // fails, and the sweep strands the user's money in a throwaway account.
   const health = (await (await fetch(`${base}/health`)).json()) as {
     usdcCode: string;
     usdcIssuer: string;
   };
-  const USDC = new Asset(health.usdcCode, health.usdcIssuer);
+  assertHealthMatchesPin(health, net.id);
+  const USDC = new Asset("USDC", pinnedUsdcIssuer(net.id));
 
   const throwaway = Keypair.fromRawEd25519Seed(Buffer.from(opts.throwawaySeed));
   const source = throwaway.publicKey();

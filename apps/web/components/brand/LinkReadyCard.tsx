@@ -11,6 +11,7 @@ import Link from "next/link";
 import { Copy, Check } from "lucide-react";
 import { MoneyCard } from "./MoneyCard";
 import { copy as uiCopy } from "../../lib/copy";
+import { shareMoneyLink } from "../../lib/share";
 
 export function LinkReadyCard({
   link,
@@ -28,12 +29,12 @@ export function LinkReadyCard({
   locked?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const [fellBack, setFellBack] = useState(false);
   const sentId = balanceId.slice(-8);
-  const waText = encodeURIComponent(
-    requestName
-      ? uiCopy.pay.sendBackWaText(link)
-      : `${from} sent you money 💸 Tap to receive it: ${link}`,
-  );
+  // The link is appended by the share sheet itself (as `url`), so the message must not repeat it.
+  const shareText = requestName
+    ? uiCopy.pay.sendBackWaText("").trim()
+    : `${from} sent you money 💸 Tap to receive it:`;
 
   async function copy() {
     try {
@@ -42,6 +43,18 @@ export function LinkReadyCard({
       setTimeout(() => setCopied(false), 1500);
     } catch {
       /* clipboard blocked — the share button still works */
+    }
+  }
+
+  async function share() {
+    const outcome = await shareMoneyLink({ text: shareText, link });
+    if (outcome === "shared") return;
+    // No share sheet (desktop, mostly): the link is on the clipboard and the user pastes it into
+    // the chat themselves. It never touches a third-party server either way.
+    setFellBack(true);
+    if (outcome === "copied") {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     }
   }
 
@@ -57,14 +70,18 @@ export function LinkReadyCard({
         {link}
       </p>
 
-      <a
-        href={`https://wa.me/?text=${waText}`}
-        target="_blank"
-        rel="noreferrer"
+      <button
+        onClick={share}
         className="flex h-12 w-full items-center justify-center rounded-full bg-money text-sm font-semibold text-primary-foreground"
       >
-        Share on WhatsApp
-      </a>
+        Share the link
+      </button>
+      {fellBack ? (
+        <p className="text-xs text-ink-soft">
+          Sharing isn&apos;t available on this device, so the link is on your clipboard — paste it
+          into the chat yourself.
+        </p>
+      ) : null}
       <button
         onClick={copy}
         className="flex h-11 w-full items-center justify-center gap-2 rounded-full border border-line text-sm font-medium text-ink"

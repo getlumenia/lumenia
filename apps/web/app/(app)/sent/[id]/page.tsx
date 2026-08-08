@@ -10,14 +10,15 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { loadLinkStatus } from "../../../../lib/horizon";
+import { recallLink } from "../../../../lib/sent-links";
 import { formatUsd } from "../../../../lib/money";
 import { StatusPill } from "../../../../components/brand/StatusPill";
 import { MoneyCard } from "../../../../components/brand/MoneyCard";
 
 interface SentRecord {
   balanceId: string;
-  /** empty for a pay-to-address send — there is no bearer link to re-copy. */
-  link: string;
+  /** false for a pay-to-address send — there is no bearer link to re-copy. */
+  hasLink?: boolean;
   amount: string;
   from: string;
   at: string;
@@ -40,6 +41,8 @@ export default function SentPage() {
   const [rec, setRec] = useState<SentRecord | null | undefined>(undefined);
   const [linkStatus, setLinkStatus] = useState<"pending" | "settled" | "loading">("loading");
   const [copied, setCopied] = useState(false);
+  // The link is decrypted on demand from the device-key store, not read out of localStorage.
+  const [link, setLink] = useState<string | null>(null);
 
   useEffect(() => {
     const r = loadSent(id);
@@ -48,6 +51,7 @@ export default function SentPage() {
       void loadLinkStatus(r.balanceId)
         .then(setLinkStatus)
         .catch(() => setLinkStatus("pending"));
+      if (r.hasLink) void recallLink(id).then(setLink);
     }
   }, [id]);
 
@@ -73,8 +77,9 @@ export default function SentPage() {
   }
 
   async function copyAgain() {
+    if (!link) return;
     try {
-      await navigator.clipboard.writeText(rec!.link);
+      await navigator.clipboard.writeText(link);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -110,7 +115,7 @@ export default function SentPage() {
               : "Still waiting to be claimed. If nobody claims it, the money comes back to you 7 days after you sent it."}
           </p>
           {/* a pay-to-address send has no bearer link — nothing to re-copy */}
-          {rec.link && (
+          {link && (
             <button
               onClick={copyAgain}
               className="mt-3 h-11 w-full rounded-full border border-line text-sm font-medium text-ink"

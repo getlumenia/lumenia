@@ -103,7 +103,11 @@ export async function loadStats(): Promise<Stats | null> {
       }
       pages++;
       if (records.length < 200) break; // short page = last page
-      url = data._links?.next?.href ?? null;
+      // The next page's URL comes out of the response BODY and this fetch runs server-side, so an
+      // upstream that is compromised or spoofed could otherwise walk this function onto the
+      // platform's link-local metadata endpoint. Follow it only while it stays on Horizon.
+      const next = data._links?.next?.href ?? null;
+      url = next && next.startsWith(`${HORIZON_URL}/`) ? next : null;
     }
     if (pages >= MAX_PAGES) {
       console.log(`[stats] hit MAX_PAGES (${MAX_PAGES}) — totals are a floor, add cursoring`);

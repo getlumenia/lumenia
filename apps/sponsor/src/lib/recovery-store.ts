@@ -102,17 +102,44 @@ function validateId(id: unknown): string {
 const KEY_EMAIL = "lumenia:recovery:";
 const KEY_ALIAS = "lumenia:recovery-pk:";
 
-async function putBoxAt(prefix: string, rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
-  const id = validateId(rawId);
-  const box = validateBox(rawBox);
-  const json = JSON.stringify(box);
-  if (json.length > MAX_BOX_BYTES) throw new Error("box too large");
+/**
+ * What is actually stored. Older rows are a bare `RecoveryBox`; newer alias rows are wrapped so the
+ * box can carry the owner proof described on `putAliasBox`. Both shapes are read.
+ */
+interface StoredRow {
+  box: RecoveryBox;
+  /** SHA-256 of the alias owner proof. Alias rows only. */
+  proofHash?: string;
+}
 
+function parseRow(raw: string): StoredRow {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  if (parsed && typeof parsed === "object" && "box" in parsed) return parsed as unknown as StoredRow;
+  return { box: parsed as unknown as RecoveryBox }; // legacy: the value WAS the box
+}
+
+async function readRow(prefix: string, id: string): Promise<StoredRow | null> {
+  const kv = kvConfigFromEnv();
+  if (!kv) {
+    const v = mem.get(prefix + id);
+    return v ? parseRow(v) : null;
+  }
+  const res = await fetch(`${kv.url}/get/${prefix}${id}`, {
+    headers: { authorization: `Bearer ${kv.token}` },
+  });
+  if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
+  const data = (await res.json()) as { result?: string | null };
+  return data.result ? parseRow(data.result) : null;
+}
+
+async function writeRow(prefix: string, id: string, row: StoredRow): Promise<void> {
+  const json = JSON.stringify(row);
+  if (json.length > MAX_BOX_BYTES) throw new Error("box too large");
   const kv = kvConfigFromEnv();
   if (!kv) {
     mem.set(prefix + id, json);
     console.log(`[recovery:put] ${prefix}${id.slice(0, 8)}… (no KV — in-memory fallback)`);
-    return { ok: true };
+    return;
   }
   const res = await fetch(`${kv.url}/set/${prefix}${id}`, {
     method: "POST",
@@ -120,22 +147,16 @@ async function putBoxAt(prefix: string, rawId: unknown, rawBox: unknown): Promis
     body: json, // Upstash SET: the raw request body is the value
   });
   if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
+}
+
+async function putBoxAt(prefix: string, rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
+  await writeRow(prefix, validateId(rawId), { box: validateBox(rawBox) });
   return { ok: true };
 }
 
 async function getBoxAt(prefix: string, rawId: unknown): Promise<RecoveryBox | null> {
-  const id = validateId(rawId);
-  const kv = kvConfigFromEnv();
-  if (!kv) {
-    const v = mem.get(prefix + id);
-    return v ? (JSON.parse(v) as RecoveryBox) : null;
-  }
-  const res = await fetch(`${kv.url}/get/${prefix}${id}`, {
-    headers: { authorization: `Bearer ${kv.token}` },
-  });
-  if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
-  const data = (await res.json()) as { result?: string | null };
-  return data.result ? (JSON.parse(data.result) as RecoveryBox) : null;
+  const row = await readRow(prefix, validateId(rawId));
+  return row?.box ?? null;
 }
 
 /** Store (or replace) the EMAIL-keyed box. Always OTP-gated at the route. */
@@ -155,9 +176,42 @@ export async function getBox(rawId: unknown): Promise<RecoveryBox | null> {
  * moment the user re-backs-up from a device with no Face ID, leaving somebody who just passed Face
  * ID staring at "this backup has no Face ID key". A stale duplicate is harmless: the seed never
  * rotates, so an older box still restores the correct account.
+ *
+ * OWNERSHIP (the write-IDOR fix). The OTP proves control of the EMAIL id and nothing else, while
+ * `aliasId` is a free parameter in the same request. Without a second check, anyone who can pass an
+ * OTP for their OWN address could write to any alias id and, knowing a victim's, replace their box
+ * with one their passkey cannot open — silently destroying the one-tap Face ID recovery for money
+ * that is otherwise fine.
+ *
+ * So an alias row is bound to a PROOF: a second, independent HKDF output from the same passkey PRF
+ * (`prfToAliasProof` in apps/web/lib/recovery.ts). Knowing an alias id does not yield it — different
+ * HKDF info labels over the same secret are independent. First write records its hash; later writes
+ * must present a proof that matches, or they are refused. A row written before this existed has no
+ * hash and adopts the first proof it is given (there are no real-user boxes yet — recovery is still
+ * owner-gated on the mailer domain).
  */
-export async function putAliasBox(rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
-  return putBoxAt(KEY_ALIAS, rawId, rawBox);
+export async function putAliasBox(
+  rawId: unknown,
+  rawBox: unknown,
+  rawProof: unknown,
+): Promise<{ ok: true }> {
+  const id = validateId(rawId);
+  const box = validateBox(rawBox);
+  const proof = typeof rawProof === "string" && ID_RE.test(rawProof) ? rawProof : null;
+  if (!proof) throw new Error("aliasProof must be a 64-char hex string");
+
+  const proofHash = await sha256Hex(proof);
+  const existing = await readRow(KEY_ALIAS, id);
+  if (existing?.proofHash && existing.proofHash !== proofHash) {
+    throw new Error("this Face ID backup belongs to a different passkey");
+  }
+  await writeRow(KEY_ALIAS, id, { box, proofHash });
+  return { ok: true };
+}
+
+async function sha256Hex(s: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Fetch the PRF-alias box, or null. Read by the un-OTP'd alias route ONLY. */

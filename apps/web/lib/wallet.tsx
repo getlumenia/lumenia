@@ -13,9 +13,10 @@ import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase1, savePhas
 import { localSignerFromSeed, type Signer } from "./signer";
 import { activeNetwork, setActiveNetwork, mainnetConfig, type NetworkId } from "./network";
 import { DEFAULT_ARGON } from "./argon";
-import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, emptyBox, putCopy, findCopy, prfToBoxId, type RecoveryBox } from "./recovery";
+import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, emptyBox, putCopy, findCopy, prfToBoxId, prfToAliasProof, type RecoveryBox } from "./recovery";
 import { enrollPasskeyPrf, derivePasskeyPrf, assertPasskeyPrf } from "./passkey-prf";
 import { fetchRecoveryBoxByPrfId } from "./recovery-api";
+import { migrateLegacySentLinks } from "./sent-links";
 import { StrKey } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
 
@@ -70,7 +71,7 @@ interface WalletState {
    * updated box to re-store. Requires the account to be unlocked (session seed present).
    * Degrades gracefully where passkeys/PRF are unavailable; NEVER a claim-path dependency.
    */
-  addFaceIdBackup: (box: RecoveryBox) => Promise<{ box: RecoveryBox; aliasId: string }>;
+  addFaceIdBackup: (box: RecoveryBox) => Promise<{ box: RecoveryBox; aliasId: string; aliasProof: string }>;
   /**
    * Find and restore this user's account from a passkey alone — no email, no code, no password.
    * One discoverable assertion yields both the PRF (which addresses and opens the backup) and the
@@ -130,6 +131,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     void refresh();
+    // One-shot cleanup for devices that already hold plaintext claim links (see sent-links.ts).
+    void migrateLegacySentLinks();
   }, [refresh]);
 
   // Reflect the device's chosen network once mounted (localStorage is client-only, not at SSR).
@@ -266,7 +269,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   );
 
   const addFaceIdBackup = useCallback(
-    async (box: RecoveryBox): Promise<{ box: RecoveryBox; aliasId: string }> => {
+    async (box: RecoveryBox): Promise<{ box: RecoveryBox; aliasId: string; aliasProof: string }> => {
       if (!account) throw new Error("no local account");
       if (!sessionSeed.current) throw new Error("locked"); // Face ID is an upgrade over the unlocked seed
       // A stable per-account passkey user id = the account's raw 32-byte public key. The
@@ -278,8 +281,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // The second, independent value from the same PRF: where this box will be findable later
       // with no email and no code. Derived here so the raw PRF never leaves this module.
       const aliasId = await prfToBoxId(prf);
+      // A third value from the same PRF, independent of the id: it proves to the server that this
+      // passkey owns that alias row, so nobody else's verified code can overwrite it.
+      const aliasProof = await prfToAliasProof(prf);
       prf.fill(0);
-      return { box: updated, aliasId };
+      return { box: updated, aliasId, aliasProof };
     },
     [account],
   );

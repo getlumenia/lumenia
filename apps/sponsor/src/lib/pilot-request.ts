@@ -2,9 +2,11 @@
  * Pilot join request — emails the OWNER that a wallet wants into the mainnet pilot,
  * plus the two applicant-facing outcome mails (approved / not-yet).
  *
- * NO persistent store and NO server-side pubkey↔email join: this is a one-shot notification
- * the owner acts on with `pnpm --filter @lumenia/sponsor pilot approve <pubkey>`. The email
- * itself carries the ready-to-paste approve command. Reuses the Resend owner-gate
+ * This DOES persist, and the docstring used to claim otherwise. `startPilotRequest` records the
+ * application state, a pubkey↔email mapping (so the outcome mail has somewhere to go), and a
+ * marker that this address has applied — the last one keyed by HASH, never by the address itself.
+ * The owner can still approve from the terminal with `pnpm --filter @lumenia/sponsor pilot approve
+ * <pubkey>`, and the email carries that command ready to paste. Reuses the Resend owner-gate
  * (recovery-otp.ts): the shared onboarding sender only delivers to the Resend account owner —
  * exactly who should see these. If Resend isn't configured it logs (visible in `wrangler
  * tail`), so a request is never silently lost.
@@ -13,7 +15,7 @@
  * consistently and Outlook-safely; every send carries BOTH a plain-text and an HTML body.
  */
 import { StrKey } from "@stellar/stellar-sdk";
-import { startPilotRequest } from "./pilot.js";
+import { mintApprovalToken, startPilotRequest } from "./pilot.js";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -113,21 +115,36 @@ export async function notifyPilotRequest(
 
   // TASK 1 — idempotent: records a pending application; if this wallet OR email already applied,
   // send NO duplicate owner-mail and tell the caller so it can show "you've already applied".
-  const { created } = await startPilotRequest(pubkey, clean);
-  if (!created) return { ok: true, already: true };
+  const { created, collision } = await startPilotRequest(pubkey, clean);
+  // `already` is an honest answer about THIS wallet's own application. A collision — some other
+  // wallet already applied with this address — gets the ordinary success shape instead, so the
+  // response cannot be used to test whether a given address is in the pilot.
+  if (!created) return collision ? { ok: true } : { ok: true, already: true };
 
   const to = process.env.OWNER_EMAIL;
   const key = process.env.RESEND_API_KEY;
   const network = process.env.STELLAR_NETWORK ?? "testnet";
   const approveCmd = `STELLAR_NETWORK=${network} pnpm --filter @lumenia/sponsor pilot approve ${pubkey}`;
-  // One-tap approve/decline links for the owner's email — only built when a token is configured.
-  const token = process.env.PILOT_APPROVE_TOKEN;
-  const link = (action: string) =>
-    origin && token
-      ? `${origin.replace(/\/$/, "")}/${action}?pubkey=${pubkey}&token=${encodeURIComponent(token)}`
-      : null;
-  const approveUrl = link("pilot-approve");
-  const rejectUrl = link("pilot-reject");
+  /**
+   * One-tap approve/decline links. Two things are deliberate here:
+   *
+   * The HOST is configuration, never the incoming request. `origin` derives from the Host header
+   * of whoever called /pilot-request, so any hostname routed to this Worker — a workers.dev alias,
+   * a stale custom domain, a preview route — used to become the link the owner clicked. Building
+   * it from `SPONSOR_ORIGIN` means the owner's tap always lands on us.
+   *
+   * The TOKEN is a per-wallet, per-action, expiring signature (lib/pilot.ts), not the shared
+   * secret. Without a configured origin we simply omit the buttons and fall back to the CLI
+   * command rather than mint a link pointing somewhere we cannot vouch for.
+   */
+  const base = (process.env.SPONSOR_ORIGIN ?? (network === "mainnet" ? "" : (origin ?? ""))).replace(/\/$/, "");
+  const mint = async (action: "approve" | "reject") => {
+    if (!base) return null;
+    const t = await mintApprovalToken(action, pubkey, Date.now());
+    return t ? `${base}/pilot-${action}?pubkey=${pubkey}&exp=${t.exp}&token=${t.token}` : null;
+  };
+  const approveUrl = await mint("approve");
+  const rejectUrl = await mint("reject");
 
   if (!to || !key) {
     // No mailer configured — log it so the owner can still see the request and approve by hand.

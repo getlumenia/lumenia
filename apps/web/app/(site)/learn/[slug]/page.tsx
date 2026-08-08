@@ -12,6 +12,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { jsonLdSafe } from "../../../../lib/utils";
 import { GUIDES, GUIDES_PUBLISHED, GUIDES_UPDATED, getGuide } from "../../../../lib/learn";
 import { Footer } from "../../../../components/site/sections/Footer";
 import "../../../../components/site/page.css";
@@ -101,8 +102,9 @@ export default async function Guide({ params }: { params: Promise<{ slug: string
     <div className="pg ed">
       <script
         type="application/ld+json"
-        // Static, authored-here object — no user input reaches this.
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(guideJsonLd(g!)) }}
+        // Authored here, but escaped anyway: JSON.stringify does not escape "<", so the day a
+        // title or a future CMS field contains "</script>" this would break out of the tag.
+        dangerouslySetInnerHTML={{ __html: jsonLdSafe(guideJsonLd(g!)) }}
       />
       <header className="pg-hero pg-glow">
         <div className="pg-hero-inner">

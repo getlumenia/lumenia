@@ -17,6 +17,13 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 STELLAR_NETWORK = "testnet"
 ALLOWED_ORIGIN = "https://getlumenia.com"
+# The host the owner's one-tap pilot approve/decline links point at. It MUST be configuration:
+# building it from the incoming request's Host header let any hostname routed to this Worker
+# become the link the owner clicks. Set it to this Worker's own public origin.
+SPONSOR_ORIGIN = "https://lumenia-sponsor.avakit.workers.dev"
+# Smallest escrow the sponsor will facilitate. The reserve it locks per escrow (~1 XLM) does not
+# scale with the amount, so without a floor a dust send costs the sponsor full price for nothing.
+MIN_DROP_USDC = "0.01"
 USDC_ISSUER = "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC"
 # v2 Soroban LumenDrop escrow (public contract id) — enables the /v2-deposit,
 # /v2-claim and /v2-reclaim relayers. SOROBAN_RPC_URL defaults to the testnet RPC.
@@ -66,6 +73,9 @@ name = "lumenia-sponsor-mainnet"
 [env.mainnet.vars]
 STELLAR_NETWORK = "mainnet"
 ALLOWED_ORIGIN = "https://getlumenia.com"
+# See the testnet block: the approve-link host is configuration, never the request's Host header.
+SPONSOR_ORIGIN = "https://lumenia-sponsor-mainnet.avakit.workers.dev"
+MIN_DROP_USDC = "0.01"
 # Circle's USDC on mainnet (verified on Horizon: auth_revocable=true, clawback disabled — Circle
 # can freeze for compliance, and no one can seize).
 USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

@@ -73,17 +73,17 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
         // The alias id is what makes a later "find my money with Face ID" possible: a second copy
         // of this same ciphertext, stored where only this passkey can address it. Stored in the
         // same request, behind the same verified code.
-        let aliasId: string | undefined;
+        let alias: { aliasId: string; aliasProof: string } | undefined;
         if (addFaceId && faceCapable) {
           try {
             const added = await addFaceIdBackup(box); // add a second (Face ID) copy before storing
             box = added.box;
-            aliasId = added.aliasId;
+            alias = { aliasId: added.aliasId, aliasProof: added.aliasProof };
           } catch {
             /* declined / unavailable on this device → ship the password-only box (still a full backup) */
           }
         }
-        await storeRecoveryBox(email.trim(), code.trim(), box, aliasId);
+        await storeRecoveryBox(email.trim(), code.trim(), box, alias);
       } else {
         let box = fetched;
         if (!box) {

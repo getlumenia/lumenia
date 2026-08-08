@@ -300,14 +300,17 @@ const httpServer = createServer(async (req, res) => {
       // bucket ("rec:"); signs nothing and touches no anti-drain policy.
       const rl = await enforceRateLimit(`rec:${clientIp(req)}`);
       if (rl.limited) return send(res, 429, { error: rl.reason });
-      const body = (await readJson(req)) as { id?: unknown; box?: unknown; code?: unknown; aliasId?: unknown };
+      const body = (await readJson(req)) as {
+        id?: unknown; box?: unknown; code?: unknown; aliasId?: unknown; aliasProof?: unknown;
+      };
       if (!(await verifyOtp(body.id, body.code))) return send(res, 401, { error: "invalid or expired code" });
       await putBox(body.id, body.box);
       // Optional PRF alias behind the SAME verified code. aliasId === id is refused: it would drop
-      // an email-derived (low-entropy) id into the namespace whose fetch has no OTP.
+      // an email-derived (low-entropy) id into the namespace whose fetch has no OTP. The code
+      // proves control of `id` alone, so the alias write carries its own ownership proof.
       if (body.aliasId !== undefined) {
         if (body.aliasId === body.id) return send(res, 400, { error: "aliasId must differ from id" });
-        await putAliasBox(body.aliasId, body.box);
+        await putAliasBox(body.aliasId, body.box, body.aliasProof);
       }
       return send(res, 200, { ok: true });
     }

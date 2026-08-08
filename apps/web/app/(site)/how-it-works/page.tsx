@@ -42,6 +42,7 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
 
+// Testnet, pinned: each hash below is a specific historical transaction that lives there.
 const explorer = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;
 /** The full hash is 64 chars and wraps to three lines on a phone; the ends are what you compare. */
 const short = (hash: string) => `${hash.slice(0, 8)}…${hash.slice(-8)}`;
@@ -54,7 +55,7 @@ const PROOFS = [
   },
   {
     hash: "fe528fe145018ea7d05c4028f01c155025535054b9a674c0df3a4aa03f6de43c",
-    what: "A recent claim, produced by the automated end-to-end check.",
+    what: "A second claim, produced by the automated end-to-end check that runs against every deploy.",
   },
 ];
 

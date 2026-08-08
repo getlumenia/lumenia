@@ -16,6 +16,7 @@
  *   7 CloseCTA + Footer — dual CTA over the living video + the dark footer
  */
 import type { Metadata } from "next";
+import { jsonLdSafe } from "../../lib/utils";
 import SmoothScroll from "../../components/brand/SmoothScroll";
 import "../../components/site/sections/landing.css";
 import { BootOpening } from "../../components/site/sections/BootOpening";
@@ -123,8 +124,9 @@ export default function Landing() {
     <SmoothScroll>
       <script
         type="application/ld+json"
-        // Static, authored-here object — no user input reaches this.
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+        // Authored here, but escaped anyway: JSON.stringify does not escape "<", so the day a
+        // title or a future CMS field contains "</script>" this would break out of the tag.
+        dangerouslySetInnerHTML={{ __html: jsonLdSafe(JSON_LD) }}
       />
       {/* `site-theme` maps shadcn semantic tokens to Periwinkle so shadcn primitives placed inside the
           landing render on-brand; the landing's own styles use the collision-free `--pw-*` namespace. */}

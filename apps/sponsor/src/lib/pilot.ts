@@ -25,6 +25,72 @@ export function pilotEnabled(): boolean {
   return process.env.PILOT_MODE === "1";
 }
 
+/* ------------------------- one-tap approval links (signed) -------------------------
+ *
+ * The approve/decline links in the owner's email grant the right to move REAL money, so what
+ * rides in that URL matters. It used to be `PILOT_APPROVE_TOKEN` itself: one static secret, valid
+ * forever, for every wallet and both actions. Anything that saw one link — a mail provider, a
+ * forwarded message, a browser history, a Referer from the confirmation page — held the permanent
+ * ability to approve any wallet it liked.
+ *
+ * Now the URL carries a SIGNATURE instead of the secret: HMAC-SHA256 over exactly this action,
+ * this wallet, and an expiry. The secret never leaves the Worker, and a leaked link approves the
+ * one wallet it was minted for, until it expires. Verification is constant-time — a link is
+ * checked before anything is written, and a byte-by-byte early exit would leak the target.
+ */
+const APPROVE_TTL_SEC = 7 * 24 * 60 * 60; // an owner should not be racing a timer to answer
+
+function approveSecret(): string | null {
+  return process.env.PILOT_APPROVE_TOKEN || null;
+}
+
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Compare two hex strings without an early exit. */
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** `{ token, exp }` for an approve/decline link, or null when no secret is configured. */
+export async function mintApprovalToken(
+  action: "approve" | "reject",
+  pubkey: string,
+  nowMs: number,
+): Promise<{ token: string; exp: number } | null> {
+  const secret = approveSecret();
+  if (!secret) return null;
+  const exp = Math.floor(nowMs / 1000) + APPROVE_TTL_SEC;
+  return { token: await hmacHex(secret, `${action}:${pubkey}:${exp}`), exp };
+}
+
+/** Is this a link we minted, for this action and wallet, that has not expired? */
+export async function verifyApprovalToken(
+  action: "approve" | "reject",
+  pubkey: string,
+  token: string,
+  rawExp: string,
+  nowMs: number,
+): Promise<boolean> {
+  const secret = approveSecret();
+  if (!secret || !token || !/^[0-9a-f]{64}$/.test(token)) return false;
+  const exp = Number.parseInt(rawExp, 10);
+  if (!Number.isFinite(exp) || exp * 1000 < nowMs) return false;
+  return timingSafeEqualHex(token, await hmacHex(secret, `${action}:${pubkey}:${exp}`));
+}
+
 function maxTx(): number {
   const n = Number.parseInt(process.env.PILOT_MAX_TX ?? "5", 10);
   return Number.isFinite(n) && n > 0 ? n : 5;
@@ -39,7 +105,16 @@ const apprKey = (pk: string) => `pilot:${net()}:appr:${pk}`;
 const txKey = (pk: string) => `pilot:${net()}:tx:${pk}`;
 const emailKey = (pk: string) => `pilot:${net()}:email:${pk}`;
 const statusKey = (pk: string) => `pilot:${net()}:status:${pk}`;
-const seenEmailKey = (email: string) => `pilot:${net()}:seen:${email.trim().toLowerCase()}`;
+/**
+ * The "this address already applied" marker. Keyed on a HASH of the address rather than the
+ * address itself: a Redis key name is not a place to keep someone's email in the clear, and this
+ * store is shared with the rate limiter and caps.
+ */
+async function seenEmailKey(email: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email.trim().toLowerCase()));
+  const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `pilot:${net()}:seen:${hex}`;
+}
 
 interface Kv {
   url: string;
@@ -121,20 +196,30 @@ export type PilotState = "none" | "pending" | "approved" | "rejected";
 export async function startPilotRequest(
   pubkey: string,
   email: string,
-): Promise<{ created: boolean; state: PilotState }> {
+): Promise<{ created: boolean; state: PilotState; collision?: boolean }> {
   const kv = kvConfigFromEnv();
   if (!kv) return { created: true, state: "pending" };
   const clean = email.trim().toLowerCase();
+  const seenKey = await seenEmailKey(clean);
   const [st, seen] = await pipe(kv, [
     ["GET", statusKey(pubkey)],
-    ["GET", seenEmailKey(clean)],
+    ["GET", seenKey],
   ]);
   const existing = (typeof st === "string" ? st : "none") as PilotState;
   if (existing !== "none") return { created: false, state: existing };
-  if (seen === "1") return { created: false, state: "pending" }; // email already used elsewhere
+  // The "seen" marker is scoped to the WALLET that set it. Keyed on the address alone it was a
+  // registration-poisoning primitive: anyone could POST /pilot-request with a throwaway wallet and
+  // a victim's address, and the victim's own later application would then be silently swallowed —
+  // no owner mail, no error, no way for them to tell.
+  if (typeof seen === "string" && seen !== pubkey) {
+    // `collision` so the CALLER can stay silent about it. Telling this wallet "that address has
+    // already applied" would answer a question it has no business asking: anyone could probe an
+    // address with a throwaway wallet and learn whether its owner applied to the pilot.
+    return { created: false, state: "pending", collision: true };
+  }
   await pipe(kv, [
     ["SET", statusKey(pubkey), "pending"],
-    ["SET", seenEmailKey(clean), "1"],
+    ["SET", seenKey, pubkey],
     ["SET", emailKey(pubkey), clean],
   ]);
   return { created: true, state: "pending" };

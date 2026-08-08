@@ -28,7 +28,7 @@ import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
-import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState } from "./lib/pilot.js";
+import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState, verifyApprovalToken } from "./lib/pilot.js";
 import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected } from "./lib/pilot-request.js";
 import { StrKey } from "@stellar/stellar-sdk";
 
@@ -82,13 +82,28 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
  * The recipient side is deliberately OPEN: claiming and cashing out that money (create-account,
  * feebump, v2-claim, payout, reclaim, sweep) need NO approval, because a friend receiving the
  * money is not a pilot user, and no NEW money can enter the pilot except through an approved
- * wallet's deposit. A no-op everywhere off the pilot Worker. Returns a 403 body, or null to
- * proceed. Fail-closed: a store outage rejects rather than admits.
+ * wallet's deposit. A no-op everywhere off the pilot Worker. Fail-closed: a store outage rejects
+ * rather than admits.
+ *
+ * Run a value handler under that gate, giving the wallet's slot BACK when the transaction
+ * does not happen.
+ *
+ * `enforcePilot` reserves a slot with an INCR and hands back a `release()` for the failure case.
+ * Dropping that release turned the budget into a weapon: `senderPublicKey` is an unauthenticated
+ * body field, so five junk requests naming an approved wallet permanently consumed that wallet's
+ * entire pilot allowance — and a genuine send that failed on a bad sequence or a Horizon blip cost
+ * the user a slot too. Only a transaction that actually went through should spend one.
  */
-async function pilotGate(pubkey: string): Promise<{ error: string } | null> {
-  if (!pilotEnabled()) return null;
+async function withPilotSlot<T>(pubkey: string, run: () => Promise<T>): Promise<T | { error: string }> {
+  if (!pilotEnabled()) return run();
   const p = await enforcePilot(pubkey);
-  return p.ok ? null : { error: p.reason ?? "not admitted to the pilot" };
+  if (!p.ok) return { error: p.reason ?? "not admitted to the pilot" };
+  try {
+    return await run();
+  } catch (e) {
+    await p.release?.();
+    throw e;
+  }
 }
 
 /**
@@ -108,6 +123,17 @@ const VALUE_ROUTES = new Set([
   "/demo-link",
 ]);
 
+/**
+ * Routes that don't move money themselves but hand out the RIGHT to move it. The halt switch is
+ * flipped when something is wrong with the sponsor key — admitting new wallets to the mainnet
+ * allowlist during exactly that window is the last thing an operator wants, and these being GET
+ * requests is not a reason to leave them running.
+ */
+const GRANT_ROUTES = new Set(["/pilot-approve", "/pilot-reject"]);
+
+/** Anything larger than this is not one of our requests; reject before parsing (F8). */
+const MAX_BODY_BYTES = 16 * 1024;
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     hydrateEnv(env);
@@ -121,9 +147,22 @@ export default {
       // KMS-aware bootstrap: with KMS_KEY_ID set the sponsor signs via AWS KMS (no hot key).
       const { config, signer, faucet, server, channels } = await getServiceAsync();
 
-      // Kill-switch: one flip halts every value-moving route (see lib/kill-switch.ts).
-      if (method === "POST" && VALUE_ROUTES.has(url) && (await isHalted())) {
-        return json(503, { error: "sponsor temporarily halted" });
+      // Kill-switch: one flip halts every value-moving route AND the two routes that grant the
+      // right to move value (see lib/kill-switch.ts). Method-agnostic on purpose — the grant
+      // routes are GETs, and "it's a GET" has never been a security boundary.
+      if ((VALUE_ROUTES.has(url) || GRANT_ROUTES.has(url)) && (await isHalted())) {
+        return GRANT_ROUTES.has(url)
+          ? html(503, "<h2>Paused</h2><p>Approvals are paused right now. Try again later.</p>")
+          : json(503, { error: "sponsor temporarily halted" });
+      }
+
+      // Body cap before any parse: workerd will happily buffer a very large body, and every
+      // route's own validation runs only after JSON.parse has already paid for it.
+      if (method === "POST") {
+        const len = Number(request.headers.get("content-length") ?? "0");
+        if (Number.isFinite(len) && len > MAX_BODY_BYTES) {
+          return json(413, { error: "request body too large" });
+        }
       }
 
       if (method === "GET" && url === "/health") {
@@ -164,9 +203,11 @@ export default {
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        const pg = await pilotGate(body.senderPublicKey);
-        if (pg) return json(403, pg);
-        return json(200, await sendLinkHandler(server, config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey }));
+        const out = await withPilotSlot(body.senderPublicKey, () =>
+          sendLinkHandler(server, config, signer, { xdr: body.xdr!, senderPublicKey: body.senderPublicKey! }),
+        );
+        if (out && typeof out === "object" && "error" in out) return json(403, out);
+        return json(200, out);
       }
 
       if (method === "POST" && url === "/payout") {
@@ -222,9 +263,11 @@ export default {
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        const pg = await pilotGate(body.senderPublicKey);
-        if (pg) return json(403, pg);
-        return json(200, await relayDepositHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey }));
+        const out = await withPilotSlot(body.senderPublicKey, () =>
+          relayDepositHandler(config, signer, { xdr: body.xdr!, senderPublicKey: body.senderPublicKey! }),
+        );
+        if (out && typeof out === "object" && "error" in out) return json(403, out);
+        return json(200, out);
       }
 
       if (method === "POST" && url === "/v2-reclaim") {
@@ -267,7 +310,13 @@ export default {
       // simply stays on testnet. The real gate is still the allowlist enforced on value routes.
       if (method === "GET" && url === "/pilot-status") {
         const pubkey = new URL(request.url).searchParams.get("pubkey");
-        if (!pubkey) return json(400, { error: "pubkey is required" });
+        // Validated + metered: it reaches the store, and unmetered it is both an allowlist
+        // enumeration oracle and a free amplifier turning one GET into a KV pipeline.
+        if (!pubkey || !StrKey.isValidEd25519PublicKey(pubkey)) {
+          return json(400, { error: "a valid pubkey is required" });
+        }
+        const rl = await enforceRateLimit(clientIp(request), pubkey);
+        if (rl.limited) return json(429, { error: rl.reason });
         if (!pilotEnabled()) return json(200, { pilot: false, approved: false });
         try {
           return json(200, { pilot: true, ...(await pilotStatus(pubkey)) });
@@ -276,17 +325,23 @@ export default {
         }
       }
 
-      // One-tap approve from the owner's email. Guarded by a shared secret in the link
-      // (PILOT_APPROVE_TOKEN) so ONLY the owner's mail can trigger it: it adds the wallet to the
-      // allowlist and sends the "you're in" mail — no terminal needed.
+      // One-tap approve from the owner's email. The link carries a per-wallet, expiring signature
+      // (lib/pilot.ts) rather than the shared secret, so a leaked link approves one wallet for one
+      // week instead of everything forever. Rate-limited because this is the route that grants the
+      // right to move real money, and an unmetered guessing loop against it is the worst hole in
+      // the service.
       if (method === "GET" && url === "/pilot-approve") {
         const u = new URL(request.url);
         const pubkey = u.searchParams.get("pubkey") ?? "";
         const token = u.searchParams.get("token") ?? "";
-        const expected = process.env.PILOT_APPROVE_TOKEN;
-        if (!expected) return html(503, "<h2>Approve-by-link isn’t set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
-        if (token !== expected) return html(403, "<h2>Not authorized</h2><p>This approval link is invalid.</p>");
+        const exp = u.searchParams.get("exp") ?? "";
+        const rl = await enforceRateLimit(`pilot:${clientIp(request)}`);
+        if (rl.limited) return html(429, "<h2>Too many attempts</h2><p>Wait a minute and try again.</p>");
+        if (!process.env.PILOT_APPROVE_TOKEN) return html(503, "<h2>Approve-by-link isn’t set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
         if (!StrKey.isValidEd25519PublicKey(pubkey)) return html(400, "<h2>Invalid wallet address</h2>");
+        if (!(await verifyApprovalToken("approve", pubkey, token, exp, Date.now()))) {
+          return html(403, "<h2>Not authorized</h2><p>This approval link is invalid or has expired.</p>");
+        }
         try {
           // Idempotent: tapping the emailed Approve link twice must not re-send "you're in".
           const prev = await getPilotState(pubkey);
@@ -308,10 +363,14 @@ export default {
         const u = new URL(request.url);
         const pubkey = u.searchParams.get("pubkey") ?? "";
         const token = u.searchParams.get("token") ?? "";
-        const expected = process.env.PILOT_APPROVE_TOKEN;
-        if (!expected) return html(503, "<h2>Decline-by-link isn’t set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
-        if (token !== expected) return html(403, "<h2>Not authorized</h2><p>This link is invalid.</p>");
+        const exp = u.searchParams.get("exp") ?? "";
+        const rl = await enforceRateLimit(`pilot:${clientIp(request)}`);
+        if (rl.limited) return html(429, "<h2>Too many attempts</h2><p>Wait a minute and try again.</p>");
+        if (!process.env.PILOT_APPROVE_TOKEN) return html(503, "<h2>Decline-by-link isn’t set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
         if (!StrKey.isValidEd25519PublicKey(pubkey)) return html(400, "<h2>Invalid wallet address</h2>");
+        if (!(await verifyApprovalToken("reject", pubkey, token, exp, Date.now()))) {
+          return html(403, "<h2>Not authorized</h2><p>This link is invalid or has expired.</p>");
+        }
         try {
           await rejectPilot(pubkey);
           const email = await getPilotEmail(pubkey);
@@ -363,15 +422,19 @@ export default {
       if (method === "POST" && url === "/recovery") {
         const rl = await enforceRateLimit(`rec:${clientIp(request)}`);
         if (rl.limited) return json(429, { error: rl.reason });
-        const body = (await readJson(request)) as { id?: unknown; box?: unknown; code?: unknown; aliasId?: unknown };
+        const body = (await readJson(request)) as {
+          id?: unknown; box?: unknown; code?: unknown; aliasId?: unknown; aliasProof?: unknown;
+        };
         if (!(await verifyOtp(body.id, body.code))) return json(401, { error: "invalid or expired code" });
         await putBox(body.id, body.box);
         // Optional PRF alias, written behind the SAME verified code. Refusing aliasId === id is not
         // defensive noise: it would drop an email-derived (low-entropy) id into the namespace whose
         // fetch route has no OTP, which is exactly the bypass the two namespaces exist to prevent.
+        // The code proves control of `id` only, so the alias write carries its own passkey-derived
+        // proof of ownership (see putAliasBox).
         if (body.aliasId !== undefined) {
           if (body.aliasId === body.id) return json(400, { error: "aliasId must differ from id" });
-          await putAliasBox(body.aliasId, body.box);
+          await putAliasBox(body.aliasId, body.box, body.aliasProof);
         }
         return json(200, { ok: true });
       }
@@ -404,7 +467,17 @@ export default {
 
       return json(404, { error: "not found" });
     } catch (e) {
-      return json(400, { error: (e as Error).message });
+      // The reason text is genuinely useful while building against testnet — anti-drain says
+      // exactly which rule rejected a transaction. On mainnet the same channel hands an attacker a
+      // precise oracle (config state, Horizon internals, the sponsor's own address, which policy
+      // clause tripped), so there it becomes a reference the operator can look up in the log.
+      const message = (e as Error).message;
+      if (process.env.STELLAR_NETWORK === "mainnet") {
+        const ref = crypto.randomUUID().slice(0, 8);
+        console.error(`[error ${ref}] ${new URL(request.url).pathname}: ${message}`);
+        return json(400, { error: "request failed", ref });
+      }
+      return json(400, { error: message });
     }
   },
 

@@ -27,6 +27,8 @@ import { kvConfigFromEnv } from "./rate-limit.js";
 export const USDC_STROOPS = 10_000_000n;
 
 export interface CapsConfig {
+  /** Smallest single escrow, in stroops. Below this the reserve costs more than the money moved. */
+  minDropStroops: bigint;
   /** Largest single escrow, in stroops. */
   maxDropStroops: bigint;
   /** Largest rolling UTC-day total across all senders, in stroops. */
@@ -50,6 +52,7 @@ function usdcEnv(name: string, fallbackUsdc: number): bigint {
  */
 export function capsFromEnv(): CapsConfig {
   return {
+    minDropStroops: usdcEnv("MIN_DROP_USDC", 0.01),
     maxDropStroops: usdcEnv("MAX_DROP_USDC", 100),
     maxDayStroops: usdcEnv("MAX_DAY_USDC", 1000),
     failClosed: process.env.CAPS_FAIL_CLOSED === "1",
@@ -112,6 +115,17 @@ export async function checkCaps(
   now = Date.now(),
 ): Promise<CapVerdict> {
   if (amountStroops <= 0n) return { ok: false, reason: "escrow amount must be positive" };
+
+  // 0. A FLOOR, not just a ceiling. The caps bound how many dollars move, but the sponsor's real
+  // cost per escrow is a fixed ~1 XLM reserve lock that has nothing to do with the amount. A
+  // one-stroop send (0.0000001 USDC) sailed through every cap while locking that reserve in full,
+  // so the cheapest way to drain the sponsor's float was to send it almost nothing, repeatedly.
+  if (amountStroops < caps.minDropStroops) {
+    return {
+      ok: false,
+      reason: `amount ${stroopsToUsdc(amountStroops)} USDC is below the minimum of ${stroopsToUsdc(caps.minDropStroops)} USDC`,
+    };
+  }
 
   // 1. Per-drop — local, always enforced.
   if (amountStroops > caps.maxDropStroops) {

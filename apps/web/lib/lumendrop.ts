@@ -26,6 +26,7 @@ import {
 import type { Signer } from "./signer";
 import { resolveNetwork, type NetworkConfig } from "./network";
 import { deriveLinkKey, makeLinkSeed, passwordFragment } from "./claim-password";
+import { assertSponsoredOnboarding } from "./tx-guard";
 
 /**
  * Every v2 call takes an optional network. Omitting it means TESTNET — the product's default —
@@ -229,6 +230,7 @@ export async function claimV2ToSponsoredAccount(opts: {
   ).json()) as { xdr?: string; error?: string };
   if (!created.xdr) throw new Error(created.error ?? "create-account failed");
   const sandwich = TransactionBuilder.fromXDR(created.xdr, net.passphrase) as Transaction;
+  assertSponsoredOnboarding(sandwich, payout.publicKey(), net.id);
   sandwich.sign(payout);
   await horizon.submitTransaction(sandwich);
 

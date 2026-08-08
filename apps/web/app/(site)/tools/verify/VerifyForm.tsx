@@ -7,8 +7,12 @@
  */
 import { useState } from "react";
 import { loadTransfer } from "../../../../lib/horizon";
+import { explorerTx } from "../../../../lib/network";
 
-const explorer = (h: string) => `https://stellar.expert/explorer/testnet/tx/${h}`;
+// The lookup itself follows the ACTIVE network (lib/horizon), so the link has to as well —
+// hardcoding testnet meant a mainnet build found a real transaction and then sent the user to an
+// explorer URL that 404s.
+const explorer = (h: string) => explorerTx(h);
 
 export function VerifyForm() {
   const [code, setCode] = useState("");
