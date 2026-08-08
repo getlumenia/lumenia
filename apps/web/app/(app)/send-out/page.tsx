@@ -269,6 +269,18 @@ export default function SendOutPage() {
           {formatUsd(amount)} left your account. Exchanges usually show a deposit within a few
           minutes. If it hasn&apos;t appeared in an hour, give them the record below.
         </p>
+        {/* Our leg is done in seconds; the exchange's and the bank's are not, and they are not
+            ours to speed up. Saying which part is whose — and that we already did ours as fast as
+            it can be done — turns "why is it slow" into "I know where it is". */}
+        <MoneyCard className="p-4">
+          <p className="text-sm text-ink">Our part is finished.</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            Anything that happens from here — the exchange crediting you, a first-time review, your
+            bank&apos;s own timing — runs on their clock, not ours. We can&apos;t shorten those, but
+            we&apos;ve already done our side the fastest way there is: your money moved the moment
+            you tapped, and the record below proves it.
+          </p>
+        </MoneyCard>
         <a
           href={explorer(hash)}
           target="_blank"
@@ -344,6 +356,15 @@ export default function SendOutPage() {
           </ul>
           <p className="mt-3 text-sm text-ink-soft">
             Sending for the first time? Send a couple of dollars, wait for it to arrive, then send the rest.
+          </p>
+          {/* Set the expectation BEFORE they send, not after: a first cash-out can sit for a while
+              at the exchange or the bank, and someone who wasn't told reads that silence as "my
+              money is gone". Naming whose clock it runs on costs nothing and prevents the panic. */}
+          <p className="mt-2 text-sm text-ink-soft">
+            Your money leaves here in seconds. After that it&apos;s on the exchange&apos;s and your
+            bank&apos;s timing — a first withdrawal in particular can take longer than the rest.
+            That part isn&apos;t ours to speed up, but nothing is stuck: it&apos;s yours the whole
+            way, and you can follow it on the public record.
           </p>
         </MoneyCard>
 
