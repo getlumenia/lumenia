@@ -13,11 +13,13 @@ Lumenia — from Stellar's lumens: light (value) that travels by link. It is a c
 
 ## Quickstart
 
-Everything runs on the Stellar **testnet** — no real money:
+Everything below runs on the Stellar **testnet** — no real money. (The product itself is testnet
+too; the one exception is a deliberately capped **mainnet canary** used as on-chain evidence —
+see [Security posture](#security-posture) further down.)
 
 ```bash
 pnpm install
-pnpm test:antidrain   # anti-drain validator (44/44, offline)
+pnpm test:antidrain   # anti-drain validator (60/60, offline)
 pnpm spike1           # sponsored 0-XLM claim economics (testnet)
 ```
 
@@ -245,14 +247,16 @@ Three gates that must pass before writing any feature code (if one fails, the ar
 |---|---|
 | **Turkey off-ramp broken** (no Turkish CASP confirmed to accept USDC on the *Stellar* network; MASAK ~$3k/day cap + 72h first withdrawal) | Off-ramp framed honestly as a **next-milestone infrastructure bet, not solved**. Mitigation: **CCTP is live on Stellar (~May 2026)** → bridge Stellar-USDC to a chain a TR CASP accepts, or a **USDC-funded card** (RedotPay; note KAST cannot be funded from Stellar-USDC). v1 leans on internal circulation + EU→TR inbound. |
 | **WhatsApp webview blocks passkey** | Argon2id primary recovery, PRF upgrade |
-| **Sponsor service single choke-point** | **AWS KMS Ed25519 raw-sign is now available (since 2025-11-07), proven mechanically (Spike #1b) and code-complete behind the signer interface (13/13 offline tests, byte-parity with the SDK's own signing) — the live AWS key is not provisioned yet, so the deployed service still uses an env hot-key**; a **kill-switch** can halt every value-moving endpoint; anti-drain validator hardened to op SOURCE+PARAMETER level (**44/44 unit + 6/6 integration tests**, gating the live `/feebump`); web→sponsor XDR **wire-parity proven (Spike #1c + live browser claim)**; plus per-IP/per-account rate-limit + fee cap. |
+| **Sponsor service single choke-point** | **AWS KMS Ed25519 raw-sign is now available (since 2025-11-07), proven mechanically (Spike #1b) and code-complete behind the signer interface (13/13 offline tests, byte-parity with the SDK's own signing) — the live AWS key is not provisioned yet, so the deployed service still uses an env hot-key**; a **kill-switch** can halt every value-moving endpoint; anti-drain validator hardened to op SOURCE+PARAMETER level (**60/60 unit + 6/6 integration tests**, gating the live `/feebump`); web→sponsor XDR **wire-parity proven (Spike #1c + live browser claim)**; plus per-IP/per-account rate-limit + fee cap. |
 | **Competitor: Sling Money** ($15M, Solana) | Corridor strategy; being a global competitor; frame Sling as validation |
 | **Regulation (MASAK/CASP)** | Strictly non-custodial; leave off-ramp to a licensed CEX; lawyer before mainnet |
 | **Serwist + Turbopack** newest combo | Day-1 spike; fallback `--webpack` |
 
 Detailed risk table and the "mempool-class" assumption traps that were caught: [stack.md §2](stack.md).
 
-**Security posture (stated honestly).** Everything runs on **testnet**; no real money. For the v2 escrow contract a **static-analysis, property-test, fuzz and mutation-testing pass is complete** (Scout, strict clippy, cargo-audit/deny, 29 unit + invariant property tests, mutation testing) — that is self-assessment, **not** an audit, and **a professional audit is pending** before any mainnet move. Full policy and disclosure: [SECURITY.md](SECURITY.md) · contract interface, governance and the invariant specification: [contracts/lumen-drop/README.md](contracts/lumen-drop/README.md).
+**Security posture (stated honestly).** The product runs on **testnet**; the only real money is a
+deliberately capped **mainnet canary** kept as on-chain evidence, with spend caps, a kill-switch and a
+15-minute watchdog around it. Full public mainnet stays gated behind the audit below. For the v2 escrow contract a **static-analysis, property-test, fuzz and mutation-testing pass is complete** (Scout, strict clippy, cargo-audit/deny, 29 unit + invariant property tests, mutation testing) — that is self-assessment, **not** an audit, and **a professional audit is pending** before any mainnet move. Full policy and disclosure: [SECURITY.md](SECURITY.md) · contract interface, governance and the invariant specification: [contracts/lumen-drop/README.md](contracts/lumen-drop/README.md).
 
 ---
 
