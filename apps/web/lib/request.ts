@@ -38,6 +38,7 @@
  */
 import { StrKey } from "@stellar/stellar-sdk";
 
+import { netKey } from "./scoped-store";
 export interface Ask {
   nonce: string;
   /** Requested amount, "12.34" (always 2dp). */
@@ -54,7 +55,7 @@ export interface AskRecord extends Ask {
 }
 
 const NAME_MAX = 40;
-const STORE_KEY = "lumenia.asks";
+const STORE_KEY = () => netKey("lumenia.asks");
 
 /** URL-safe random id — the request funnel's join key, not a secret. */
 export function makeNonce(): string {
@@ -95,9 +96,9 @@ export function isValidAddress(addr: string): boolean {
 /** Local-only history so the asker can re-copy a link. Never sent to a server. */
 export function saveAsk(rec: AskRecord): void {
   try {
-    const all = JSON.parse(localStorage.getItem(STORE_KEY) ?? "{}") as Record<string, AskRecord>;
+    const all = JSON.parse(localStorage.getItem(STORE_KEY()) ?? "{}") as Record<string, AskRecord>;
     all[rec.nonce] = rec;
-    localStorage.setItem(STORE_KEY, JSON.stringify(all));
+    localStorage.setItem(STORE_KEY(), JSON.stringify(all));
   } catch {
     /* localStorage blocked — the link still works, just no local history */
   }
@@ -105,7 +106,7 @@ export function saveAsk(rec: AskRecord): void {
 
 export function loadAsks(): AskRecord[] {
   try {
-    const all = JSON.parse(localStorage.getItem(STORE_KEY) ?? "{}") as Record<string, AskRecord>;
+    const all = JSON.parse(localStorage.getItem(STORE_KEY()) ?? "{}") as Record<string, AskRecord>;
     return Object.values(all).sort((x, y) => y.at.localeCompare(x.at));
   } catch {
     return [];

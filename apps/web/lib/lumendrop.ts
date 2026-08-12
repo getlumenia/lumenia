@@ -28,6 +28,7 @@ import { resolveNetwork, activeNetwork, type NetworkConfig } from "./network";
 import { deriveLinkKey, makeLinkSeed, passwordFragment } from "./claim-password";
 import { assertSponsoredOnboarding } from "./tx-guard";
 
+import { netKey } from "./scoped-store";
 /**
  * Every v2 call takes an optional network; omitting it means THE NETWORK THIS DEVICE IS ON.
  *
@@ -471,7 +472,7 @@ export async function loadReclaimableV2(sender: string): Promise<ReclaimableV2[]
   const net = defaultNet();
   let records: Record<string, { balanceId?: string }>;
   try {
-    records = JSON.parse(localStorage.getItem("lumenia.sent") ?? "{}") as Record<string, { balanceId?: string }>;
+    records = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as Record<string, { balanceId?: string }>;
   } catch {
     return [];
   }

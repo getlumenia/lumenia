@@ -1,3 +1,4 @@
+import { netKey } from "./scoped-store";
 /**
  * Where a sent money link is kept so the sender can copy it again.
  *
@@ -98,7 +99,7 @@ export async function recallLink(id: string): Promise<string | null> {
 export async function migrateLegacySentLinks(): Promise<void> {
   let all: Record<string, { link?: string; hasLink?: boolean }>;
   try {
-    all = JSON.parse(localStorage.getItem("lumenia.sent") ?? "{}") as typeof all;
+    all = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as typeof all;
   } catch {
     return;
   }
@@ -116,7 +117,7 @@ export async function migrateLegacySentLinks(): Promise<void> {
     delete rec.link;
   }
   try {
-    localStorage.setItem("lumenia.sent", JSON.stringify(all));
+    localStorage.setItem(netKey("lumenia.sent"), JSON.stringify(all));
   } catch {
     /* storage blocked — nothing was removed, and nothing was made worse */
   }

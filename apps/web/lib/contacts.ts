@@ -1,3 +1,4 @@
+import { netKey } from "./scoped-store";
 /**
  * Contacts — derived entirely from YOUR OWN local history, never a server address book. When you
  * pay someone's request straight to their account (/send with a `to` address), we keep their name +
@@ -27,7 +28,7 @@ interface SentRecord {
 export function loadContacts(): Contact[] {
   let all: Record<string, SentRecord>;
   try {
-    all = JSON.parse(localStorage.getItem("lumenia.sent") ?? "{}") as Record<string, SentRecord>;
+    all = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as Record<string, SentRecord>;
   } catch {
     return [];
   }

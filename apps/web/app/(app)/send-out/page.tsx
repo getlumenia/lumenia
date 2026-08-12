@@ -48,16 +48,17 @@ import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { activeNetwork, explorerTx } from "../../../lib/network";
 
+import { netKey } from "../../../lib/scoped-store";
 const explorer = explorerTx;
 /** Draft of the form, kept only for this tab so an unlock detour doesn't wipe it. */
-const DRAFT_KEY = "lumenia.sendout.draft";
+const DRAFT_KEY = () => netKey("lumenia.sendout.draft");
 /**
  * The last destination that actually WORKED, kept on this device. Reusing it is both
  * the fastest path and the safest one: the second cash-out repeats an address the
  * ledger already accepted, instead of another paste that could carry a typo or a
  * hijacked clipboard. Local only; never sent anywhere.
  */
-const SAVED_KEY = "lumenia.sendout.destination";
+const SAVED_KEY = () => netKey("lumenia.sendout.destination");
 
 interface SavedDestination {
   address: string;
@@ -96,7 +97,7 @@ export default function SendOutPage() {
   // hazard. Nothing secret is kept here: an address and an amount, for this tab only.
   useEffect(() => {
     try {
-      const draft = sessionStorage.getItem(DRAFT_KEY);
+      const draft = sessionStorage.getItem(DRAFT_KEY());
       if (draft) {
         const d = JSON.parse(draft) as { raw?: string; memo?: string; memoKind?: MemoKind; amount?: string };
         if (d.raw) setRaw(d.raw);
@@ -104,7 +105,7 @@ export default function SendOutPage() {
         if (d.memoKind) setMemoKind(d.memoKind);
         if (d.amount) setAmount(d.amount);
       }
-      const last = localStorage.getItem(SAVED_KEY);
+      const last = localStorage.getItem(SAVED_KEY());
       if (last) setSaved(JSON.parse(last) as SavedDestination);
     } catch {
       /* storage blocked — the form just starts empty */
@@ -122,7 +123,7 @@ export default function SendOutPage() {
   function forgetSaved() {
     setSaved(null);
     try {
-      localStorage.removeItem(SAVED_KEY);
+      localStorage.removeItem(SAVED_KEY());
     } catch {
       /* nothing to clear */
     }
@@ -219,7 +220,7 @@ export default function SendOutPage() {
       } catch {
         // Locked account: keep the draft so nothing has to be retyped on the way back.
         try {
-          sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ raw, memo, memoKind, amount }));
+          sessionStorage.setItem(DRAFT_KEY(), JSON.stringify({ raw, memo, memoKind, amount }));
         } catch {
           /* storage blocked — the form is lost, but no money moved */
         }
@@ -237,10 +238,10 @@ export default function SendOutPage() {
       });
       void sendEvent("cashout_sent", account!.address);
       try {
-        sessionStorage.removeItem(DRAFT_KEY);
+        sessionStorage.removeItem(DRAFT_KEY());
         // Only ever save a destination the ledger just accepted.
         localStorage.setItem(
-          SAVED_KEY,
+          SAVED_KEY(),
           JSON.stringify({
             address: destination.address,
             memo: destination.muxed ? "" : effectiveMemo,

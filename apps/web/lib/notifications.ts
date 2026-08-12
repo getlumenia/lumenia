@@ -24,6 +24,7 @@ import {
 } from "./horizon";
 import { loadReclaimableV2 } from "./lumendrop";
 
+import { netKey } from "./scoped-store";
 export interface Notice {
   id: string;
   kind: "waiting" | "reclaimable" | "received";
@@ -35,11 +36,11 @@ export interface Notice {
   via?: "classic" | "v2";
 }
 
-const SEEN_KEY = "lumenia.notif.seen";
+const SEEN_KEY = () => netKey("lumenia.notif.seen");
 
 function seenSet(): Set<string> {
   try {
-    return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) ?? "[]") as string[]);
+    return new Set(JSON.parse(localStorage.getItem(SEEN_KEY()) ?? "[]") as string[]);
   } catch {
     return new Set();
   }
@@ -50,7 +51,7 @@ export function markAllSeen(ids: string[]): void {
   try {
     const merged = new Set([...seenSet(), ...ids]);
     // keep the set bounded — only the most recent ids matter for "unread"
-    localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(merged).slice(-300)));
+    localStorage.setItem(SEEN_KEY(), JSON.stringify(Array.from(merged).slice(-300)));
   } catch {
     /* localStorage blocked — unread just won't persist, which is a safe default */
   }

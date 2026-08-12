@@ -30,6 +30,7 @@ import { claimPasswordProblem } from "../../../lib/claim-password";
 import { isValidAddress } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
 import { formatUsd } from "../../../lib/money";
+import { netKey } from "../../../lib/scoped-store";
 import { activeNetwork } from "../../../lib/network";
 import { copy } from "../../../lib/copy";
 import { rememberLink } from "../../../lib/sent-links";
@@ -90,9 +91,9 @@ type Ready =
 
 function saveSent(id: string, rec: SentRecord) {
   try {
-    const all = JSON.parse(localStorage.getItem("lumenia.sent") ?? "{}") as Record<string, SentRecord>;
+    const all = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as Record<string, SentRecord>;
     all[id] = rec;
-    localStorage.setItem("lumenia.sent", JSON.stringify(all));
+    localStorage.setItem(netKey("lumenia.sent"), JSON.stringify(all));
   } catch {
     /* localStorage blocked — the link still works, just no local tracking */
   }

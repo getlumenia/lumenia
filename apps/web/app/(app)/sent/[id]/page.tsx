@@ -12,6 +12,7 @@ import { useParams } from "next/navigation";
 import { loadLinkStatus } from "../../../../lib/horizon";
 import { recallLink } from "../../../../lib/sent-links";
 import { formatUsd } from "../../../../lib/money";
+import { netKey } from "../../../../lib/scoped-store";
 import { loadV2DropStatus } from "../../../../lib/lumendrop";
 import { useWallet } from "../../../../lib/wallet";
 import { StatusPill } from "../../../../components/brand/StatusPill";
@@ -30,7 +31,7 @@ interface SentRecord {
 
 function loadSent(id: string): SentRecord | null {
   try {
-    const all = JSON.parse(localStorage.getItem("lumenia.sent") ?? "{}") as Record<string, SentRecord>;
+    const all = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as Record<string, SentRecord>;
     return all[id] ?? null;
   } catch {
     return null;
