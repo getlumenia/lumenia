@@ -29,14 +29,21 @@ import { deriveLinkKey, makeLinkSeed, passwordFragment } from "./claim-password"
 import { assertSponsoredOnboarding } from "./tx-guard";
 
 /**
- * Every v2 call takes an optional network. Omitting it means TESTNET — the product's default —
- * so existing call sites are unchanged; a mainnet claim link passes its own config through.
+ * Every v2 call takes an optional network; omitting it means THE NETWORK THIS DEVICE IS ON.
+ *
+ * It used to mean testnet, frozen at import via `resolveNetwork(undefined)` — and that was not a
+ * stale-capture bug that a reload could clear, it could never be anything but testnet. So on real
+ * money the deposit was built against the testnet RPC, the testnet passphrase and the testnet
+ * escrow, then posted to the mainnet sponsor: sending failed outright, and `loadReclaimableV2`
+ * searched the testnet escrow for mainnet drops, so an unclaimed real-money link never appeared on
+ * /notifications and its dollars sat past expiry with no way back in the UI.
+ *
+ * A claim link still carries its own network (`?n=public`) and passes it through explicitly — the
+ * recipient's device has no prior state to read, which is the entire point of the product.
  */
-const DEFAULT_NET = resolveNetwork(undefined);
-const RPC_URL = DEFAULT_NET.rpcUrl;
-const NETWORK = Networks.TESTNET;
-/** The CURRENT escrow — every NEW deposit goes here. */
-const CONTRACT = DEFAULT_NET.contract;
+function defaultNet(): NetworkConfig {
+  return activeNetwork();
+}
 
 /**
  * Lookup order for an EXISTING drop on a given network: the current escrow first, then each
@@ -48,7 +55,6 @@ const dropContracts = (net: NetworkConfig): string[] => [
   net.contract,
   ...net.legacyContracts.filter((c) => c !== net.contract),
 ];
-const DROP_CONTRACTS = dropContracts(DEFAULT_NET);
 const UNIT = 10_000_000n; // 1 USDC = 1e7 stroops
 
 const usdcStroops = (amount: string) => BigInt(Math.round(Number.parseFloat(amount) * Number(UNIT)));
@@ -90,7 +96,11 @@ export async function createV2Link(opts: {
   /** optional claim password — the recipient must know it before the money will move */
   password?: string;
 }): Promise<V2Link> {
-  const server = new rpc.Server(RPC_URL);
+  // Resolved ONCE and reused for the transaction and the link's `n` label. Deriving it twice is
+  // how the tx and the label could disagree, which would mint a link pointing at an escrow that
+  // never received the money.
+  const net = defaultNet();
+  const server = new rpc.Server(net.rpcUrl);
   // No password ⇒ a random ephemeral key that IS the fragment (the fast default).
   // A password ⇒ a key derived from a random seed + the password; the seed is the fragment.
   const seed = opts.password ? makeLinkSeed() : null;
@@ -100,9 +110,9 @@ export async function createV2Link(opts: {
   const expiry = BigInt(opts.expiry ?? Math.floor(Date.now() / 1000) + 7 * 24 * 3600);
 
   const source = await server.getAccount(sender);
-  const tx = new TransactionBuilder(source, { fee: "2000000", networkPassphrase: NETWORK })
+  const tx = new TransactionBuilder(source, { fee: "2000000", networkPassphrase: net.passphrase })
     .addOperation(
-      new Contract(CONTRACT).call(
+      new Contract(net.contract).call(
         "deposit",
         Address.fromString(sender).toScVal(),
         xdr.ScVal.scvBytes(Buffer.from(link.rawPublicKey())),
@@ -136,7 +146,7 @@ export async function createV2Link(opts: {
   // the testnet escrow, where it does not exist — the claim failed for a reason neither side could
   // see. The recipient arrives with no prior state (that is the whole point of the product), so the
   // network cannot come from their device; it has to travel in the link.
-  const netParam = activeNetwork().isMainnet ? "&n=public" : "";
+  const netParam = net.isMainnet ? "&n=public" : "";
   const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}${netParam}`;
   const fragment = seed ? passwordFragment(seed) : link.secret();
   const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
@@ -160,7 +170,7 @@ export async function claimV2(opts: {
   /** true for a group-drop share (claim_share); false/undefined for a one-to-one claim */
   group?: boolean;
 }): Promise<{ hash: string }> {
-  const net = opts.net ?? DEFAULT_NET;
+  const net = opts.net ?? defaultNet();
   const server = new rpc.Server(net.rpcUrl);
   const link = Keypair.fromSecret(opts.linkSecret);
   const linkHex = Buffer.from(link.rawPublicKey()).toString("hex");
@@ -203,7 +213,6 @@ export async function claimV2(opts: {
   return JSON.parse(text) as { hash: string };
 }
 
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
 
 /**
  * The walletless recipient path for the v2 UI: create a fresh account with a sponsored USDC
@@ -221,7 +230,7 @@ export async function claimV2ToSponsoredAccount(opts: {
   net?: NetworkConfig;
   group?: boolean;
 }): Promise<{ hash: string; publicKey: string; seed: Uint8Array }> {
-  const net = opts.net ?? DEFAULT_NET;
+  const net = opts.net ?? defaultNet();
   const base = (opts.sponsorUrl || net.sponsorUrl).replace(/\/$/, "");
   const horizon = new Horizon.Server(net.horizonUrl);
   const payout = Keypair.random();
@@ -267,9 +276,10 @@ async function readDropFrom(
   sourceAccount: string,
   linkHex: string,
   contract: string,
+  net: NetworkConfig,
 ): Promise<{ amount: bigint; expiry: number; claimed: boolean } | null> {
   const src = await server.getAccount(sourceAccount);
-  const view = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: NETWORK })
+  const view = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: net.passphrase })
     .addOperation(new Contract(contract).call("get_drop", xdr.ScVal.scvBytes(Buffer.from(linkHex, "hex"))))
     .setTimeout(60)
     .build();
@@ -287,16 +297,47 @@ async function readDrop(
   server: rpc.Server,
   sourceAccount: string,
   linkHex: string,
+  net: NetworkConfig,
 ): Promise<({ amount: bigint; expiry: number; claimed: boolean } & { contract: string }) | null> {
-  for (const contract of DROP_CONTRACTS) {
+  for (const contract of dropContracts(net)) {
     try {
-      const d = await readDropFrom(server, sourceAccount, linkHex, contract);
+      const d = await readDropFrom(server, sourceAccount, linkHex, contract, net);
       if (d) return { ...d, contract };
     } catch {
       /* unreachable contract ⇒ try the next one */
     }
   }
   return null;
+}
+
+/**
+ * Has this v2 link been claimed yet? The counterpart to `loadLinkStatus` for the CLASSIC path.
+ *
+ * They cannot share a reader: a classic Claimable Balance id is 72 hex and lives on Horizon, while
+ * a v2 drop id is the 64-hex link pubkey and lives in the Soroban escrow. Asking Horizon about a
+ * 64-hex id does not 404, it **400s** ("does not validate as claimableBalanceID"), so the sender's
+ * "is it claimed yet?" read threw on every single v2 send — and the caller's catch defaulted to
+ * "pending". Every link a sender ever made read "Still waiting to be claimed" forever, including
+ * seconds after the recipient had the money.
+ *
+ * `unknown` is a real third answer, not a failure dressed as one: a read we could not complete must
+ * never be reported as a settled or an outstanding payment.
+ */
+export async function loadV2DropStatus(
+  linkHex: string,
+  sourceAccount: string,
+): Promise<"pending" | "settled" | "unknown"> {
+  try {
+    const net = defaultNet();
+    const server = new rpc.Server(net.rpcUrl);
+    const drop = await readDrop(server, sourceAccount, linkHex, net);
+    // No escrow holds it ⇒ it has been claimed or reclaimed and cleared — the same conclusion the
+    // classic path draws from a 404.
+    if (!drop) return "settled";
+    return drop.claimed ? "settled" : "pending";
+  } catch {
+    return "unknown";
+  }
 }
 
 /**
@@ -309,7 +350,7 @@ async function resolveDropContract(
   sourceAccount: string,
   linkHex: string,
   group?: boolean,
-  net: NetworkConfig = DEFAULT_NET,
+  net: NetworkConfig = defaultNet(),
 ): Promise<string> {
   const candidates = dropContracts(net);
   if (candidates.length === 1) return net.contract;
@@ -340,6 +381,7 @@ async function resolveDropContract(
  * `sender` is the user's home account (an existing account is needed as the simulation source).
  */
 export async function loadReclaimableV2(sender: string): Promise<ReclaimableV2[]> {
+  const net = defaultNet();
   let records: Record<string, { balanceId?: string }>;
   try {
     records = JSON.parse(localStorage.getItem("lumenia.sent") ?? "{}") as Record<string, { balanceId?: string }>;
@@ -354,13 +396,13 @@ export async function loadReclaimableV2(sender: string): Promise<ReclaimableV2[]
     ),
   );
   if (linkHexes.length === 0) return [];
-  const server = new rpc.Server(RPC_URL);
+  const server = new rpc.Server(net.rpcUrl);
   const nowSec = Math.floor(Date.now() / 1000);
   // Parallel per-drop reads (bounded by the local send count) so the bell poll stays light.
   const results = await Promise.all(
     linkHexes.map(async (linkHex): Promise<ReclaimableV2 | null> => {
       try {
-        const drop = await readDrop(server, sender, linkHex);
+        const drop = await readDrop(server, sender, linkHex, net);
         if (drop && !drop.claimed && nowSec >= drop.expiry && drop.amount > 0n) {
           return { linkHex, usd: stroopsToUsdc(drop.amount), expiry: drop.expiry };
         }
@@ -385,13 +427,14 @@ export async function reclaimV2(opts: {
   /** true for a group drop (reclaim_pool); false/undefined for a one-to-one drop (reclaim) */
   group?: boolean;
 }): Promise<{ hash: string }> {
-  const server = new rpc.Server(RPC_URL);
+  const net = defaultNet();
+  const server = new rpc.Server(net.rpcUrl);
   const sender = opts.signer.publicKey();
   const method = opts.group ? "reclaim_pool" : "reclaim";
   // Your own money can be sitting in a superseded escrow — reclaim from wherever it is.
   const contract = await resolveDropContract(server, sender, opts.linkHex, opts.group);
   const source = await server.getAccount(sender);
-  const tx = new TransactionBuilder(source, { fee: "2000000", networkPassphrase: NETWORK })
+  const tx = new TransactionBuilder(source, { fee: "2000000", networkPassphrase: net.passphrase })
     .addOperation(new Contract(contract).call(method, xdr.ScVal.scvBytes(Buffer.from(opts.linkHex, "hex"))))
     .setTimeout(120)
     .build();

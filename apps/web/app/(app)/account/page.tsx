@@ -79,8 +79,15 @@ function MainnetSwitchOnApproval({ approved }: { approved: boolean }) {
     } catch {
       /* storage blocked — proceed once; the router.replace below still strips the param */
     }
-    setActiveNetwork("public"); // flip this device to real money (the sponsor allowlist is the real gate)
-    router.replace("/account"); // strip ?switch=mainnet so a refresh can't retrigger it
+    // Flip the device flag AND reload. The reload is not optional: `activeNetwork()` is read at call
+    // time by every money module, but `useWallet().network` is set once on mount, so a client-side
+    // router.replace() left the two disagreeing — the ledger calls went to mainnet while the whole
+    // UI still said "practice money", still offered "switch to real money", never showed the
+    // activate-mainnet step, and displayed a stale testnet balance. That desync is precisely the
+    // "I tapped switch and everything stayed on testnet" report. window.location.replace also strips
+    // the param, so it does the job router.replace was here for.
+    setActiveNetwork("public");
+    window.location.replace("/account");
   }, [approved, searchParams, router]);
 
   return null;

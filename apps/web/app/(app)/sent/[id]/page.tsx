@@ -12,6 +12,8 @@ import { useParams } from "next/navigation";
 import { loadLinkStatus } from "../../../../lib/horizon";
 import { recallLink } from "../../../../lib/sent-links";
 import { formatUsd } from "../../../../lib/money";
+import { loadV2DropStatus } from "../../../../lib/lumendrop";
+import { useWallet } from "../../../../lib/wallet";
 import { StatusPill } from "../../../../components/brand/StatusPill";
 import { MoneyCard } from "../../../../components/brand/MoneyCard";
 
@@ -36,10 +38,11 @@ function loadSent(id: string): SentRecord | null {
 }
 
 export default function SentPage() {
+  const { account } = useWallet();
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [rec, setRec] = useState<SentRecord | null | undefined>(undefined);
-  const [linkStatus, setLinkStatus] = useState<"pending" | "settled" | "loading">("loading");
+  const [linkStatus, setLinkStatus] = useState<"pending" | "settled" | "loading" | "unknown">("loading");
   const [copied, setCopied] = useState(false);
   // The link is decrypted on demand from the device-key store, not read out of localStorage.
   const [link, setLink] = useState<string | null>(null);
@@ -47,13 +50,20 @@ export default function SentPage() {
   useEffect(() => {
     const r = loadSent(id);
     setRec(r);
-    if (r) {
-      void loadLinkStatus(r.balanceId)
-        .then(setLinkStatus)
-        .catch(() => setLinkStatus("pending"));
+    if (r && account) {
+      // Which reader depends on which KIND of link this is, and the id shape is the tell: a classic
+      // Claimable Balance id is 72 hex and lives on Horizon; a v2 escrow drop id is the 64-hex link
+      // pubkey and lives in the Soroban contract. Asking Horizon about a 64-hex id 400s rather than
+      // 404s, so this used to throw on EVERY v2 send and the catch below reported "pending" — every
+      // link a sender made read "Still waiting to be claimed" forever, including after it was paid.
+      const isV2 = /^[0-9a-f]{64}$/i.test(r.balanceId);
+      const read = isV2
+        ? loadV2DropStatus(r.balanceId, account.address)
+        : loadLinkStatus(r.balanceId);
+      void read.then(setLinkStatus).catch(() => setLinkStatus("unknown"));
       if (r.hasLink) void recallLink(id).then(setLink);
     }
-  }, [id]);
+  }, [id, account]);
 
   if (rec === undefined) return <p className="py-10 text-center text-ink-soft">Loading…</p>;
 

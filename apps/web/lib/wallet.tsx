@@ -150,20 +150,40 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     let alive = true;
-    fetch(`${mainnet.sponsorUrl.replace(/\/$/, "")}/pilot-status?pubkey=${account.address}`)
-      .then((r) => r.json() as Promise<{ approved?: boolean; state?: string }>)
-      .then((d) => {
-        if (!alive) return;
-        setMainnetApproved(Boolean(d.approved));
-        setPilotState(isPilotState(d.state) ? d.state : "none");
-      })
-      .catch(() => {
-        if (!alive) return;
-        setMainnetApproved(false);
-        setPilotState("none");
-      });
+    const ask = () =>
+      fetch(`${mainnet.sponsorUrl.replace(/\/$/, "")}/pilot-status?pubkey=${account.address}`)
+        .then((r) => r.json() as Promise<{ approved?: boolean; state?: string }>)
+        .then((d) => {
+          if (!alive) return;
+          setMainnetApproved(Boolean(d.approved));
+          setPilotState(isPilotState(d.state) ? d.state : "none");
+        })
+        .catch(() => {
+          /* A failed ASK is not a rejection. This used to demote the caller to "none" +
+             not-approved, so one flaky request turned an approved pilot user back into a stranger:
+             the switch-to-real-money button vanished, and switchNetwork() silently refused. Keep
+             the last known answer and try again on the next tick. */
+        });
+
+    void ask();
+
+    /* Approval happens on the OWNER's phone, minutes or hours later, and nothing pushes that back
+       here. The status was read exactly once per hard page load, and `account` does not change in
+       normal use — so on an installed PWA an approved user could sit on "You're on the list,
+       nothing to do right now" for days, with no button anywhere to check. Poll while the answer is
+       still pending, only when the tab is visible, and stop as soon as it lands. */
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === "visible") void ask();
+    }, 60_000);
+    const onShow = () => {
+      if (document.visibilityState === "visible") void ask();
+    };
+    document.addEventListener("visibilitychange", onShow);
+
     return () => {
       alive = false;
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onShow);
     };
   }, [account]);
 

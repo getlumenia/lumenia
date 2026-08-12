@@ -49,6 +49,9 @@ import { LinkReadyCard } from "../../../components/brand/LinkReadyCard";
  * Read at call time, never at module scope: switching networks reloads, but a module constant
  * captured at import is exactly how this drifted in the first place.
  */
+/** Must match MAX_DROP_USDC on the mainnet Worker; same env var the /pilot page promises. */
+const PILOT_TX_CAP_USD = process.env.NEXT_PUBLIC_PILOT_TX_CAP_USD ?? "5";
+
 function sponsorUrl(): string {
   return activeNetwork().sponsorUrl;
 }
@@ -174,6 +177,13 @@ export default function SendPage() {
       return setError("Enter an amount to send.");
     }
     if (balance !== null && amt > Number.parseFloat(balance)) return setError("That's more than you have.");
+    // The pilot cap is enforced by the sponsor, but only AFTER the transaction is signed — and on
+    // mainnet the reason is masked, so an over-cap send asked for the password, then failed with a
+    // generic "try again" that no amount of retrying could fix. Check it here, before we ask the
+    // user for anything, and say the number out loud.
+    if (activeNetwork().isMainnet && amt > Number.parseFloat(PILOT_TX_CAP_USD)) {
+      return setError(`During the pilot you can send up to $${PILOT_TX_CAP_USD} at a time.`);
+    }
     const directTo = request?.to; // paying a returning asker straight to her account
     if (!directTo && !from.trim()) return setError("Add your name so they know who it's from.");
     const lockWith = !directTo && wantPassword ? password : "";
@@ -250,10 +260,19 @@ export default function SendPage() {
       setPassword(""); // it lives in the link's derivation now; keep it out of memory
       setReady({ kind: "link", link: result.link, balanceId: result.linkHex, locked: Boolean(lockWith) });
     } catch (e) {
-      // Technical reasons (status codes, ledger result codes) must never reach a
-      // money surface (vocabulary law); a rejected inner tx means nothing moved.
+      // Technical reasons (status codes, ledger result codes) must never reach a money surface
+      // (vocabulary law); a rejected inner tx means nothing moved.
+      //
+      // The 403s are the exception, and refusing them cost people real time. The sponsor's pilot
+      // gate answers in plain, already-human sentences — "pilot limit reached: 5 transactions
+      // used", "this wallet is not on the pilot allowlist yet" — and burying those under "try
+      // again" invited exactly the retry that can never work. A wall the user could act on read
+      // as a glitch.
       console.error("[send]", e);
-      setError(copy.errors.moneySafe);
+      const msg = (e as Error).message ?? "";
+      const pilotReason = /403/.test(msg) ? msg.slice(msg.indexOf("{")) : "";
+      const reason = pilotReason.match(/"error"\s*:\s*"([^"]+)"/)?.[1];
+      setError(reason ? `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.` : copy.errors.moneySafe);
     } finally {
       setBusy(false);
     }
@@ -331,12 +350,28 @@ export default function SendPage() {
       </header>
 
       {zeroBalance ? (
+        /* The faucet is a TESTNET thing. On real money it 503s ("faucet not configured"), and the
+           raw error landed on a money screen — under a button offering free money and a line saying
+           the money isn't real, to someone who had just been approved to move real dollars. */
         <div className="flex flex-col gap-3">
           <p className="text-ink-soft">You don&apos;t have any money to send yet.</p>
-          <PrimaryButton loading={faucetBusy} loadingLabel="Getting test money…" onClick={getTestMoney}>
-            Get test money
-          </PrimaryButton>
-          <p className="text-xs text-ink-soft">Test network. This money isn&apos;t real.</p>
+          {activeNetwork().isMainnet ? (
+            <>
+              <Link href="/add-money" className="block">
+                <PrimaryButton>Add dollars</PrimaryButton>
+              </Link>
+              <p className="text-xs text-ink-soft">
+                Send USDC to your address from an exchange or another wallet.
+              </p>
+            </>
+          ) : (
+            <>
+              <PrimaryButton loading={faucetBusy} loadingLabel="Getting test money…" onClick={getTestMoney}>
+                Get test money
+              </PrimaryButton>
+              <p className="text-xs text-ink-soft">Test network. This money isn&apos;t real.</p>
+            </>
+          )}
         </div>
       ) : (
         <>

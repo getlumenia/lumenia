@@ -183,13 +183,16 @@ export async function loadTransfer(
  * exists (waiting to be claimed); "settled" = it's gone (claimed by the recipient,
  * or reclaimed by the sender after 7 days).
  */
-export async function loadLinkStatus(balanceId: string): Promise<"pending" | "settled"> {
+export async function loadLinkStatus(balanceId: string): Promise<"pending" | "settled" | "unknown"> {
   try {
     await server().claimableBalances().claimableBalance(balanceId).call();
     return "pending";
   } catch (e) {
     if ((e as { response?: { status?: number } })?.response?.status === 404) return "settled";
-    throw e;
+    // Anything else (rate limit, outage, a malformed id) is a read we could not complete. It used
+    // to throw, and callers turned that into "pending" — reporting an unfinished read as an
+    // outstanding payment. Say we don't know instead.
+    return "unknown";
   }
 }
 

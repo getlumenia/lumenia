@@ -23,6 +23,10 @@ export default async function V2ClaimPage({
   // `p=1` marks a password-locked link, so the page can say so up front instead of
   // letting someone tap a button that then asks for something they weren't expecting.
   const locked = sp.p === "1";
+  // `n=public` means this link carries REAL money. The honesty note below was unconditional, so a
+  // friend opening a real transfer was told by the app itself that the money isn't real — on the
+  // one screen a non-user ever sees, about the one thing they care about.
+  const real = sp.n === "public";
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-8 px-6 py-12 text-center">
@@ -40,7 +44,11 @@ export default async function V2ClaimPage({
         )}
       </div>
       <V2ClaimButton linkHex={linkHex} amount={amount} sender={sender} />
-      <p className="text-xs text-ink-soft">Test network. This money isn&apos;t real.</p>
+      {real ? (
+        <p className="text-xs text-ink-soft">Real money, on the public Stellar record.</p>
+      ) : (
+        <p className="text-xs text-ink-soft">Test network. This money isn&apos;t real.</p>
+      )}
     </main>
   );
 }

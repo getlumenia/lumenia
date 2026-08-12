@@ -10,7 +10,7 @@ import { loadLinkStatus } from "../../../../lib/horizon";
 
 export function LinkCheckForm() {
   const [link, setLink] = useState("");
-  const [state, setState] = useState<"idle" | "loading" | "pending" | "settled" | "error">("idle");
+  const [state, setState] = useState<"idle" | "loading" | "pending" | "settled" | "error" | "unknown">("idle");
 
   async function check(e: React.FormEvent) {
     e.preventDefault();
