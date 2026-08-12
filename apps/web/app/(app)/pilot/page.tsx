@@ -122,14 +122,19 @@ export default function PilotPage() {
           that means: it&apos;s an early preview, not yet reviewed by an outside security firm, so
           keep amounts tiny. The pilot caps every transfer at ${PILOT_TX_CAP_USD}.
         </p>
-        {/* Said BEFORE they opt in, not after they are holding the money. Someone who joins expecting
-            to turn dollars into lira in the app, and only finds out afterwards, has been misled by
-            omission — and this is the one limitation a recipient in Turkey feels immediately. */}
+        {/* Said BEFORE they opt in, not after. An earlier draft of this said conversion was "not
+            possible yet", which was wrong and contradicted our own /cash-out page: the route works
+            and has been walked end to end with real money. What is true is that the last leg happens
+            in the user's own exchange account rather than in here, and knowing that up front is the
+            difference between a workable extra step and an unpleasant surprise. */}
         <p className="mt-3 text-sm text-ink-soft">
-          One thing to know up front: you can receive, hold and send dollars here, but{" "}
-          <strong className="text-ink">turning them into Turkish lira is not part of the app yet</strong>.
-          That step goes through a licensed provider we haven&apos;t connected. Join if you want to
-          try the sending part with us — not because you need the money converted today.
+          One thing to know up front: dollars reach you here, but the last leg into Turkish lira
+          happens <strong className="text-ink">in your own exchange account, not inside Lumenia</strong>.
+          The route works and we have walked it with real money.{" "}
+          <Link href="/cash-out" className="text-money underline-offset-2 hover:underline">
+            See the route
+          </Link>{" "}
+          before you join, so the extra step is something you chose rather than something you found out later.
         </p>
       </header>
 
