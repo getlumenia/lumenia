@@ -42,7 +42,7 @@ interface Step {
 }
 
 export default function StartPage() {
-  const { status, account, network, pilotState, switchNetwork } = useWallet();
+  const { status, account, network, pilotState, mainnetApproved, switchNetwork } = useWallet();
   const [usdc, setUsdc] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
@@ -81,10 +81,13 @@ export default function StartPage() {
   const isApproved = pilotState === "approved";
   const hasMoney = usdc !== null && parseFloat(usdc) > 0;
 
-  /* The order is not cosmetic — each step is genuinely blocked by the one above it. You cannot
-     lock an account you do not have; mainnet refuses to sign without the password; the sponsor
-     will not let an unapproved wallet deposit; and a link cannot carry dollars you do not hold. */
-  const done = [hasAccount, isLocked, onMainnet, isApproved, hasMoney];
+  /* The order is not cosmetic — each step is genuinely blocked by the one above it, and getting it
+     wrong strands people. Approval must come BEFORE the network switch: switchNetwork() refuses
+     outright while `mainnetApproved` is false, and it refuses SILENTLY, so a checklist that offered
+     "switch to real money" first would hand every user a button that does nothing and no reason why.
+     You cannot lock an account you do not have; mainnet will not sign without the password; the
+     sponsor will not let an unapproved wallet deposit; a link cannot carry dollars you do not hold. */
+  const done = [hasAccount, isLocked, isApproved, onMainnet, hasMoney];
   const firstUnfinished = done.findIndex((d) => !d);
   const stateFor = (i: number): StepState =>
     done[i] ? "done" : i === firstUnfinished ? "current" : "later";
@@ -111,16 +114,6 @@ export default function StartPage() {
       state: stateFor(1),
     },
     {
-      id: "mainnet",
-      title: "Switch to real money",
-      body:
-        "Everything so far was practice money. Switching opens your account on the real network with a dollar trustline, so real dollars can reach you.",
-      doneNote: "You are on real money.",
-      href: "/account",
-      cta: "Switch to real money",
-      state: stateFor(2),
-    },
-    {
       id: "pilot",
       title: "Ask to join the pilot",
       body:
@@ -128,6 +121,16 @@ export default function StartPage() {
       doneNote: "You are in the pilot.",
       href: "/pilot",
       cta: "Ask to join",
+      state: stateFor(2),
+    },
+    {
+      id: "mainnet",
+      title: "Switch to real money",
+      body:
+        "Everything so far was practice money. Switching opens your account on the real network with a dollar trustline, so real dollars can reach you.",
+      doneNote: "You are on real money.",
+      href: "/account",
+      cta: "Switch to real money",
       state: stateFor(3),
     },
     {
@@ -200,7 +203,7 @@ export default function StartPage() {
                       decide what to do next, which is the one thing this page exists to answer. */}
                   {s.state === "current" ? (
                     <div className="mt-3">
-                      {s.id === "mainnet" && MAINNET_CONFIGURED ? (
+                      {s.id === "mainnet" && MAINNET_CONFIGURED && mainnetApproved ? (
                         <PrimaryButton onClick={() => switchNetwork("public")}>
                           {s.cta}
                         </PrimaryButton>
