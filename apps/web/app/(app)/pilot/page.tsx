@@ -29,6 +29,15 @@ import { mainnetConfig } from "../../../lib/network";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
+/**
+ * The per-transfer cap this page PROMISES, which must equal MAX_DROP_USDC on the mainnet Worker.
+ * It read "$1" here while the Worker enforced 5 — the page was describing a protection the user
+ * did not actually have. The number lives in one named constant so the next drift is a one-line
+ * fix, and `NEXT_PUBLIC_PILOT_TX_CAP_USD` lets a deploy override it without a code change.
+ * Raising the Worker's cap without raising this is a promise broken, so change both together.
+ */
+const PILOT_TX_CAP_USD = process.env.NEXT_PUBLIC_PILOT_TX_CAP_USD ?? "5";
+
 export default function PilotPage() {
   const { status, account } = useWallet();
   const router = useRouter();
@@ -111,7 +120,16 @@ export default function PilotPage() {
           Lumenia is in a pilot. If you&apos;d like to be among the first to use it with real
           money and help us make it better, ask to join here. Be honest with yourself about what
           that means: it&apos;s an early preview, not yet reviewed by an outside security firm, so
-          keep amounts tiny. The pilot caps every transfer at $1.
+          keep amounts tiny. The pilot caps every transfer at ${PILOT_TX_CAP_USD}.
+        </p>
+        {/* Said BEFORE they opt in, not after they are holding the money. Someone who joins expecting
+            to turn dollars into lira in the app, and only finds out afterwards, has been misled by
+            omission — and this is the one limitation a recipient in Turkey feels immediately. */}
+        <p className="mt-3 text-sm text-ink-soft">
+          One thing to know up front: you can receive, hold and send dollars here, but{" "}
+          <strong className="text-ink">turning them into Turkish lira is not part of the app yet</strong>.
+          That step goes through a licensed provider we haven&apos;t connected. Join if you want to
+          try the sending part with us — not because you need the money converted today.
         </p>
       </header>
 

@@ -185,12 +185,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const getSigner = useCallback(async (): Promise<Signer> => {
     if (!account) throw new Error("no local account");
-    // Pilot rule: mainnet money must never sit under a Phase-1 account (a device key with no
-    // password — anyone holding the unlocked phone can spend). When NEXT_PUBLIC_REQUIRE_PHASE2=1
-    // (set only on the pilot build), every value action refuses until the account is locked to a
-    // password (Phase 2). The LockMoneyCard on /home performs that one-time upgrade. A no-op on
-    // the open testnet build, so it never adds friction there.
-    if (account.phase === 1 && process.env.NEXT_PUBLIC_REQUIRE_PHASE2 === "1") {
+    // Real money must never sit under a Phase-1 account — a device key with no password, which
+    // anyone holding the unlocked phone can spend.
+    //
+    // This used to key off NEXT_PUBLIC_REQUIRE_PHASE2 alone, which was the wrong axis: one build
+    // serves BOTH networks (the choice is a runtime device flag), so the env var could only be all
+    // or nothing. Off meant real mainnet money was spendable from an unlocked phone; on meant the
+    // testnet demo — the thing we hand strangers to try — grew a password wall. So the rule follows
+    // the NETWORK instead: mainnet always requires the password, testnet never does. The env var
+    // survives as an override for forcing Phase 2 on a testnet build too.
+    const onMainnet = activeNetwork().id === "public";
+    if (account.phase === 1 && (onMainnet || process.env.NEXT_PUBLIC_REQUIRE_PHASE2 === "1")) {
       throw new Error("Lock your money with a password first, then try again.");
     }
     let signer: Signer;
