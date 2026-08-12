@@ -27,6 +27,26 @@ const NAV = [
   { href: "/account", label: "Account" },
 ];
 
+/**
+ * "Set up" appears in the nav ONLY while sending is still blocked, and disappears the moment it
+ * is not. A permanent fourth link would tax every user forever to help the few in their first
+ * hour; a link that leaves when it stops being true costs nothing and is exactly the thing a new
+ * sender is looking for. Receiving never needs any of this, so an account that only ever claims
+ * money never sees it.
+ */
+function SetupLink() {
+  const { status, account, network, pilotState } = useWallet();
+  const pathname = usePathname();
+  if (status === "loading" || !account) return null;
+  const ready = account.phase === 2 && network === "public" && pilotState === "approved";
+  if (ready) return null;
+  return (
+    <Link href="/start" className="app-nav-link" data-active={pathname === "/start"}>
+      Set up
+    </Link>
+  );
+}
+
 function NotificationsBell() {
   const { account } = useWallet();
   const pathname = usePathname();
@@ -100,6 +120,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {n.label}
               </Link>
             ))}
+            <SetupLink />
             <NotificationsBell />
             {/* Report-a-problem is one tap away on EVERY money surface (owner directive) —
                 a life-buoy next to the bell, opening the portaled FeedbackDialog. */}

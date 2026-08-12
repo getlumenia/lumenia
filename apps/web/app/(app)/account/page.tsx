@@ -36,6 +36,7 @@ import { formatUsd } from "../../../lib/money";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { NetworkSwitcher } from "../../../components/brand/NetworkSwitcher";
 import { PilotStatusChip } from "../../../components/brand/PilotStatusChip";
+import { DisconnectButton } from "../../../components/brand/DisconnectButton";
 import { ActivateMainnet } from "../../../components/brand/ActivateMainnet";
 import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
@@ -340,6 +341,29 @@ export default function AccountPage() {
             bring it back on any phone. But the password can&apos;t be reset: if you forget it, nobody can
             open your money, us included. That&apos;s what keeps it yours.
           </p>
+        </details>
+
+        {/* Leaving a device is a real need — a shared laptop, a phone you are selling, a demo
+            account you are done with — and it had no affordance at all, which quietly taught people
+            that the only exit was clearing browser data. It sits behind a disclosure because the
+            danger is asymmetric: on a Phase-1 account with no backup, the keys on this device are
+            the ONLY copy, and "sign out" in every other product means "come back with your
+            password". Here it can mean the money is gone, so the warning is stated before the
+            button and the button says what it does. */}
+        <details className="group mt-4 border-t border-line pt-4">
+          <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-ink [&::-webkit-details-marker]:hidden">
+            Use a different account, or leave this device
+            <ChevronDown className="size-4 text-ink-soft transition-transform group-open:rotate-180" />
+          </summary>
+          <p className="mt-2 text-sm text-ink-soft">
+            This removes your keys from this phone. It does not touch your money, which lives on the
+            public record and comes back with your email and password, or with Face ID.
+          </p>
+          <p className="mt-2 text-sm text-ink-soft">
+            <strong className="text-ink">Only do this if you have backed it up.</strong> Without a
+            backup, the keys here are the only way in, and removing them ends your access for good.
+          </p>
+          <DisconnectButton backedUp={account.phase === 2} />
         </details>
       </MoneyCard>
 

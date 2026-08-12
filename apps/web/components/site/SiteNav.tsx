@@ -44,6 +44,27 @@ export function SiteNav() {
   const [scrolledPastHero, setScrolledPastHero] = useState(false);
   const shown = !gated || scrolledPastHero;
 
+  /* Whether this device already holds an account. Read once, from the keystore, after mount — the
+     marketing shell has no WalletProvider and the record lives in IndexedDB, so there is nothing
+     synchronous to read. It stays false until the answer arrives, which means a first-time visitor
+     (the overwhelming majority here, and the one we cannot afford to confuse) never sees a flash of
+     the returning-user door. Failure is treated as "no account" for the same reason. */
+  const [hasAccount, setHasAccount] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    import("../../lib/keystore")
+      .then((m) => m.getHome())
+      .then((home) => {
+        if (alive && home) setHasAccount(true);
+      })
+      .catch(() => {
+        /* no keystore, blocked storage, private mode — treat as a new visitor */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!gated) return;
     const onScroll = () => setScrolledPastHero(window.scrollY > window.innerHeight * 1.35);
@@ -109,9 +130,28 @@ export function SiteNav() {
             way to convert; pointer-events re-enabled since the header itself is click-through. */}
         <div className="pointer-events-auto relative flex items-center gap-1.5 justify-self-end">
           <ThemeToggle />
-          <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
-            <Link href="/try">Get started</Link>
-          </Button>
+          {/* A returning user had no way back to their money from the landing — the only action was
+              "Get started", which sends someone who already HAS an account to a demo. So the cell
+              answers who is looking: first-timers still get the demo (the product's best pitch),
+              and anyone with an account on this device gets a door to it plus their next setup step. */}
+          {hasAccount ? (
+            <>
+              <Button
+                asChild
+                variant="ghost"
+                className="rounded-xl px-3 transition-transform duration-200 hover:-translate-y-0.5"
+              >
+                <Link href="/start">Set up</Link>
+              </Button>
+              <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
+                <Link href="/home">My money</Link>
+              </Button>
+            </>
+          ) : (
+            <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
+              <Link href="/try">Get started</Link>
+            </Button>
+          )}
         </div>
       </nav>
     </header>
