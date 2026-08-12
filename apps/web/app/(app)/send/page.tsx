@@ -30,13 +30,28 @@ import { claimPasswordProblem } from "../../../lib/claim-password";
 import { isValidAddress } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
 import { formatUsd } from "../../../lib/money";
+import { activeNetwork } from "../../../lib/network";
 import { copy } from "../../../lib/copy";
 import { rememberLink } from "../../../lib/sent-links";
 import { AmountDisplay } from "../../../components/brand/AmountDisplay";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { LinkReadyCard } from "../../../components/brand/LinkReadyCard";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
+/**
+ * The sponsor for the network this device is ACTUALLY on.
+ *
+ * This page used to hold a single module-level SPONSOR_URL pointing at the testnet Worker, no
+ * matter which network the user had switched to. On real money that meant every send was signed
+ * for mainnet and then posted to the testnet sponsor, which cannot serve it — sending was broken
+ * on mainnet outright, and the failure surfaced as an unexplained error at the last step, after
+ * the person had already chosen an amount. /send-out already resolved this per call; /send did not.
+ *
+ * Read at call time, never at module scope: switching networks reloads, but a module constant
+ * captured at import is exactly how this drifted in the first place.
+ */
+function sponsorUrl(): string {
+  return activeNetwork().sponsorUrl;
+}
 
 /**
  * The metadata half of a sent link. The LINK ITSELF is deliberately absent: its #fragment is a
@@ -135,7 +150,7 @@ export default function SendPage() {
     setFaucetBusy(true);
     setError("");
     try {
-      const res = await fetch(`${SPONSOR_URL}/faucet`, {
+      const res = await fetch(`${sponsorUrl()}/faucet`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ recipientPublicKey: account!.address }),
@@ -187,7 +202,7 @@ export default function SendPage() {
 
       if (directTo) {
         const result = await payToAddress({
-          sponsorUrl: SPONSOR_URL,
+          sponsorUrl: sponsorUrl(),
           signer,
           amount: amt.toFixed(2),
           to: directTo,
@@ -210,7 +225,7 @@ export default function SendPage() {
       // chosen at claim time (no reserve, no fragmentation, no sweep). The sender pays no gas —
       // the sponsor fee-bumps the deposit (/v2-deposit). The claim opens at /v2/c/<linkHex>.
       const result = await createV2Link({
-        sponsorUrl: SPONSOR_URL,
+        sponsorUrl: sponsorUrl(),
         signer,
         amount: amt.toFixed(2),
         from: from.trim(),

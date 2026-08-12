@@ -26,6 +26,7 @@ import QRCode from "react-qr-code";
 import { AlertTriangle, Copy, Check, QrCode } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
+import { activeNetwork } from "../../../lib/network";
 import { loadTotalUsd } from "../../../lib/horizon";
 import { markPublished } from "../../../lib/keystore";
 import { buildReceiveUri, moneyOrigin, NETWORK_LABEL, getTestMoney } from "../../../lib/receive";
@@ -35,7 +36,15 @@ import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
+/**
+ * The sponsor for the network this device is ACTUALLY on. A module-level constant here pointed at
+ * the testnet Worker regardless of the switch, so on real money these calls went to a service that
+ * cannot serve them. Read at call time — switching networks reloads, but a constant captured at
+ * import is how this drifted.
+ */
+function sponsorUrl(): string {
+  return activeNetwork().sponsorUrl;
+}
 
 export default function AddMoneyPage() {
   const { status, account, accounts } = useWallet();
@@ -51,7 +60,7 @@ export default function AddMoneyPage() {
 
   useEffect(() => {
     let alive = true;
-    fetch(`${SPONSOR_URL.replace(/\/$/, "")}/health`)
+    fetch(`${sponsorUrl().replace(/\/$/, "")}/health`)
       .then((r) => r.json() as Promise<{ usdcCode?: string; usdcIssuer?: string }>)
       .then((h) => alive && h.usdcIssuer && setHealth({ usdcCode: h.usdcCode ?? "USDC", usdcIssuer: h.usdcIssuer }))
       .catch(() => {});
@@ -115,7 +124,7 @@ export default function AddMoneyPage() {
     setFaucetBusy(true);
     setError("");
     try {
-      await getTestMoney(SPONSOR_URL, account!.address);
+      await getTestMoney(sponsorUrl(), account!.address);
       poll.refreshNow();
     } catch (e) {
       setError((e as Error).message);

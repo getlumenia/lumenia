@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
+import { activeNetwork } from "../../../lib/network";
 import { loadNotices, markAllSeen, type Notice } from "../../../lib/notifications";
 import { loadLinkStatus } from "../../../lib/horizon";
 import { collectIncoming } from "../../../lib/claim";
@@ -20,7 +21,15 @@ import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
+/**
+ * The sponsor for the network this device is ACTUALLY on. A module-level constant here pointed at
+ * the testnet Worker regardless of the switch, so on real money these calls went to a service that
+ * cannot serve them. Read at call time — switching networks reloads, but a constant captured at
+ * import is how this drifted.
+ */
+function sponsorUrl(): string {
+  return activeNetwork().sponsorUrl;
+}
 
 function whenText(iso: string): string {
   if (!iso) return "";
@@ -92,9 +101,9 @@ export default function NotificationsPage() {
       // A v2 drop comes back via the contract reclaim (/v2-reclaim); a classic CB (waiting or
       // a classic reclaimable send) via the /feebump claim — collectIncoming handles both.
       if (n.kind === "reclaimable" && n.via === "v2") {
-        await reclaimV2({ signer, linkHex: n.balanceId, sponsorUrl: SPONSOR_URL });
+        await reclaimV2({ signer, linkHex: n.balanceId, sponsorUrl: sponsorUrl() });
       } else {
-        await collectIncoming({ sponsorUrl: SPONSOR_URL, signer, balanceId: n.balanceId });
+        await collectIncoming({ sponsorUrl: sponsorUrl(), signer, balanceId: n.balanceId });
       }
       await reload();
     } catch {

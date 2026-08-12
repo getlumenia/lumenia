@@ -18,6 +18,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Split } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
+import { activeNetwork } from "../../../lib/network";
 import { loadBalance, loadActivityForAccounts, loadIncomingClaims, loadLinkStatus, loadTotalUsd, type ActivityItem, type IncomingClaim } from "../../../lib/horizon";
 import { collectIncoming } from "../../../lib/claim";
 import { sweepIntoHome } from "../../../lib/sweep";
@@ -33,7 +34,15 @@ import { FeedbackDialog } from "../../../components/FeedbackDialog";
 import { copy } from "../../../lib/copy";
 import { sendEvent } from "../../../lib/events";
 
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
+/**
+ * The sponsor for the network this device is ACTUALLY on. A module-level constant here pointed at
+ * the testnet Worker regardless of the switch, so on real money these calls went to a service that
+ * cannot serve them. Read at call time — switching networks reloads, but a constant captured at
+ * import is how this drifted.
+ */
+function sponsorUrl(): string {
+  return activeNetwork().sponsorUrl;
+}
 
 /** The home dashboard's primary actions — each a soft-3D brand icon, each a real destination.
  *  (Activity + Account live in the top nav; these are the money verbs.) */
@@ -145,7 +154,7 @@ export default function HomePage() {
             // The sweep wipes its own COPY of the seed on success; ours stays intact
             // and is wiped below.
             await sweepIntoHome({
-              sponsorUrl: SPONSOR_URL,
+              sponsorUrl: sponsorUrl(),
               throwawaySeed: seed.slice(),
               homePublicKey: home,
               amount,
@@ -226,7 +235,7 @@ export default function HomePage() {
         router.push("/unlock?next=/home");
         return;
       }
-      await collectIncoming({ sponsorUrl: SPONSOR_URL, signer, balanceId });
+      await collectIncoming({ sponsorUrl: sponsorUrl(), signer, balanceId });
       await reload();
     } catch {
       // Terminal vs. transient, by re-reading whether the balance still exists —

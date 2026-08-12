@@ -24,7 +24,7 @@ import {
   type Transaction,
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
-import { resolveNetwork, type NetworkConfig } from "./network";
+import { resolveNetwork, activeNetwork, type NetworkConfig } from "./network";
 import { deriveLinkKey, makeLinkSeed, passwordFragment } from "./claim-password";
 import { assertSponsoredOnboarding } from "./tx-guard";
 
@@ -131,7 +131,13 @@ export async function createV2Link(opts: {
 
   // `p=1` lets the claim screen ask for the password BEFORE it reads the fragment, so a
   // recipient sees "this one needs the password" rather than a button that quietly fails.
-  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}`;
+  // `n=public` is what tells the RECIPIENT's device this is real money. resolveNetwork() treats a
+  // missing `n` as testnet, so a mainnet link without it sent the claimer looking for the drop in
+  // the testnet escrow, where it does not exist — the claim failed for a reason neither side could
+  // see. The recipient arrives with no prior state (that is the whole point of the product), so the
+  // network cannot come from their device; it has to travel in the link.
+  const netParam = activeNetwork().isMainnet ? "&n=public" : "";
+  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}${netParam}`;
   const fragment = seed ? passwordFragment(seed) : link.secret();
   const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
   return { link: url, linkHex, hash };
