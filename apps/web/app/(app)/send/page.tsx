@@ -25,7 +25,7 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { loadBalance } from "../../../lib/horizon";
 import { payToAddress } from "../../../lib/send";
-import { createV2Link } from "../../../lib/lumendrop";
+import { createV2Link, DepositUncertainError, v2DepositLanded } from "../../../lib/lumendrop";
 import { claimPasswordProblem } from "../../../lib/claim-password";
 import { isValidAddress } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
@@ -33,6 +33,7 @@ import { formatUsd } from "../../../lib/money";
 import { activeNetwork } from "../../../lib/network";
 import { copy } from "../../../lib/copy";
 import { rememberLink } from "../../../lib/sent-links";
+import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { AmountDisplay } from "../../../components/brand/AmountDisplay";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { LinkReadyCard } from "../../../components/brand/LinkReadyCard";
@@ -116,6 +117,10 @@ export default function SendPage() {
   const [busy, setBusy] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [error, setError] = useState("");
+  /* A deposit we submitted but could not confirm. Distinct from `error` on purpose: an error screen
+     invites a retry, and retrying this is the failure mode. */
+  const [uncertain, setUncertain] = useState<{ linkHex: string; link: string; amount: string } | null>(null);
+  const [rechecking, setRechecking] = useState(false);
   const [ready, setReady] = useState<Ready | null>(null);
 
   useEffect(() => {
@@ -269,6 +274,22 @@ export default function SendPage() {
       // again" invited exactly the retry that can never work. A wall the user could act on read
       // as a glitch.
       console.error("[send]", e);
+
+      /* The one error we must never guess at. Everywhere else "your money hasn't moved, try again"
+       * is true and kind; here it can be a lie that costs real money, because the deposit may be
+       * sitting in the ledger's queue and a retry mints a SECOND drop under a fresh link key.
+       *
+       * So an unresolved deposit gets its own state: the truth, the link id to check with, and NO
+       * retry button. The user can re-check, and the money surfaces on its own once the ledger
+       * catches up. */
+      if (e instanceof DepositUncertainError) {
+        // Persist the link now, not on success: if this deposit lands later, the only copy of the
+        // claim URL is the one we are holding here, and a reload would otherwise lose it.
+        void rememberLink(e.linkHex.slice(-8), e.link);
+        setUncertain({ linkHex: e.linkHex, link: e.link, amount: amt.toFixed(2) });
+        return; // deliberately skips setError — this is not an error screen
+      }
+
       const msg = (e as Error).message ?? "";
       const pilotReason = /403/.test(msg) ? msg.slice(msg.indexOf("{")) : "";
       const reason = pilotReason.match(/"error"\s*:\s*"([^"]+)"/)?.[1];
@@ -276,6 +297,56 @@ export default function SendPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /* Submitted, unconfirmed. The screen's whole job is to stop a second send: it states what is
+     actually known, offers a re-check against the escrow, and gives no path that spends money
+     again. If the drop turns up, this becomes the ordinary link screen. */
+  if (uncertain) {
+    async function recheck() {
+      setRechecking(true);
+      try {
+        const landed = await v2DepositLanded(uncertain!.linkHex, account!.address);
+        if (landed === true) {
+          setReady({ kind: "link", link: uncertain!.link, balanceId: uncertain!.linkHex, locked: false });
+          setUncertain(null);
+        } else if (landed === false) {
+          // Definitively nothing there — sending again is safe, so let them.
+          setUncertain(null);
+          setError("That one didn't go through. Nothing left your account — you can try again.");
+        }
+        // "unknown" ⇒ stay exactly here. Saying anything else would be inventing an answer.
+      } finally {
+        setRechecking(false);
+      }
+    }
+
+    return (
+      <div className="flex flex-col gap-4 py-4">
+        <h1 className="text-xl font-bold text-ink">We couldn&apos;t confirm this one</h1>
+        <MoneyCard className="p-5">
+          <p className="text-sm text-ink">
+            Your {formatUsd(uncertain.amount)} was handed to the network, but we didn&apos;t get
+            confirmation back in time. It may well have gone through.
+          </p>
+          <p className="mt-2 text-sm font-semibold text-ink">
+            Don&apos;t send it again yet — you could send twice.
+          </p>
+          <p className="mt-2 text-sm text-ink-soft">
+            Check again in a moment. If it went through, your link appears here. If it didn&apos;t,
+            we&apos;ll say so and nothing will have left your account.
+          </p>
+          <div className="mt-4">
+            <PrimaryButton loading={rechecking} loadingLabel="Checking…" onClick={recheck}>
+              Check again
+            </PrimaryButton>
+          </div>
+        </MoneyCard>
+        <Link href="/activity" className="text-sm text-ink-soft underline-offset-2 hover:underline">
+          See my activity
+        </Link>
+      </div>
+    );
   }
 
   if (ready?.kind === "direct") {

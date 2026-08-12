@@ -129,15 +129,54 @@ export async function createV2Link(opts: {
   await opts.signer.sign(prepared); // sender authorizes (source-account auth covers the SAC transfer)
 
   // Gasless: the sponsor fee-bumps + submits the sender-signed inner (the sender pays no XLM).
+  /* Assembled BEFORE the deposit is submitted. The link is a pure function of the key we just
+     generated, so having it early costs nothing — and it means an unconfirmed deposit can still be
+     handed to the user if the ledger later shows it landed. */
+  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}${net.isMainnet ? "&n=public" : ""}`;
+  const fragment = seed ? passwordFragment(seed) : link.secret();
+  const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
+
   const base = opts.sponsorUrl.replace(/\/$/, "");
-  const res = await fetch(`${base}/v2-deposit`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ xdr: prepared.toXDR(), senderPublicKey: sender }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${base}/v2-deposit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ xdr: prepared.toXDR(), senderPublicKey: sender }),
+    });
+  } catch {
+    /* The connection dropped. A rejected fetch cannot tell us whether the request arrived — a phone
+     * losing signal mid-flight looks identical to one that never sent — and the sponsor may have
+     * submitted the deposit before we lost the reply. So we ask the escrow rather than assume the
+     * convenient answer. */
+    const landed = await v2DepositLanded(linkHex, sender);
+    if (landed === true) return { link: url, linkHex, hash: "" };
+    if (landed === "unknown") throw new DepositUncertainError(linkHex, url);
+    throw new Error("couldn't reach the sponsor");
+  }
+  /* Three outcomes, and conflating them is what lost money.
+   *
+   * 200 — the sponsor watched it land. Done.
+   *
+   * 202 — accepted by the ledger, not yet observed. NOT a failure. Ask the escrow directly; it is
+   *       the only authority on whether this drop exists. If it does, the send succeeded and the
+   *       user gets their link. If the escrow says no, nothing moved and a retry is safe. If we
+   *       cannot read it either, we say so — and the caller must not offer a plain "try again",
+   *       because a retry mints a SECOND drop under a fresh link key.
+   *
+   * A rejected request (4xx/5xx) never reached the ledger, so those still throw normally: the
+   * pilot gate, the caps and the anti-drain validator all answer before anything is submitted.
+   */
   const text = await res.text();
-  if (!res.ok) throw new Error(`/v2-deposit → ${res.status}: ${text}`);
-  const { hash } = JSON.parse(text) as { hash: string };
+  if (res.status === 202) {
+    const landed = await v2DepositLanded(linkHex, sender);
+    if (landed === false) throw new Error(`/v2-deposit → not submitted: ${text}`);
+    if (landed === "unknown") throw new DepositUncertainError(linkHex, url);
+    // landed === true → it did happen; fall through and hand back the link.
+  } else if (!res.ok) {
+    throw new Error(`/v2-deposit → ${res.status}: ${text}`);
+  }
+  const { hash } = (text ? JSON.parse(text) : { hash: "" }) as { hash: string };
 
   // `p=1` lets the claim screen ask for the password BEFORE it reads the fragment, so a
   // recipient sees "this one needs the password" rather than a button that quietly fails.
@@ -146,10 +185,6 @@ export async function createV2Link(opts: {
   // the testnet escrow, where it does not exist — the claim failed for a reason neither side could
   // see. The recipient arrives with no prior state (that is the whole point of the product), so the
   // network cannot come from their device; it has to travel in the link.
-  const netParam = net.isMainnet ? "&n=public" : "";
-  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}${netParam}`;
-  const fragment = seed ? passwordFragment(seed) : link.secret();
-  const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
   return { link: url, linkHex, hash };
 }
 
@@ -308,6 +343,58 @@ async function readDrop(
     }
   }
   return null;
+}
+
+/**
+ * Did a deposit for this link actually reach the escrow?
+ *
+ * The one question that decides whether it is safe to send again, so it answers in three values and
+ * never guesses. `readDrop` cannot be reused here: it swallows per-contract errors and returns null,
+ * which conflates "no such drop" with "could not ask" — and treating the second as the first is
+ * precisely how a user gets told to retry a deposit that already landed.
+ *
+ * A link key is freshly random per attempt, so for THIS link "no drop" is unambiguous: the money
+ * did not move. Anything that stops us reading is "unknown", which is a real answer, not a failure.
+ */
+export async function v2DepositLanded(
+  linkHex: string,
+  sourceAccount: string,
+): Promise<boolean | "unknown"> {
+  const net = defaultNet();
+  const server = new rpc.Server(net.rpcUrl);
+  try {
+    const src = await server.getAccount(sourceAccount);
+    const view = new TransactionBuilder(src, { fee: "1000000", networkPassphrase: net.passphrase })
+      .addOperation(
+        new Contract(net.contract).call("get_drop", xdr.ScVal.scvBytes(Buffer.from(linkHex, "hex"))),
+      )
+      .setTimeout(60)
+      .build();
+    const sim = await server.simulateTransaction(view);
+    if (rpc.Api.isSimulationError(sim)) return "unknown";
+    const val = (sim as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!val) return "unknown";
+    // A successful simulation that returns None is a definitive "this link holds nothing".
+    return scValToNative(val) != null;
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * Thrown when a deposit could not be confirmed. `landed` carries what we actually established, so
+ * the UI can tell the truth instead of asserting the comfortable thing.
+ */
+export class DepositUncertainError extends Error {
+  constructor(
+    readonly linkHex: string,
+    /** The claim URL this attempt would produce. Carried because the deposit may yet land, and a
+     *  recipient cannot be paid with a drop whose link we threw away. */
+    readonly link: string,
+  ) {
+    super("deposit submitted but not confirmed");
+    this.name = "DepositUncertainError";
+  }
 }
 
 /**

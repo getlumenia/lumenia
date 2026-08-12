@@ -267,7 +267,16 @@ export default {
           relayDepositHandler(config, signer, { xdr: body.xdr!, senderPublicKey: body.senderPublicKey! }),
         );
         if (out && typeof out === "object" && "error" in out) return json(403, out);
-        return json(200, out);
+        /* 202, not 200, when the transaction is on the network but we could not observe it land.
+         * 200 asserts the deposit happened, and the client turned anything else into "your money
+         * hasn't moved. Try again." — the one sentence that must never be guessed, because a retry
+         * mints a second drop under a fresh link key. 202 says exactly what is true: accepted,
+         * outcome unknown, here is the hash. The client settles it against the escrow.
+         *
+         * The pilot slot is NOT released here: an unconfirmed deposit may still land, and handing
+         * the budget back would let the same wallet spend it twice. */
+        const unconfirmed = out && typeof out === "object" && "confirmed" in out && out.confirmed === false;
+        return json(unconfirmed ? 202 : 200, out);
       }
 
       if (method === "POST" && url === "/v2-reclaim") {

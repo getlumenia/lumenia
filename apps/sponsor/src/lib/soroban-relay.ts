@@ -66,6 +66,15 @@ function exitContract(config: SponsorConfig, requested?: string): string {
 
 export interface RelayClaimResult {
   hash: string;
+  /**
+   * Did we OBSERVE this transaction land? Present on /v2-deposit only.
+   *
+   * `false` means the ledger accepted it for inclusion but the RPC had not shown us the result
+   * before our poll window closed — an ordinary outcome under congestion, and NOT a failure. The
+   * distinction has to survive all the way to the caller, because "the deposit did not happen" is
+   * the one claim that must never be guessed: acting on it means depositing again.
+   */
+  confirmed?: boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -215,16 +224,43 @@ export async function relayDepositHandler(
 
     const server = new rpc.Server(config.sorobanRpcUrl);
     const sent = await server.sendTransaction(feeBump);
-    if (sent.status === "ERROR") throw new Error(`v2-deposit send failed: ${JSON.stringify(sent.errorResult)}`);
+    // A send ERROR is the ledger refusing the transaction outright: nothing was accepted, nothing
+    // will land. This is the ONLY branch that can honestly say the money did not move.
+    if (sent.status === "ERROR") {
+      await cap.release?.();
+      throw new Error(`v2-deposit send failed: ${JSON.stringify(sent.errorResult)}`);
+    }
+
+    // From here the transaction IS on the network. Everything below is us trying to observe it.
     let got = await server.getTransaction(sent.hash);
     for (let i = 0; i < 40 && got.status === "NOT_FOUND"; i++) {
       await sleep(1500);
       got = await server.getTransaction(sent.hash);
     }
-    if (got.status !== "SUCCESS") throw new Error(`v2-deposit tx ${got.status}`);
-    return { hash: sent.hash };
+
+    if (got.status === "SUCCESS") return { hash: sent.hash, confirmed: true as const };
+
+    // FAILED is a definitive on-ledger rejection — the deposit did not take effect, so the day's
+    // budget goes back.
+    if (got.status === rpc.Api.GetTransactionStatus.FAILED) {
+      await cap.release?.();
+      throw new Error(`v2-deposit tx ${got.status}`);
+    }
+
+    /* Still NOT_FOUND after the poll window. This used to throw, and the catch below released the
+     * cap with the comment "the deposit never landed" — but we do not know that. The transaction
+     * was accepted for inclusion; the RPC simply has not shown it to us yet, which is ordinary
+     * under congestion. Reporting that as a failure is what made the client tell the user "your
+     * money hasn't moved. Try again." for a deposit that then landed a moment later, and a retry
+     * mints a SECOND drop under a fresh link key — real money gone twice.
+     *
+     * So: say we could not confirm, hand back the hash, and keep the budget reserved. The caller
+     * settles it against the escrow, which is the only authority on whether the drop exists. */
+    return { hash: sent.hash, confirmed: false as const };
   } catch (e) {
-    await cap.release?.(); // the deposit never landed — give the day's budget back
+    // Reached only for pre-submit faults (signing, fee-bump construction, an unreachable RPC before
+    // sendTransaction) — those genuinely never touched the ledger.
+    await cap.release?.();
     throw e;
   }
 }
