@@ -34,6 +34,7 @@ import { usePolling, agoLabel } from "../../../lib/poll";
 import { formatUsd } from "../../../lib/money";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
+import { ActivateMainnet } from "../../../components/brand/ActivateMainnet";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 
 /**
@@ -139,6 +140,13 @@ export default function AddMoneyPage() {
         <h1 className="text-xl font-bold text-ink">{copy.receive.title}</h1>
         <p className="mt-1 text-sm text-ink-soft">{copy.receive.lead}</p>
       </header>
+
+      {/* Switching to real money only flips a device flag — it does not open the on-chain account or
+          its dollar trustline. Until both exist, dollars withdrawn from an exchange to the address
+          below BOUNCE. This card was mounted only on /account, while the setup path sends people
+          straight here, so the documented route ended at an address that could not be paid. It
+          renders itself away the moment the account can hold dollars. */}
+      <ActivateMainnet />
 
       {/* The correction, first, because it is the thing people get wrong. */}
       <MoneyCard className="p-5">
