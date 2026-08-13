@@ -14,7 +14,7 @@
 import { useEffect, useState } from "react";
 import { PrimaryButton } from "./PrimaryButton";
 import { useWallet } from "../../lib/wallet";
-import { requestRecoveryOtp, storeRecoveryBox, fetchRecoveryBox } from "../../lib/recovery-api";
+import { requestRecoveryOtp, storeRecoveryBox, fetchRecoveryBox, markBackedUp } from "../../lib/recovery-api";
 import { findCopy, type RecoveryBox } from "../../lib/recovery";
 import { isPlatformAuthenticatorAvailable } from "../../lib/passkey-prf";
 import { passwordStrength } from "../../lib/password-strength";
@@ -96,6 +96,7 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
           }
         }
         await storeRecoveryBox(email.trim(), code.trim(), box, alias);
+        if (account) markBackedUp(account.address); // only now is "backed up" true
       } else {
         let box = fetched;
         if (!box) {

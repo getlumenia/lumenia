@@ -37,6 +37,7 @@ import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { NetworkSwitcher } from "../../../components/brand/NetworkSwitcher";
 import { PilotStatusChip } from "../../../components/brand/PilotStatusChip";
 import { DisconnectButton } from "../../../components/brand/DisconnectButton";
+import { hasBackup } from "../../../lib/recovery-api";
 import { ActivateMainnet } from "../../../components/brand/ActivateMainnet";
 import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
@@ -96,6 +97,8 @@ function MainnetSwitchOnApproval({ approved }: { approved: boolean }) {
 export default function AccountPage() {
   const { status, account, accounts, mainnetApproved } = useWallet();
   const [copied, setCopied] = useState(false);
+  /* A read we could not finish. Distinct from "still loading": one resolves itself, the other never does. */
+  const [loadFailed, setLoadFailed] = useState(false);
   const [showQr, setShowQr] = useState(false);
   // null = still loading; a value = the real Horizon result (empty is an honest empty).
   const [total, setTotal] = useState<string | null>(null);
@@ -119,9 +122,13 @@ export default function AccountPage() {
         if (alive) setActivity(acts);
       })
       .catch(() => {
+        /* An outage is not a zero balance. Painting "$0.00" and "No money in or out yet" at someone
+           whose money is untouched is the most alarming thing this app can do, and it is a lie the
+           ledger never told. Leave both null so the UI can say it doesn't know. */
         if (!alive) return;
-        setTotal("0");
-        setActivity([]);
+        setTotal(null);
+        setActivity(null);
+        setLoadFailed(true);
       });
     return () => {
       alive = false;
@@ -191,9 +198,13 @@ export default function AccountPage() {
       <MoneyCard className="p-5">
         <p className="text-sm font-medium text-ink-soft">Your money</p>
         <p className="mt-1 text-4xl font-bold tabular-nums text-ink">
-          {total === null ? "…" : formatUsd(total)}
+          {total === null ? (loadFailed ? "—" : "…") : formatUsd(total)}
         </p>
-        <p className="mt-1 text-sm text-ink-soft">Held in dollars, yours to send whenever you like.</p>
+        <p className="mt-1 text-sm text-ink-soft">
+          {loadFailed
+            ? "We couldn't reach the public record just now. Your money is safe there — this is only our view of it."
+            : "Held in dollars, yours to send whenever you like."}
+        </p>
         {/* Quick copy of the account address, right where the balance is — this is what you paste
             into an outside wallet or exchange to receive here. Copies the FULL address; the QR +
             explorer live in the Receive card below. */}
@@ -370,7 +381,10 @@ export default function AccountPage() {
             <strong className="text-ink">Only do this if you have backed it up.</strong> Without a
             backup, the keys here are the only way in, and removing them ends your access for good.
           </p>
-          <DisconnectButton backedUp={account.phase === 2} />
+          {/* `phase === 2` is a password, not a backup. Passing it here showed the gentle one-tap
+              confirmation to people whose keys existed ONLY on this device — the exact case the
+              type-REMOVE wall was built for. */}
+          <DisconnectButton backedUp={hasBackup(account.address)} />
         </details>
       </MoneyCard>
 
@@ -379,7 +393,9 @@ export default function AccountPage() {
       <MoneyCard className="p-5">
         <p className="font-semibold text-ink">Recent activity</p>
         {activity === null ? (
-          <p className="mt-2 text-sm text-ink-soft">Loading…</p>
+          <p className="mt-2 text-sm text-ink-soft">
+            {loadFailed ? "We couldn't load this just now. Try again in a moment." : "Loading…"}
+          </p>
         ) : activity.length === 0 ? (
           <p className="mt-2 text-sm text-ink-soft">No money in or out yet. When it moves, you&apos;ll see it here.</p>
         ) : (
@@ -388,7 +404,7 @@ export default function AccountPage() {
               <li key={a.id} className="flex items-center gap-3 py-2.5">
                 <span
                   className={`flex size-8 shrink-0 items-center justify-center rounded-full ${
-                    a.direction === "in" ? "bg-accent-soft text-money" : "border border-line text-ink-soft"
+                    a.direction === "in" ? "bg-money/10 text-money" : "border border-line text-ink-soft"
                   }`}
                 >
                   {a.direction === "in" ? <ArrowDownLeft className="size-4" /> : <ArrowUpRight className="size-4" />}

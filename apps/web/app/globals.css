@@ -126,6 +126,11 @@
   --color-money-pressed: var(--money-pressed);
   --color-joy: var(--joy);
   --color-line: var(--line);
+  /* --danger was defined in every scope but never exported here, so Tailwind generated no
+     .text-danger / .border-danger / .bg-danger at all. Every error message in the app — "That's
+     more than you have", the wrong-network warning on the cash-out screen, "this account has no
+     backup" — inherited body ink and read as ordinary copy. Failures looked like sentences. */
+  --color-danger: var(--danger);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

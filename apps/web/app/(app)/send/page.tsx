@@ -23,7 +23,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
-import { loadBalance } from "../../../lib/horizon";
+import { loadTotalUsd } from "../../../lib/horizon";
 import { payToAddress } from "../../../lib/send";
 import { createV2Link, DepositUncertainError, v2DepositLanded } from "../../../lib/lumendrop";
 import { claimPasswordProblem } from "../../../lib/claim-password";
@@ -105,7 +105,7 @@ function shortName(name: string): string {
 }
 
 export default function SendPage() {
-  const { status, account, getSigner } = useWallet();
+  const { status, account, accounts, getSigner } = useWallet();
   const router = useRouter();
   const [balance, setBalance] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
@@ -124,9 +124,22 @@ export default function SendPage() {
   const [rechecking, setRechecking] = useState(false);
   const [ready, setReady] = useState<Ready | null>(null);
 
+  /* Sum EVERY stored account, the way /home and /account do. Reading only the home account meant a
+     claim that had just landed in a fresh sponsored account — which is how every v2 claim arrives —
+     was invisible here: /home said "$20.00" and this screen said "You don't have any money to send
+     yet" and offered practice money. Also survives a failed read instead of reporting zero. */
   useEffect(() => {
-    if (account) void loadBalance(account.address).then((b) => setBalance(b?.usd ?? "0"));
-  }, [account]);
+    if (!accounts.length) return;
+    let alive = true;
+    void loadTotalUsd(accounts.map((a) => a.address))
+      .then((t) => alive && setBalance(t.usd))
+      .catch(() => {
+        /* leave it null: unknown is not zero, and the guards below already no-op on null */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [accounts]);
 
   // Prefill from a request hand-off (/r → /send). Read once on mount.
   useEffect(() => {
@@ -165,8 +178,8 @@ export default function SendPage() {
         body: JSON.stringify({ recipientPublicKey: account!.address }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "faucet unavailable");
-      const b = await loadBalance(account!.address);
-      setBalance(b?.usd ?? "0");
+      const t = await loadTotalUsd(accounts.map((a) => a.address));
+      setBalance(t.usd);
     } catch (e) {
       setError((e as Error).message);
     } finally {

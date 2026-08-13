@@ -18,7 +18,7 @@ import Link from "next/link";
 import { claimV2ToSponsoredAccount } from "../../../../lib/lumendrop";
 import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { savePhase1 } from "../../../../lib/keystore";
-import { resolveNetwork, type NetworkConfig } from "../../../../lib/network";
+import { resolveNetwork, setActiveNetwork, type NetworkConfig } from "../../../../lib/network";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const explorer = (hash: string, net: NetworkConfig) =>
@@ -79,13 +79,29 @@ export default function V2ClaimButton({
         linkSecret: secret,
         sponsorUrl: net.isMainnet ? net.sponsorUrl : SPONSOR_URL,
         net,
+        /* Save the key the MOMENT the account exists, before the money is sent to it. If the claim
+           then fails or the connection drops, the worst case is an empty account on this phone —
+           not money sitting somewhere whose only key we threw away. */
+        onAccountReady: async (publicKey, seed) => {
+          try {
+            await savePhase1(publicKey, seed);
+          } catch {
+            /* storage blocked (private mode, a locked-down webview). Not fatal, and NOT a reason to
+               tell someone their claim failed — the money still moves and the receipt still shows
+               the address. */
+          } finally {
+            seed.fill(0);
+          }
+        },
       });
-      // Persist the claimed account locally so /home shows it. Best-effort.
-      try {
-        await savePhase1(r.publicKey, r.seed);
-      } finally {
-        r.seed.fill(0);
-      }
+      r.seed.fill(0); // the callback already stored it; don't keep a second copy around
+
+      /* The money is on MAINNET but this device's flag still says practice, so /home would read the
+         testnet ledger and greet a recipient who just received real dollars with "$0.00". The link
+         is the only thing that knows which network this was, so the moment it lands is the only
+         moment we can set it. */
+      setActiveNetwork(net.id);
+
       setHash(r.hash);
       setState("done");
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);

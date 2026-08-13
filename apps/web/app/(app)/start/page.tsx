@@ -107,8 +107,8 @@ export default function StartPage() {
       id: "lock",
       title: "Lock it with a password",
       body:
-        "Real money never sits on an unlocked phone here. Your password also becomes your backup, so a new phone can bring your money back with your email.",
-      doneNote: "Locked, and backed up.",
+        "Real money never sits on an unlocked phone here. Pick a password and only you can spend this money.",
+      doneNote: "Locked to you.",
       href: "/home",
       cta: "Lock my money",
       state: stateFor(1),

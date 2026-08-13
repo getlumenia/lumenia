@@ -44,6 +44,40 @@ export async function requestRecoveryOtp(email: string): Promise<void> {
  * behind this same verified code on purpose: the backup flow already holds one, so adding the
  * alias widens no surface.
  */
+/**
+ * A local marker that a recovery box was actually STORED for this account.
+ *
+ * Four surfaces were using `phase === 2` to mean "backed up": /start's "Locked, and backed up.",
+ * /pilot skipping its own backup step, /account's Disconnect showing the soft one-tap confirmation
+ * instead of the type-REMOVE wall, and the /start step body promising "a new phone can bring your
+ * money back with your email". But `phase === 2` only means "locked with a password on this
+ * device" — LockMoneyCard sets it without ever creating a box. So a user could be told four times
+ * that they were backed up, clear their browser, and find the only copy of their key was gone.
+ *
+ * Local-only and deliberately conservative: it can be wrong in the safe direction (a device that
+ * restored a backup made elsewhere reads "not backed up" and is merely asked again), never in the
+ * dangerous one.
+ */
+const BACKED_UP_KEY = "lumenia.backedup";
+
+export function markBackedUp(pubkey: string): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(BACKED_UP_KEY) ?? "[]") as string[];
+    if (!all.includes(pubkey)) localStorage.setItem(BACKED_UP_KEY, JSON.stringify([...all, pubkey]));
+  } catch {
+    /* storage blocked — hasBackup() stays false, which is the safe answer */
+  }
+}
+
+export function hasBackup(pubkey: string | undefined): boolean {
+  if (!pubkey) return false;
+  try {
+    return (JSON.parse(localStorage.getItem(BACKED_UP_KEY) ?? "[]") as string[]).includes(pubkey);
+  } catch {
+    return false;
+  }
+}
+
 export async function storeRecoveryBox(
   email: string,
   code: string,

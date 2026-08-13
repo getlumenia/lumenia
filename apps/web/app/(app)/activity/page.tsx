@@ -8,21 +8,40 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "../../../lib/wallet";
-import { loadActivity, type ActivityItem } from "../../../lib/horizon";
+import { loadActivityForAccounts, loadTotalUsd, type ActivityItem } from "../../../lib/horizon";
 import { ActivityRow } from "../../../components/brand/ActivityRow";
 
 export default function ActivityPage() {
-  const { status, account } = useWallet();
+  const { status, account, accounts } = useWallet();
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!account) return;
     setLoading(true);
     let live = true;
-    void loadActivity(account.address, 100)
+    /* Read every stored account, not just home. A v2 claim lands in a fresh sponsored account, so
+       the page billed as the full history was the only one that couldn't see it — /home and
+       /account both sum across accounts. */
+    void loadTotalUsd(accounts.map((a) => a.address))
+      .then((total) =>
+        loadActivityForAccounts(
+          total.perAccount.map((p) => ({
+            address: p.address,
+            issuer: p.issuer,
+            isHome: p.address === account.address,
+          })),
+          100,
+        ),
+      )
       .then((a) => {
         if (live) setItems(a);
+      })
+      .catch(() => {
+        /* A failed read is not an empty history. Rendering "Nothing yet" here tells someone their
+           money never moved, which is the one thing this page must never get wrong. */
+        if (live) setFailed(true);
       })
       .finally(() => {
         if (live) setLoading(false);
@@ -30,7 +49,7 @@ export default function ActivityPage() {
     return () => {
       live = false;
     };
-  }, [account]);
+  }, [account, accounts]);
 
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
 
@@ -60,7 +79,9 @@ export default function ActivityPage() {
         <p className="py-6 text-center text-sm text-ink-soft">Loading…</p>
       ) : items.length === 0 ? (
         <p className="py-10 text-center text-sm text-ink-soft">
-          Nothing yet. When money comes in or goes out, you&apos;ll see it here.
+          {failed
+            ? "We couldn't reach the public record just now. Your money is safe there. Try again in a moment."
+            : "Nothing yet. When money comes in or goes out, you'll see it here."}
         </p>
       ) : (
         <div className="rounded-[20px] border border-line bg-surface px-4">

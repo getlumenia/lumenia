@@ -6,8 +6,37 @@
  *
  * This is a NEW route (the frozen v1 /c/[id] is untouched). It reuses the brand tokens.
  */
+import type { Metadata, Viewport } from "next";
 import { formatUsd } from "../../../../lib/money";
 import V2ClaimButton from "./V2ClaimButton";
+
+
+/**
+ * Without these the link arrives in WhatsApp as a bare https://getlumenia.com/v2/c/3f9a8c… with a
+ * generic grey card — the visual signature of a phishing message, on the one link we are asking 20
+ * people to trust. The v1 route has had this since launch; the v2 rewrite dropped it. Nothing
+ * private is exposed: the amount and name are already query params, not fragment.
+ */
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}): Promise<Metadata> {
+  const sp = await searchParams;
+  const a = typeof sp.a === "string" ? Number.parseFloat(sp.a) : Number.NaN;
+  const ok = Number.isFinite(a) && a > 0 && a <= 10_000;
+  const who = (typeof sp.s === "string" ? sp.s : "").trim().slice(0, 24) || "Someone";
+  const title = ok ? `${who} sent you ${formatUsd(sp.a as string)}` : `${who} sent you money`;
+  const images = [`/c/x/og?${new URLSearchParams({ a: ok ? (sp.a as string) : "", s: who })}`];
+  return { title, openGraph: { title, images }, twitter: { card: "summary_large_image", title, images } };
+}
+
+/**
+ * The root layout pins maximumScale: 1, which renders as user-scalable=no — a WCAG failure. The
+ * (app) and (site) groups each override it; this route is in neither, so it kept the failure on a
+ * screen showing someone their money in 12px grey.
+ */
+export const viewport: Viewport = { maximumScale: 5, themeColor: "#F5F3EF", viewportFit: "cover" };
 
 export default async function V2ClaimPage({
   params,
@@ -18,8 +47,18 @@ export default async function V2ClaimPage({
 }) {
   const { linkHex } = await params;
   const sp = await searchParams;
-  const amount = typeof sp.a === "string" ? sp.a : "";
-  const sender = (typeof sp.s === "string" ? sp.s : "").trim() || "Someone";
+  /* Everything below comes from the query string, which anyone can write. It is rendered at 60px
+     on a page carrying our domain and a working Claim button, so it gets checked first: an
+     unchecked `a` renders "$NaN" or "-$2.00", and an unchecked `s` can be 300 characters or
+     reverse the line with a bidi override. */
+  const rawAmount = typeof sp.a === "string" ? Number.parseFloat(sp.a) : Number.NaN;
+  const amount =
+    Number.isFinite(rawAmount) && rawAmount > 0 && rawAmount <= 10_000 ? sp.a as string : "";
+  const sender =
+    (typeof sp.s === "string" ? sp.s : "")
+      .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
+      .trim()
+      .slice(0, 24) || "Someone";
   // `p=1` marks a password-locked link, so the page can say so up front instead of
   // letting someone tap a button that then asks for something they weren't expecting.
   const locked = sp.p === "1";
@@ -29,7 +68,10 @@ export default async function V2ClaimPage({
   const real = sp.n === "public";
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-8 px-6 py-12 text-center">
+    /* `claim-pw` is what makes this Periwinkle. Without it the page fell through to the retired
+       green :root tokens, so the live claim screen — the only screen a recipient ever sees — was a
+       different product from the one they land on right after. */
+    <main className="claim-pw mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-8 bg-paper px-6 py-12 text-center text-ink">
       <div className="flex flex-col items-center gap-2">
         <p className="text-ink-soft">{sender} sent you money</p>
         {amount ? (

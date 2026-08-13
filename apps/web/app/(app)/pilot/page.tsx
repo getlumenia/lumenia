@@ -26,6 +26,7 @@ import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { PilotStatusBadge } from "../../../components/brand/PilotStatusBadge";
 import { mainnetConfig } from "../../../lib/network";
+import { hasBackup } from "../../../lib/recovery-api";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
@@ -52,7 +53,10 @@ export default function PilotPage() {
     return null;
   }
 
-  const lockedToYou = account.phase === 2;
+  /* The pilot's stated precondition is that real money never sits under a device-only key AND that
+     it can be brought back. Reading `phase === 2` alone let someone who locked via /home skip the
+     backup step entirely, and then told them they had one. */
+  const lockedToYou = account.phase === 2 && hasBackup(account.address);
 
   async function submit(e: FormEvent) {
     e.preventDefault();

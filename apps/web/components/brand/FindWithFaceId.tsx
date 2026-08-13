@@ -34,6 +34,8 @@ export function FindWithFaceId() {
   const { findAccountWithFaceId, lockWithPassword } = useWallet();
   const [capable, setCapable] = useState(false);
   const [step, setStep] = useState<Step>("idle");
+  /** Did they actually lock it, or skip? The done screen asserts a safety property, so it must know. */
+  const [locked, setLocked] = useState(false);
   const [found, setFound] = useState<{ address: string; alreadyHere: boolean; hasPasswordCopy: boolean } | null>(null);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,6 +68,7 @@ export function FindWithFaceId() {
     try {
       await lockWithPassword(password);
       setPassword("");
+      setLocked(true);
       setStep("done");
     } catch (e) {
       setError((e as Error).message);
@@ -75,12 +78,28 @@ export function FindWithFaceId() {
   }
 
   if (step === "done") {
+    /* "Not now" used to land here too, so someone who explicitly DECLINED the lock was told their
+       money was locked and only their password could spend it. That is the worst sentence this app
+       can produce: a safety property asserted about a phone that does not have it. The two
+       outcomes now read differently, and the skipped one says plainly what is still true. */
     return (
       <MoneyCard className="p-5">
-        <p className="font-semibold text-money">Locked to you on this phone.</p>
-        <p className="mt-1 text-sm text-ink-soft">
-          Your money is back and only your password can spend it here.
-        </p>
+        {locked ? (
+          <>
+            <p className="font-semibold text-money">Locked to you on this phone.</p>
+            <p className="mt-1 text-sm text-ink-soft">
+              Your money is back, and only your password can spend it here.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="font-semibold text-money">Your money is back on this phone.</p>
+            <p className="mt-1 text-sm text-ink-soft">
+              It isn&apos;t locked yet, so anyone holding this phone could spend it. You can lock it
+              any time from your Account.
+            </p>
+          </>
+        )}
       </MoneyCard>
     );
   }
@@ -114,7 +133,10 @@ export function FindWithFaceId() {
             Lock it to me
           </PrimaryButton>
           <button
-            onClick={() => setStep("done")}
+            onClick={() => {
+              setLocked(false);
+              setStep("done");
+            }}
             className="text-sm text-ink-soft underline-offset-2 hover:underline"
           >
             Not now

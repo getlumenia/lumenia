@@ -265,6 +265,8 @@ export async function claimV2ToSponsoredAccount(opts: {
   /** which network this link lives on; omit for testnet (the product default) */
   net?: NetworkConfig;
   group?: boolean;
+  /** Called once the payout account exists on-ledger, BEFORE the claim is relayed. */
+  onAccountReady?: (publicKey: string, seed: Uint8Array) => Promise<void> | void;
 }): Promise<{ hash: string; publicKey: string; seed: Uint8Array }> {
   const net = opts.net ?? defaultNet();
   const base = (opts.sponsorUrl || net.sponsorUrl).replace(/\/$/, "");
@@ -284,6 +286,15 @@ export async function claimV2ToSponsoredAccount(opts: {
   assertSponsoredOnboarding(sandwich, payout.publicKey(), net.id);
   sandwich.sign(payout);
   await horizon.submitTransaction(sandwich);
+
+  /* The account exists on-ledger now, so the caller gets the key BEFORE the money is sent to it.
+   *
+   * The old order persisted only after a successful claim, which meant a dropped connection during
+   * the claim — a phone on a Turkish mobile network, the exact user this product is for — left the
+   * money sitting in an account whose only key had just gone out of scope. The claim relayer polls
+   * for up to a minute, so that window is real, not theoretical. Saving first costs nothing if the
+   * claim then fails: an empty sponsored account is harmless. */
+  await opts.onAccountReady?.(payout.publicKey(), new Uint8Array(payout.rawSecretKey()));
 
   // 2. claim the v2 drop into the new account via the relayer (walletless + gasless).
   const { hash } = await claimV2({
