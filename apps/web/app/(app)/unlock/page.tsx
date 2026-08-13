@@ -58,8 +58,23 @@ export default function UnlockPage() {
       const { seed } = await unlockPhase2(password);
       setSessionSeed(seed); // hold in memory for the session (send needs to sign)
       router.replace(safeNext());
-    } catch {
-      setError("That password didn't work. Try again.");
+    } catch (e) {
+      /* Four very different failures used to arrive here and all four were reported as "that
+       * password didn't work": no locked record on this device, a keystore read that failed, the
+       * Argon2 derivation failing (it wants 48 MiB of WASM, which a memory-tight webview can
+       * refuse), and the actual wrong password. Telling someone their correct password is wrong is
+       * the worst of those to get wrong — they retype it, it fails again, and they conclude their
+       * money is gone. Only a failed DECRYPT is evidence about the password; everything else is
+       * evidence about the device. */
+      console.error("[unlock]", e);
+      const err = e as { name?: string; message?: string };
+      if (err.message?.includes("no phase-2 key")) {
+        setError("This device doesn't have a password-locked account. Bring your money back with your email or Face ID.");
+      } else if (err.name === "OperationError") {
+        setError("That password didn't work. Try again.");
+      } else {
+        setError("We couldn't check your password on this phone just now. Try again, or use Face ID if you set it up.");
+      }
     } finally {
       setBusy(false);
     }
