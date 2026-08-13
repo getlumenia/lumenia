@@ -1,16 +1,22 @@
 "use client";
 
 /**
- * /account — everything about your money in one place, in fewer, calmer regions (UX pass):
- *   1. Your money — the big balance.
- *   2. Actions — Send · Ask to be paid.
- *   3. Network state — practice vs. real money, near the top (no longer buried mid-page).
- *   ── below, the less-frequent stuff ──
- *   4. Receive — your account address + Copy + QR (collapsed) + explorer link.
- *   5. Security & backup — ONE card: a state-driven lock header, one primary action (back up your
- *      money, which also locks it), and the no-password-reset truth tucked into a single
- *      <details>. This replaces the four consecutive security/backup cards that read as "fragile".
- *   6. More — recent activity as a compact preview + cash-out, appearance and help as compact rows.
+ * /account — WHO you are and HOW your money is kept safe. Deliberately not a second home screen.
+ *
+ * It used to carry eight regions and three of them belonged to other pages: the big balance (that
+ * is /home), Send and Ask tiles (the action bar renders those on every screen already), and a
+ * recent-activity preview (that is /activity, the page which claims to be the full history). The
+ * result was the longest screen in the app, with no way for a user to tell which copy of a number
+ * was the real one. They are gone. What is left answers one question each:
+ *
+ *   1. Your address — what you hand to someone so they can pay you. Copy, QR, public record.
+ *   2. Which money — practice or real, pilot standing, and the one-time activation step.
+ *   3. Safety — locked? backed up? plus the two honest truths (no password reset; how to leave
+ *      this device) behind disclosures rather than standing warnings.
+ *   4. More — cash-out, appearance, language, help.
+ *
+ * One line of orientation stays at the top ("You have $X · See your money") because people do
+ * arrive here looking for the number, and a dead end is worse than a signpost.
  *
  * Real data only (no-mock): balance + activity are live Horizon reads; the account address +
  * custody phase come from the local keystore via useWallet; the explorer links resolve to the real
@@ -29,15 +35,16 @@ import { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import QRCode from "react-qr-code";
-import { Copy, Check, Send, HandCoins, ArrowDownLeft, ArrowUpRight, QrCode, ChevronDown } from "lucide-react";
+import { Copy, Check, QrCode, ChevronDown } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
-import { loadTotalUsd, loadActivityForAccounts, type ActivityItem } from "../../../lib/horizon";
+import { loadTotalUsd } from "../../../lib/horizon";
 import { formatUsd } from "../../../lib/money";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { NetworkSwitcher } from "../../../components/brand/NetworkSwitcher";
 import { PilotStatusChip } from "../../../components/brand/PilotStatusChip";
 import { DisconnectButton } from "../../../components/brand/DisconnectButton";
 import { hasBackup } from "../../../lib/recovery-api";
+import { markPublished } from "../../../lib/keystore";
 import { ActivateMainnet } from "../../../components/brand/ActivateMainnet";
 import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
@@ -49,14 +56,6 @@ import { explorerAccount, setActiveNetwork } from "../../../lib/network";
 
 const explorer = explorerAccount;
 
-function fmtDate(iso: string): string {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  } catch {
-    return "";
-  }
-}
 
 /**
  * Deep-link handler for the approval email's "Switch to real money" button (→ /account?switch=
@@ -102,32 +101,22 @@ export default function AccountPage() {
   const [showQr, setShowQr] = useState(false);
   // null = still loading; a value = the real Horizon result (empty is an honest empty).
   const [total, setTotal] = useState<string | null>(null);
-  const [activity, setActivity] = useState<ActivityItem[] | null>(null);
 
   useEffect(() => {
     if (!account) return;
     let alive = true;
     const addrs = accounts.length ? accounts.map((a) => a.address) : [account.address];
-    // A brand-new account 404s on Horizon — loadTotalUsd/loadActivity return 0/[] honestly.
+    // One number, for the orientation line. The activity list moved to /activity, which is the page
+    // that claims to be the full history — it should not have had a rival preview here.
     loadTotalUsd(addrs)
-      .then(async (r) => {
-        if (!alive) return;
-        setTotal(r.usd);
-        // Same account set as the total, and paged so the account's own creation effects can no
-        // longer crowd the one credit that matters out of an 8-row window.
-        const acts = await loadActivityForAccounts(
-          r.perAccount.map((p) => ({ address: p.address, issuer: p.issuer, isHome: p.address === account!.address })),
-          8,
-        ).catch(() => [] as ActivityItem[]);
-        if (alive) setActivity(acts);
+      .then((r) => {
+        if (alive) setTotal(r.usd);
       })
       .catch(() => {
-        /* An outage is not a zero balance. Painting "$0.00" and "No money in or out yet" at someone
-           whose money is untouched is the most alarming thing this app can do, and it is a lie the
-           ledger never told. Leave both null so the UI can say it doesn't know. */
+        /* An outage is not a zero balance. Painting "$0.00" at someone whose money is untouched is
+           the most alarming thing this app can do, and it is a lie the ledger never told. */
         if (!alive) return;
         setTotal(null);
-        setActivity(null);
         setLoadFailed(true);
       });
     return () => {
@@ -163,7 +152,26 @@ export default function AccountPage() {
     );
   }
 
+  /**
+   * Copying or showing the address is the moment it becomes PUBLISHED — the user is handing it to
+   * somebody else. /add-money marks it; this page did not, on any of its three controls.
+   *
+   * That gap had teeth: /home sweeps every non-home account into home and the sweep ends in an
+   * accountMerge, which CLOSES the account. Restoring a backup repoints home. So an address copied
+   * here, given to an exchange, could be merged away underneath the user, and the withdrawal they
+   * were waiting for would bounce off an account that no longer exists. markPublished is what stops
+   * that, and it has to fire from every surface that reveals the address.
+   */
+  async function publish() {
+    try {
+      await markPublished(account!.address);
+    } catch {
+      /* keystore unavailable — the sweep's other guards still apply */
+    }
+  }
+
   async function copyAddress() {
+    void publish();
     try {
       await navigator.clipboard.writeText(account!.address);
       setCopied(true);
@@ -193,50 +201,21 @@ export default function AccountPage() {
         <p className="mt-1 text-sm text-ink-soft">Everything about your money, in one place.</p>
       </header>
 
-      {/* 1. Your money — the real total, live from the public record. One number; the split across
-          accounts is plumbing (loadTotalUsd), never shown. Honest $0.00 for a fresh account. */}
-      <MoneyCard className="p-5">
-        <p className="text-sm font-medium text-ink-soft">Your money</p>
-        <p className="mt-1 text-4xl font-bold tabular-nums text-ink">
-          {total === null ? (loadFailed ? "—" : "…") : formatUsd(total)}
-        </p>
-        <p className="mt-1 text-sm text-ink-soft">
-          {loadFailed
-            ? "We couldn't reach the public record just now. Your money is safe there — this is only our view of it."
-            : "Held in dollars, yours to send whenever you like."}
-        </p>
-        {/* Quick copy of the account address, right where the balance is — this is what you paste
-            into an outside wallet or exchange to receive here. Copies the FULL address; the QR +
-            explorer live in the Receive card below. */}
-        <div className="mt-4 flex items-center gap-2 border-t border-line pt-4">
-          <code className="min-w-0 flex-1 truncate font-mono text-xs text-ink-soft">{account.address}</code>
-          <button
-            onClick={copyAddress}
-            className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-sm font-medium text-ink"
-          >
-            {copied ? <Check className="size-4 text-money" /> : <Copy className="size-4" />}
-            {copied ? "Copied" : "Copy address"}
-          </button>
-        </div>
-      </MoneyCard>
-
-      {/* 2. Actions — the two things you can do today, one tap each. */}
-      <div className="grid grid-cols-2 gap-3">
-        <Link
-          href="/send"
-          className="flex flex-col items-start gap-2 rounded-[16px] border border-line bg-surface p-4 transition-colors hover:border-money"
-        >
-          <Send className="size-5 text-money" />
-          <span className="font-semibold text-ink">Send money</span>
+      {/* Your money lives on /home; this page is about WHO you are and HOW your money is kept safe.
+          The balance was a second hero of the same number, the two action tiles repeated the action
+          bar that is already on every screen, and the activity preview repeated /activity. Three
+          copies of other pages made this the longest screen in the app and left no obvious answer to
+          "which one is the real one". What stays is a single line of orientation. */}
+      <p className="text-sm text-ink-soft">
+        {total === null
+          ? loadFailed
+            ? "We couldn't reach the public record just now. Your money is safe there."
+            : "Checking your money…"
+          : `You have ${formatUsd(total)}.`}{" "}
+        <Link href="/home" className="text-money underline-offset-2 hover:underline">
+          See your money
         </Link>
-        <Link
-          href="/request"
-          className="flex flex-col items-start gap-2 rounded-[16px] border border-line bg-surface p-4 transition-colors hover:border-money"
-        >
-          <HandCoins className="size-5 text-money" />
-          <span className="font-semibold text-ink">Ask to be paid</span>
-        </Link>
-      </div>
+      </p>
 
       {/* 3. Network state — practice vs. real money, up near the top so it's never buried. The
           component already handles every pilot state (none / pending / approved / rejected / on-mainnet). */}
@@ -256,8 +235,8 @@ export default function AccountPage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img className="app-kicon" src="/brand-kit-assets/icon-key.webp" alt="" />
           <div className="app-krow-body">
-            <p className="app-krow-t">Your account</p>
-            <p className="app-krow-s">Where your money lives on the public record.</p>
+            <p className="app-krow-t">Your address</p>
+            <p className="app-krow-s">Give this to anyone who wants to send you money.</p>
           </div>
         </div>
         <p className="mt-3 break-all rounded-[12px] border border-line bg-paper px-3 py-2 font-mono text-xs text-ink-soft">
@@ -266,24 +245,27 @@ export default function AccountPage() {
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={copyAddress}
-            className="flex h-10 items-center gap-2 rounded-full border border-line px-4 text-sm font-medium text-ink"
+            className="flex h-11 items-center gap-2 rounded-full border border-line px-4 text-sm font-medium text-ink"
           >
             {copied ? <Check className="size-4 text-money" /> : <Copy className="size-4" />}
             {copied ? "Copied" : "Copy"}
           </button>
           <button
-            onClick={() => setShowQr((v) => !v)}
+            onClick={() => {
+              if (!showQr) void publish();
+              setShowQr((v) => !v);
+            }}
             aria-expanded={showQr}
-            className="flex h-10 items-center gap-2 rounded-full border border-line px-4 text-sm font-medium text-ink"
+            className="flex h-11 items-center gap-2 rounded-full border border-line px-4 text-sm font-medium text-ink"
           >
             <QrCode className="size-4" />
-            {showQr ? "Hide code" : "Show code"}
+            {showQr ? "Hide my QR" : "Show my QR"}
           </button>
           <a
             href={explorer(account.address)}
             target="_blank"
             rel="noreferrer"
-            className="flex h-10 items-center rounded-full border border-line px-4 text-sm font-medium text-money"
+            className="flex h-11 items-center rounded-full border border-line px-4 text-sm font-medium text-money"
           >
             See it on the public record ↗
           </a>
@@ -386,46 +368,6 @@ export default function AccountPage() {
               type-REMOVE wall was built for. */}
           <DisconnectButton backedUp={hasBackup(account.address)} />
         </details>
-      </MoneyCard>
-
-      {/* 6a. Recent activity — a compact preview (top 3), straight from the ledger. Honest empty for a
-          new account; no invented rows. The full history lives on /activity. */}
-      <MoneyCard className="p-5">
-        <p className="font-semibold text-ink">Recent activity</p>
-        {activity === null ? (
-          <p className="mt-2 text-sm text-ink-soft">
-            {loadFailed ? "We couldn't load this just now. Try again in a moment." : "Loading…"}
-          </p>
-        ) : activity.length === 0 ? (
-          <p className="mt-2 text-sm text-ink-soft">No money in or out yet. When it moves, you&apos;ll see it here.</p>
-        ) : (
-          <ul className="mt-3 flex flex-col divide-y divide-line">
-            {activity.slice(0, 3).map((a) => (
-              <li key={a.id} className="flex items-center gap-3 py-2.5">
-                <span
-                  className={`flex size-8 shrink-0 items-center justify-center rounded-full ${
-                    a.direction === "in" ? "bg-money/10 text-money" : "border border-line text-ink-soft"
-                  }`}
-                >
-                  {a.direction === "in" ? <ArrowDownLeft className="size-4" /> : <ArrowUpRight className="size-4" />}
-                </span>
-                <span className="flex-1 text-sm text-ink">{a.direction === "in" ? "Received" : "Sent"}</span>
-                <span className="text-right text-sm text-ink-soft">{fmtDate(a.at)}</span>
-                <span className={`w-20 text-right font-semibold tabular-nums ${a.direction === "in" ? "text-money" : "text-ink"}`}>
-                  {a.direction === "in" ? "+" : "−"}
-                  {formatUsd(a.usd)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {activity !== null && activity.length > 0 && (
-          <div className="mt-3">
-            <Link href="/activity" className="text-sm font-medium text-money underline-offset-2 hover:underline">
-              See all activity →
-            </Link>
-          </div>
-        )}
       </MoneyCard>
 
       {/* 6b. More — the less-frequent controls as compact rows, not a stack of full-height cards:
