@@ -487,10 +487,15 @@ export default function SendPage() {
                   onChange={(e) => setWantPassword(e.target.checked)}
                   className="mt-1 size-4"
                 />
+                {/* Named for WHOSE password it is. "Lock it with a password" is the same phrase the
+                    app uses for locking your own account (/home, /pilot), and a user who had just
+                    wrestled with that one read this as "my account is already protected, why is it
+                    asking again". Two unrelated secrets, one word, one screen apart. */}
                 <span>
-                  <span className="font-medium text-ink">Lock it with a password</span>
+                  <span className="font-medium text-ink">Make them enter a password</span>
                   <span className="block text-ink-soft">
-                    Only someone who knows it can claim the link.
+                    You pick it and tell them yourself. Without it, the link won&apos;t open —
+                    even for you.
                   </span>
                 </span>
               </label>
