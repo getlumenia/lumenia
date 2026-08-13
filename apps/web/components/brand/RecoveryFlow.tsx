@@ -23,8 +23,14 @@ const field = "w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
-  const { secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId } = useWallet();
+  const { account, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId } = useWallet();
   const secure = mode === "secure";
+  /* In "secure" mode the SAME field means two opposite things, and saying "Choose a password" for
+     both is what made this unusable: on a Phase-1 account the password you type BECOMES the
+     password, but on an already-locked one secureRecovery VERIFIES it against the existing one and
+     throws if it differs. Someone with a two-week-old password read "Choose a password", typed a
+     new one, and was told it was wrong — correct behaviour, incomprehensible screen. */
+  const alreadyLocked = secure && account?.phase === 2;
   const [step, setStep] = useState<"start" | "code" | "done">("start");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -48,7 +54,13 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
   const codeOk = /^\d{6}$/.test(code.trim());
   // Setting a NEW recovery password must clear the strength floor (F1 — the password copy is
   // offline-crackable if the store leaks); entering an EXISTING one on restore just needs length.
-  const pwCheck = secure ? passwordStrength(password) : { ok: password.length >= 6, reason: undefined as string | undefined };
+  /* The strength floor applies to a password being CHOSEN. Applying it to one being VERIFIED locks
+     people out of their own account: a password set before the floor existed would be refused by
+     the client before it ever got the chance to decrypt anything. */
+  const settingNew = secure && !alreadyLocked;
+  const pwCheck = settingNew
+    ? passwordStrength(password)
+    : { ok: password.length >= 6, reason: undefined as string | undefined };
   const pwOk = pwCheck.ok;
 
   async function sendCode() {
@@ -154,6 +166,15 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
       ) : (
         <>
           <p className="text-xs text-ink-soft">We sent a 6-digit code to {email.trim()}.</p>
+          {/* The line that was missing. Without it, someone whose account was locked weeks ago sees
+              a password box on a page about backing up and reasonably assumes they are picking one
+              now. They are not — this account already has a password, and only that one opens it. */}
+          {alreadyLocked ? (
+            <p className="text-xs text-ink-soft">
+              This account already has a password. Enter <strong className="text-ink">that</strong> one
+              — it&apos;s the only thing that can open your money, so we can&apos;t change it here.
+            </p>
+          ) : null}
           <input
             inputMode="numeric"
             autoComplete="one-time-code"
@@ -165,9 +186,9 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
           />
           <input
             type="password"
-            autoComplete={secure ? "new-password" : "current-password"}
-            aria-label={secure ? "Choose a password" : "Your password"}
-            placeholder={secure ? "Choose a password" : "Your password"}
+            autoComplete={settingNew ? "new-password" : "current-password"}
+            aria-label={settingNew ? "Choose a password" : "Your password"}
+            placeholder={settingNew ? "Choose a password" : "Your password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className={field}
