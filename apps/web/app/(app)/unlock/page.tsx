@@ -8,7 +8,7 @@
  * holds only a blob it cannot open). Verifying the password decrypts the seed;
  * holding it for signing lands in Stage 5 (send).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { unlockPhase2 } from "../../../lib/keystore";
@@ -19,6 +19,7 @@ export default function UnlockPage() {
   const { status, account, setSessionSeed, unlockWithFaceId } = useWallet();
   const router = useRouter();
   const [password, setPassword] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [faceCapable, setFaceCapable] = useState(false);
@@ -52,10 +53,19 @@ export default function UnlockPage() {
   }
 
   async function unlock() {
+    /* Read the field, not just the state. A password manager that writes the input's value
+       directly — without dispatching the event React listens for — leaves `password` empty while
+       the box looks full, and the console showed exactly that ("Password must be specified"). The
+       user then gets told their password is wrong about a field they can see is filled. */
+    const typed = password || inputRef.current?.value || "";
+    if (!typed) {
+      setError("Enter your password to unlock.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const { seed } = await unlockPhase2(password);
+      const { seed } = await unlockPhase2(typed);
       setSessionSeed(seed); // hold in memory for the session (send needs to sign)
       router.replace(safeNext());
     } catch (e) {
@@ -101,6 +111,7 @@ export default function UnlockPage() {
         <p className="mt-1 text-sm text-ink-soft">Enter the password you chose on this phone.</p>
       </header>
       <input
+        ref={inputRef}
         type="password"
         autoComplete="current-password"
         value={password}
