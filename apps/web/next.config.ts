@@ -75,7 +75,16 @@ const nextConfig: NextConfig = {
 
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      /* `wasm-unsafe-eval` is required, not optional: Argon2id runs as WebAssembly (hash-wasm), and
+       * it is what turns a password into the key that locks an account, backs it up and restores
+       * it. Without this the browser refuses to compile the module at all — every unlock failed
+       * with a CompileError that the UI reported as "that password didn't work", telling people
+       * their correct password was wrong about money they could no longer open.
+       *
+       * It is the narrow directive for exactly this, and deliberately NOT `unsafe-eval`: it permits
+       * compiling WebAssembly and nothing else, so eval() of strings stays blocked and the
+       * no-remote-code property this policy exists for is untouched. */
+      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
       `style-src 'self' 'unsafe-inline'${styleExtra}`,
       `font-src 'self' data:${fontExtra}`,
       "img-src 'self' data: blob:",
