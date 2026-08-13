@@ -15,6 +15,7 @@
  * consistently and Outlook-safely; every send carries BOTH a plain-text and an HTML body.
  */
 import { StrKey } from "@stellar/stellar-sdk";
+import { capsFromEnv, stroopsToUsdc } from "./caps.js";
 import { mintApprovalToken, startPilotRequest } from "./pilot.js";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -230,13 +231,18 @@ export async function notifyPilotApproved(pubkey: string, email: string): Promis
   }
 
   const switchUrl = `${process.env.WEB_ORIGIN ?? "https://getlumenia.com"}/account?switch=mainnet`;
+  // The cap this mail quotes is read from the SAME env the enforcement reads (lib/caps.ts,
+  // MAX_DROP_USDC). It used to be a hardcoded "$1" — an aspirational number the mainnet Worker
+  // never enforced (it has run $5 since day one), so the welcome mail promised a protection
+  // the user did not have.
+  const cap = `$${stroopsToUsdc(capsFromEnv().maxDropStroops)}`;
   const body =
     "Your account is ready to use Lumenia with real money. When you're set, turn it on in " +
-    "one tap — and keep amounts small: every transfer in the pilot is capped at $1, so you " +
+    `one tap — and keep amounts small: every transfer in the pilot is capped at ${cap}, so you ` +
     "can get comfortable safely.";
 
   const html = renderEmail({
-    preheader: "Turn on real money in one tap. Every transfer is capped at $1 in the pilot.",
+    preheader: `Turn on real money in one tap. Every transfer is capped at ${cap} in the pilot.`,
     mascotFile: "mascot-celebrate-cut.webp",
     mascotAlt: "Confetti celebration",
     h1: "You're approved for real money",

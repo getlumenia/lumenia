@@ -4,7 +4,8 @@
  * /pilot — ask to be an early mainnet pilot user.
  *
  * Honest by construction: it says out loud that this is an early preview, not reviewed by an
- * outside security firm, and capped at $1 per transfer. It also ENFORCES the safety rule the
+ * outside security firm, and capped per transfer at the configured pilot cap ($5 today, via
+ * `NEXT_PUBLIC_PILOT_TX_CAP_USD` — see PILOT_TX_CAP_USD below). It also ENFORCES the safety rule the
  * pilot depends on before it will let you ask in: your money must be locked to a password
  * (Phase 2), Face ID optional — a pilot user's real money must never sit under a device key
  * anyone holding the phone could spend.

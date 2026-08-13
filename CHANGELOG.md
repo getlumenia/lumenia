@@ -14,6 +14,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/).
 - Community-health and presentation layer: contributing guide, code of conduct,
   security policy, issue/PR templates, and this changelog.
 
+### Fixed
+
+- **The web recovery self-test was repaired.** Its Argon2id speed-check parameters sat
+  below the minimum the wrap path enforces, so the suite had been crashing since
+  2026-08-08; the parameters were raised to the enforced floor, and a wrap-time guard
+  now rejects Argon2id parameters below that floor instead of failing later.
+- **The pilot approval email now states the enforced per-transfer cap** (derived from
+  `MAX_DROP_USDC`) instead of a stale hard-coded "$1".
+
+### Changed
+
+- **CI now runs every offline test suite**, not just the anti-drain validator: the web
+  self-tests (recovery, claim-password, receive, horizon) plus the sponsor
+  kms / caps / channels / pilot / recovery-store suites. The dead Vercel bundle step
+  was removed along with the deleted Vercel fallback.
+- **Test-count claims across the docs were reconciled to the executed suites:**
+  anti-drain 60, caps 31, recovery-store 17, web recovery self-test 18.
+
 ## [0.2.1] — 2026-07-25
 
 A pre-mainnet hardening pass on the v2 `LumenDrop` Soroban escrow, plus dependency and

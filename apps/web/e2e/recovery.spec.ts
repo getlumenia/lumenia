@@ -7,7 +7,7 @@ import { mintClaimLink } from "./mintLink";
  * → the SAME account + money come back.
  *
  * The blob store + OTP are STUBBED (the OTP email can't be read headless; the sponsor recovery
- * endpoints are separately unit-tested — store 8/8, OTP 7/7). ONLY the three /recovery* endpoints
+ * store is separately unit-tested — test-recovery-store.ts, 17/17). ONLY the three /recovery* endpoints
  * are stubbed; /create-account + /feebump still hit the real Worker, so the account is a genuine
  * testnet account that really holds $20 — this proves the CLIENT crypto + the secure/restore UI
  * drive it correctly across devices.

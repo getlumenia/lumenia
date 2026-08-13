@@ -15,12 +15,12 @@ Closes #
 
 - [ ] `pnpm --filter @lumenia/sponsor exec tsc --noEmit`
 - [ ] `pnpm --filter @lumenia/web exec tsc --noEmit`
-- [ ] `pnpm test:antidrain` (44/44)
+- [ ] `pnpm test:antidrain` (anti-drain policy suite, all green)
 - [ ] `pnpm --filter @lumenia/web build`
 
 ## Checklist
 
-- [ ] CI is green (typecheck, anti-drain, builds).
+- [ ] CI is green (typecheck, anti-drain + the offline sponsor/web suites, builds).
 - [ ] No secrets, keys, or `.env` files committed.
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
 - [ ] User-facing copy keeps the product voice (money & people, no crypto jargon).

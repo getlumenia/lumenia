@@ -2,11 +2,11 @@
 
 This file records **only the work that has actually been done** (not plans or decisions — those live in [README.md](README.md) and [stack.md](stack.md)). The next agent reads this to see "what really exists." Be honest about the line between *proven* and *unverified* (the §6 table is the single source of truth for that).
 
-Last updated: 2026-07-25 · Network: **testnet** · No real money used.
+Last updated: 2026-08-13 · Network: **testnet** · No real money used.
 
 > **Instawards sprint (25.06 → ~24.07): see §10** — the live sponsor service, the
 > end-to-end browser claim (binary metric MET on-chain) and the hardened anti-drain
-> (**44/44** unit + **6/6** integration) supersede the pre-award state below where they conflict.
+> (**60/60** unit + **6/6** integration) supersede the pre-award state below where they conflict.
 > The project has continued past the sprint: the sponsor now runs as a single **Cloudflare Worker**,
 > and v2 Soroban escrow + recovery + request-money + onward-send are shipped on testnet (§6, §10).
 > A **pre-mainnet hardening pass** on the v2 escrow contract landed 2026-07-25 — see **§11**
@@ -56,7 +56,7 @@ lumenia/  (working dir: faceid-wallet)
 │           ├── spike1b-kms-rawsign.ts      # ✅ Spike #1b — external raw Ed25519 → DecoratedSignature
 │           ├── spike1c-wire-parity.ts      # ✅ Spike #1c — web→sponsor XDR wire-parity + fee-bump
 │           ├── spike5-sponsored-send.ts    # ✅ Spike #5  — 0-XLM sponsored onward-send (7/7 testnet)
-│           └── test-antidrain.ts           # ✅ anti-drain validator tests (44/44: 18 claim+7 send+12 sweep+4 seq+3 golden)
+│           └── test-antidrain.ts           # ✅ anti-drain validator tests (60/60: 18 claim+7 send+12 sweep+12 payout+4 seq+4 golden+3 mux)
 ├── contracts/
 │   └── lumen-drop/                      # ✅ v2 Soroban escrow (Rust) — soroban-sdk 26.1, OZ Stellar contracts 0.7.2
 │       ├── src/lib.rs · src/test.rs     #   contract + 29 unit/property tests over a 14-invariant spec (§11)
@@ -105,7 +105,7 @@ The primitives shared by web + sponsor:
 
 > ⚠️ **Correction (don't overclaim):** Spike #1 signs with a **local in-memory `Keypair`** (`tx.sign`) in a **single process**. It does **NOT** prove (a) that the sponsor key can live in an HSM/KMS, or (b) that the inner tx survives the web→sponsor wire, or (c) fee-abuse/economic anti-drain. Those are covered by §4b–§4d below; what remains open is in 6.
 
-## 4b. ✅ Anti-drain validator hardening + tests (14/14 → 18/18 → 25/25 → 44/44, see §10)
+## 4b. ✅ Anti-drain validator hardening + tests (14/14 → 18/18 → 25/25 → 44/44 → 57/57 → 60/60, see §10)
 
 **File:** [apps/sponsor/src/test-antidrain.ts](apps/sponsor/src/test-antidrain.ts) · **Run:** `pnpm test:antidrain` · no network needed.
 
@@ -146,18 +146,18 @@ Proves the Stellar-specific half of the CCTP bridge leg (off-ramp Path 3) on liv
 | Item | Status |
 |---|---|
 | Sponsored 0-XLM onboarding + fee-bumped claim economics | ✅ PROVEN (Spike #1, testnet) |
-| Anti-drain validator rejects reserve/principal drain vectors | ✅ PROVEN (**44/44** unit + **6/6** integration tests; gates the live `/feebump` — §10) |
+| Anti-drain validator rejects reserve/principal drain vectors | ✅ PROVEN (**60/60** unit + **6/6** integration tests; gates the live `/feebump` — §10) |
 | Sponsor key behind external raw-Ed25519 signer (KMS path) | ✅ PROVEN mechanically (Spike #1b); an AWS-KMS signer is now **code-complete** behind the existing signer interface with **13/13 offline tests** (byte-parity with the SDK's own signing — §11). ⚠️ Live AWS provisioning has **not** happened: the deployed testnet service still uses an env hot-key (SOW scope) |
 | web→sponsor XDR wire-parity + fee-bump of re-parsed tx | ✅ PROVEN (Spike #1c + live browser claim — §10) |
 | **Live sponsor service + end-to-end walletless browser claim** | ✅ **PROVEN on-chain** (§10: tx `b9ef1844…` — 20 USDC landed, 0 XLM held, sponsor paid the fee) |
 | Fee-abuse / rate-limit economic defense | ✅ PROVEN live — durable cross-instance 429 on the deployed service (Upstash store; §10) + integration test |
 | v2 Soroban `LumenDrop` escrow (late-bound payout; the default shareable link-send) | ✅ PROVEN (testnet) — **29** unit + property tests over a written 14-invariant spec, plus **7/7** escrow + **5/5** relayer + **10/10** governance on-chain proofs against the current contract; deposit→claim→reclaim live over HTTP with the sponsor paying the fees (§10, §11). Production now points at the **hardened** contract, with superseded contracts still readable/exitable via the legacy fallback (§11). ❌ **No professional audit** — the static-analysis, property-test, fuzz and mutation-testing pass is complete, but that is self-assessment; a professional audit is pending. |
-| Escrow **canary caps** (per-drop + rolling-UTC-day ceiling on both escrow-creating paths) | ✅ PROVEN offline — **28/28** (`test:caps`): boundaries, day rollover, reserve/release, both store-outage behaviours. Amounts are read from the transaction XDR, not a client field. Live on testnet at 100 / 1000 USDC; mainnet should start at 20 / 500 with `CAPS_FAIL_CLOSED=1` (§11) |
+| Escrow **canary caps** (per-drop + rolling-UTC-day ceiling on both escrow-creating paths) | ✅ PROVEN offline — **31/31** (`test:caps`): boundaries, day rollover, reserve/release, both store-outage behaviours. Amounts are read from the transaction XDR, not a client field. Live on testnet at 100 / 1000 USDC; mainnet should start at 20 / 500 with `CAPS_FAIL_CLOSED=1` (§11) |
 | **Legacy-contract read/exit fallback** (a drop can only be released by the contract holding it) | ✅ PROVEN on testnet — **9/9** real transactions (`test:legacy`): a drop in a superseded contract claims through the relayer, a drop in the current one claims with no `contract` argument, a foreign contract id is rejected before any network spend, and a deposit into a superseded contract is rejected (§11) |
 | **Watchdog** (Cloudflare Cron Trigger, every 15 min: sponsor float · sponsor-sourced value ops · escrow governance + wasm hash) | ✅ PROVEN on testnet — smoke test **3/3** (`test:watchdog`), plus **both tripwires fired against real transactions**: a live `pause` produced a page naming the tx hash, and a deliberately wrong pinned wasm hash produced the wasm-changed page (§11) |
 | v2 escrow tool-clean (static analysis, property tests, fuzz, mutation testing) | ✅ DONE 2026-07-25 (§11) — Scout 0 findings, strict clippy 0, cargo-deny ok, 0 `unsafe`, 99.16% line coverage, 51/58 mutants caught. **This is not an audit**; a professional audit is pending. |
 | Sponsor concurrency (channel-account pool; was the #1 mainnet blocker) | ✅ PROVEN live — 20/20 concurrent `/create-account`, 0 `tx_bad_seq`, 20/20 via:channel (§10) |
-| Recovery (password + email-OTP + WebAuthn-PRF "Face ID") | ◑ SHIPPED in code + crypto self-test 13/13 (multi-account keystore + sweep also shipped, Spike #7 8/8). Real-device PRF (Spike #2) + Resend domain-verify still gate real users. |
+| Recovery (password + email-OTP + WebAuthn-PRF "Face ID") | ◑ SHIPPED in code + crypto self-test 18/18 (multi-account keystore + sweep also shipped, Spike #7 8/8). Real-device PRF (Spike #2) + Resend domain-verify still gate real users. |
 | Sponsor runs as a single Cloudflare Worker (env hot-key signer) | ✅ LIVE — `lumenia-sponsor.avakit.workers.dev`; the Vercel esbuild-CJS path is a deprecated 12-fn fallback. KMS raw-signer proven mechanically (Spike #1b), not wired. |
 | 🔑 Recipient can turn Stellar-USDC into spendable TRY (off-ramp) | ⚠️ PATHS IDENTIFIED, real-world unconfirmed. **CCTP V2 is live on Stellar testnet+mainnet** (bridge leg is **testnet-testable now**, no money/KYC). Two **direct** Stellar-USDC exits need no bridge: **KAST card** (TRY spend) and **Binance Global→Binance TR→IBAN**. MASAK: ~$3k/day, 72h first withdrawal. Official anchor directory (anchors.stellar.org) checked 2026-06-18: TR anchors = Banxa/BiLira/Onramp.money/Digibank/Arf, but **Banxa rejects Stellar-USDC** (XLM buy-only) and **no anchor offers a direct TRY off-ramp for Stellar-USDC** — Banxa/BiLira are BD leads ("accept USDC on Stellar?"), not a ready path. Plan tracked in a local working doc — Spike #4 (CCTP testnet) done; KAST/Binance real-account checks pending. |
 | WebAuthn PRF round-trip on real devices (Spike #2) | ❌ UNVERIFIED (needs hardware); Argon2id is the mandatory floor |
@@ -196,9 +196,9 @@ Six deep research briefs were produced to de-risk the review-flagged unknowns. H
 # at the repo root
 pnpm install        # entire workspace
 pnpm spike1         # Spike #1   → testnet → "✅ SPIKE #1 PASS"
-pnpm test:antidrain # validator  → "✅ ANTI-DRAIN TESTS PASS (44/44)" (no network)
+pnpm test:antidrain # validator  → "✅ ANTI-DRAIN TESTS PASS (60/60)" (no network)
 pnpm --filter @lumenia/sponsor test:integration  # → "✅ INTEGRATION TESTS PASS (6/6)" (testnet)
-pnpm --filter @lumenia/sponsor test:caps         # → 28/28 canary caps (no network)
+pnpm --filter @lumenia/sponsor test:caps         # → 31/31 canary caps (no network)
 pnpm --filter @lumenia/sponsor test:legacy       # → 9/9 legacy-contract fallback (testnet)
 pnpm --filter @lumenia/sponsor test:watchdog     # → 3/3 watchdog smoke test (testnet)
 pnpm spike1b        # Spike #1b  → testnet → "✅ SPIKE #1b PASS"

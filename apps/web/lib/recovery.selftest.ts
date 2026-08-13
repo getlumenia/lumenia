@@ -46,8 +46,12 @@ async function rejects(label: string, fn: () => Promise<unknown>) {
 }
 const addr = (seed: Uint8Array) => Keypair.fromRawEd25519Seed(Buffer.from(seed)).publicKey();
 const eq = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((v, i) => v === b[i]);
-// A faster Argon for the test loop (correctness is param-independent; DEFAULT_ARGON is exercised once).
-const FAST = { memMiB: 8, time: 1, parallelism: 1 };
+// A faster Argon for the test loop (correctness is param-independent; DEFAULT_ARGON is exercised
+// once). These are the ARGON_BOUNDS minimums, not lower: since the 2026-08-08 hardening,
+// below-floor params are rejected on unwrap (attacker-influenced wire input), so the selftest
+// must exercise in-bounds params — the old 8/1/1 made the very first unwrap throw and the whole
+// suite abort with 0 checks.
+const FAST = { memMiB: 19, time: 2, parallelism: 1 };
 
 async function main() {
   console.log("============================================================");

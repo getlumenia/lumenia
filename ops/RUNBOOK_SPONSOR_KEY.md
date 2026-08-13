@@ -82,6 +82,6 @@ CloudTrail `Sign` calls you cannot attribute.
 
 - Sponsor float: keep ≤ a few days of expected fee spend; top up from treasury on a schedule.
 - Channel accounts bound per-channel exposure; the anti-drain validator
-  (`test-antidrain.ts`, 44/44) bounds what a signed tx can even ask for; Upstash rate-limit
+  (the full `test-antidrain.ts` suite) bounds what a signed tx can even ask for; Upstash rate-limit
   bounds request volume. The kill-switch bounds TIME. Four independent brakes.
 - OZ Monitor (ops/monitor) is the tripwire that makes §4 start in minutes, not days.

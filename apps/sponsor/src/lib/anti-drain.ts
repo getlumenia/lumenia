@@ -12,7 +12,7 @@
  * `payment` to an arbitrary destination all drain the sponsor while passing a
  * type-only check. So we validate every op's SOURCE and its sensitive PARAMETERS.
  *
- * Covered by test-antidrain.ts (57/57) — the same file that tests the deployed gate.
+ * Covered by the full test-antidrain.ts suite — the same file that tests the deployed gate.
  * Includes an exact op-SEQUENCE matcher (defense-in-depth) + a GOLDEN-policy snapshot
  * that fails CI if any allowlist silently widens.
  */

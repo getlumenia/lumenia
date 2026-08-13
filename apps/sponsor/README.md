@@ -7,8 +7,8 @@ with the anti-drain allowlist.
 
 **Live (testnet):** a single Cloudflare Worker at https://lumenia-sponsor.avakit.workers.dev —
 `GET /health` plus the POST endpoints below. Deploy = `cd apps/sponsor && npx wrangler deploy`.
-(The old Vercel host + esbuild `api/*.js` bundle is a deprecated 12-function fallback.)
-Evidence: [../../EVIDENCE.md](../../EVIDENCE.md).
+(The old Vercel host and its esbuild `api/*.js` bundle have been deleted — the Worker is the
+only host.) Evidence: [../../EVIDENCE.md](../../EVIDENCE.md).
 
 ## Layout
 
@@ -18,26 +18,25 @@ src/index.ts        node:http server (local dev + integration-test child)
 src/lib/            config · signer · stellar · service · create-account · feebump · send · sweep ·
                     channels (concurrency lease) · soroban-relay (v2) · recovery-otp/-store ·
                     anti-drain (the D3 validator) · rate-limit (durable Upstash KV + in-memory fallback)
-src/vercel/         function sources → esbuild-bundled deprecated 12-fn Vercel fallback
 src/cli/            bootstrap · create-account · claim · makelink · provision-channels · reserve-report
-src/test-antidrain.ts     44/44, no network
+src/test-antidrain.ts     60/60, no network
 src/test-integration.ts   6/6 — happy claim / happy send / drain rejection / rate-limit (testnet)
 src/spike*.ts             proof spikes (#1/#1b/#1c/#4/#5/#6/#7/#8/#9/#10 + LumenDrop v2)
 ```
 
-Endpoints (Worker): `/health`, `/create-account`, `/feebump`, `/send-link`, `/sweep`, `/faucet`,
-`/demo-link`, `/waitlist`, `/feedback`, `/events`, plus v2 Soroban `/v2-deposit` `/v2-claim`
-`/v2-reclaim` and recovery `/recovery-otp` `/recovery` `/recovery-fetch` (the last four Worker-only).
+Endpoints (Worker): `/health`, `/create-account`, `/feebump`, `/send-link`, `/sweep`, `/payout`,
+`/faucet`, `/demo-link`, `/waitlist`, `/feedback`, `/events`, plus the v2 Soroban group
+(`/v2-deposit` `/v2-claim` `/v2-reclaim`), the recovery group (`/recovery-otp` `/recovery`
+`/recovery-fetch` `/recovery-alias-fetch`) and the pilot group (`/pilot-*`).
 
 ## Run
 
 ```bash
 pnpm install                                       # at the repo root
-pnpm --filter @lumenia/sponsor test:antidrain      # 44/44, no network
+pnpm --filter @lumenia/sponsor test:antidrain      # 60/60, no network
 pnpm --filter @lumenia/sponsor test:integration    # 6/6, testnet (friendbot)
 pnpm --filter @lumenia/sponsor dev                 # local server (needs .env — see .env.example)
-# deploy (live):     cd apps/sponsor && npx wrangler deploy          # Cloudflare Worker
-# deploy (fallback): node build-vercel.mjs && vercel deploy --prod   # deprecated 12-fn Vercel
+# deploy: cd apps/sponsor && npx wrangler deploy   # Cloudflare Worker (the only host)
 ```
 
 ## ⚠️ stellar-sdk@16 module-system gotchas (hard-won)
@@ -48,9 +47,11 @@ pnpm --filter @lumenia/sponsor dev                 # local server (needs .env �
 - The **live host is a single Cloudflare Worker** (`src/worker.ts`, `nodejs_compat`) — the
   sponsor is one service, and Vercel Hobby caps a deployment at 12 functions (recovery pushed
   it to 15). `@stellar/stellar-sdk@16` runs on `workerd`+`nodejs_compat` (proven).
-- The **Vercel path is a deprecated fallback**: plain Node-ESM on Vercel breaks on the
-  `@stellar/js-xdr` `config` export, so those functions are an **esbuild self-contained CJS
-  bundle** (`build-vercel.mjs` → `api/*.js`). Don't deploy raw `.ts`/ESM function files there.
-- Vercel uploads only this directory → no `workspace:*` imports in deployed code;
-  the anti-drain validator lives here (`src/lib/anti-drain.ts`), not in
-  `packages/shared`, so the tests and the deployed bundle share one module.
+- The **Vercel fallback is gone**: `src/vercel/`, `build-vercel.mjs` and the generated
+  `api/*.js` were deleted once the Worker was proven as the sole host. (Historical context,
+  in case the pattern resurfaces: plain Node-ESM on Vercel broke on the `@stellar/js-xdr`
+  `config` export, so those functions shipped as an esbuild self-contained CJS bundle.)
+- The anti-drain validator lives here (`src/lib/anti-drain.ts`), not in `packages/shared` —
+  originally forced by Vercel's standalone upload (npm can't resolve `workspace:*` there),
+  kept because the sponsor is where validation belongs; the tests and the deployed Worker
+  share one module.

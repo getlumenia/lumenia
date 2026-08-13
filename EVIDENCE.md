@@ -56,24 +56,27 @@ capture remains valid evidence; this newer one shows the metric holds on today's
 | Evidence | Where |
 |---|---|
 | Validator gating every live `/feebump` | [`apps/sponsor/src/lib/anti-drain.ts`](apps/sponsor/src/lib/anti-drain.ts) — allowlist over op **types, sources and parameters**, strict-by-default (a missing constraint rejects) |
-| Unit tests | **44/44** — `pnpm --filter @lumenia/sponsor test:antidrain` (no network; the same module the deployed Worker uses). Breakdown: **18 claim + 7 send + 12 sweep + 4 op-sequence + 3 golden-policy**. The SOW cited 14/14; the suite grew to 44/44 (see the growth note below) — re-running today prints 44/44 |
+| Unit tests | **60/60** — `pnpm --filter @lumenia/sponsor test:antidrain` (no network; the same module the deployed Worker uses). Breakdown: **18 claim + 7 send + 12 sweep + 12 payout + 4 op-sequence + 4 golden-policy + 3 muxed-address**. The SOW cited 14/14; the suite grew to 60/60 (see the growth note below) — re-running today prints 60/60 |
 | Integration tests | **6/6** — `pnpm --filter @lumenia/sponsor test:integration` (real HTTP: happy claim lands 20 USDC at 0 XLM, a 0-XLM onward send creates a sponsored CB, a malicious payment is rejected 400, a burst 429s) |
 | Live drain rejection (deployed service) | A sponsor-sourced `payment` inner tx POSTed to the **production** `/feebump` returns `400 {"error":"anti-drain rejected the inner tx: op 'payment' sourced from sponsor (drain attempt)"}` (2026-07-11) |
 | Plain-language write-up | [ANTI_DRAIN.md](ANTI_DRAIN.md) |
 
 > **Why the count differs from the SOW.** The SOW (§4.1, written 2026-06-18) cites **14/14**. The suite has
-> since grown to **44/44**: sprint hardening added strict-by-default fail-closed cases + more drain vectors
+> since grown to **60/60**: sprint hardening added strict-by-default fail-closed cases + more drain vectors
 > (14 → 18); the post-SOW onward-send feature added a **separate, tight `/send-link` policy** (18 → 25); the
-> recovery-consolidation **sweep policy** added 12 (25 → 37); and an op-**sequence** matcher + a
-> **golden-policy** snapshot added 7 (37 → 44). The claim allowlist was never widened — the count went up
-> because coverage went up, and no SOW-era test was removed or weakened. (The capture below is a fresh
-> **44/44** run; the earlier SOW-era 25/25 capture is kept at `evidence/tests-25-25-and-6-6.png` for history.)
+> recovery-consolidation **sweep policy** added 12 (25 → 37); an op-**sequence** matcher + a
+> **golden-policy** snapshot added 7 (37 → 44); a **`/payout` policy** (the user sends their own dollars to
+> an address they name) plus its golden-allowlist case added 13 (44 → 57); and three **muxed-address
+> (M…) rejection** cases, added 2026-08-08, closed the muxed-source bypass class (57 → 60). The claim
+> allowlist was never widened — the count went up because coverage went up, and no SOW-era test was
+> removed or weakened. (The captures referenced below are historical: a 44/44 run from 2026-07-22 and the
+> SOW-era 25/25 capture at `evidence/tests-25-25-and-6-6.png`; re-running today prints 60/60.)
 
-### Test output (2026-07-22)
+### Test output (2026-07-22 capture — the suite has since grown to 60/60)
 
 ![44/44 anti-drain + 6/6 integration tests passing](evidence/tests-44-44-and-6-6.png)
 
-Verbatim:
+Verbatim (as captured then — the anti-drain line now prints 60/60):
 
 ```
  ✅ ANTI-DRAIN TESTS PASS (44/44)
@@ -146,7 +149,7 @@ once the transaction has been included in a ledger, or throws with Horizon's `ex
 response reflects a final outcome and never a pending state. Only the mechanism differs
 (Horizon blocks; we do not poll it ourselves).
 
-**4. The test count grew: 14/14 → 44/44.** See the note under D3 above.
+**4. The test count grew: 14/14 → 60/60.** See the note under D3 above.
 
 > **Note on the host.** Deviations 1–2 were written when the sponsor deployed to Vercel.
 > It has since moved to a single **Cloudflare Worker** (`apps/sponsor/src/worker.ts`,
@@ -175,7 +178,7 @@ sees the current shape of the repo, not to expand the SOW's claims:
   the on-device seed, plus a WebAuthn-PRF "Face ID" fast-unlock upgrade. One 32-byte seed,
   two wraps (Argon2id → AES-GCM as the floor; PRF → HKDF → AES-GCM as the upgrade), stored
   as a **ciphertext-only, zero-knowledge box the server cannot open** (OTP-gated, isolated
-  store, separate rate-limit bucket). Recovery self-test 13/13. Owner-gated while the OTP
+  store, separate rate-limit bucket). Recovery self-test 18/18. Owner-gated while the OTP
   email domain is being verified; there is still **no seed-export** path.
 - **Channel-account concurrency** (`lib/channels.ts`) — a pool of sponsor-controlled channel
   accounts, each lending a transaction sequence under an exclusive Upstash Redis lease,
@@ -223,10 +226,10 @@ posture: [SECURITY.md](SECURITY.md).
 | Escrow, on-chain (deposit → late-bound claim → relayer cannot redirect) | **7/7** real testnet txs | `USDC_ISSUER_SECRET=S… pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-onchain-proof.ts` |
 | Relayer handler (the same code the deployed `/v2-claim` runs) | **5/5** real testnet txs | `SPONSOR_SECRET=S… USDC_ISSUER_SECRET=S… pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-relay-test.ts` |
 | **Governance, on-chain (new)** | **10/10** real testnet txs | `USDC_ISSUER_SECRET=S… OWNER_SECRET=S… LUMENDROP_CONTRACT=C… WASM_HASH=… pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-governance-proof.ts` |
-| Anti-drain validator | **44/44** (offline) | `pnpm --filter @lumenia/sponsor test:antidrain` |
+| Anti-drain validator | **60/60** (offline) | `pnpm --filter @lumenia/sponsor test:antidrain` |
 | Sponsor integration (real HTTP) | **6/6** (testnet) | `pnpm --filter @lumenia/sponsor test:integration` |
 | KMS Ed25519 signer (offline; byte-parity with the SDK's own signing) | **13/13** | `pnpm --filter @lumenia/sponsor test:kms` |
-| **Canary caps (new)** — per-drop + rolling-UTC-day escrow ceiling on both escrow-creating paths | **28/28** (offline) | `pnpm --filter @lumenia/sponsor test:caps` |
+| **Canary caps (new)** — per-drop + rolling-UTC-day escrow ceiling on both escrow-creating paths | **31/31** (offline) | `pnpm --filter @lumenia/sponsor test:caps` |
 | **Legacy-contract fallback (new)** — claim/reclaim a drop held by a superseded contract | **9/9** real testnet txs | `SPONSOR_SECRET=S… USDC_ISSUER_SECRET=S… pnpm --filter @lumenia/sponsor test:legacy` |
 | **Watchdog (new)** — cron tripwire smoke test | **3/3** (testnet) | `pnpm --filter @lumenia/sponsor test:watchdog` |
 
@@ -236,7 +239,7 @@ actually execute, not a client-supplied field. The per-drop cap is enforced loca
 call, so a store outage cannot disable it; the per-day total is an **atomic `INCRBY` reserve-then-check**
 in the same Upstash store as the rate limiter, so concurrent requests cannot slip through a
 read-then-write gap. A rejected request does not consume the day's budget and a failed transaction
-releases its reservation. The 28 cases cover boundaries, UTC-day rollover, reserve/release, both
+releases its reservation. The 31 cases cover boundaries, UTC-day rollover, reserve/release, both
 store-outage behaviours (default **fail open**, `CAPS_FAIL_CLOSED=1` **fail closed**) and a malformed
 env value falling back to the default rather than to unlimited. Testnet values: `MAX_DROP_USDC=100`,
 `MAX_DAY_USDC=1000`.
@@ -313,10 +316,10 @@ fiat conversion, production KMS/HSM, WhatsApp automation, and abuse-at-scale han
 ```bash
 git clone https://github.com/getlumenia/lumenia && cd lumenia
 pnpm install
-pnpm --filter @lumenia/sponsor test:antidrain     # 44/44, no network
+pnpm --filter @lumenia/sponsor test:antidrain     # 60/60, no network
 pnpm --filter @lumenia/sponsor test:integration   # 6/6, testnet (friendbot; can be slow if friendbot rate-limits)
 pnpm --filter @lumenia/sponsor test:kms           # 13/13 KMS signer tests, no network, no AWS
-pnpm --filter @lumenia/sponsor test:caps          # 28/28 canary caps, no network
+pnpm --filter @lumenia/sponsor test:caps          # 31/31 canary caps, no network
 pnpm --filter @lumenia/sponsor test:legacy        # 9/9 legacy-contract fallback, testnet (needs SPONSOR_SECRET + USDC_ISSUER_SECRET)
 pnpm --filter @lumenia/sponsor test:watchdog      # 3/3 watchdog smoke test, testnet
 curl https://lumenia-sponsor.avakit.workers.dev/health   # live service (Cloudflare Worker)

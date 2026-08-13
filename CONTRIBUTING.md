@@ -41,7 +41,7 @@ The same checks CI runs, so you can reproduce a green build locally:
 pnpm --filter @lumenia/sponsor exec tsc --noEmit
 pnpm --filter @lumenia/web exec tsc --noEmit
 
-# the anti-drain validator — 44/44, no network needed
+# the anti-drain validator — the full suite must pass, no network needed
 pnpm test:antidrain
 
 # production builds

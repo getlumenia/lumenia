@@ -155,6 +155,10 @@ export async function wrapWithPassword(
   password: string,
   argon: ArgonParams = DEFAULT_ARGON,
 ): Promise<PasswordCopy> {
+  // Mirror of the unwrap-side check: unwrapWithPassword rejects out-of-bounds params, so a
+  // below-floor wrap would produce a box this very app then refuses to open — a backup that
+  // exists but can never be restored. Refuse to create one in the first place.
+  assertArgonInBounds(argon);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const kek = await deriveKek(password, salt, argon);
   const { iv, ct } = await aesGcmEncrypt(kek, seed);

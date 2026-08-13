@@ -3,8 +3,8 @@
  *
  * The user-funded mainnet pilot admits ONLY owner-approved wallets, and gives each a hard
  * budget of `PILOT_MAX_TX` (default 5) ledger-confirmed value operations. This is a SECOND,
- * independent bound next to the $1 per-drop cap (lib/caps.ts, set MAX_DROP_USDC=1 on the
- * mainnet Worker): caps bound how MUCH moves, this bounds WHO may move it and HOW OFTEN.
+ * independent bound next to the env-driven per-drop cap (lib/caps.ts, `MAX_DROP_USDC` — the
+ * mainnet Worker runs 5): caps bound how MUCH moves, this bounds WHO may move it and HOW OFTEN.
  *
  * Only active when PILOT_MODE=1 (set on the mainnet Worker). On testnet and in normal
  * operation it is a no-op — it can never gate the open product.

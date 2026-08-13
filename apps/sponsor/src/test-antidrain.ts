@@ -9,7 +9,8 @@
  *  not enough; the validator must check op SOURCE and sensitive PARAMETERS.
  *  These cases prove the hardened validator accepts the legit claim + send + sweep
  *  shapes and rejects every reserve/principal drain vector we could think of
- *  (57/57 = 18 claim + 7 send + 12 sweep + 12 payout + 4 op-sequence + 4 golden-policy). The sweep policy (validateSweepTransaction)
+ *  (60/60 = 18 claim + 7 send + 12 sweep + 12 payout + 4 op-sequence + 4 golden-policy
+ *  + 3 MUX (muxed-address rejection)). The sweep policy (validateSweepTransaction)
  *  is a SEPARATE tight allowlist — the claim/send allowlists are never widened.
  *
  *  RUN:

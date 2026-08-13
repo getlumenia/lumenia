@@ -47,8 +47,9 @@ function usdcEnv(name: string, fallbackUsdc: number): bigint {
 
 /**
  * Defaults are TESTNET-shaped: comfortably above every amount the demo and test suites move
- * (the largest is 20 USDC), while still bounding a runaway. Mainnet should start far lower —
- * ops/RUNBOOK_SPONSOR_KEY.md and the mainnet decision packet suggest 20 / 500.
+ * (the largest is 20 USDC), while still bounding a runaway. Mainnet runs far lower — the
+ * deployed pilot caps are 5 / 50 (wrangler.toml [env.mainnet]; see ops/RUNBOOK_MAINNET_DEMO.md);
+ * 20 / 500 is the post-audit LAUNCH suggestion (recorded in the owner's local decision packet).
  */
 export function capsFromEnv(): CapsConfig {
   return {

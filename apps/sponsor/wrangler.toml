@@ -35,7 +35,9 @@ LUMENDROP_CONTRACT = "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S"
 LUMENDROP_LEGACY_CONTRACTS = "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF,CAKEJAGCATVMJB6CMB6LM736DHUJ37YOTOER23SWRNDHPLTU2ZJUDIAB"
 
 # Canary caps — the maximum escrow this sponsor will facilitate (see lib/caps.ts).
-# Testnet values; mainnet should start far lower (20 / 500) with CAPS_FAIL_CLOSED = "1".
+# Testnet values. The 20 / 500 pair is the post-audit LAUNCH suggestion; the mainnet PILOT
+# actually runs the tighter 5 / 50 set in [env.mainnet] below, with CAPS_FAIL_CLOSED = "1"
+# (see ops/RUNBOOK_MAINNET_DEMO.md for the pilot sequence and caps).
 MAX_DROP_USDC = "100"
 MAX_DAY_USDC = "1000"
 # Watchdog: alert when the sponsor's float drops under this many XLM (see lib/watchdog.ts).
