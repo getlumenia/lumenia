@@ -26,6 +26,30 @@ import { kvConfigFromEnv } from "./rate-limit.js";
 /** 1 USDC = 1e7 stroops (Stellar's 7-decimal fixed point). */
 export const USDC_STROOPS = 10_000_000n;
 
+/**
+ * A refusal that is SAFE to state plainly on mainnet.
+ *
+ * The Worker hides error text on mainnet, because anti-drain reasons tell an attacker exactly
+ * which policy clause tripped — a precise oracle for probing the validator. Caps are different:
+ * the per-drop and per-day ceilings are a published product rule (ops/RUNBOOK_MAINNET_DEMO.md),
+ * not a secret, and hiding them leaves an honest sender staring at "request failed" with no way
+ * to learn their amount was simply too large. Anything thrown as a PublicRefusal keeps its text;
+ * everything else still collapses to a reference.
+ */
+export class PublicRefusal extends Error {
+  readonly isPublicRefusal = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "PublicRefusal";
+  }
+}
+
+/** True for an error that may be shown to the caller verbatim, on any network. */
+export function isPublicRefusal(e: unknown): boolean {
+  return e instanceof PublicRefusal || (e as { isPublicRefusal?: boolean })?.isPublicRefusal === true;
+}
+
+
 export interface CapsConfig {
   /** Smallest single escrow, in stroops. Below this the reserve costs more than the money moved. */
   minDropStroops: bigint;

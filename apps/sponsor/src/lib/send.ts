@@ -19,7 +19,7 @@
  */
 import { TransactionBuilder, type Transaction, type Horizon } from "@stellar/stellar-sdk";
 import { validateInnerTransaction, ALLOWED_SEND_OP_TYPES, type InnerTxPolicy } from "./anti-drain.js";
-import { capsFromEnv, checkCaps, USDC_STROOPS } from "./caps.js";
+import { capsFromEnv, checkCaps, PublicRefusal, USDC_STROOPS } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { submit, createdBalanceIdFromResult } from "./stellar.js";
@@ -83,7 +83,7 @@ export async function sendLinkHandler(
     | undefined;
   const amountStroops = BigInt(Math.round(Number.parseFloat(cbOp?.amount ?? "0") * Number(USDC_STROOPS)));
   const cap = await checkCaps(amountStroops, capsFromEnv());
-  if (!cap.ok) throw new Error(`canary cap: ${cap.reason}`);
+  if (!cap.ok) throw new PublicRefusal(`canary cap: ${cap.reason}`);
 
   let submitted: Awaited<ReturnType<typeof submit>>;
   try {

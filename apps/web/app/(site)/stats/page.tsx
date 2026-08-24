@@ -55,7 +55,8 @@ function ago(iso: string | null): string {
 }
 
 export default async function StatsPage() {
-  const stats = await loadStats();
+  const { real, practice } = await loadStats();
+  const nothingYet = real === null && practice === null;
 
   return (
     <div className="pg">
@@ -65,43 +66,78 @@ export default async function StatsPage() {
             <span className="pg-dot" aria-hidden="true" />
             Live from the public record
           </p>
-          <h1 className="pg-h1">Every number here is real.</h1>
+          <h1 className="pg-h1">Read off the record, not typed in.</h1>
           <p className="pg-lead">
-            These come straight off the public record and refresh continuously. Nothing is typed in
-            by hand. Open any transfer and check it yourself.
+            Two sets of numbers, kept apart: what has moved in{" "}<strong>real money</strong>, and
+            what has moved in{" "}<strong>practice</strong>. They are never added together, because
+            they are not the same thing. Open any transfer and check it yourself.
           </p>
         </div>
       </header>
 
       <section className="stat-body">
         <div className="stat-inner">
-          {stats === null ? (
+          {nothingYet ? (
             <p className="stat-refreshing">
               The live numbers are refreshing. Check back in a moment. We only show what we can read
               from the public record, so this space stays empty rather than guessing.
             </p>
           ) : (
             <>
-              <div className="stat-grid">
-                <div className="stat-tile">
-                  <span className="stat-num stat-num-accent">{nf.format(stats.accountsCreated)}</span>
-                  <span className="stat-label">Accounts created</span>
-                  <span className="stat-sub">funded by the system, no setup for the person</span>
+              <h2 className="stat-section-h">Real money</h2>
+              <p className="stat-section-sub">
+                Actual dollars, on the main public record. This is a small, capped pilot — the
+                numbers are meant to be checkable, not impressive.
+              </p>
+              {real === null ? (
+                <p className="stat-refreshing">Refreshing the real-money numbers.</p>
+              ) : (
+                <div className="stat-grid">
+                  <div className="stat-tile">
+                    <span className="stat-num stat-num-accent">{nf.format(real.accountsCreated)}</span>
+                    <span className="stat-label">Accounts created</span>
+                    <span className="stat-sub">funded by the system, no setup for the person</span>
+                  </div>
+                  <div className="stat-tile">
+                    <span className="stat-num">{nf.format(real.linksSent)}</span>
+                    <span className="stat-label">Payment links sent</span>
+                    <span className="stat-sub">each one a real transfer, on the record</span>
+                  </div>
+                  <div className="stat-tile">
+                    <span className="stat-num">{real.lastActivityAt ? ago(real.lastActivityAt) : "not yet"}</span>
+                    <span className="stat-label">Last activity</span>
+                    <span className="stat-sub">when real money last moved</span>
+                  </div>
                 </div>
-                <div className="stat-tile">
-                  <span className="stat-num">{nf.format(stats.linksSent)}</span>
-                  <span className="stat-label">Payment links sent</span>
-                  <span className="stat-sub">each one a real transfer, on the record</span>
+              )}
+
+              <h2 className="stat-section-h">Practice</h2>
+              <p className="stat-section-sub">
+                The same system on a test record, where the money is not real. This is where we and
+                anyone trying the product spend most of our time, so the count is much larger and
+                means much less.
+              </p>
+              {practice === null ? (
+                <p className="stat-refreshing">Refreshing the practice numbers.</p>
+              ) : (
+                <div className="stat-grid">
+                  <div className="stat-tile">
+                    <span className="stat-num">{nf.format(practice.accountsCreated)}</span>
+                    <span className="stat-label">Accounts created</span>
+                    <span className="stat-sub">mostly our own testing</span>
+                  </div>
+                  <div className="stat-tile">
+                    <span className="stat-num">{nf.format(practice.linksSent)}</span>
+                    <span className="stat-label">Payment links sent</span>
+                    <span className="stat-sub">practice transfers, no real money</span>
+                  </div>
+                  <div className="stat-tile">
+                    <span className="stat-num">{practice.lastActivityAt ? ago(practice.lastActivityAt) : "not yet"}</span>
+                    <span className="stat-label">Last activity</span>
+                    <span className="stat-sub">the system is live and running</span>
+                  </div>
                 </div>
-                {/* No "dollars moved" tile: every transfer so far is our own testing, so a dollar
-                    figure would imply economic volume that doesn't exist. It returns with real
-                    money, where it means something. */}
-                <div className="stat-tile">
-                  <span className="stat-num">{stats.lastActivityAt ? ago(stats.lastActivityAt) : "not yet"}</span>
-                  <span className="stat-label">Last activity</span>
-                  <span className="stat-sub">the system is live and running</span>
-                </div>
-              </div>
+              )}
 
               <p className="stat-note">
                 {/* explicit {" "} at each </strong> boundary — JSX eats the trailing space (SITE_REDESIGN §5) */}
@@ -109,12 +145,13 @@ export default async function StatsPage() {
                 counts every account the system has funded, including our own
                 testing, and{" "}<strong>not</strong>{" "}unique people. We don&apos;t track who you are,
                 so we can&apos;t claim a user count we&apos;d be unable to prove, and we won&apos;t.
-                What we can prove is that the money moves, and that every number here is on the record.
+                Most of the practice number is us. What we can prove is that the money moves, and
+                that every number here is on the record.
               </p>
 
               <p className="stat-meta">
-                Read live from the public record{stats.lastActivityAt ? `, last active ${ago(stats.lastActivityAt)}` : ""}.{" "}
-                <a href="/tools/verify">Check a transfer yourself →</a>
+                Read live from the public record.{" "}
+                <a href="/tools/verify">Check a transfer yourself &rarr;</a>
               </p>
             </>
           )}

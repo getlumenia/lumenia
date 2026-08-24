@@ -10,7 +10,7 @@
  * can never lose value — it holds no USDC in this path.
  */
 import { rpc, Address, Contract, TransactionBuilder, scValToNative, xdr, type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
-import { capsFromEnv, checkCaps } from "./caps.js";
+import { capsFromEnv, checkCaps, PublicRefusal } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { CHANNEL_LEASE_TTL_SECONDS, type ChannelManager } from "./channels.js";
@@ -211,7 +211,7 @@ export async function relayDepositHandler(
   if (args.length !== 4) throw new Error(`deposit expects 4 args, got ${args.length}`);
   const amountStroops = BigInt(scValToNative(args[2]!) as bigint | number | string);
   const cap = await checkCaps(amountStroops, capsFromEnv());
-  if (!cap.ok) throw new Error(`canary cap: ${cap.reason}`);
+  if (!cap.ok) throw new PublicRefusal(`canary cap: ${cap.reason}`);
 
   try {
     const feeBump = TransactionBuilder.buildFeeBumpTransaction(

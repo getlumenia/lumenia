@@ -27,6 +27,7 @@
     "concurrency-check": "tsx src/cli/concurrency-check.ts",
     "reserve-report": "tsx src/cli/reserve-report.ts",
     "pilot": "tsx src/cli/pilot.ts",
+    "fleet": "tsx src/fleet-run.ts",
     "test:kms": "tsx src/test-kms-signer.ts",
     "test:caps": "tsx src/test-caps.ts",
     "test:pilot": "tsx src/test-pilot.ts",

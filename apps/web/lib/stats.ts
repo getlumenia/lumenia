@@ -19,9 +19,8 @@
  * Server-only: called from the /stats server component with `revalidate = 300`, so
  * the ledger walk runs at most once every 5 minutes regardless of traffic.
  */
-import { ACTIVE } from "./network";
+import { ACTIVE, mainnetConfig } from "./network";
 
-const HORIZON_URL = ACTIVE.horizonUrl;
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const REVALIDATE = 300;
 /** Safety cap on pagination (200 ops/page → 4000 ops). Logged if ever hit. */
@@ -41,9 +40,11 @@ export interface Stats {
   lastActivityAt: string | null;
 }
 
-async function sponsorIdentity(): Promise<{ pubkey: string; issuer: string; code: string } | null> {
+async function sponsorIdentity(
+  sponsorUrl: string,
+): Promise<{ pubkey: string; issuer: string; code: string } | null> {
   try {
-    const r = await fetch(`${SPONSOR_URL}/health`, { next: { revalidate: REVALIDATE } });
+    const r = await fetch(`${sponsorUrl}/health`, { next: { revalidate: REVALIDATE } });
     if (!r.ok) return null;
     const d = (await r.json()) as { sponsorPublicKey?: string; usdcIssuer?: string; usdcCode?: string };
     if (!d.sponsorPublicKey || !d.usdcIssuer || !d.usdcCode) return null;
@@ -65,8 +66,9 @@ interface HorizonOp {
  * Returns the aggregates, or null if the ledger/sponsor is unreachable — the page
  * shows an honest "refreshing" state on null, never fabricated zeros.
  */
-export async function loadStats(): Promise<Stats | null> {
-  const id = await sponsorIdentity();
+async function loadStatsFor(horizonUrl: string, sponsorUrl: string): Promise<Stats | null> {
+  const HORIZON_URL = horizonUrl;
+  const id = await sponsorIdentity(sponsorUrl);
   if (!id) return null;
 
   const usdcAsset = `${id.code}:${id.issuer}`;
@@ -117,4 +119,24 @@ export async function loadStats(): Promise<Stats | null> {
   }
 
   return { accountsCreated, linksSent, dollarsSent, lastActivityAt };
+}
+
+/**
+ * Both ledgers, read separately and never added together.
+ *
+ * This used to read only the build-time ACTIVE network — testnet — and the page then said
+ * "every number here is real" over it without ever naming which ledger it meant. Both halves
+ * of that were true in isolation and misleading together: the numbers ARE read off a public
+ * chain and nothing is typed by hand, but on the test network the dollars are free-minted
+ * practice money, so a reader (a grant reviewer above all) would take "real transfer" and
+ * "the money moves" to mean real money. Splitting them is the fix — the mainnet figure is
+ * small and honest, the practice figure is large and labeled as practice.
+ */
+export async function loadStats(): Promise<{ real: Stats | null; practice: Stats | null }> {
+  const mainnet = mainnetConfig();
+  const [real, practice] = await Promise.all([
+    mainnet ? loadStatsFor(mainnet.horizonUrl, mainnet.sponsorUrl) : Promise.resolve(null),
+    loadStatsFor(ACTIVE.horizonUrl, SPONSOR_URL),
+  ]);
+  return { real, practice };
 }

@@ -30,6 +30,7 @@ import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.j
 import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
 import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState, verifyApprovalToken } from "./lib/pilot.js";
 import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected } from "./lib/pilot-request.js";
+import { isPublicRefusal } from "./lib/caps.js";
 import { StrKey } from "@stellar/stellar-sdk";
 
 type Env = Record<string, unknown>;
@@ -481,6 +482,9 @@ export default {
       // precise oracle (config state, Horizon internals, the sponsor's own address, which policy
       // clause tripped), so there it becomes a reference the operator can look up in the log.
       const message = (e as Error).message;
+      // A refusal the caller is entitled to understand — a cap or a floor — keeps its text on
+      // every network. Only the reasons that would help someone map the validator get hidden.
+      if (isPublicRefusal(e)) return json(400, { error: message });
       if (process.env.STELLAR_NETWORK === "mainnet") {
         const ref = crypto.randomUUID().slice(0, 8);
         console.error(`[error ${ref}] ${new URL(request.url).pathname}: ${message}`);

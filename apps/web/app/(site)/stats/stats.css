@@ -91,3 +91,20 @@
   font-size: 15px;
   color: var(--pw-muted);
 }
+
+/* Section headings for the real-money / practice split. The two sets are never summed,
+   so they are never shown in one grid either — the heading is the separation. */
+.stat-section-h {
+  font-family: var(--pw-font-display, inherit);
+  font-size: clamp(1.25rem, 2.5vw, 1.6rem);
+  margin: 2.5rem 0 0.35rem;
+  letter-spacing: -0.01em;
+}
+.stat-section-h:first-of-type { margin-top: 0; }
+.stat-section-sub {
+  margin: 0 0 1.25rem;
+  max-width: 46ch;
+  opacity: 0.72;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
