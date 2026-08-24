@@ -25,6 +25,20 @@ export const copy = {
     receipt: "See the public record",
     error: (name: string) => `We couldn't finish — your money from ${name} is still safe. Try again.`,
     retry: "Try again",
+    /* Failure messages that tell the truth per case. The generic `error` above stays as the
+     * fallback for a cause we could not identify — "try again" is safe advice only when we
+     * genuinely do not know. See lib/claim-error.ts for why this list exists. */
+    errAlreadyTitle: "You already have this money",
+    errAlreadyBody: "This link was claimed — it's in your account already. Nothing more to do here.",
+    errBusyBody: "A lot of people are claiming right now. Wait a moment and tap again.",
+    errPausedBody:
+      "We've paused claiming for a short while. Your money is untouched and this link keeps working — please come back a little later.",
+    errOfflineBody: "We couldn't reach Lumenia. Check your connection and tap again.",
+    errLinkBody: "This link is incomplete. Open the original message and tap the link there.",
+    /* Shown small under the message. It exists so that someone reporting "it didn't work" can tell
+     * us WHICH failure they hit — the first two reports of this bug were unactionable because every
+     * cause produced identical words. */
+    errDetail: (d: string) => `Details: ${d}`,
     holdHint: "Your dollars stay right here, to spend whenever you like.",
     // post-claim next action (the north-star hand-off)
     ctaSend: "Send money to someone",

@@ -49,12 +49,13 @@ jobs:
           pnpm --filter @lumenia/sponsor test:channels
           pnpm --filter @lumenia/sponsor test:pilot
           pnpm --filter @lumenia/sponsor test:recovery-store
-      - name: Web self-tests (recovery + claimpw + receive + horizon)
+      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr)
         run: |
           pnpm --filter @lumenia/web test:recovery
           pnpm --filter @lumenia/web test:claimpw
           pnpm --filter @lumenia/web test:receive
           pnpm --filter @lumenia/web test:horizon
+          pnpm --filter @lumenia/web test:claimerr
 
   build:
     name: Build web
