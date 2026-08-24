@@ -108,6 +108,30 @@ function balanceFloor(): number {
   return Number.isFinite(n) && n > 0 ? n : 50;
 }
 
+/**
+ * How many more walletless recipients the sponsor can still onboard.
+ *
+ * The raw balance is the wrong thing to watch. Every account the sponsor onboards adds two
+ * sponsored ledger entries — the account and its USDC trustline — and each entry raises the
+ * sponsor's own MINIMUM balance by the base reserve. That minimum is not spendable, so the
+ * number that decides whether the next person can be onboarded is `balance - minimum`, and
+ * the two diverge fast: on mainnet on 2026-08-24 the sponsor held 109 XLM against a floor of
+ * 3, looking nine hundred times over — while sponsoring 186 entries, which put its minimum at
+ * 94 and left capacity for ten more recipients. A floor on the raw balance would have fired
+ * long AFTER onboarding had already started failing, which is the one moment it exists for.
+ *
+ * Reserve per recipient: 2 entries x 0.5 XLM base reserve.
+ */
+const BASE_RESERVE_XLM = 0.5;
+const RESERVE_PER_RECIPIENT_XLM = 2 * BASE_RESERVE_XLM;
+
+/** Alert when fewer than this many recipients can still be onboarded. */
+function capacityFloor(): number {
+  const raw = process.env.SPONSOR_MIN_RECIPIENTS;
+  const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : 25;
+}
+
 async function checkSponsorAccount(
   config: SponsorConfig,
   sponsorPublicKey: string,
@@ -116,6 +140,8 @@ async function checkSponsorAccount(
   const base = config.horizonUrl.replace(/\/$/, "");
   const acc = (await (await fetch(`${base}/accounts/${sponsorPublicKey}`)).json()) as {
     balances?: Array<{ asset_type?: string; balance?: string }>;
+    subentry_count?: number;
+    num_sponsoring?: number;
     status?: number;
   };
   const native = acc.balances?.find((b) => b.asset_type === "native");
@@ -134,6 +160,27 @@ async function checkSponsorAccount(
       severity: "page",
       title: "Sponsor float below the floor",
       detail: `${xlm} XLM left (floor ${floor}). Top up, or find out what is spending it.`,
+    });
+  }
+
+  /* The check that actually protects onboarding: spendable balance, not the headline one.
+   * `num_sponsoring` counts entries whose reserve THIS account pays for, plus its own
+   * subentries; both raise its minimum balance and neither can be spent. */
+  const sponsoring = acc.num_sponsoring ?? 0;
+  const own = acc.subentry_count ?? 0;
+  const minimum = (2 + sponsoring + own) * BASE_RESERVE_XLM;
+  const available = xlm - minimum;
+  const recipientsLeft = Math.floor(available / RESERVE_PER_RECIPIENT_XLM);
+  const capFloor = capacityFloor();
+  if (recipientsLeft < capFloor) {
+    alerts.push({
+      severity: "page",
+      title: `Sponsor can onboard only ${recipientsLeft} more recipients`,
+      detail:
+        `${xlm} XLM held, but ${minimum} is locked as the minimum balance for ${sponsoring} sponsored ` +
+        `entries — ${available.toFixed(4)} XLM is actually spendable, which is ${recipientsLeft} more ` +
+        `recipients at ${RESERVE_PER_RECIPIENT_XLM} XLM each (floor ${capFloor}). Top up before ` +
+        `/create-account starts failing; the raw balance will still look healthy when it does.`,
     });
   }
 
