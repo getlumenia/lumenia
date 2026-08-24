@@ -1461,6 +1461,106 @@ function report(state: State): void {
 }
 
 /* ----------------------------------------------------------------------------
+ * TOPUP — bring the fleet up to a target number of live accounts.
+ *
+ * The wave loses accounts to the per-IP rate limit by design: it fires everything at once,
+ * and the limiter is a fixed 30-per-60s window. That is the right behaviour to keep, so the
+ * way to reach a target headcount is not to hammer harder but to go one at a time, pacing
+ * under the window. Each new account is also given a little money and made to spend it, so
+ * it lands on the ledger with a history rather than as an empty shell nobody ever used.
+ * -------------------------------------------------------------------------- */
+async function topup(): Promise<void> {
+  if (NET.id === "mainnet" && !flag("yes")) {
+    console.error("\nThis creates real accounts on mainnet. Re-run with --yes.\n");
+    process.exit(1);
+  }
+  const state = loadState();
+  const treasury = treasuryKeypair();
+  const target = Number.parseInt(opt("target", "30"), 10);
+
+  const all = [
+    ...Object.entries(state.actors).map(([id, s]) => ({ id, kp: Keypair.fromSecret(s) })),
+    ...state.wave.map((s, i) => ({ id: `W${String(i + 1).padStart(2, "0")}`, kp: Keypair.fromSecret(s) })),
+  ];
+  const missing: Array<{ id: string; kp: Keypair }> = [];
+  let live = 0;
+  for (const a of all) {
+    try {
+      await HZ.loadAccount(a.kp.publicKey());
+      live++;
+    } catch {
+      missing.push(a);
+    }
+  }
+  console.log(`\n=== FLEET TOPUP — ${NET.id.toUpperCase()} ===`);
+  console.log(`  live now: ${live}   target: ${target}   never onboarded: ${missing.length}\n`);
+
+  const want = target - live;
+  if (want <= 0) {
+    console.log(`  already at ${live} accounts — nothing to do.\n`);
+    return;
+  }
+  // Reuse the keys that never made it before minting new ones: they are already in the state
+  // file, which is the only record of this fleet.
+  const queue = missing.slice(0, want);
+  while (queue.length < want) {
+    const kp = Keypair.random();
+    state.wave.push(kp.secret());
+    queue.push({ id: `W${String(state.wave.length).padStart(2, "0")}`, kp });
+  }
+  saveState(state);
+
+  const added: Keypair[] = [];
+  for (const a of queue) {
+    try {
+      const { hash, via } = await onboard(a.kp);
+      added.push(a.kp);
+      console.log(`  ✓ ${a.id} ${a.kp.publicKey().slice(0, 10)}… via:${via ?? "sponsor"}  ${hash.slice(0, 10)}…`);
+    } catch (e) {
+      const m = (e as Error).message;
+      if (/429/.test(m)) {
+        console.log(`  · ${a.id} rate-limited, waiting out the window`);
+        await sleep(62_000);
+        try {
+          const { hash, via } = await onboard(a.kp);
+          added.push(a.kp);
+          console.log(`  ✓ ${a.id} ${a.kp.publicKey().slice(0, 10)}… via:${via ?? "sponsor"}  ${hash.slice(0, 10)}…`);
+        } catch (e2) {
+          console.log(`  ✗ ${a.id} ${(e2 as Error).message.slice(0, 90)}`);
+        }
+      } else {
+        console.log(`  ✗ ${a.id} ${m.slice(0, 90)}`);
+      }
+    }
+    // Pace under the 30-per-60s window with room for the sponsor's own calls.
+    await sleep(2500);
+  }
+
+  if (added.length) {
+    const each = "0.005";
+    console.log(`\n  funding ${added.length} new accounts with ${each} USDC (one transaction)…`);
+    try {
+      const hash = await fundActors(treasury, added.map((k) => ({ pub: k.publicKey(), amount: each })));
+      console.log(`  ✓ ${tx(hash)}`);
+      console.log(`  giving each one a transaction of its own…`);
+      for (let i = 0; i < added.length; i++) {
+        const to = added[(i + 1) % added.length]!.publicKey();
+        try {
+          const r = await payout(added[i]!, to, "0.002");
+          console.log(`  ${r.status === 200 ? "✓" : "✗"} ${added[i]!.publicKey().slice(0, 10)}… paid onward`);
+        } catch {
+          console.log(`  ✗ ${added[i]!.publicKey().slice(0, 10)}… onward payment refused`);
+        }
+        await sleep(2000);
+      }
+    } catch (e) {
+      console.log(`  ✗ funding failed: ${(e as Error).message.slice(0, 120)}`);
+    }
+  }
+  console.log(`\n  ${live + added.length} live accounts.\n`);
+}
+
+/* ----------------------------------------------------------------------------
  * TEARDOWN — give the reserve and the USDC back. Not part of `run`.
  * -------------------------------------------------------------------------- */
 async function teardown(): Promise<void> {
@@ -1544,16 +1644,18 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === "run") return run();
+  if (cmd === "topup") return topup();
   if (cmd === "report") return report(loadState());
   if (cmd === "teardown") return teardown();
   console.log(`
-usage: fleet <plan|trustline|run|report|teardown> [options]
+usage: fleet <plan|trustline|run|topup|report|teardown> [options]
 
   --network testnet|mainnet   which network (default testnet)
   --amount 0.01               USDC per drop (0.01 is the sponsor's floor)
   --wave 12                   how many simultaneous onboardings
   --expiry-wait 100           seconds before the short-expiry reclaim
   --rounds 2                  extra payment rounds around the actor ring
+  --target 30                 topup: how many live accounts to reach
   --force                     plan: replace a state file that was never torn down
 
   trustline opens the treasury's own USDC trustline (needs TREASURY_SECRET + a little

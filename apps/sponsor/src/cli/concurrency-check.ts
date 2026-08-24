@@ -8,12 +8,21 @@
  *
  *   RUN: pnpm --filter @lumenia/sponsor exec tsx src/cli/concurrency-check.ts \
  *          --url https://lumenia-sponsor.avakit.workers.dev --count 20
- *   NEEDS: internet (Horizon testnet). Testnet only, no real money.
+ *   NEEDS: internet. Add `--network mainnet` to check the mainnet sponsor — that spends real
+ *          sponsor reserve (1.5 XLM per account created), so keep --count small there.
  */
 import { Keypair, Horizon, TransactionBuilder, Networks, type Transaction } from "@stellar/stellar-sdk";
 
-const NETWORK = Networks.TESTNET;
-const server = new Horizon.Server("https://horizon-testnet.stellar.org");
+/* The network is a flag, not a constant. Hardcoding testnet here meant a run pointed at the
+ * MAINNET sponsor still built and submitted against testnet: the sponsor handed out real mainnet
+ * channels, every one reported via:channel, and every submit then failed tx_no_source_account
+ * because those accounts do not exist on testnet. The pool looked broken when it was working. */
+const MAINNET = process.argv.includes("--network") &&
+  process.argv[process.argv.indexOf("--network") + 1] === "mainnet";
+const NETWORK = MAINNET ? Networks.PUBLIC : Networks.TESTNET;
+const server = new Horizon.Server(
+  MAINNET ? "https://horizon.stellar.org" : "https://horizon-testnet.stellar.org",
+);
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(name);

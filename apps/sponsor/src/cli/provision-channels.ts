@@ -19,6 +19,9 @@
  *   NEEDS: internet. On testnet, friendbot and no real money; on mainnet, a funded funder key.
  */
 import { Keypair, Horizon, TransactionBuilder, Networks, Operation, BASE_FEE } from "@stellar/stellar-sdk";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 function argOf(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -99,6 +102,33 @@ async function main() {
 
   const channels = Array.from({ length: count }, () => Keypair.random());
 
+  /* Persist the secrets BEFORE spending anything.
+   *
+   * These keys are the only way back to XLM that is about to leave the funder, and stdout is
+   * not storage: a pipe into grep, a scrolled-back terminal, a crash between funding and
+   * printing, and the money sits in accounts nobody can sign for. That is not hypothetical —
+   * it is how 16.5 XLM was stranded on 2026-08-24, filtered out of a terminal by a grep that
+   * was only watching the progress lines. Writing first means the worst case is a file of
+   * unused keys, never funded accounts without keys. It goes outside the repository, where the
+   * fleet state also lives, so git can never reach it either. */
+  const dir = join(homedir(), ".lumenia");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const out = join(dir, `channels-${MAINNET ? "mainnet" : "testnet"}-${Date.now()}.txt`);
+  const value = channels.map((k) => k.secret()).join(",");
+  writeFileSync(out, `CHANNEL_SECRETS=${value}\n`, { mode: 0o600 });
+
+  // Read it back and rebuild every keypair from what is actually on disk. If the file cannot
+  // reproduce the accounts we are about to fund, nothing gets funded.
+  const readBack = readFileSync(out, "utf8").trim().replace(/^CHANNEL_SECRETS=/, "").split(",");
+  if (
+    readBack.length !== channels.length ||
+    readBack.some((sec, i) => Keypair.fromSecret(sec).publicKey() !== channels[i]!.publicKey())
+  ) {
+    console.error(`\n💥 ${out} does not reproduce the generated keys — refusing to spend.`);
+    process.exit(1);
+  }
+  console.log(`[0] ${channels.length} secrets written + verified: ${out}\n`);
+
   if (MAINNET) {
     const balance = argOf("balance") ?? "1.1";
     console.log(`[1] creating ${count} channels from the funder at ${balance} XLM each (one transaction)…`);
@@ -128,10 +158,10 @@ async function main() {
     process.exit(1);
   }
 
-  const value = channels.map((k) => k.secret()).join(",");
   console.log("\n============================================================");
   console.log(` ✅ ${count} channels provisioned`);
   console.log("============================================================");
+  console.log(`\n  secrets saved to ${out} (mode 600) — they are NOT recoverable from anywhere else`);
   console.log("\nSet this as the sponsor's CHANNEL_SECRETS (enables the C1 channel pool):\n");
   console.log(`CHANNEL_SECRETS=${value}`);
   console.log("\nCloudflare Worker deploy:");
