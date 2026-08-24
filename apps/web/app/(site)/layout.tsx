@@ -26,6 +26,17 @@ import "../../components/site/pw-tokens.css";
 import "../../components/site/theme-transition.css";
 import { SiteNav } from "../../components/site/SiteNav";
 import { ThemeProvider } from "../../components/site/ThemeProvider";
+// Web analytics, mounted HERE and not in the root layout — deliberately.
+//
+// The root wraps the frozen claim route /c/[id] and the (app) money surfaces too, and neither
+// belongs in a third-party analytics store: the claim path carries a bearer id in its URL, and a
+// person's send/claim behaviour is not ours to hand to a vendor. This group is the public site —
+// pages anyone can already reach from a search engine — so a visitor count here answers "is anyone
+// arriving?" without measuring anyone's money.
+//
+// Same-origin by construction on Vercel (/_vercel/insights/*), so the CSP in next.config.ts needs
+// no new host: 'self' in script-src and connect-src already covers it.
+import { Analytics } from "@vercel/analytics/next";
 
 /** Group-wide only. Everything route-specific (title/description/canonical/OG) lives in page.tsx.
  *  The title TEMPLATE enforces the " | Lumenia" suffix pages used to append by hand (drift risk);
@@ -75,6 +86,7 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
       <link rel="preload" as="image" href="/brand-kit-assets/logo-wordmark-dark.svg" type="image/svg+xml" fetchPriority="high" />
       <SiteNav />
       {children}
+      <Analytics />
     </ThemeProvider>
   );
 }
