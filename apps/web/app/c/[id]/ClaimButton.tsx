@@ -43,9 +43,17 @@ export default function ClaimButton({
   // in the fragment). Only the rare no-key case (e.g. a reloaded, already-stripped
   // URL) swaps to the "open your original link" message after mount.
   const [noKey, setNoKey] = useState(false);
+  /** True when the key is gone because this page was reloaded, not because the link lacked one. */
+  const [reloaded, setReloaded] = useState(false);
   /** Why the last attempt failed. Null until one does. */
   const [failure, setFailure] = useState<ClaimErrorInfo | null>(null);
   const secretRef = useRef("");
+
+  /* Marker that THIS tab already saw a key for THIS claim, so a later mount without one can tell
+   * "you reloaded" from "this link never had a key" and give the right instruction. It is a
+   * boolean, never the key. The claim id is already in the URL and in browser history, so writing
+   * it here reveals nothing new — and sessionStorage dies with the tab. */
+  const seenKey = `lumenia.claim.seen.${claimId}`;
 
   // C3 — read the bearer key at mount, keep it in memory, strip the fragment from
   // the URL right away (referrer/history/analytics leak surface). Fire claim_opened
@@ -54,12 +62,28 @@ export default function ClaimButton({
     const frag = window.location.hash.slice(1);
     if (frag) {
       secretRef.current = frag;
+      try {
+        sessionStorage.setItem(seenKey, "1");
+      } catch {
+        /* private mode or blocked storage — we just lose the nicer reload message */
+      }
       history.replaceState(null, "", window.location.pathname + window.location.search);
     } else if (!secretRef.current) {
-      setNoKey(true);
+      /* Stripping the fragment means a reload lands here with no key — and the old copy told the
+       * person to "open your original link", which is exactly where they already were. A dead end
+       * on the one screen that must never have one. If we stripped a key in this tab, say what
+       * actually happened and what actually works: tap the link in the chat again. */
+      let strippedHere = false;
+      try {
+        strippedHere = sessionStorage.getItem(seenKey) === "1";
+      } catch {
+        /* storage unavailable — fall back to the generic message */
+      }
+      if (strippedHere) setReloaded(true);
+      else setNoKey(true);
     }
     void sendEvent("claim_opened", claimId);
-  }, [claimId]);
+  }, [claimId, seenKey]);
 
   async function onClaim() {
     setState("claiming");
@@ -196,7 +220,12 @@ export default function ClaimButton({
   // idle / error
   return (
     <div className="flex w-full flex-col items-center gap-3">
-      {noKey ? (
+      {reloaded ? (
+        <div className="flex flex-col items-center gap-1 text-center">
+          <p className="text-base font-semibold text-ink">{copy.claim.reloadedTitle}</p>
+          <p className="text-sm text-ink-soft">{copy.claim.reloadedBody}</p>
+        </div>
+      ) : noKey ? (
         <p className="text-sm text-ink-soft">Open your original link to claim this money.</p>
       ) : (
         // A failure we know cannot succeed on retry gets no button — offering one is an invitation

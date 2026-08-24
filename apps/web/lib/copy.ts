@@ -39,6 +39,12 @@ export const copy = {
      * us WHICH failure they hit — the first two reports of this bug were unactionable because every
      * cause produced identical words. */
     errDetail: (d: string) => `Details: ${d}`,
+    /* Reloading the claim page loses the key, because we strip it from the address on purpose so it
+     * is not left sitting in browser history. The old copy said "open your original link", which is
+     * where the person already was — a dead end on the one screen that must never have one. */
+    reloadedTitle: "Tap the link once more",
+    reloadedBody:
+      "Refreshing this page cleared the key from the address — we do that on purpose, so it isn't left in your history. Your money is untouched. Open the message again and tap the link.",
     holdHint: "Your dollars stay right here, to spend whenever you like.",
     // post-claim next action (the north-star hand-off)
     ctaSend: "Send money to someone",
