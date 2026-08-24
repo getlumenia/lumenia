@@ -345,6 +345,53 @@ async function checkWasmHash(config: SponsorConfig, alerts: Alert[]): Promise<vo
 
 /* ---------------------------------- alerting ---------------------------------- */
 
+/**
+ * How long a given alert stays quiet after it has been emailed once.
+ *
+ * The watchdog runs every 15 minutes, and a condition worth paging about is usually one that
+ * persists for hours: a float that needs topping up, a wasm hash that no longer matches. With
+ * no memory between runs, every one of those emailed the same paragraph four times an hour
+ * until someone fixed it — which does not make the problem more visible, it makes the next
+ * alert easier to ignore. The condition is still logged on every run; only the email is held.
+ */
+function alertCooldownMs(): number {
+  const raw = process.env.ALERT_COOLDOWN_MINUTES;
+  const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return (Number.isFinite(n) && n > 0 ? n : 360) * 60_000;
+}
+
+/** A stable identity for an alert: the title, which does not carry the changing numbers. */
+function alertSlug(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+}
+
+/**
+ * Drop alerts that were already emailed inside the cooldown, and reset the clock for any that
+ * have since cleared — so a problem that comes back pages immediately instead of serving out a
+ * stale silence. Fails OPEN: if the store is unreachable we send, because a missed page is
+ * worse than a duplicate one.
+ */
+export async function withoutRepeats(alerts: Alert[]): Promise<Alert[]> {
+  const now = Date.now();
+  const active = new Set(alerts.map((a) => alertSlug(a.title)));
+
+  const previous = (await kvGet("watchdog:alerting")) ?? "";
+  for (const slug of previous.split(",").filter(Boolean)) {
+    if (!active.has(slug)) await kvSet(`watchdog:alerted:${slug}`, "0");
+  }
+  await kvSet("watchdog:alerting", [...active].join(","));
+
+  const due: Alert[] = [];
+  for (const a of alerts) {
+    const slug = alertSlug(a.title);
+    const last = Number.parseInt((await kvGet(`watchdog:alerted:${slug}`)) ?? "0", 10);
+    if (Number.isFinite(last) && last > 0 && now - last < alertCooldownMs()) continue;
+    await kvSet(`watchdog:alerted:${slug}`, String(now));
+    due.push(a);
+  }
+  return due;
+}
+
 async function emailAlerts(alerts: Alert[]): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.ALERT_NOTIFY_TO ?? process.env.FEEDBACK_NOTIFY_TO;
@@ -413,7 +460,7 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
     if (a.severity === "page") console.error(line);
     else console.log(line);
   }
-  await emailAlerts(alerts.filter((a) => a.severity === "page"));
+  await emailAlerts(await withoutRepeats(alerts.filter((a) => a.severity === "page")));
 
   return { checked, alerts };
 }

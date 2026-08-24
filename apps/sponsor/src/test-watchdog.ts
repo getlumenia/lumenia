@@ -7,7 +7,7 @@
  */
 import { makeConfig } from "./lib/config.js";
 import { signerFromSecret } from "./lib/signer.js";
-import { runWatchdog } from "./lib/watchdog.js";
+import { runWatchdog, withoutRepeats, type Alert } from "./lib/watchdog.js";
 
 function need(name: string): string {
   const v = process.env[name];
@@ -43,6 +43,25 @@ async function main() {
     !report.alerts.some((a) => a.title.startsWith("Watchdog check failed")),
     report.alerts.filter((a) => a.title.startsWith("Watchdog check failed")).map((a) => a.detail).join("; "),
   );
+  /* Alert de-duplication — the thing standing between a persistent condition and four
+   * identical emails an hour. Uses a throwaway title so it never collides with a real alert's
+   * cooldown key in the shared store. */
+  const title = `Test alert ${Date.now()}`;
+  const one: Alert[] = [{ severity: "page", title, detail: "first" }];
+  check("a new alert is sent", (await withoutRepeats(one)).length === 1, "the first occurrence was suppressed");
+  check(
+    "the same alert is suppressed inside the cooldown",
+    (await withoutRepeats([{ severity: "page", title, detail: "different numbers, same problem" }])).length === 0,
+    "a repeat got through — the inbox would be flooded every 15 minutes",
+  );
+  // Clearing: a run where the condition is gone must reset the clock, so its return pages at once.
+  await withoutRepeats([]);
+  check(
+    "an alert that cleared and came back is sent again",
+    (await withoutRepeats([{ severity: "page", title, detail: "it is back" }])).length === 1,
+    "a recurrence was swallowed by a stale cooldown",
+  );
+
   console.log(`\n  findings: ${report.alerts.length === 0 ? "none" : ""}`);
   for (const a of report.alerts) console.log(`    [${a.severity}] ${a.title} — ${a.detail}`);
 
