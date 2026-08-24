@@ -115,6 +115,7 @@ PRE_MAINNET_HARDENING_BRIEF.md
 MAINNET_EVIDENCE.md
 AUDIT_BANK_PACKAGE.md
 DECISION_PACKET_MAINNET.md
+SOW2.md
 
 # cargo-mutants / cargo-fuzz working output — reports, not sources
 contracts/lumen-drop/mutants.out/

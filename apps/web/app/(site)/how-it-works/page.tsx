@@ -141,7 +141,7 @@ export default function HowItWorks() {
                 </p>
                 <span className="hw-seal">
                   <span className="hw-seal-star" aria-hidden="true" />
-                  Backed by the Stellar Community Fund
+                  Funded by Stellar Instawards, via the Stellar Türkiye chapter
                 </span>
               </div>
             </div>

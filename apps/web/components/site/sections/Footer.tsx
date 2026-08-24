@@ -64,7 +64,7 @@ export function Footer() {
         <span>Your money is never ours. That&rsquo;s the point.</span>
         <Badge variant="secondary" className="foot-seal">
           <span className="foot-seal-star" aria-hidden="true" />
-          Backed by the Stellar Community Fund
+          Funded by Stellar Instawards, via the Stellar Türkiye chapter
         </Badge>
       </div>
     </footer>

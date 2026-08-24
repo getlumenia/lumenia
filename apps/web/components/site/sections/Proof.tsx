@@ -35,7 +35,7 @@ export function Proof() {
           </p>
           <Badge className="proof-seal">
             <span className="proof-seal-star" aria-hidden="true" />
-            Backed by the Stellar Community Fund
+            Funded by Stellar Instawards, via the Stellar Türkiye chapter
           </Badge>
         </motion.div>
 
