@@ -29,6 +29,7 @@ import { BalanceHeader } from "../../../components/brand/BalanceHeader";
 import { ActivityRow } from "../../../components/brand/ActivityRow";
 import { LockMoneyCard } from "../../../components/brand/LockMoneyCard";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
+import { WelcomeNudge } from "../../../components/brand/WelcomeNudge";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
 import { copy } from "../../../lib/copy";
@@ -317,6 +318,12 @@ export default function HomePage() {
           </Link>
         ))}
       </nav>
+
+      {/* The one pointer to /welcome, and only for a device that has never seen it and has no name
+          yet. It sits BELOW the balance and the money verbs on purpose: nothing about setting up
+          may come before the money, which is the entire product. Dismissible, and silent for
+          everybody else — see components/brand/WelcomeNudge.tsx. */}
+      <WelcomeNudge />
 
       {/* Split — a request-money composition (one link per person). A quiet entry, not a big tile. */}
       <Link
