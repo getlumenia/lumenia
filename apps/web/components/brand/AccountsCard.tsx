@@ -71,7 +71,7 @@ export function AccountsCard() {
         <img className="app-kicon" src="/brand-kit-assets/icon-key.webp" alt="" />
         <div className="app-krow-body">
           <p className="app-krow-t">Your accounts</p>
-          <p className="app-krow-s">
+          <p className="app-krow-s app-krow-s--prose">
             {others.length > 0
               ? "Money, names and history are separate for each one."
               : "You can keep more than one on this phone — a personal one and a shared one, say."}

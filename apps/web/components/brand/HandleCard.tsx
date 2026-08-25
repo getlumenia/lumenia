@@ -121,7 +121,7 @@ export function HandleCard() {
         <img className="app-kicon" src="/brand-kit-assets/icon-key.webp" alt="" />
         <div className="app-krow-body">
           <p className="app-krow-t">Your name</p>
-          <p className="app-krow-s">
+          <p className="app-krow-s app-krow-s--prose">
             {name ? "People can pay you at this instead of a long address." : "Pick a short name people can pay you at."}
           </p>
         </div>

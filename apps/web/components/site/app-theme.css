@@ -179,6 +179,10 @@
 .app-krow-body { flex: 1; min-width: 0 }
 .app-krow-t { font-size: 14px; font-weight: 600; color: var(--ink) }
 .app-krow-s { margin-top: 2px; font-size: 13px; line-height: 1.45; color: var(--ink-soft); word-break: break-all }
+/* The row subtitle breaks anywhere because it usually holds a `G...` address, which has no spaces
+   to break at. On a row whose subtitle is a SENTENCE that rule chops words in half mid-letter
+   ("a p / ersonal one"), so prose rows opt out and only break where a long token genuinely has to. */
+.app-krow-s--prose { word-break: normal; overflow-wrap: anywhere }
 
 /* ---- Bottom money action bar (AppShell) ----------------------------------------------------
    The two money verbs pinned in the thumb zone, on every list surface (see AppShell). Fixed to

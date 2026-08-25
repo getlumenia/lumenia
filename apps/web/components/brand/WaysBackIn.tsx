@@ -206,7 +206,7 @@ export function WaysBackIn({ connectedTicket, ticketProvider }: { connectedTicke
         <img className="app-kicon" src="/brand-kit-assets/icon-shield.webp" alt="" />
         <div className="app-krow-body">
           <p className="app-krow-t">Ways back in</p>
-          <p className="app-krow-s">
+          <p className="app-krow-s app-krow-s--prose">
             {linked === null
               ? "Unlock your money to see which of these are connected."
               : count === 0
