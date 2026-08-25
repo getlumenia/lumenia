@@ -32,6 +32,7 @@ import { hasBackup } from "../../../lib/recovery-api";
 import { markWelcomeSeen } from "../../../lib/welcome";
 import { MAINNET_CONFIGURED } from "../../../lib/network";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
+import { JoinPilotDialog } from "../../../components/brand/JoinPilotDialog";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 
 type Step = "hello" | "name" | "done";
@@ -75,6 +76,7 @@ export default function WelcomePage() {
   const [typedReason, setTypedReason] = useState<string | null>(null);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [askPilot, setAskPilot] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /**
@@ -264,7 +266,7 @@ export default function WelcomePage() {
                 className="app-choice-opt"
                 data-on={onReal}
                 aria-pressed={onReal}
-                onClick={() => !onReal && switchNetwork("public")}
+                onClick={() => (mainnetApproved ? !onReal && switchNetwork("public") : setAskPilot(true))}
               >
                 <span className="app-choice-t">Real money</span>
                 <span className="app-choice-s">
@@ -286,8 +288,11 @@ export default function WelcomePage() {
           </PrimaryButton>
           {!canCreate && (
             <p className="text-center text-xs text-ink-soft">
-              New accounts on real money are opened for people on the pilot list. Pick practice money
-              above and you can start right now.
+              New accounts on real money are opened for people on the pilot list.{" "}
+              <button type="button" onClick={() => setAskPilot(true)} className="text-money underline underline-offset-2">
+                Ask to join
+              </button>
+              , or pick practice money above and start right now.
             </p>
           )}
           <Link
@@ -298,6 +303,10 @@ export default function WelcomePage() {
           </Link>
         </div>
         {error && <p className="text-center text-sm text-danger">{error}</p>}
+        {/* Tapping "Real money" without an invite used to end in a refusal and nothing else, which
+            is a door with no handle. This is the handle — and it does not become a shortcut around
+            the pilot's own preconditions (see JoinPilotDialog). */}
+        <JoinPilotDialog open={askPilot} onClose={() => setAskPilot(false)} />
       </div>
     );
   }
