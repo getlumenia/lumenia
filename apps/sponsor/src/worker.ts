@@ -32,6 +32,23 @@ import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, get
 import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected } from "./lib/pilot-request.js";
 import { isPublicRefusal } from "./lib/caps.js";
 import {
+  resolveProof,
+  checkIdentity,
+  attachIdentity,
+  fetchByIdentity,
+  detachIdentity,
+  detachProviderByAccount,
+  listLinks,
+  startOAuth,
+  finishOAuth,
+  availableOAuthProviders,
+  OAUTH_PROVIDERS,
+  PROVIDERS,
+  type Provider,
+  type IdentityProof,
+  type OAuthProvider,
+} from "./lib/identity-links.js";
+import {
   claimHandle,
   releaseHandle,
   lookupHandle,
@@ -555,6 +572,148 @@ export default {
           config.network,
         );
         return "ok" in answer ? json(404, { detail: answer.reason }) : json(200, answer);
+      }
+
+      /* ------------------------------------------------------------------------------
+       * WAYS BACK IN — docs/IDENTITY_AND_ACCOUNTS.md §5.
+       *
+       * These endpoints connect an identity somebody controls (a passkey, an email address, a
+       * Google/GitHub/X account) to an account, and file the account's ALREADY-ENCRYPTED box
+       * under it. None of them can decrypt anything, none of them issues a session, and none of
+       * them is a sign-in: what opens the money is still the password or the passkey.
+       * ---------------------------------------------------------------------------- */
+
+      /** Which connections this deployment can actually offer (an unregistered app is not offered). */
+      if (method === "GET" && url === "/identity-providers") {
+        return json(200, { providers: ["passkey", "email", ...availableOAuthProviders()] });
+      }
+
+      /** Begin an OAuth round trip. Returns the URL to send the browser to; state lives server-side. */
+      if (method === "POST" && url === "/identity-start") {
+        const b = (await readJson(request)) as { provider?: unknown; address?: unknown };
+        const provider = String(b.provider ?? "");
+        if (!OAUTH_PROVIDERS.includes(provider as OAuthProvider)) {
+          return json(400, { error: "unknown provider" });
+        }
+        const rl = await enforceRateLimit(`idlink:${clientIp(request)}`);
+        if (rl.limited) return json(429, { error: rl.reason });
+        const started = await startOAuth(
+          provider as OAuthProvider,
+          typeof b.address === "string" ? b.address : undefined,
+          config.network,
+        );
+        return started.ok ? json(200, { authUrl: started.authUrl }) : json(400, { error: started.reason });
+      }
+
+      /**
+       * The provider redirects the browser here. The code is exchanged server-side (the client
+       * secret never reaches a browser), and what goes back to the app is a one-time ticket —
+       * never a provider token, which is used once here and dropped.
+       */
+      if (method === "GET" && url.startsWith("/oauth/") && url.endsWith("/callback")) {
+        const provider = url.slice("/oauth/".length, -"/callback".length);
+        const params = new URL(request.url).searchParams;
+        const done = await finishOAuth(provider, params.get("code"), params.get("state"));
+        if (!done.ok) {
+          return html(400, `<h2>That didn't connect</h2><p>${done.reason}</p><p><a href="/">Back</a></p>`);
+        }
+        return new Response(null, { status: 302, headers: { location: done.redirectTo, ...corsHeaders() } });
+      }
+
+      /**
+       * The four operations over a proved identity. `readProof` turns the request into an identity
+       * or into nothing — and everything below refuses on nothing, so no route can be reached
+       * without control of the identity it names.
+       */
+      if (
+        method === "POST" &&
+        (url === "/identity-check" || url === "/identity-attach" || url === "/identity-fetch" || url === "/identity-detach")
+      ) {
+        const rl = await enforceRateLimit(`idlink:${clientIp(request)}`);
+        if (rl.limited) return json(429, { error: rl.reason });
+        const b = (await readJson(request)) as Record<string, unknown>;
+        const proof = b.proof as IdentityProof | undefined;
+        if (!proof || typeof proof !== "object" || typeof (proof as { kind?: unknown }).kind !== "string") {
+          return json(400, { error: "proof is required" });
+        }
+        const resolved = await resolveProof(proof, {
+          verifyEmailOtp: async (email, code) => verifyOtp(await idForEmail(email), code),
+        });
+        if (!resolved) return json(401, { error: "we could not confirm that is yours" });
+
+        if (url === "/identity-check") {
+          return json(200, await checkIdentity(resolved, config.network));
+        }
+        if (url === "/identity-fetch") {
+          const found = await fetchByIdentity(resolved);
+          return found ? json(200, found) : json(404, { error: "not found" });
+        }
+        if (url === "/identity-detach") {
+          const done = await detachIdentity(resolved);
+          return done.ok ? json(200, done) : json(404, { error: done.reason });
+        }
+        const attached = await attachIdentity(
+          resolved,
+          String(b.address ?? ""),
+          config.network,
+          b.box,
+          typeof b.passkeyProof === "string" ? b.passkeyProof : undefined,
+        );
+        return attached.ok ? json(200, attached) : json(409, { error: attached.reason, conflict: attached.conflict });
+      }
+
+      /**
+       * Disconnect a provider from an account, authorized by the ACCOUNT's own signature. The
+       * identity-proof route above still exists for the other direction ("take my passkey off
+       * whatever it opens"); this one is what a settings screen needs, because re-proving a Google
+       * account just to remove it — or a passkey you have lost — is either friction or impossible.
+       */
+      if (method === "POST" && url === "/identity-detach-mine") {
+        const b = (await readJson(request)) as {
+          pubkey?: unknown;
+          ts?: unknown;
+          nonce?: unknown;
+          proof?: unknown;
+          provider?: unknown;
+        };
+        const pubkey = String(b.pubkey ?? "");
+        const provider = String(b.provider ?? "");
+        const rl = await enforceRateLimit(`idlink:${clientIp(request)}`, pubkey);
+        if (rl.limited) return json(429, { error: rl.reason });
+        if (!PROVIDERS.includes(provider as Provider)) return json(400, { error: "unknown provider" });
+        const okProof = await verifyHandleProof({
+          action: "links",
+          name: "",
+          pubkey,
+          ts: Number(b.ts),
+          nonce: String(b.nonce ?? ""),
+          network: config.network,
+          proof: String(b.proof ?? ""),
+        });
+        if (okProof.ok !== true) return json(401, { error: okProof.reason });
+        return json(200, await detachProviderByAccount(pubkey, config.network, provider as Provider));
+      }
+
+      /**
+       * Which connections does THIS account have? Signed by the account, because a list of
+       * somebody's ways back in is not public information about an address.
+       */
+      if (method === "POST" && url === "/identity-links") {
+        const b = (await readJson(request)) as { pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
+        const pubkey = String(b.pubkey ?? "");
+        const rl = await enforceRateLimit(`idlink:${clientIp(request)}`, pubkey);
+        if (rl.limited) return json(429, { error: rl.reason });
+        const okProof = await verifyHandleProof({
+          action: "links",
+          name: "",
+          pubkey,
+          ts: Number(b.ts),
+          nonce: String(b.nonce ?? ""),
+          network: config.network,
+          proof: String(b.proof ?? ""),
+        });
+        if (okProof.ok !== true) return json(401, { error: okProof.reason });
+        return json(200, { links: await listLinks(pubkey, config.network) });
       }
 
       return json(404, { error: "not found" });

@@ -39,6 +39,8 @@
     "mainnet-demo": "tsx src/mainnet-demo.ts",
     "test:antidrain": "tsx src/test-antidrain.ts",
     "test:recovery-store": "tsx src/test-recovery-store.ts",
+    "test:identity": "tsx src/test-identity.ts",
+    "test:identity-routes": "tsx src/test-identity-routes.ts",
     "test:integration": "tsx src/test-integration.ts"
   },
   "dependencies": {
