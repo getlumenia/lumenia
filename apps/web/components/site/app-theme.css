@@ -135,6 +135,88 @@
 .app-nav-tools .fb-trigger-nav:hover,
 .app-nav-icon:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent) }
 
+/* Below ~400px the row cannot hold everything, and the honest thing to drop is the item that has a
+   substitute one centimetre to its left: the wordmark is a link to /home, with that accessible
+   name. Everything else — Activity, the call to action, the bell, help, you — has no stand-in. */
+@media (max-width: 399px) {
+  .app-nav-link[data-optional="true"] { display: none }
+}
+
+/* THE ONE CALL TO ACTION. Not a nav link: a task, not a place. It carries its own tinted ground so
+   it reads as an action in both themes — the previous grey link was the first thing the row trimmed
+   when it ran out of width, and a trimmed grey label on a dark background is an invisible one. */
+.app-nav-cta {
+  flex: none; white-space: nowrap; scroll-snap-align: end;
+  padding: 6px 11px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  color: var(--money); text-decoration: none;
+  background: color-mix(in srgb, var(--money) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--money) 26%, transparent);
+  transition: background .18s, border-color .18s;
+}
+.app-nav-cta:hover {
+  background: color-mix(in srgb, var(--money) 22%, transparent);
+  border-color: color-mix(in srgb, var(--money) 40%, transparent);
+}
+.app-nav-cta[data-active="true"] { background: color-mix(in srgb, var(--money) 24%, transparent) }
+
+/* ---- The account menu ("you") ------------------------------------------------------------- */
+.app-nav-you { position: relative; flex: none; display: flex; align-items: center }
+.app-nav-avatar {
+  width: 32px; height: 32px; display: grid; place-items: center; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink-soft); font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: border-color .18s, color .18s, background .18s;
+}
+.app-nav-avatar:hover { color: var(--ink); border-color: color-mix(in srgb, var(--money) 45%, var(--line)) }
+.app-nav-avatar[aria-expanded="true"] {
+  color: var(--money); border-color: var(--money);
+  background: color-mix(in srgb, var(--money) 12%, var(--surface));
+}
+
+.app-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; width: min(272px, calc(100vw - 24px));
+  padding: 6px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface);
+  box-shadow: 0 4px 10px rgba(20, 16, 30, .06), 0 24px 48px -20px rgba(20, 16, 30, .28);
+}
+:root[data-theme="dark"] .app-menu { box-shadow: 0 4px 10px rgba(0, 0, 0, .35), 0 24px 48px -20px rgba(0, 0, 0, .6) }
+
+.app-menu-id { padding: 10px 10px 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px }
+.app-menu-id-name { font-size: 15px; font-weight: 700; color: var(--ink) }
+.app-menu-id-sub { margin-top: 1px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--ink-soft) }
+
+.app-menu-row {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  padding: 9px 10px; border-radius: 11px; border: 0; background: none; cursor: pointer;
+  color: var(--ink-soft); text-decoration: none; transition: background .15s, color .15s;
+}
+.app-menu-row:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); color: var(--ink) }
+.app-menu-row-static { cursor: default; padding-right: 6px }
+.app-menu-row-static:hover { background: none }
+/* The theme switch arrives with shadcn's ghost styling, which is a mid-grey on a mid-grey panel —
+   on dark it read as a smudge rather than a control. Give it the same bordered, tappable shape the
+   avatar has, in tokens that flip with the theme. */
+.app-menu-row-static button {
+  width: 32px; height: 32px; display: grid; place-items: center; flex: none;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink-soft); transition: color .18s, border-color .18s;
+}
+.app-menu-row-static button:hover {
+  color: var(--ink); border-color: color-mix(in srgb, var(--money) 45%, var(--line));
+}
+.app-menu-row-t { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 14px; font-weight: 600; color: var(--ink) }
+.app-menu-row-s { font-size: 12px; font-weight: 400; line-height: 1.35; color: var(--ink-soft) }
+.app-menu-row-btn { font: inherit }
+
+.app-menu-danger { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line) }
+.app-menu-danger .app-menu-row-t { color: var(--danger) }
+.app-menu-danger .app-menu-row:hover { background: color-mix(in srgb, var(--danger) 8%, transparent) }
+.app-menu-danger .app-menu-row > svg { color: var(--danger) }
+/* The disconnect flow renders its own buttons; keep them inside the panel's width. */
+.app-menu-danger button { max-width: 100% }
+
+.app-nav-avatar:focus-visible,
+.app-menu-row:focus-visible { outline: 2px solid var(--money); outline-offset: 2px }
+
 /* Keyboard users had nothing at all here. One ring, one token, both themes. */
 .app-nav-link:focus-visible,
 .app-nav-brand:focus-visible,

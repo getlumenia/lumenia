@@ -19,29 +19,50 @@ import { loadUnreadCount } from "../../lib/notifications";
 import { TestnetBanner } from "./TestnetBanner";
 import { FeedbackDialog } from "../FeedbackDialog";
 import { copy } from "../../lib/copy";
+import { AccountMenu } from "./AccountMenu";
 
-const NAV = [
-  { href: "/home", label: "Home" },
+/**
+ * PLACES, and only places. "Account" used to be here and is now the first row of the account menu:
+ * it was never a peer of Home and Activity — it is where you go to look after yourself, which is
+ * exactly what the menu on the right is for. Two links is also what actually fits next to a
+ * wordmark, three controls and a call to action on a 375px phone.
+ */
+const NAV: { href: string; label: string; optional?: boolean }[] = [
+  // `optional` = dropped on the narrowest phones, where the wordmark next to it already goes home
+  // and the alternative is trimming something that has no substitute.
+  { href: "/home", label: "Home", optional: true },
   { href: "/activity", label: "Activity" },
-  { href: "/account", label: "Account" },
 ];
 
 /**
- * "Set up" appears in the nav ONLY while sending is still blocked, and disappears the moment it
- * is not. A permanent fourth link would tax every user forever to help the few in their first
- * hour; a link that leaves when it stops being true costs nothing and is exactly the thing a new
- * sender is looking for. Receiving never needs any of this, so an account that only ever claims
- * money never sees it.
+ * The one call to action in the nav. It appears ONLY while sending is still blocked and disappears
+ * the moment it is not: a permanent link would tax every user forever to help the few in their
+ * first hour. Receiving never needs any of it, so an account that only ever claims money never
+ * sees it.
+ *
+ * It says "Activate", not "Set up". The old label named the machinery — a chore — where this names
+ * turning the account on, which is the only reason any of those steps exist; the full sentence
+ * rides along as the title and the accessible name, because the pill has room for one word. It is
+ * also not a nav link any more but a CTA pill: it is a task, not a place, and a plain grey link at
+ * the end of a full row was invisible on dark the moment the row had to trim it.
  */
-function SetupLink() {
+function StartSendingLink() {
   const { status, account, network, pilotState } = useWallet();
   const pathname = usePathname();
   if (status === "loading" || !account) return null;
   const ready = account.phase === 2 && network === "public" && pilotState === "approved";
   if (ready) return null;
   return (
-    <Link href="/start" className="app-nav-link" data-active={pathname === "/start"}>
-      Set up
+    <Link
+      href="/start"
+      className="app-nav-cta"
+      data-active={pathname === "/start"}
+      /* The pill has room for one word; the sentence it stands for goes to anyone who needs it
+         spelled out, and to every screen reader. */
+      title="Activate your account so you can send money"
+      aria-label="Activate your account so you can send money"
+    >
+      Activate
     </Link>
   );
 }
@@ -152,13 +173,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 key={n.href}
                 href={n.href}
                 className="app-nav-link"
+                data-optional={n.optional ? "true" : undefined}
                 data-active={pathname === n.href}
                 aria-current={pathname === n.href ? "page" : undefined}
               >
                 {n.label}
               </Link>
             ))}
-            <SetupLink />
+            <StartSendingLink />
           </nav>
           )}
           {/* Utilities, kept in their own group. Three controls that are NOT navigation were sitting
@@ -177,6 +199,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               triggerAriaLabel={copy.feedback.linkLabel}
               defaultCategory="money"
             />
+            {/* Everything about YOU — name, accounts, settings, appearance, and leaving this
+                device — behind one control. Leaving used to be three disclosures deep inside a page
+                about balances; it is now one tap from every screen, which is what it should always
+                have been for a product whose keys live on the phone. */}
+            <AccountMenu />
             {/* The theme switch used to sit here and no longer does. Measured, not guessed: the row
                 needs 257px for its links and has 193px even on a 430px phone, so something had to
                 leave, and this was the only control that is (a) a preference rather than something
