@@ -48,6 +48,21 @@ function effectiveSource(op: { source?: string }, txSource: string): string {
   return op.source ?? txSource;
 }
 
+/**
+ * Compare a Stellar amount by VALUE, never as a string.
+ *
+ * This is not a style preference — it is the bug this function exists to prevent. A transaction is
+ * built with `startingBalance: "0"`, serialised to XDR as an integer number of stroops, and parsed
+ * back as `"0.0000000"`. Any check written as `amount !== "0"` therefore compares two strings that
+ * are never equal on the wire, and it does so INVISIBLY: written one way it refuses every honest
+ * transaction, written the other way it silently permits the hostile one. Both spellings appeared
+ * below, and both were wrong.
+ */
+function amount(raw: unknown): number {
+  const n = Number.parseFloat(String(raw ?? ""));
+  return Number.isFinite(n) ? n : Number.NaN;
+}
+
 /** An `Asset` from a parsed changeTrust op — a credit asset exposes code + issuer. */
 function isPinnedUsdc(line: unknown, issuer: string): boolean {
   const a = line as Partial<Asset> & { code?: string; issuer?: string };
@@ -90,7 +105,9 @@ export function assertSponsoredOnboarding(tx: Transaction, me: string, net: Netw
   if (
     create.type !== "createAccount" ||
     create.destination !== me ||
-    create.startingBalance !== "0" ||
+    // The sponsor funds ZERO XLM: the recipient's reserves are sponsored, not gifted. Anything
+    // above zero would be the sponsor's own money leaving, which is not what this call is for.
+    !(amount(create.startingBalance) === 0) ||
     effectiveSource(create, txSource) === me
   ) {
     throw new Error(REFUSED);
@@ -104,9 +121,11 @@ export function assertSponsoredOnboarding(tx: Transaction, me: string, net: Netw
   ) {
     throw new Error(REFUSED);
   }
-  // limit "0" DELETES a trustline. Harmless on a brand-new account, but this same call prepares an
-  // existing wallet that may already hold dollars — refuse rather than reason about which is which.
-  if (trust.limit === "0") throw new Error(REFUSED);
+  // A ZERO limit DELETES a trustline. Harmless on a brand-new account, but this same call prepares
+  // an existing wallet that may already hold dollars — refuse rather than reason about which is
+  // which. Written as `trust.limit === "0"` this check could never fire on a parsed transaction,
+  // so the one hostile shape it names was the one shape it let through.
+  if (!(amount(trust.limit) > 0)) throw new Error(REFUSED);
 
   if (end.type !== "endSponsoringFutureReserves" || effectiveSource(end, txSource) !== me) {
     throw new Error(REFUSED);
