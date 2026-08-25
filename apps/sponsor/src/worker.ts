@@ -27,10 +27,19 @@ import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
-import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
+import { requestOtp, verifyOtp, idForEmail } from "./lib/recovery-otp.js";
 import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState, verifyApprovalToken } from "./lib/pilot.js";
 import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected } from "./lib/pilot-request.js";
 import { isPublicRefusal } from "./lib/caps.js";
+import {
+  claimHandle,
+  releaseHandle,
+  lookupHandle,
+  handleOf,
+  federationLookup,
+  verifyHandleProof,
+  handleAvailability,
+} from "./lib/handles.js";
 import { StrKey } from "@stellar/stellar-sdk";
 
 type Env = Record<string, unknown>;
@@ -473,6 +482,79 @@ export default {
         const box = await getBox(body.id);
         if (!box) return json(404, { error: "not found" });
         return json(200, { box });
+      }
+
+      /* ------------------------------------------------------------------------------
+       * NAMES (@handle) + SEP-0002 federation — docs/IDENTITY_AND_ACCOUNTS.md §3.
+       *
+       * Every write is an Ed25519 signature from the account itself; this service issues no
+       * session and holds no secret of the user's, so it can refuse a name but never move one.
+       * The NETWORK is taken from this Worker's own config, never from the request — a proof
+       * signed for testnet must not be replayable against the mainnet registry.
+       * ---------------------------------------------------------------------------- */
+
+      if (method === "GET" && url === "/handle") {
+        const name = new URL(request.url).searchParams.get("name");
+        const found = await lookupHandle(name);
+        if (!found) {
+          // Not resolving is not the same as free: a name can be cooling down after a release, or
+          // be a lookalike of one that exists. handleAvailability knows about both.
+          const availability = await handleAvailability(name);
+          return json(404, {
+            available: availability.available,
+            ...(availability.reason ? { error: availability.reason } : {}),
+          });
+        }
+        return json(200, { name: found.name, address: found.pubkey, network: found.network });
+      }
+
+      if (method === "GET" && url === "/handle-of") {
+        const pubkey = new URL(request.url).searchParams.get("pubkey");
+        const name = await handleOf(pubkey, config.network);
+        return name ? json(200, { name }) : json(404, { error: "not found" });
+      }
+
+      if (method === "POST" && url === "/handle-claim") {
+        const b = (await readJson(request)) as { name?: unknown; pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
+        const rl = await enforceRateLimit(`handle:${clientIp(request)}`, typeof b.pubkey === "string" ? b.pubkey : undefined);
+        if (rl.limited) return json(429, { error: rl.reason });
+        const result = await claimHandle({
+          action: "claim",
+          name: String(b.name ?? ""),
+          pubkey: String(b.pubkey ?? ""),
+          ts: Number(b.ts),
+          nonce: String(b.nonce ?? ""),
+          network: config.network,
+          proof: String(b.proof ?? ""),
+        });
+        return result.ok ? json(200, result) : json(409, { error: result.reason });
+      }
+
+      if (method === "POST" && url === "/handle-release") {
+        const b = (await readJson(request)) as { name?: unknown; pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
+        const rl = await enforceRateLimit(`handle:${clientIp(request)}`, typeof b.pubkey === "string" ? b.pubkey : undefined);
+        if (rl.limited) return json(429, { error: rl.reason });
+        const result = await releaseHandle({
+          action: "release",
+          name: String(b.name ?? ""),
+          pubkey: String(b.pubkey ?? ""),
+          ts: Number(b.ts),
+          nonce: String(b.nonce ?? ""),
+          network: config.network,
+          proof: String(b.proof ?? ""),
+        });
+        return result.ok ? json(200, result) : json(409, { error: result.reason });
+      }
+
+      /** SEP-0002. Answers `name` and `id`; says so plainly for the two types it does not serve. */
+      if (method === "GET" && url === "/federation") {
+        const params = new URL(request.url).searchParams;
+        const answer = await federationLookup(
+          params.get("q") ?? "",
+          params.get("type") ?? "",
+          config.network,
+        );
+        return "ok" in answer ? json(404, { detail: answer.reason }) : json(200, answer);
       }
 
       return json(404, { error: "not found" });
