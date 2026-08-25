@@ -23,19 +23,36 @@ const EVENT = "lumenia:toast";
 const VISIBLE_MS = 4200;
 
 /**
- * Show a message. Safe to call immediately before a reload or a navigation — it is stored first,
- * and the host picks it up whenever it next mounts.
+ * Show a message on THIS page, now.
+ *
+ * Deliberately does not touch storage. The first version of this did both — dispatch and store —
+ * and the two fought each other: a caller that toasts and then reloads would light the toast on the
+ * page that is about to be destroyed, and that render's own "clear it once it is on screen" step
+ * wiped the copy meant for the page arriving next. The switch between practice and real money
+ * therefore reloaded in silence, which is the exact thing the toast was added to fix.
+ *
+ * So the two situations are two functions, and the call site says which one it is in.
  */
 export function toast(message: string): void {
   try {
-    sessionStorage.setItem(KEY, message);
-  } catch {
-    /* storage blocked — fall through to the live event, which still works within this page */
-  }
-  try {
     window.dispatchEvent(new CustomEvent(EVENT, { detail: message }));
   } catch {
-    /* pre-hydration or a non-browser context: the stored copy is the fallback */
+    /* pre-hydration or a non-browser context: nothing to announce to yet */
+  }
+}
+
+/**
+ * Show a message on the page that comes AFTER a reload or a full navigation.
+ *
+ * Stores only. The host drains it when it next mounts, which is on the other side of the reload —
+ * the only place a confirmation of "you switched networks" can survive, because that switch throws
+ * this page away on purpose (every money module reads the active network at call time).
+ */
+export function toastAfterReload(message: string): void {
+  try {
+    sessionStorage.setItem(KEY, message);
+  } catch {
+    /* storage blocked — the switch still happens, it just goes unannounced */
   }
 }
 

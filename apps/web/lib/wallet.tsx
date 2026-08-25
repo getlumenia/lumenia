@@ -18,7 +18,7 @@ import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, empty
 import { enrollPasskeyPrf, derivePasskeyPrf, assertPasskeyPrf } from "./passkey-prf";
 import { fetchRecoveryBoxByPrfId } from "./recovery-api";
 import { migrateLegacySentLinks } from "./sent-links";
-import { toast } from "../components/brand/Toast";
+import { toast, toastAfterReload } from "../components/brand/Toast";
 import { StrKey } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
 
@@ -224,9 +224,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         toast("Real money is invite-only for now — you're still on practice money.");
         return;
       }
-      // Handed over before the reload deliberately: the switch throws this page away, and the
-      // confirmation is picked up on the other side (components/brand/Toast.tsx).
-      toast(id === "public" ? "You're on real money now." : "You're on practice money now.");
+      // AFTER the reload, not now: the switch throws this page away, so a toast lit here would be
+      // destroyed by the very event it announces (components/brand/Toast.tsx).
+      toastAfterReload(id === "public" ? "You're on real money now." : "You're on practice money now.");
       setActiveNetwork(id);
       window.location.reload();
     },
