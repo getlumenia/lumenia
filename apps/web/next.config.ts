@@ -32,6 +32,16 @@ const nextConfig: NextConfig = {
     return [{ source: "/demo", destination: "/try", permanent: true }];
   },
 
+  /**
+   * SEP-0001 discovery. A wallet resolving `name*getlumenia.com` fetches
+   * `/.well-known/stellar.toml` — and an app-router segment cannot be called `.well-known`
+   * (a leading dot is not a route segment), so the well-known path is rewritten onto a normal
+   * route handler. See app/api/stellar-toml/route.ts.
+   */
+  async rewrites() {
+    return [{ source: "/.well-known/stellar.toml", destination: "/api/stellar-toml" }];
+  },
+
   async headers() {
     /**
      * Content-Security-Policy. This app keeps a raw Ed25519 seed in IndexedDB and decrypts it in

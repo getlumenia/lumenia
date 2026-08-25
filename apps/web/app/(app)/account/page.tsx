@@ -399,6 +399,19 @@ export default function AccountPage() {
           </div>
         </div>
 
+        {/* Settings — the person-shaped questions (your name, your accounts, how you get back in)
+            live on their own page. A row here rather than a fourth nav link: everybody would pay
+            for the link, and only the people looking for it need the row. */}
+        <div className="flex items-center justify-between gap-3 border-b border-line py-3">
+          <div>
+            <p className="text-sm font-medium text-ink">Settings</p>
+            <p className="text-xs text-ink-soft">Your name, your accounts, and how you get back in.</p>
+          </div>
+          <Link href="/settings" className="text-sm font-medium text-money underline-offset-2 hover:underline">
+            Open →
+          </Link>
+        </div>
+
         {/* Appearance — a live theme toggle (light or dark, follows the phone by default). */}
         <div className="flex items-center justify-between gap-3 border-b border-line py-3">
           <div>
