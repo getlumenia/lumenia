@@ -66,10 +66,10 @@ export default function SettingsPage() {
           <p className="font-semibold text-ink">There is no account on this phone yet.</p>
           <p className="mt-1 text-sm text-ink-soft">
             An account appears here the moment someone sends you money with a link — or you can open
-            one yourself.
+            one yourself, on practice money, in a few seconds.
           </p>
           <Link
-            href="/start"
+            href="/welcome"
             className="mt-4 inline-flex rounded-full border border-line px-4 py-2.5 text-sm font-medium text-ink"
           >
             Get started

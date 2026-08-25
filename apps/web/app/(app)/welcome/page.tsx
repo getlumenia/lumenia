@@ -64,7 +64,7 @@ function Dots({ step }: { step: Step }) {
 
 export default function WelcomePage() {
   const router = useRouter();
-  const { status, account, getSigner } = useWallet();
+  const { status, account, getSigner, createAccount } = useWallet();
   const [step, setStep] = useState<Step>("hello");
   const [name, setName] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -168,6 +168,24 @@ export default function WelcomePage() {
     }
   }, [account, target, getSigner, refreshSuggestions]);
 
+  /**
+   * Open a brand-new account from here. It lands at Phase 1 (a device key, no password), which is
+   * the same place a Face-ID restore lands, and the "Back up my money" step at the end of this flow
+   * is what turns that into something that survives losing the phone.
+   */
+  const createAccountHere = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await createAccount();
+      setStep("name"); // an account with no name is exactly what the next beat is for
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [createAccount]);
+
   const skip = useCallback(() => {
     markWelcomeSeen();
     setStep("done");
@@ -182,24 +200,43 @@ export default function WelcomePage() {
     return <p className="py-10 text-center text-ink-soft">One moment…</p>;
   }
 
-  /* No account yet: this screen has nothing to welcome. Say so, and point at the one thing that
-     does apply — the same honest empty /settings and /home use. */
+  /**
+   * NO ACCOUNT YET — and this is where one gets made.
+   *
+   * This screen used to say "there is no account on this phone" and point at a checklist whose own
+   * first step said to wait for somebody to send you money. That is a closed loop: the only way in
+   * was to be sent a link, so a person who simply wanted to try the product had nowhere to go. An
+   * account is a keypair and a sponsored, zero-XLM ledger entry — there is no reason it cannot be
+   * made right here, and now that it can be, this is the first beat rather than a dead end.
+   *
+   * Nobody's real money is involved: a device with no account is on practice money by definition
+   * (real money is gated on a pilot approval that is granted to an account, which does not exist
+   * yet), and the copy says exactly that rather than implying otherwise.
+   */
   if (!account) {
     return (
       <div className="flex flex-col gap-5 py-6">
         <Mascot step="hello" />
-        <MoneyCard className="p-5 text-center">
-          <p className="font-semibold text-ink">There is no account on this phone yet.</p>
-          <p className="mt-1 text-sm text-ink-soft">
-            One appears the moment someone sends you money with a link — or you can open one yourself.
+        <header className="text-center">
+          <h1 className="text-2xl font-bold text-ink">Let&apos;s get you an account.</h1>
+          <p className="mx-auto mt-2 max-w-xs text-sm text-ink-soft">
+            It takes a few seconds, costs you nothing, and there is nothing to sign up for. You start
+            with practice money, so you can send some to a friend and watch it arrive before any real
+            money is involved.
           </p>
+        </header>
+        <div className="flex flex-col gap-2">
+          <PrimaryButton loading={busy} loadingLabel="Opening your account…" onClick={createAccountHere}>
+            Create my account
+          </PrimaryButton>
           <Link
-            href="/start"
-            className="mt-4 inline-flex rounded-full border border-line px-4 py-2.5 text-sm font-medium text-ink"
+            href="/how-it-works"
+            className="flex h-12 items-center justify-center rounded-full text-sm font-medium text-ink-soft"
           >
-            Get started
+            First, how does this work?
           </Link>
-        </MoneyCard>
+        </div>
+        {error && <p className="text-center text-sm text-danger">{error}</p>}
       </div>
     );
   }

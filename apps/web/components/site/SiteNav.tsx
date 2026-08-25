@@ -130,10 +130,13 @@ export function SiteNav() {
             way to convert; pointer-events re-enabled since the header itself is click-through. */}
         <div className="pointer-events-auto relative flex items-center gap-1.5 justify-self-end">
           <ThemeToggle />
-          {/* A returning user had no way back to their money from the landing — the only action was
-              "Get started", which sends someone who already HAS an account to a demo. So the cell
-              answers who is looking: first-timers still get the demo (the product's best pitch),
-              and anyone with an account on this device gets a door to it plus their next setup step. */}
+          {/* The cell answers who is looking. Someone with an account on this device gets a door to
+              their money plus their next step; a first-timer gets ONBOARDING — not the demo link it
+              used to point at. The demo is still the best pitch and still one tap away on /try, but
+              as the answer to "Get started" it was the wrong shape: it hands you $5 of practice
+              money through a claim link, which explains the product without ever giving you an
+              account. /welcome now opens one in a few seconds, on practice money, which is what a
+              person pressing that button is actually asking for. */}
           {hasAccount ? (
             <>
               <Button
@@ -141,7 +144,7 @@ export function SiteNav() {
                 variant="ghost"
                 className="rounded-xl px-3 transition-transform duration-200 hover:-translate-y-0.5"
               >
-                <Link href="/start">Set up</Link>
+                <Link href="/start">Activate</Link>
               </Button>
               <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
                 <Link href="/home">My money</Link>
@@ -149,7 +152,7 @@ export function SiteNav() {
             </>
           ) : (
             <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
-              <Link href="/try">Get started</Link>
+              <Link href="/welcome">Get started</Link>
             </Button>
           )}
         </div>

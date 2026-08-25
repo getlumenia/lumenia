@@ -23,6 +23,7 @@ import { sweepHandler } from "./lib/sweep.js";
 import { relayClaimHandler, relayDepositHandler, relayReclaimHandler } from "./lib/soroban-relay.js";
 import { faucetHandler } from "./lib/faucet.js";
 import { demoLinkHandler } from "./lib/demo-link.js";
+import { takeDemoLink, refillDemoPool } from "./lib/demo-pool.js";
 import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
@@ -162,7 +163,12 @@ const GRANT_ROUTES = new Set(["/pilot-approve", "/pilot-reject"]);
 const MAX_BODY_BYTES = 16 * 1024;
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: Env,
+    /** Optional so the offline route suite can drive this handler with just (request, env). */
+    ctx?: { waitUntil(p: Promise<unknown>): void },
+  ): Promise<Response> {
     hydrateEnv(env);
 
     const method = request.method;
@@ -323,11 +329,29 @@ export default {
         return json(200, await faucetHandler(server, config, faucet, { recipientPublicKey: body.recipientPublicKey }));
       }
 
+      /**
+       * The demo link, from stock where possible.
+       *
+       * Minting one creates a Claimable Balance, and a transaction is not real until a ledger
+       * closes — ~5s on Stellar, measured 4.9–7.3s end to end. That was the whole of the wait
+       * behind "Making your link…", and it is the network's heartbeat rather than our latency, so
+       * it cannot be optimised away. It CAN be moved off the visitor's tap: hand out a link minted
+       * earlier, then spend the ledger wait refilling the stock for the next person.
+       *
+       * An empty pool mints inline, exactly as before — a slow link beats an error.
+       */
       if (method === "POST" && url === "/demo-link") {
         if (!faucet) return json(503, { error: "demo not configured" });
         const rl = await enforceRateLimit(clientIp(request));
         if (rl.limited) return json(429, { error: rl.reason });
-        return json(200, await demoLinkHandler(server, config, faucet));
+        const mint = () => demoLinkHandler(server, config, faucet);
+        const ready = await takeDemoLink(config.network);
+        const link = ready ?? (await mint());
+        // Refilling AFTER the response is the entire point; without waitUntil the isolate can be
+        // torn down mid-mint and the stock never recovers.
+        const refill = refillDemoPool(config.network, mint).catch(() => 0);
+        if (ctx?.waitUntil) ctx.waitUntil(refill);
+        return json(200, { ...link, ...(ready ? { fromPool: true } : {}) });
       }
 
       if (method === "POST" && url === "/waitlist") {
