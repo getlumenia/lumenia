@@ -340,3 +340,37 @@
 .ob-chip[data-on="true"] {
   border-color: var(--money); background: color-mix(in srgb, var(--money) 10%, var(--surface)); color: var(--money);
 }
+
+/* ---- Toast --------------------------------------------------------------------------------
+   One message, above the action bar, out of the way of the thumb. Tokens only, so it reads in both
+   themes; the entrance is a small rise rather than a slide, to match the app's other motion. */
+.app-toast {
+  position: fixed; z-index: 60; left: 50%; transform: translateX(-50%);
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 10px;
+  max-width: min(26rem, calc(100vw - 32px)); padding: 11px 12px 11px 15px;
+  border-radius: 14px; border: 1px solid var(--line); background: var(--surface);
+  box-shadow: 0 4px 10px rgba(20, 16, 30, .07), 0 20px 40px -18px rgba(20, 16, 30, .3);
+  animation: app-toast-in .22s ease-out;
+}
+:root[data-theme="dark"] .app-toast { box-shadow: 0 4px 10px rgba(0, 0, 0, .4), 0 20px 40px -18px rgba(0, 0, 0, .7) }
+.app-toast-text { font-size: 13.5px; font-weight: 500; line-height: 1.4; color: var(--ink) }
+.app-toast-x { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; border: 0; background: none; color: var(--ink-soft); cursor: pointer }
+.app-toast-x:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent) }
+@keyframes app-toast-in { from { opacity: 0; transform: translate(-50%, 8px) } to { opacity: 1; transform: translate(-50%, 0) } }
+@media (prefers-reduced-motion: reduce) { .app-toast { animation: none } }
+
+/* ---- The money choice on /welcome ---------------------------------------------------------- */
+.app-choice { display: flex; gap: 8px }
+.app-choice-opt {
+  flex: 1; display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  padding: 11px 13px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface);
+  cursor: pointer; text-align: left; transition: border-color .15s, background .15s;
+}
+.app-choice-opt:hover:not([data-on="true"]) { border-color: color-mix(in srgb, var(--money) 40%, var(--line)) }
+.app-choice-opt[data-on="true"] { border-color: var(--money); background: color-mix(in srgb, var(--money) 10%, var(--surface)) }
+.app-choice-opt:focus-visible { outline: 2px solid var(--money); outline-offset: 2px }
+.app-choice-t { font-size: 14px; font-weight: 600; color: var(--ink) }
+.app-choice-opt[data-on="true"] .app-choice-t { color: var(--money) }
+.app-choice-s { font-size: 11.5px; line-height: 1.35; color: var(--ink-soft) }
+

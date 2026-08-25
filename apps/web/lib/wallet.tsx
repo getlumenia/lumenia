@@ -18,6 +18,7 @@ import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, empty
 import { enrollPasskeyPrf, derivePasskeyPrf, assertPasskeyPrf } from "./passkey-prf";
 import { fetchRecoveryBoxByPrfId } from "./recovery-api";
 import { migrateLegacySentLinks } from "./sent-links";
+import { toast } from "../components/brand/Toast";
 import { StrKey } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
 
@@ -216,7 +217,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // re-reads it cleanly and a stale unlocked session never carries across networks.
   const switchNetwork = useCallback(
     (id: NetworkId) => {
-      if (id === "public" && !mainnetApproved) return; // UI guard; the sponsor is the real gate
+      if (id === "public" && !mainnetApproved) {
+        // The sponsor is the real gate, so refusing here is only a UI courtesy — but refusing
+        // SILENTLY was its own small bug: the button did nothing and said nothing, which reads as
+        // a broken app rather than as an answer.
+        toast("Real money is invite-only for now — you're still on practice money.");
+        return;
+      }
+      // Handed over before the reload deliberately: the switch throws this page away, and the
+      // confirmation is picked up on the other side (components/brand/Toast.tsx).
+      toast(id === "public" ? "You're on real money now." : "You're on practice money now.");
       setActiveNetwork(id);
       window.location.reload();
     },

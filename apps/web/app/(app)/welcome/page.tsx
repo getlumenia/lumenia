@@ -30,6 +30,7 @@ import { checkHandle, claimHandle, handleOf, federationAddress } from "../../../
 import { suggestAvailable } from "../../../lib/handle-suggest";
 import { hasBackup } from "../../../lib/recovery-api";
 import { markWelcomeSeen } from "../../../lib/welcome";
+import { MAINNET_CONFIGURED } from "../../../lib/network";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 
@@ -215,38 +216,79 @@ export default function WelcomePage() {
    */
   if (!account) {
     /**
-     * REAL MONEY IS NOT OPENED FROM HERE.
+     * THE MONEY CHOICE IS A CHOICE, and it stays one.
      *
-     * /settings gates creating an account on the pilot allowlist, because on mainnet every new
-     * account parks a reserve the sponsor never gets back. This screen went in without that gate,
-     * so a device someone had switched to real money could open an account here and spend the
-     * sponsor's XLM on a stranger. Same rule, same place in the code path — and the copy changes
-     * with it, because promising "practice money" to somebody on mainnet would simply be false.
+     * This screen first shipped with a single "Switch to practice money" button, which is a
+     * one-way door: press it and the option disappears, so the only way to see where you are — or
+     * to go back — is to find the switch on another page. Two options, always both on screen, with
+     * the current one marked, answers "which money is this account for?" every time the screen is
+     * opened rather than only the first time.
+     *
+     * REAL MONEY IS STILL GATED. /settings gates creating an account on the pilot allowlist,
+     * because on mainnet every new account parks a reserve the sponsor never gets back, and this
+     * screen went in without that gate. Choosing real money without an invite is allowed to be
+     * SAID — the option is visible, and tapping it explains itself in a toast — but it cannot
+     * create anything.
+     *
+     * Where mainnet is not configured at all there is nothing to choose between, and a dead switch
+     * is worse than no switch: the choice is simply not drawn.
      */
-    const practice = network !== "public";
-    const blocked = !practice && !mainnetApproved;
+    const onReal = network === "public";
+    const canCreate = !onReal || mainnetApproved;
     return (
       <div className="flex flex-col gap-5 py-6">
         <Mascot step="hello" />
         <header className="text-center">
-          <h1 className="text-2xl font-bold text-ink">
-            {blocked ? "Real money is invite-only right now." : "Let’s get you an account."}
-          </h1>
+          <h1 className="text-2xl font-bold text-ink">Let&apos;s get you an account.</h1>
           <p className="mx-auto mt-2 max-w-xs text-sm text-ink-soft">
-            {blocked
-              ? "New accounts on real money are opened for people on the pilot list. You can switch to practice money and start right now — it is the same product, with money that costs nothing."
-              : practice
-                ? "It takes a few seconds, costs you nothing, and there is nothing to sign up for. You start with practice money, so you can send some to a friend and watch it arrive before any real money is involved."
-                : "It takes a few seconds and there is nothing to sign up for. This one opens on real money, so treat it like the account it is — and back it up before you put anything in."}
+            It takes a few seconds and there is nothing to sign up for — no app, no seed phrase.
           </p>
         </header>
+
+        {MAINNET_CONFIGURED && (
+          <MoneyCard className="p-4">
+            <p className="mb-2 text-sm font-semibold text-ink">Which money?</p>
+            <div className="app-choice">
+              <button
+                type="button"
+                className="app-choice-opt"
+                data-on={!onReal}
+                aria-pressed={!onReal}
+                onClick={() => onReal && switchNetwork("testnet")}
+              >
+                <span className="app-choice-t">Practice money</span>
+                <span className="app-choice-s">Costs nothing. Everything works the same.</span>
+              </button>
+              <button
+                type="button"
+                className="app-choice-opt"
+                data-on={onReal}
+                aria-pressed={onReal}
+                onClick={() => !onReal && switchNetwork("public")}
+              >
+                <span className="app-choice-t">Real money</span>
+                <span className="app-choice-s">
+                  {mainnetApproved ? "You're on the pilot list." : "Invite-only for now."}
+                </span>
+              </button>
+            </div>
+          </MoneyCard>
+        )}
+
         <div className="flex flex-col gap-2">
-          {blocked ? (
-            <PrimaryButton onClick={() => switchNetwork("testnet")}>Switch to practice money</PrimaryButton>
-          ) : (
-            <PrimaryButton loading={busy} loadingLabel="Opening your account…" onClick={createAccountHere}>
-              Create my account
-            </PrimaryButton>
+          <PrimaryButton
+            loading={busy}
+            loadingLabel="Opening your account…"
+            disabled={!canCreate}
+            onClick={createAccountHere}
+          >
+            Create my account
+          </PrimaryButton>
+          {!canCreate && (
+            <p className="text-center text-xs text-ink-soft">
+              New accounts on real money are opened for people on the pilot list. Pick practice money
+              above and you can start right now.
+            </p>
           )}
           <Link
             href="/how-it-works"

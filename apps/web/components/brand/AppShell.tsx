@@ -20,6 +20,7 @@ import { TestnetBanner } from "./TestnetBanner";
 import { FeedbackDialog } from "../FeedbackDialog";
 import { copy } from "../../lib/copy";
 import { AccountMenu } from "./AccountMenu";
+import { ToastHost } from "./Toast";
 
 /**
  * PLACES, and only places. "Account" used to be here and is now the first row of the account menu:
@@ -217,6 +218,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
       <div className={`app-content mx-auto max-w-md px-5${onboarding ? " app-content-onb" : ""}`}>{children}</div>
       <MoneyActionBar />
+      {/* Outside every chrome guard on purpose: the switch between practice and real money is
+          confirmed here, and it is confirmed on /welcome too — where there is no chrome at all. */}
+      <ToastHost />
     </div>
   );
 }
