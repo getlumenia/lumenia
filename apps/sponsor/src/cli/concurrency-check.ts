@@ -12,6 +12,9 @@
  *          sponsor reserve (1.5 XLM per account created), so keep --count small there.
  */
 import { Keypair, Horizon, TransactionBuilder, Networks, type Transaction } from "@stellar/stellar-sdk";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /* The network is a flag, not a constant. Hardcoding testnet here meant a run pointed at the
  * MAINNET sponsor still built and submitted against testnet: the sponsor handed out real mainnet
@@ -33,8 +36,7 @@ type Outcome =
   | { ok: true; via?: string }
   | { ok: false; stage: "sponsor" | "submit"; reason: string; via?: string };
 
-async function oneOnboarding(baseUrl: string): Promise<Outcome> {
-  const recipient = Keypair.random();
+async function oneOnboarding(baseUrl: string, recipient: Keypair): Promise<Outcome> {
   // 1. sponsor builds the sandwich
   let via: string | undefined;
   let xdr: string;
@@ -76,7 +78,36 @@ async function main() {
   console.log(` target: ${baseUrl}`);
   console.log("============================================================\n");
 
-  const outcomes = await Promise.all(Array.from({ length: count }, () => oneOnboarding(baseUrl)));
+  /* Generate every recipient key up front and, on mainnet, WRITE THEM DOWN before a single
+   * request goes out.
+   *
+   * This CLI used to mint a keypair inside each onboarding and let it fall out of scope when
+   * the process exited. On testnet that is free and correct — the accounts are worthless. On
+   * mainnet, which this can now target, every account it creates locks 1.5 XLM of sponsor
+   * reserve that can NEVER be recovered, because closing an account requires its key: 8 runs
+   * on 2026-08-24 stranded 12 XLM exactly this way, days after the same mistake in
+   * provision-channels cost 16.5 more. A throwaway key stops being a throwaway the moment the
+   * network it lives on has real money in it. */
+  const recipients = Array.from({ length: count }, () => Keypair.random());
+  if (MAINNET) {
+    const dir = join(homedir(), ".lumenia");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const out = join(dir, `concurrency-mainnet-${Date.now()}.txt`);
+    writeFileSync(out, recipients.map((k) => k.secret()).join("\n") + "\n", { mode: 0o600 });
+    const back = readFileSync(out, "utf8").trim().split("\n");
+    if (
+      back.length !== recipients.length ||
+      back.some((sec, i) => Keypair.fromSecret(sec).publicKey() !== recipients[i]!.publicKey())
+    ) {
+      console.error(`\n💥 ${out} does not reproduce the generated keys — refusing to spend.`);
+      process.exit(1);
+    }
+    console.log(`  ${recipients.length} recipient keys written + verified: ${out}`);
+    console.log(`  (each account created below locks 1.5 XLM of sponsor reserve; that file is`);
+    console.log(`   the only way to ever merge them back)\n`);
+  }
+
+  const outcomes = await Promise.all(recipients.map((kp) => oneOnboarding(baseUrl, kp)));
 
   const okCount = outcomes.filter((o) => o.ok).length;
   const badSeq = outcomes.filter((o) => !o.ok && o.reason === "tx_bad_seq").length;
