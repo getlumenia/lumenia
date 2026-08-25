@@ -64,7 +64,7 @@ function Dots({ step }: { step: Step }) {
 
 export default function WelcomePage() {
   const router = useRouter();
-  const { status, account, getSigner, createAccount } = useWallet();
+  const { status, account, getSigner, createAccount, network, mainnetApproved, switchNetwork } = useWallet();
   const [step, setStep] = useState<Step>("hello");
   const [name, setName] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -214,21 +214,40 @@ export default function WelcomePage() {
    * yet), and the copy says exactly that rather than implying otherwise.
    */
   if (!account) {
+    /**
+     * REAL MONEY IS NOT OPENED FROM HERE.
+     *
+     * /settings gates creating an account on the pilot allowlist, because on mainnet every new
+     * account parks a reserve the sponsor never gets back. This screen went in without that gate,
+     * so a device someone had switched to real money could open an account here and spend the
+     * sponsor's XLM on a stranger. Same rule, same place in the code path — and the copy changes
+     * with it, because promising "practice money" to somebody on mainnet would simply be false.
+     */
+    const practice = network !== "public";
+    const blocked = !practice && !mainnetApproved;
     return (
       <div className="flex flex-col gap-5 py-6">
         <Mascot step="hello" />
         <header className="text-center">
-          <h1 className="text-2xl font-bold text-ink">Let&apos;s get you an account.</h1>
+          <h1 className="text-2xl font-bold text-ink">
+            {blocked ? "Real money is invite-only right now." : "Let’s get you an account."}
+          </h1>
           <p className="mx-auto mt-2 max-w-xs text-sm text-ink-soft">
-            It takes a few seconds, costs you nothing, and there is nothing to sign up for. You start
-            with practice money, so you can send some to a friend and watch it arrive before any real
-            money is involved.
+            {blocked
+              ? "New accounts on real money are opened for people on the pilot list. You can switch to practice money and start right now — it is the same product, with money that costs nothing."
+              : practice
+                ? "It takes a few seconds, costs you nothing, and there is nothing to sign up for. You start with practice money, so you can send some to a friend and watch it arrive before any real money is involved."
+                : "It takes a few seconds and there is nothing to sign up for. This one opens on real money, so treat it like the account it is — and back it up before you put anything in."}
           </p>
         </header>
         <div className="flex flex-col gap-2">
-          <PrimaryButton loading={busy} loadingLabel="Opening your account…" onClick={createAccountHere}>
-            Create my account
-          </PrimaryButton>
+          {blocked ? (
+            <PrimaryButton onClick={() => switchNetwork("testnet")}>Switch to practice money</PrimaryButton>
+          ) : (
+            <PrimaryButton loading={busy} loadingLabel="Opening your account…" onClick={createAccountHere}>
+              Create my account
+            </PrimaryButton>
+          )}
           <Link
             href="/how-it-works"
             className="flex h-12 items-center justify-center rounded-full text-sm font-medium text-ink-soft"
