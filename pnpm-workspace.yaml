@@ -14,6 +14,13 @@ packages:
 # ERR_PNPM_LOCKFILE_CONFIG_MISMATCH; with them ONLY in package.json, it passes and the lockfile
 # records them. So package.json is the one that is real today.
 #
+# AND KEEP THE LIST SHORT. Dependabot rewrites the override string inside the LOCKFILE when it
+# bumps a package, but it cannot edit the manifest where the override is declared — so every
+# entry here is a standing chance of a red dependency PR (ERR_PNPM_LOCKFILE_CONFIG_MISMATCH).
+# There were eleven; nine of them were bumping nothing, because the tree already resolved above
+# their floor on its own. Measured by emptying the list and re-resolving. Only add an override
+# back when removing it demonstrably leaves a vulnerable version pinned by somebody upstream.
+#
 # pnpm does print "the pnpm field in package.json is no longer read" — that is pnpm announcing
 # where this setting is GOING, not where it is now. When the toolchain moves to pnpm 10+, the
 # block moves back here and this comment goes away. Until then there is exactly ONE list, because
