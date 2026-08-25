@@ -160,6 +160,12 @@ async function main(): Promise<void> {
   ok("another domain is refused", "ok" in (await federationLookup("meric*example.com", "name", NET)));
   ok("an unknown name 404s", "ok" in (await federationLookup("nobody*getlumenia.com", "name", NET)));
   ok("txid is refused rather than guessed", "ok" in (await federationLookup("x", "txid", NET)));
+  // A name is global across networks; an INSTRUCTION TO PAY is not. Answering a mainnet lookup with
+  // a testnet account id would send real money at an account that does not exist on that chain.
+  ok(
+    "a name held on another network is not answered here",
+    "ok" in (await federationLookup("meric*getlumenia.com", "name", "mainnet")),
+  );
 
   /* ----------------------------- ways back in ------------------------------- */
   console.log("\n[7] identity ids are domain-separated");

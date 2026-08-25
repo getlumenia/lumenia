@@ -478,6 +478,14 @@ export async function federationLookup(
     }
     const found = await lookupHandle(name);
     if (!found) return { ok: false, reason: "not found" };
+    /**
+     * The name namespace is global across networks (one `@meric`, whichever chain it lives on), but
+     * a FEDERATION answer is an instruction to pay an account on THIS network. Without this check a
+     * mainnet lookup could hand a wallet a testnet account id, and the payment would be sent at an
+     * account that does not exist on the chain it was sent on. A name held on another network is
+     * "not found" here — the honest answer, since there is nothing on this chain to pay.
+     */
+    if (found.network !== network) return { ok: false, reason: "not found" };
     return {
       stellar_address: `${found.name}*${federationDomain()}`,
       account_id: found.pubkey,
