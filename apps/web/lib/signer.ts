@@ -15,6 +15,17 @@ export interface Signer {
   publicKey(): string;
   /** Sign a transaction and return it (mutated/clone) ready to submit. */
   sign(tx: Transaction): Promise<Transaction>;
+  /**
+   * Sign arbitrary bytes with the account key — NOT a transaction, and never used to move money.
+   *
+   * It exists for one job: proving to a server that the holder of this account authorized
+   * something the ledger has no opinion about, such as claiming a `@name`
+   * (docs/IDENTITY_AND_ACCOUNTS.md §3.2). Optional on the interface because a v2 passkey
+   * smart-account signer cannot produce a raw Ed25519 signature over an arbitrary message; that
+   * path will prove ownership a different way, and callers must handle its absence rather than
+   * assume it.
+   */
+  signMessage?(message: Uint8Array): Promise<Uint8Array>;
   /** Which concrete backend — for diagnostics only, never for control flow. */
   readonly kind: "local-ed25519" | "kms" | "passkey-smart-account";
 }
@@ -37,5 +48,6 @@ export function localSignerFromSeed(seed: Uint8Array): Signer {
       tx.sign(kp);
       return tx;
     },
+    signMessage: async (message) => new Uint8Array(kp.sign(Buffer.from(message))),
   };
 }

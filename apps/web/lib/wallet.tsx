@@ -9,7 +9,8 @@
  * v2 swaps the concrete signer without touching this shape.
  */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase1, savePhase2, setHome, isPublished, type Phase } from "./keystore";
+import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase1, savePhase2, setHome, setActive, removeAccount, isPublished, type Phase, type AccountKind } from "./keystore";
+import { createUserAccount } from "./new-account";
 import { localSignerFromSeed, type Signer } from "./signer";
 import { activeNetwork, setActiveNetwork, mainnetConfig, type NetworkId } from "./network";
 import { DEFAULT_ARGON } from "./argon";
@@ -23,6 +24,12 @@ import { Buffer } from "buffer";
 export interface WalletAccount {
   address: string;
   phase: Phase;
+  /**
+   * "user" = an account the person created or restored on purpose. "throwaway" = the per-link
+   * account a claim produced, which /home sweeps and closes. See docs/IDENTITY_AND_ACCOUNTS.md §4.2
+   * — the distinction is what stops consolidation from destroying a deliberate second account.
+   */
+  kind: AccountKind;
 }
 
 /** This account's standing in the mainnet pilot — the sponsor's /pilot-status `state`. */
@@ -102,6 +109,24 @@ interface WalletState {
   pilotState: PilotState;
   /** Switch this device's active network (mainnet only sticks if approved + configured); reloads. */
   switchNetwork: (id: NetworkId) => void;
+  /**
+   * Make another account on this device the active one — the account the app IS: shown, sent from,
+   * and where incoming links consolidate. Reloads, for the same reason switchNetwork does: an
+   * unlocked seed belongs to the account it was unlocked for, and every money module reads the
+   * active account at call time.
+   */
+  switchAccount: (address: string) => Promise<void>;
+  /**
+   * Open a brand-new account (sponsored, 0 XLM, USDC trustline) and switch to it. Lands at Phase 1,
+   * so the caller should offer the password step straight away — real money cannot be sent from an
+   * unlocked-by-default account.
+   */
+  createAccount: () => Promise<{ address: string }>;
+  /**
+   * Remove one non-active account from this device. Irreversible without a backup, which is why the
+   * UI that calls this asks in those words. Refuses the active account outright.
+   */
+  forgetAccount: (address: string) => Promise<void>;
 }
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -119,8 +144,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const [home, all] = await Promise.all([getHome(), listAccounts()]);
-      setAccount(home ? { address: home.pubkey, phase: home.phase } : null);
-      setAccounts(all.map((a) => ({ address: a.pubkey, phase: a.phase })));
+      setAccount(home ? { address: home.pubkey, phase: home.phase, kind: home.kind } : null);
+      setAccounts(all.map((a) => ({ address: a.pubkey, phase: a.phase, kind: a.kind })));
     } catch {
       setAccount(null);
       setAccounts([]);
@@ -285,7 +310,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (!copy) throw new Error("This backup can only be opened with Face ID.");
       const seed = await unwrapWithPassword(copy, password); // throws on a wrong password
       const pub = localSignerFromSeed(seed).publicKey();
-      await savePhase2(pub, seed, password, DEFAULT_ARGON);
+      await savePhase2(pub, seed, password, DEFAULT_ARGON, "user"); // restored on purpose → never swept
       await adoptRestored(pub);
       setSessionSeed(seed);
       await refresh();
@@ -325,7 +350,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const pub = localSignerFromSeed(seed).publicKey();
       // Adopt device-locally with the device key (Phase 1) — they authenticated biometrically,
       // so no separate password; the "Back up your money" card can add one later.
-      await savePhase1(pub, seed);
+      await savePhase1(pub, seed, "user"); // restored on purpose → never swept
       await adoptRestored(pub);
       setSessionSeed(seed);
       await refresh();
@@ -375,7 +400,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (named !== pub) throw new Error("This passkey doesn't match the backup it opened.");
     }
     const before = await getHome();
-    await savePhase1(pub, seed);
+    await savePhase1(pub, seed, "user"); // found on purpose → never swept
     await adoptRestored(pub);
     setSessionSeed(seed);
     await refresh();
@@ -440,9 +465,41 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setSessionSeed(seed);
   }, [account, setSessionSeed]);
 
+  /**
+   * Switching is a hard reload on purpose. `activeNetwork()`-style call-time reads exist all over
+   * the money modules, and the session seed in this provider belongs to whichever account unlocked
+   * it — a soft route change would leave one screen signing for an account another screen is no
+   * longer showing. Reloading throws all of that away, which is the only cheap way to be sure.
+   */
+  const switchAccount = useCallback(async (address: string): Promise<void> => {
+    const known = await listAccounts();
+    if (!known.some((a) => a.pubkey === address)) throw new Error("that account is not on this phone");
+    sessionSeed.current?.fill(0);
+    sessionSeed.current = null;
+    await setActive(address);
+    window.location.assign("/home");
+  }, []);
+
+  const createAccount = useCallback(async (): Promise<{ address: string }> => {
+    const { address } = await createUserAccount({ sponsorUrl: activeNetwork().sponsorUrl, makeActive: true });
+    sessionSeed.current?.fill(0);
+    sessionSeed.current = null;
+    await refresh();
+    return { address };
+  }, [refresh]);
+
+  const forgetAccount = useCallback(
+    async (address: string): Promise<void> => {
+      if (account?.address === address) throw new Error("that is the account you are using");
+      await removeAccount(address, true); // deliberate: the UI has already confirmed it
+      await refresh();
+    },
+    [account, refresh],
+  );
+
   return (
     <WalletContext.Provider
-      value={{ status, account, accounts, unlocked, network, mainnetApproved, pilotState, switchNetwork, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
+      value={{ status, account, accounts, unlocked, network, mainnetApproved, pilotState, switchNetwork, switchAccount, createAccount, forgetAccount, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
     >
       {children}
     </WalletContext.Provider>

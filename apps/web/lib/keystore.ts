@@ -20,6 +20,18 @@
  * non-home account into home and then removeAccount()s it. The first account seen
  * becomes home. Browser storage is a fast-path cache, never the source of truth.
  *
+ * ACCOUNT KIND (docs/IDENTITY_AND_ACCOUNTS.md §4.2). Multi-account came from claim links, so the
+ * consolidation above treats every non-active account as disposable — it sweeps it and CLOSES it
+ * with accountMerge. That is right for a per-link throwaway and fatal for an account somebody
+ * created on purpose. So a record carries a `kind`:
+ *
+ *   "user"      — created or restored deliberately. Never swept, never merged, never auto-removed.
+ *   "throwaway" — the per-link account a claim produced. Swept into the active account and closed.
+ *
+ * Records written before this existed have no `kind`, and are read as: the active account is a
+ * user account, everything else is a throwaway — which is exactly the old behaviour, so the
+ * migration changes nothing for an existing device.
+ *
  * All crypto is WebCrypto (AES-GCM) + hash-wasm (Argon2id). No seed is ever logged
  * or sent anywhere.
  */
@@ -51,6 +63,15 @@ const LEGACY_ID = "primary";
 
 export type Phase = 1 | 2;
 
+/** Why this account exists — and therefore whether the sweep may close it. See the header. */
+export type AccountKind = "user" | "throwaway";
+
+export interface AccountMeta {
+  pubkey: string;
+  phase: Phase;
+  kind: AccountKind;
+}
+
 export interface KeyRecord {
   /** For an account record this is the account pubkey (`G...`); one record per account. */
   id: string;
@@ -62,6 +83,8 @@ export interface KeyRecord {
   wrapKey?: CryptoKey; // phase 1 (non-extractable, structured-clone into IDB)
   salt?: Uint8Array; // phase 2
   argon?: ArgonParams; // phase 2
+  /** Absent on records written before account kinds existed; resolved on read (see kindOf). */
+  kind?: AccountKind;
 }
 
 /** The single home-pointer record — names the ONE persistent home account. */
@@ -180,23 +203,63 @@ export async function clearKeystore(): Promise<void> {
 
 /* ----------------------------- Multi-account API ---------------------------- */
 
-/** The HOME account's meta (the one persistent account), or null. */
-export async function getHome(): Promise<{ pubkey: string; phase: Phase } | null> {
+/**
+ * Resolve a record's kind, including for records written before kinds existed: the ACTIVE account
+ * is a user account, anything else is a throwaway. That is precisely how the app behaved before,
+ * so an existing device migrates without noticing.
+ */
+function kindOf(rec: KeyRecord, activePubkey: string | undefined): AccountKind {
+  return rec.kind ?? (rec.pubkey === activePubkey ? "user" : "throwaway");
+}
+
+/** The ACTIVE account — the one the app *is*: shown, sent from, and named by the handle. */
+export async function getActive(): Promise<AccountMeta | null> {
   const ptr = await getHomePointer();
   if (!ptr) return null;
   const rec = await getAccountRecord(ptr.pubkey);
-  return rec ? { pubkey: rec.pubkey, phase: rec.phase } : null;
+  return rec ? { pubkey: rec.pubkey, phase: rec.phase, kind: kindOf(rec, ptr.pubkey) } : null;
 }
 
-/** Every stored account (EXCLUDING the home pointer), home + any not-yet-swept throwaways. */
-export async function listAccounts(): Promise<{ pubkey: string; phase: Phase }[]> {
-  const all = await idbGetAll();
-  return all.filter(isAccountRecord).map((r) => ({ pubkey: r.pubkey, phase: r.phase }));
+/**
+ * Backward-compatible alias. "Home" and "active" were the same thing while there could only be one
+ * user account; they still are — sweeps land in the active account. Kept so existing callers do
+ * not all have to change on the same day.
+ */
+export async function getHome(): Promise<AccountMeta | null> {
+  return getActive();
 }
 
-/** Point home at an existing account. */
-export async function setHome(pubkey: string): Promise<void> {
+/** Every stored account (EXCLUDING the reserved records) — the active one plus anything else held. */
+export async function listAccounts(): Promise<AccountMeta[]> {
+  const [all, ptr] = await Promise.all([idbGetAll(), getHomePointer()]);
+  return all
+    .filter(isAccountRecord)
+    .map((r) => ({ pubkey: r.pubkey, phase: r.phase, kind: kindOf(r, ptr?.pubkey) }));
+}
+
+/** Only the accounts the person meant to have. What a switcher lists, and what a sweep may not touch. */
+export async function listUserAccounts(): Promise<AccountMeta[]> {
+  return (await listAccounts()).filter((a) => a.kind === "user");
+}
+
+/** Make `pubkey` the active account. */
+export async function setActive(pubkey: string): Promise<void> {
   await idbPut({ id: HOME_ID, pubkey } satisfies HomePointer);
+}
+
+/** Backward-compatible alias for setActive. */
+export async function setHome(pubkey: string): Promise<void> {
+  await setActive(pubkey);
+}
+
+/**
+ * Mark an account as deliberate (or not). Writing "user" is what protects it from the sweep, so
+ * this is called at exactly two moments: creating an account, and restoring one.
+ */
+export async function setAccountKind(pubkey: string, kind: AccountKind): Promise<void> {
+  const rec = await getAccountRecord(pubkey);
+  if (!rec) return;
+  await idbPut({ ...rec, kind });
 }
 
 /* ------------------------- Published addresses ------------------------------
@@ -239,11 +302,19 @@ export async function listPublished(): Promise<string[]> {
 
 /**
  * Delete one account record — used AFTER a successful sweep merges it away.
- * Refuses (no-op) if `pubkey` is the home account, so home is never removable.
+ *
+ * Refuses the ACTIVE account, so the app can never be left pointing at nothing. Also refuses a
+ * "user" account unless `force` is set: the sweep loop calls this in a catch-all fashion, and a
+ * deliberate account must never disappear as a side effect of housekeeping. Forgetting one is an
+ * explicit action with its own confirmation (see the settings screen).
  */
-export async function removeAccount(pubkey: string): Promise<void> {
+export async function removeAccount(pubkey: string, force = false): Promise<void> {
   const ptr = await getHomePointer();
-  if (ptr?.pubkey === pubkey) return; // never remove home
+  if (ptr?.pubkey === pubkey) return; // never remove the active account
+  if (!force) {
+    const rec = await getAccountRecord(pubkey);
+    if (rec && kindOf(rec, ptr?.pubkey) === "user") return;
+  }
   await idbDelete(pubkey);
 }
 
@@ -251,19 +322,19 @@ export async function removeAccount(pubkey: string): Promise<void> {
  * Backward-compat: returns the HOME account's meta (the WalletProvider reads this).
  * Same shape as before the multi-account change; callers are unaffected.
  */
-export async function getRecordMeta(): Promise<{ pubkey: string; phase: Phase } | null> {
-  return getHome();
+export async function getRecordMeta(): Promise<AccountMeta | null> {
+  return getActive();
 }
 
-/** If no account is home yet, adopt `pubkey` (first-seen = home). */
+/** If nothing is active yet, adopt `pubkey` (first-seen = active). */
 async function adoptHomeIfUnset(pubkey: string): Promise<void> {
   const ptr = await getHomePointer();
-  if (!ptr) await setHome(pubkey);
+  if (!ptr) await setActive(pubkey);
 }
 
 /* --------------------------- Phase 1 (device key) --------------------------- */
 
-export async function savePhase1(pubkey: string, seed: Uint8Array): Promise<void> {
+export async function savePhase1(pubkey: string, seed: Uint8Array, kind?: AccountKind): Promise<void> {
   const wrapKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
     "encrypt",
     "decrypt",
@@ -274,7 +345,18 @@ export async function savePhase1(pubkey: string, seed: Uint8Array): Promise<void
   );
   // APPEND: the record id IS the pubkey, so this only ever overwrites the SAME
   // account (re-claiming the same key) — never a different account.
-  await idbPut({ id: pubkey, formatVersion: 1, pubkey, phase: 1, iv, ciphertext, wrapKey });
+  const previous = await getAccountRecord(pubkey);
+  const resolvedKind = kind ?? previous?.kind;
+  await idbPut({
+    id: pubkey,
+    formatVersion: 1,
+    pubkey,
+    phase: 1,
+    iv,
+    ciphertext,
+    wrapKey,
+    ...(resolvedKind ? { kind: resolvedKind } : {}),
+  });
   await adoptHomeIfUnset(pubkey);
 }
 
@@ -294,6 +376,7 @@ export async function savePhase2(
   seed: Uint8Array,
   password: string,
   params: ArgonParams,
+  kind?: AccountKind,
 ): Promise<{ deriveMs: number }> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const t0 = performance.now();
@@ -309,7 +392,19 @@ export async function savePhase2(
   kekBytes.fill(0);
   // APPEND (id = pubkey): only overwrites the SAME account (e.g. locking home from
   // phase 1 → phase 2), never a different account.
-  await idbPut({ id: pubkey, formatVersion: 1, pubkey, phase: 2, iv, ciphertext, salt, argon: params });
+  const previous = await getAccountRecord(pubkey);
+  const resolvedKind = kind ?? previous?.kind;
+  await idbPut({
+    id: pubkey,
+    formatVersion: 1,
+    pubkey,
+    phase: 2,
+    iv,
+    ciphertext,
+    salt,
+    argon: params,
+    ...(resolvedKind ? { kind: resolvedKind } : {}),
+  });
   await adoptHomeIfUnset(pubkey);
   return { deriveMs };
 }

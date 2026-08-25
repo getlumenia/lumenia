@@ -121,7 +121,11 @@ export default function HomePage() {
   useEffect(() => {
     if (!account || accounts.length <= 1) return;
     const home = account.address;
-    const others = accounts.filter((a) => a.address !== home);
+    // ONLY throwaways. A sweep ends in accountMerge, which closes the account on-chain, so an
+    // account the person created or restored on purpose must never enter this loop — see
+    // docs/IDENTITY_AND_ACCOUNTS.md §4.2. The kind is resolved by the keystore, which reads
+    // pre-existing records exactly the way this page used to treat them.
+    const others = accounts.filter((a) => a.address !== home && a.kind !== "user");
     if (others.length === 0) return;
 
     let cancelled = false;
