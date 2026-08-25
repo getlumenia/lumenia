@@ -543,19 +543,16 @@ async function v2Deposit(
 }
 
 /**
- * v2 group pool — one link, `slots` equal shares.
+ * v2 group pool — one link, `slots` equal shares, relayed gaslessly like any other deposit.
  *
- * NOT relayed by the sponsor. `/v2-deposit` allow-lists exactly one contract method,
- * `deposit`, and answers a group drop with "only 'deposit' is relayed here, got
- * 'create_drop'" (apps/sponsor/src/lib/soroban-relay.ts). The claim and reclaim sides DO
- * allow the group methods, so a pool can be claimed and reclaimed gaslessly but cannot be
- * CREATED gaslessly — the contract feature is only half-wired to the service. Until that
- * gap closes, the pool is created by the SENDER with the treasury paying the fee through a
- * plain Stellar fee-bump, which is what a UI would have to do too.
+ * This used to need the treasury to fee-bump it by hand: `/v2-deposit` allow-listed exactly
+ * one contract method and refused a group drop, so a pool could be claimed and reclaimed
+ * gaslessly but never created that way — and since every Lumenia account holds 0 XLM, that
+ * meant nobody could create one at all. The relay now accepts `create_drop` under the same
+ * guard and the same canary cap, so this goes through the ordinary sponsored path.
  */
 async function v2CreateDrop(
   sender: Keypair,
-  treasury: Keypair,
   link: Keypair,
   amount: string,
   slots: number,
@@ -570,11 +567,11 @@ async function v2CreateDrop(
     nativeToScVal(slots, { type: "u32" }),
     nativeToScVal(expiry, { type: "u64" }),
   );
-  const inner = TransactionBuilder.fromXDR(x, NET.passphrase) as Transaction;
-  const bump = TransactionBuilder.buildFeeBumpTransaction(treasury, "2000000", inner, NET.passphrase);
-  bump.sign(treasury);
-  const res = await HZ.submitTransaction(bump);
-  return res.hash;
+  const r = await sponsorPost("/v2-deposit", { xdr: x, senderPublicKey: sender.publicKey() });
+  if (r.status !== 200 && r.status !== 202) {
+    throw new Error(`create_drop → ${r.status}: ${r.raw.slice(0, 200)}`);
+  }
+  return r.body.hash as string;
 }
 
 /**
@@ -1077,8 +1074,8 @@ async function run(): Promise<void> {
   await step("M07", "create_drop — 3 equal shares", async () => {
     state.links.push({ owner: "M07", secret: pool.secret(), kind: "v2-pool" });
     saveState(state);
-    const hash = await v2CreateDrop(kp("M07"), treasury, pool, poolTotal, 3, now() + 7n * 24n * 3600n);
-    return { detail: `${poolTotal} USDC in 3 slots (owner-paid fee — not relayed)`, hashes: [hash] };
+    const hash = await v2CreateDrop(kp("M07"), pool, poolTotal, 3, now() + 7n * 24n * 3600n);
+    return { detail: `${poolTotal} USDC in 3 slots, sponsor-relayed`, hashes: [hash] };
   });
   /* G06 belongs HERE, not down with the other guards: it has to run while the pool still
    * has a free slot. Once M08–M10 have emptied it, a forged signature would be refused for

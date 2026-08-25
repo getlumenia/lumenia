@@ -16,6 +16,21 @@ import type { SponsorSigner } from "./signer.js";
 import { CHANNEL_LEASE_TTL_SECONDS, type ChannelManager } from "./channels.js";
 
 const ALLOWED_METHODS = new Set<string>(["claim", "claim_share"]);
+/**
+ * The two escrow-CREATING methods a sender may relay. `deposit` mints a one-to-one drop,
+ * `create_drop` a group pool of equal shares — the same money movement (the sender's own USDC
+ * into the escrow, authorized by the sender), differing only in how the contract will later let
+ * it out. Both go through the identical guard below and the identical canary cap.
+ *
+ * `create_drop` was missing for a while, and the gap was invisible from the contract's side: the
+ * claim relay already accepted `claim_share` and the reclaim relay `reclaim_pool`, so a group
+ * pool could be claimed and reclaimed gaslessly but never CREATED gaslessly. Since every Lumenia
+ * account holds 0 XLM by design, that meant no user could make one at all.
+ */
+export const ALLOWED_DEPOSIT_METHODS = new Set<string>(["deposit", "create_drop"]);
+/** Argument count per method: deposit(from,link,amount,expiry) / create_drop(+slots). */
+const DEPOSIT_ARITY: Record<string, number> = { deposit: 4, create_drop: 5 };
+
 /** The two reclaim methods a sender may relay to recover their OWN unclaimed drop after expiry. */
 const ALLOWED_RECLAIM_METHODS = new Set<string>(["reclaim", "reclaim_pool"]);
 /** Max fee (stroops) the sponsor will fee-bump a v2 deposit to (~2 XLM; a deposit costs ~0.2). */
@@ -179,7 +194,8 @@ export interface RelayDepositInput {
  * invoke (authorizing the USDC transfer into the escrow); the sponsor FEE-BUMPS it so the sender
  * pays no gas (proven: the gasless-deposit spike, 5/5). The sponsor can never lose value — the USDC
  * is the sender's own, and the fee-bump only pays the tx fee. Tight guard: the inner MUST be a
- * single `deposit` invoke on the KNOWN LumenDrop contract, sourced by the sender, under the fee cap.
+ * single `deposit` or `create_drop` invoke on the KNOWN LumenDrop contract, sourced by the sender,
+ * under the fee cap, and within the canary caps.
  */
 export async function relayDepositHandler(
   config: SponsorConfig,
@@ -199,16 +215,23 @@ export async function relayDepositHandler(
   const calledFn = ic.functionName().toString();
   // NEW escrow only ever goes into the CURRENT contract (the legacy one is read/exit-only).
   if (calledContract !== config.lumendropContract) throw new Error("wrong contract");
-  if (calledFn !== "deposit") throw new Error(`only 'deposit' is relayed here, got '${calledFn}'`);
+  if (!ALLOWED_DEPOSIT_METHODS.has(calledFn)) {
+    throw new Error(`only deposit/create_drop is relayed here, got '${calledFn}'`);
+  }
   if (Number.parseInt(inner.fee, 10) > V2_DEPOSIT_FEE_CAP) {
     throw new Error(`inner fee ${inner.fee} exceeds cap ${V2_DEPOSIT_FEE_CAP}`);
   }
 
-  // Canary caps — `deposit(from, link, amount, expiry)`, so the escrowed amount is arg 2.
-  // Reading it from the XDR (not from a client-supplied field) means the cap is enforced on
-  // what the ledger will actually execute.
+  /* Canary caps. Both methods put the escrowed amount at arg 2 —
+   *   deposit(from, link, amount, expiry)
+   *   create_drop(from, link, amount, slots, expiry)
+   * — and for a pool that amount is the WHOLE pool, which is the right thing to cap: it is the
+   * total the sponsor is facilitating into escrow, however many ways the contract later splits
+   * it. Read from the XDR rather than a client field, so the cap binds what the ledger will
+   * actually execute. */
   const args = ic.args();
-  if (args.length !== 4) throw new Error(`deposit expects 4 args, got ${args.length}`);
+  const arity = DEPOSIT_ARITY[calledFn]!;
+  if (args.length !== arity) throw new Error(`${calledFn} expects ${arity} args, got ${args.length}`);
   const amountStroops = BigInt(scValToNative(args[2]!) as bigint | number | string);
   const cap = await checkCaps(amountStroops, capsFromEnv());
   if (!cap.ok) throw new PublicRefusal(`canary cap: ${cap.reason}`);
