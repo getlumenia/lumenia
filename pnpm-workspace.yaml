@@ -2,17 +2,20 @@ packages:
   - "apps/*"
   - "packages/*"
 
-# Security floors for transitive deps. THE ONLY SOURCE — the package.json "pnpm.overrides"
-# copy is gone; pnpm 9+ ignored it anyway, and keeping two lists is what broke CI: Dependabot
-# wrote postcss 8.5.24 into the lockfile's overrides while this file still pinned 8.5.19, and
-# `pnpm install --frozen-lockfile` refused the mismatch.
+# WHERE THE OVERRIDES ARE, AND WHY THEY ARE NOT HERE.
 #
-# Every entry is a FLOOR (>=), never an exact pin. A pinned override fights every future bump
-# of that package and turns a routine dependency PR into a red build.
-overrides:
-  postcss: ">=8.5.24"
-  axios: ">=1.18.0"
-  brace-expansion: ">=5.0.8"
-  "@hono/node-server": ">=2.0.5"
-  fast-uri: ^3.1.4
-  sharp: ^0.35.0
+# They used to live in this file, and they did nothing. This repo is pinned to pnpm@9.12.0
+# (packageManager, so CI and Vercel use it too), and that version reads `pnpm.overrides` from the
+# ROOT package.json — not from here. The block sat in this file long enough for `sharp: ^0.35.0`
+# to be written down while the lockfile quietly kept resolving sharp 0.34.5, which is a security
+# floor that exists only on paper.
+#
+# Proven, not assumed: with the overrides ONLY here, `pnpm install --frozen-lockfile` fails with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH; with them ONLY in package.json, it passes and the lockfile
+# records them. So package.json is the one that is real today.
+#
+# pnpm does print "the pnpm field in package.json is no longer read" — that is pnpm announcing
+# where this setting is GOING, not where it is now. When the toolchain moves to pnpm 10+, the
+# block moves back here and this comment goes away. Until then there is exactly ONE list, because
+# two lists drifting apart is what broke CI the last time.
+
