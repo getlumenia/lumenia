@@ -10,14 +10,13 @@
  * Periwinkle without any component rewrite. The unread count is DERIVED from the public ledger
  * (lib/notifications) — no server, no push subscription.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, LifeBuoy, Send, HandCoins } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { loadUnreadCount } from "../../lib/notifications";
 import { TestnetBanner } from "./TestnetBanner";
-import { ThemeToggle } from "../site/ThemeToggle";
 import { FeedbackDialog } from "../FeedbackDialog";
 import { copy } from "../../lib/copy";
 
@@ -84,7 +83,7 @@ function NotificationsBell() {
   return (
     <Link
       href="/notifications"
-      className="relative grid size-9 place-items-center rounded-lg text-ink-soft transition-colors hover:text-ink"
+      className="app-nav-icon relative"
       aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
     >
       <Bell className="size-[18px]" />
@@ -97,30 +96,78 @@ function NotificationsBell() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const links = useRef<HTMLElement>(null);
+
+  /**
+   * Keep the CURRENT page's label fully on screen.
+   *
+   * The link row scrolls rather than wrapping when it runs out of room (which happens on a small
+   * phone while the temporary "Set up" link is showing). A scroll container starts at its left
+   * edge, so the label that got clipped was the rightmost one — usually the page you are actually
+   * on, which is the single worst one to cut in half. This nudges it into view instead.
+   */
+  useEffect(() => {
+    const row = links.current;
+    if (!row) return;
+    const measure = () => {
+      const overflowing = row.scrollWidth > row.clientWidth + 1;
+      // Drives a soft fade at the edges (app-theme.css), so a label that had to be cut reads as
+      // "there is more this way" instead of as a broken layout.
+      row.dataset.overflow = String(overflowing);
+      if (!overflowing) return;
+      row.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: "nearest", inline: "end" });
+    };
+    measure();
+    // Rotating a phone changes the answer, and so does the temporary "Set up" link appearing.
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [pathname]);
+  /**
+   * The welcome screen is the one surface that gets the chrome taken away.
+   *
+   * It asks exactly one question at a time, and a nav bar plus a Send/Ask action bar answer three
+   * other questions over the top of it — including "send money", which a person who has not
+   * finished arriving cannot do yet. The escape hatch is not lost: every step of /welcome carries
+   * its own "Skip for now", which is a better exit than a nav link because it also records that
+   * they have been here.
+   */
+  const onboarding = pathname === "/welcome";
   return (
     <div className="app-pw">
       <TestnetBanner />
       <header className="app-nav">
         <div className="app-nav-inner">
-          <Link href="/home" aria-label="Lumenia home">
+          <Link href="/home" className="app-nav-brand" aria-label="Lumenia home">
             {/* Wordmark swaps per theme (paper-filled counters only read on light). */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand-kit-assets/logo-wordmark-t.svg" alt="Lumenia" className="app-wordmark site-wordmark-light" />
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/brand-kit-assets/logo-wordmark-dark.svg" alt="" className="app-wordmark site-wordmark-dark" />
           </Link>
-          <nav className="app-nav-links">
+          {!onboarding && (
+          <nav className="app-nav-links" ref={links}>
             {NAV.map((n) => (
               <Link
                 key={n.href}
                 href={n.href}
                 className="app-nav-link"
                 data-active={pathname === n.href}
+                aria-current={pathname === n.href ? "page" : undefined}
               >
                 {n.label}
               </Link>
             ))}
             <SetupLink />
+          </nav>
+          )}
+          {/* Utilities, kept in their own group. Three controls that are NOT navigation were sitting
+              in the same row as the four that are, in three different button shapes — so the row read
+              as seven equal things and none of them looked deliberate. Grouping them behind a hairline
+              lets one CSS rule give all three the same size, radius, hover and focus ring, whatever
+              each component's own classes happen to be. */}
+          {!onboarding && (
+          <div className="app-nav-tools">
             <NotificationsBell />
             {/* Report-a-problem is one tap away on EVERY money surface (owner directive) —
                 a life-buoy next to the bell, opening the portaled FeedbackDialog. */}
@@ -130,11 +177,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               triggerAriaLabel={copy.feedback.linkLabel}
               defaultCategory="money"
             />
-            <ThemeToggle />
-          </nav>
+            {/* The theme switch used to sit here and no longer does. Measured, not guessed: the row
+                needs 257px for its links and has 193px even on a 430px phone, so something had to
+                leave, and this was the only control that is (a) a preference rather than something
+                time-sensitive and (b) already present twice — Settings → Appearance and Account →
+                Appearance both carry a live toggle, and the default still follows the phone. The
+                bell announces money arriving and the life-buoy is one tap from every money surface
+                by owner directive; neither can be the one to go. */}
+          </div>
+          )}
         </div>
       </header>
-      <div className="app-content mx-auto max-w-md px-5">{children}</div>
+      <div className={`app-content mx-auto max-w-md px-5${onboarding ? " app-content-onb" : ""}`}>{children}</div>
       <MoneyActionBar />
     </div>
   );
@@ -154,7 +208,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
  * follow the two verbs onto the DEEP pages (/activity, /account, /contacts,
  * /notifications, /split) that otherwise dead-end.
  */
-const HIDE_ACTIONBAR = ["/home", "/send", "/request", "/r/", "/sent/", "/unlock"];
+/** Surfaces that carry their own primary action, so a second one below would compete with it.
+ *  `/welcome` is here for a stronger reason: it asks one question at a time, and "Send" is not
+ *  something a person who has not finished arriving can do yet. */
+const HIDE_ACTIONBAR = ["/home", "/send", "/request", "/r/", "/sent/", "/unlock", "/welcome"];
 
 function MoneyActionBar() {
   const pathname = usePathname();

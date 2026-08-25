@@ -65,25 +65,89 @@
 /* ---- App top chrome ---------------------------------------------------------------------- */
 .app-nav {
   position: sticky; top: 0; z-index: 20;
-  background: color-mix(in srgb, var(--paper) 82%, transparent);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--paper) 84%, transparent);
+  backdrop-filter: saturate(150%) blur(14px); -webkit-backdrop-filter: saturate(150%) blur(14px);
   border-bottom: 1px solid var(--line);
 }
 .app-nav-inner {
-  max-width: 28rem; margin: 0 auto; padding: 12px clamp(16px, 5vw, 20px);
-  display: flex; align-items: center; gap: 10px;
+  max-width: 28rem; margin: 0 auto; padding: 10px clamp(12px, 4vw, 20px);
+  display: flex; align-items: center; gap: 6px;
 }
+
+/* The wordmark is IDENTITY, so it is the one thing in this row that may never be squeezed. As a
+   plain flex child it shrank when the links and the icons ran out of room, and at 400px it
+   collapsed to a two-pixel sliver of itself. */
+.app-nav-brand { flex: none; display: flex; align-items: center; border-radius: 8px }
+.app-nav-brand img { transition: transform .3s ease }
+.app-nav-brand:hover img { transform: scale(1.04) }
 /* No `display` here on purpose: the theme swap (.site-wordmark-light/dark in globals.css) owns
    display, and a `display:block` at this specificity would beat `.site-wordmark-dark{display:none}`
    (same score, later file wins) and show BOTH wordmarks stacked. */
-.app-wordmark { height: 20px; width: auto }
-.app-nav-links { margin-left: auto; display: flex; align-items: center; gap: 2px }
-.app-nav-link {
-  padding: 6px 11px; border-radius: 10px; font-size: 14px; font-weight: 500;
-  color: var(--ink-soft); text-decoration: none; transition: color .18s, background .18s;
+.app-wordmark { height: 18px; width: auto }
+
+/* NAVIGATION — the four places you can go.
+   `nowrap` is load-bearing: with the row full, "Set up" broke onto a second line and pushed the
+   header to 1.5× its height. When the labels genuinely do not fit (a small phone with every link
+   showing), the row scrolls instead of wrapping or crushing its neighbours — a degradation nobody
+   normally sees, rather than a layout that visibly breaks. */
+.app-nav-links {
+  margin-left: auto; display: flex; align-items: center; gap: 1px;
+  min-width: 0; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none;
+  scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
 }
-.app-nav-link:hover { color: var(--ink) }
-.app-nav-link[data-active="true"] { color: var(--money); background: color-mix(in srgb, var(--money) 10%, transparent) }
+.app-nav-links::-webkit-scrollbar { display: none }
+/* Only when it actually scrolls — a permanent fade would dim the last label for everybody. */
+.app-nav-links[data-overflow="true"] {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+}
+.app-nav-link {
+  flex: none; white-space: nowrap; scroll-snap-align: end;
+  padding: 6px 8px; border-radius: 9px; font-size: 13px; font-weight: 500;
+  color: var(--ink-soft); text-decoration: none;
+  transition: color .18s, background .18s;
+}
+.app-nav-link:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent) }
+.app-nav-link[data-active="true"] {
+  color: var(--money); background: color-mix(in srgb, var(--money) 12%, transparent); font-weight: 600;
+}
+
+/* UTILITIES — three controls that are not navigation, given one shape.
+   The bell was a 36px rounded-lg link, the life-buoy a 36px rounded-8 button and the theme switch a
+   shadcn rounded-xl icon button: same row, three radii, three hover treatments. These rules land
+   after Tailwind's utilities, so they unify all three without touching each component. */
+.app-nav-tools {
+  flex: none; display: flex; align-items: center; gap: 1px;
+  margin-left: 4px; padding-left: 7px;
+  border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+.app-nav-tools > a,
+.app-nav-tools > button,
+.app-nav-tools .fb-trigger-nav,
+.app-nav-icon {
+  width: 34px; height: 34px; display: grid; place-items: center;
+  border-radius: 9px; background: transparent; border: 0; padding: 0;
+  color: var(--ink-soft); cursor: pointer;
+  transition: color .18s, background .18s;
+}
+.app-nav-tools > a:hover,
+.app-nav-tools > button:hover,
+.app-nav-tools .fb-trigger-nav:hover,
+.app-nav-icon:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent) }
+
+/* Keyboard users had nothing at all here. One ring, one token, both themes. */
+.app-nav-link:focus-visible,
+.app-nav-brand:focus-visible,
+.app-nav-tools > a:focus-visible,
+.app-nav-tools > button:focus-visible,
+.app-nav-icon:focus-visible {
+  outline: 2px solid var(--money); outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-nav-brand img { transition: none }
+  .app-nav-brand:hover img { transform: none }
+}
 
 /* ---- Actions grid (soft-3D icon tiles) ---------------------------------------------------
    The home dashboard's primary actions, each a soft-3D icon from the brand set (icons-*, sliced +
@@ -145,3 +209,48 @@
   background: var(--surface); color: var(--ink); border: 1px solid var(--line);
 }
 @media (prefers-reduced-motion: reduce) { .app-actionbar-btn { transition: none } }
+
+/* ---- Onboarding (/welcome) ----------------------------------------------------------------
+   The messenger appears at three beats of the first minute — hello, pick your name, you're set —
+   and nowhere else in the app (brand.md §9: "do it once; don't scatter"). The site's .pg-mascot
+   treatment is not reachable here: tools.css belongs to the (site) group, so the same idea is
+   rebuilt against the app's own tokens, which is also what makes it correct in dark mode.
+   Float + glow are decoration and honour reduced-motion. */
+/* With the nav links and the action bar taken away, the welcome content has the screen to itself —
+   so it sits in the middle of it rather than clinging to the top of a mostly empty page. */
+.app-content-onb {
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  min-height: calc(100dvh - 57px);
+  display: flex; flex-direction: column; justify-content: center;
+}
+
+.ob-mascot-wrap { position: relative; width: -moz-fit-content; width: fit-content; margin: 0 auto }
+.ob-mascot-glow {
+  position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%);
+  width: 72%; height: 24%; z-index: 0; pointer-events: none; border-radius: 50%;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--money) 30%, transparent), transparent 70%);
+  filter: blur(13px);
+}
+.ob-mascot {
+  position: relative; z-index: 1; width: clamp(116px, 33vw, 164px); height: auto; display: block;
+  filter: drop-shadow(0 16px 22px color-mix(in srgb, var(--money) 28%, transparent));
+  animation: obfloat 5.2s ease-in-out infinite;
+}
+@keyframes obfloat { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-9px) } }
+@media (prefers-reduced-motion: reduce) { .ob-mascot { animation: none } }
+
+/* Where you are, in three quiet dots. Not a progress bar: three steps do not need a percentage. */
+.ob-dots { display: flex; justify-content: center; gap: 6px }
+.ob-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); transition: background .2s, width .2s }
+.ob-dot[data-on="true"] { width: 18px; border-radius: 3px; background: var(--money) }
+
+/* A suggested name. Tappable, obviously a choice, and wide enough to read at a glance. */
+.ob-chip {
+  display: inline-flex; align-items: center; height: 40px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+  font-size: 14px; font-weight: 600; color: var(--ink); transition: border-color .15s, background .15s;
+}
+.ob-chip:hover { border-color: color-mix(in srgb, var(--money) 45%, var(--line)) }
+.ob-chip[data-on="true"] {
+  border-color: var(--money); background: color-mix(in srgb, var(--money) 10%, var(--surface)); color: var(--money);
+}
