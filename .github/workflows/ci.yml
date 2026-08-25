@@ -5,8 +5,9 @@ name: CI
 # those need friendbot + Horizon + USDC_ISSUER_SECRET and would be flaky/secret-dependent in CI.
 # They stay as the local + post-deploy gates. Everything here passes offline: typecheck, the
 # contract security gate (clippy strict + tests + audit/deny + coverage), the anti-drain
-# validator, the other offline sponsor suites (kms/caps/channels/pilot/recovery-store), the web
-# self-tests (recovery/claimpw/receive/horizon), and a production web build.
+# validator, the other offline sponsor suites (kms/caps/channels/pilot/recovery-store/identity),
+# the web self-tests (recovery/claimpw/receive/horizon/claimerr/suggest), and a production web
+# build.
 
 on:
   push:
@@ -42,20 +43,25 @@ jobs:
       # Every offline sponsor suite runs here, not just anti-drain — the recovery selftest
       # crash of 2026-08 stayed invisible for days precisely because CI only ran one suite.
       # Network-dependent suites (test:integration, test:watchdog, test:concurrency*) stay out.
-      - name: Sponsor offline suites (kms + caps + channels + pilot + recovery-store)
+      - name: Sponsor offline suites (kms + caps + channels + pilot + recovery-store + identity)
+        # The identity suites run against the in-memory store fallback: no KV_REST_API_* exists in
+        # CI, so they cannot reach — let alone write to — the production registry.
         run: |
           pnpm --filter @lumenia/sponsor test:kms
           pnpm --filter @lumenia/sponsor test:caps
           pnpm --filter @lumenia/sponsor test:channels
           pnpm --filter @lumenia/sponsor test:pilot
           pnpm --filter @lumenia/sponsor test:recovery-store
-      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr)
+          pnpm --filter @lumenia/sponsor test:identity
+          pnpm --filter @lumenia/sponsor test:identity-routes
+      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest)
         run: |
           pnpm --filter @lumenia/web test:recovery
           pnpm --filter @lumenia/web test:claimpw
           pnpm --filter @lumenia/web test:receive
           pnpm --filter @lumenia/web test:horizon
           pnpm --filter @lumenia/web test:claimerr
+          pnpm --filter @lumenia/web test:suggest
 
   build:
     name: Build web
