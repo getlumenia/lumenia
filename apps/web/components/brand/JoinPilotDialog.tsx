@@ -79,10 +79,10 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
       e.preventDefault();
       setBusy(true);
       setError("");
+      // The allowlist lives on the MAINNET worker — the namespace the owner approves in.
+      const target = mainnetConfig()?.sponsorUrl ?? activeNetwork().sponsorUrl;
       try {
         if (account) {
-          // The allowlist lives on the MAINNET worker — the namespace the owner approves in.
-          const target = mainnetConfig()?.sponsorUrl ?? activeNetwork().sponsorUrl;
           const res = await fetch(`${target.replace(/\/$/, "")}/pilot-request`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -95,7 +95,12 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
         }
         // No account: there is no key to approve, so this is the waitlist — an isolated store that
         // is never joined to any account or any money.
-        const res = await fetch(`${activeNetwork().sponsorUrl.replace(/\/$/, "")}/waitlist`, {
+        //
+        // SAME TARGET as the account path, deliberately. Asking to join is not a money operation,
+        // so routing it at whichever network this device happens to be flipped to would file the
+        // same question in two different places depending on a setting the person did not make for
+        // this purpose. The pilot allowlist lives on the mainnet worker, so that is where asks go.
+        const res = await fetch(`${target.replace(/\/$/, "")}/waitlist`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ list: "pilot", email }),
