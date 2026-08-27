@@ -20,9 +20,9 @@ export function MoneyCard({
     <div
       className={cn(
         "rounded-[20px] border border-line bg-surface p-6",
-        "shadow-[0_1px_2px_rgba(28,43,35,0.04),0_8px_24px_-12px_rgba(28,43,35,0.10)]",
+        "shadow-[0_1px_2px_rgba(30,27,34,0.04),0_8px_24px_-12px_rgba(30,27,34,0.10)]",
         interactive &&
-          "transition-[transform,box-shadow] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(28,43,35,0.05),0_16px_32px_-16px_rgba(28,43,35,0.16)]",
+          "transition-[transform,box-shadow] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(30,27,34,0.05),0_16px_32px_-16px_rgba(30,27,34,0.16)]",
         className,
       )}
     >

@@ -11,16 +11,21 @@
    utilities (bg-money, text-ink, bg-joy…) live alongside for brand components.
    ========================================================================= */
 :root {
-  /* --- brand palette (§5) --- */
-  --paper: #faf6f0;          /* warm paper — never pure white */
-  --surface: #ffffff;        /* cards */
-  --ink: #1c2b23;            /* green-black text (not #000) */
-  --ink-soft: #5c6b62;       /* secondary text */
-  --money: #1e7a52;          /* "money green" — actions + money arriving ONLY */
-  --money-pressed: #16603f;
-  --joy: #f4a259;            /* apricot — celebration only; a spice, not a theme */
-  --line: #eae2d8;           /* card/input borders */
-  --danger: #c4453c;
+  /* --- brand palette — Periwinkle (brand.md, LOCKED). SIX COLOURS, and nothing else. ---
+     This block used to hold the retired warm-paper GREEN system, kept because the app and the site
+     each override it in their own scope. That made it a trap rather than a default: anything that
+     did NOT name a scoped token fell through to green, in a product whose brand has no green. The
+     landing's "Activate" button was exactly that — near-black-green text on a dark header, because
+     it inherited from here. Root is now the brand, so a fall-through lands on-brand by definition. */
+  --paper: #f5f3ef;          /* page ground, warm off-white */
+  --surface: #fbfaf8;        /* raised cards */
+  --ink: #1e1b22;            /* primary text */
+  --ink-soft: #67626e;       /* secondary text */
+  --money: #6e5fce;          /* Periwinkle — actions, links, the moment money arrives */
+  --money-pressed: #4e40a8;
+  --joy: #6e5fce;            /* the accent carries the arrival moment; there is no apricot */
+  --line: #e5dfe8;           /* card/input borders */
+  --danger: #c4362b;         /* errors only, never decorative */
 
   /* --- shadcn semantic tokens, mapped to the brand --- */
   --background: var(--paper);
@@ -30,12 +35,12 @@
   --popover: var(--surface);
   --popover-foreground: var(--ink);
   --primary: var(--money);
-  --primary-foreground: #ffffff;
-  --secondary: #f1eae0;      /* warm neutral */
+  --primary-foreground: #f6f4fd;
+  --secondary: #e8e3f7;      /* accent-soft */
   --secondary-foreground: var(--ink);
-  --muted: #f1eae0;
+  --muted: #e8e3f7;
   --muted-foreground: var(--ink-soft);
-  --accent: #f1eae0;         /* NOT joy — joy stays reserved for celebration */
+  --accent: #e8e3f7;
   --accent-foreground: var(--ink);
   --destructive: var(--danger);
   --border: var(--line);
@@ -49,30 +54,33 @@
 }
 
 .dark {
-  /* App dark mode (later). The claim page ships light-only. Warm-dark, reserved. */
-  --paper: #14110d;
-  --surface: #1e1a15;
-  --ink: #faf6f0;
-  --ink-soft: #b8af9e;
-  --line: #2e2820;
+  /* The retired warm-dark, re-pointed at Periwinkle's dark values — the same ones .app-pw uses
+     under data-theme="dark", so the two can never disagree. (The product drives dark with
+     data-theme, not this class; it is kept aligned rather than left holding greens the brand does
+     not contain.) */
+  --paper: #15121c;
+  --surface: #1d1926;
+  --ink: #edeaf3;
+  --ink-soft: #a59db2;
+  --line: #2c2536;
   --background: var(--paper);
   --foreground: var(--ink);
   --card: var(--surface);
   --card-foreground: var(--ink);
   --popover: var(--surface);
   --popover-foreground: var(--ink);
-  --primary: #2e9b6b;
-  --primary-foreground: #0b0b0f;
-  --secondary: #2a241c;
+  --primary: #b7ace8;
+  --primary-foreground: #1a1622;
+  --secondary: #2a2338;
   --secondary-foreground: var(--ink);
-  --muted: #2a241c;
+  --muted: #2a2338;
   --muted-foreground: var(--ink-soft);
-  --accent: #2a241c;
+  --accent: #2a2338;
   --accent-foreground: var(--ink);
-  --destructive: #e06a60;
+  --destructive: #e5695f;
   --border: var(--line);
   --input: var(--line);
-  --ring: #2e9b6b;
+  --ring: #b7ace8;
 }
 
 /* The claim route /c/[id] restyled to Periwinkle (owner request; the Instawards metric is already
