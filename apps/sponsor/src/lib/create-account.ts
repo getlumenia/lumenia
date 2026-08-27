@@ -63,6 +63,8 @@ export interface CreateAccountResult {
   recipientMustSign: true;
   /** Which tx-source path built this sandwich (observability; the client ignores it). */
   via?: "channel" | "sponsor";
+  /** "onboarding" = the 4-op sandwich; "trustline" = 3 ops, for an account already on-ledger. */
+  mode?: "trustline" | "onboarding";
 }
 
 function assertValidRecipient(pub: string): void {
@@ -83,21 +85,54 @@ function assembleSandwich(
   sponsorPublicKey: string,
   recipientPublicKey: string,
   timeoutSeconds: number,
+  /**
+   * Omit the `createAccount` op for an account that ALREADY EXISTS on this ledger.
+   *
+   * Without this the only way to get a USDC trustline was a transaction containing
+   * `createAccount`, which Horizon rejects with `op_already_exists` the moment the account is
+   * there — so an account that existed WITHOUT a trustline could never be given one. That is not
+   * a corner case: it is every account funded from outside (somebody sends it 1 XLM to "activate"
+   * it) and every account that lost its trustline. The activation button built a transaction that
+   * could only fail, and reported it as "400 Bad Request".
+   *
+   * The 3-op shape is strictly LESS than the 4-op one — the sponsor still sources `begin` (it pays
+   * the trustline's reserve) and the account still signs its own `changeTrust`.
+   */
+  trustlineOnly = false,
 ): Transaction {
-  return new TransactionBuilder(sourceAccount, {
+  const builder = new TransactionBuilder(sourceAccount, {
     fee: BASE_FEE,
     networkPassphrase: config.networkPassphrase,
-  })
-    .addOperation(
-      Operation.beginSponsoringFutureReserves({ sponsoredId: recipientPublicKey, source: sponsorPublicKey }),
-    )
-    .addOperation(
+  }).addOperation(
+    Operation.beginSponsoringFutureReserves({ sponsoredId: recipientPublicKey, source: sponsorPublicKey }),
+  );
+  if (!trustlineOnly) {
+    builder.addOperation(
       Operation.createAccount({ destination: recipientPublicKey, startingBalance: "0", source: sponsorPublicKey }),
-    )
+    );
+  }
+  return builder
     .addOperation(Operation.changeTrust({ asset: config.usdc, source: recipientPublicKey }))
     .addOperation(Operation.endSponsoringFutureReserves({ source: recipientPublicKey }))
     .setTimeout(timeoutSeconds)
     .build();
+}
+
+/**
+ * Does this account already exist on-ledger? A 404 is the ordinary answer for the claim path (a
+ * brand-new key), so it is not an error; anything else that fails is treated as "does not exist"
+ * only when Horizon actually says 404 — a network blip must not silently drop the createAccount op
+ * and produce a transaction that fails for a different reason.
+ */
+export async function accountExists(server: Horizon.Server, pubkey: string): Promise<boolean> {
+  try {
+    await server.loadAccount(pubkey);
+    return true;
+  } catch (e) {
+    const status = (e as { response?: { status?: number } })?.response?.status;
+    if (status === 404) return false;
+    throw new Error(`could not check whether ${pubkey.slice(0, 6)}… exists: ${(e as Error).message}`);
+  }
 }
 
 /** Sponsor-sourced sandwich (the fallback / original path). tx.source = sponsor. */
@@ -106,13 +141,15 @@ export async function buildCreateAccountSandwich(
   config: SponsorConfig,
   sponsorPublicKey: string,
   recipientPublicKey: string,
+  /** See assembleSandwich: true when the account is already on-ledger. */
+  trustlineOnly = false,
 ): Promise<Transaction> {
   assertValidRecipient(recipientPublicKey);
   if (recipientPublicKey === sponsorPublicKey) {
     throw new Error("recipient must differ from the sponsor");
   }
   const sponsorAccount = await server.loadAccount(sponsorPublicKey);
-  return assembleSandwich(sponsorAccount, config, sponsorPublicKey, recipientPublicKey, 180);
+  return assembleSandwich(sponsorAccount, config, sponsorPublicKey, recipientPublicKey, 180, trustlineOnly);
 }
 
 /**
@@ -135,6 +172,11 @@ export async function createAccountHandler(
     throw new Error("recipient must differ from the sponsor");
   }
 
+  /* Decided ONCE, before either path builds anything: an existing account must not be handed a
+     `createAccount` op (op_already_exists → the client sees a bare 400), and a missing one must
+     still get created. Both paths below assemble from this same answer, so they cannot disagree. */
+  const exists = await accountExists(server, input.recipientPublicKey);
+
   const base = {
     sponsorPublicKey: signer.publicKey(),
     network: config.network,
@@ -142,6 +184,8 @@ export async function createAccountHandler(
     // USDC is always a credit asset (constructed with an issuer), never native.
     usdcIssuer: config.usdc.getIssuer()!,
     recipientMustSign: true as const,
+    /** Which shape this is: the 4-op onboarding, or the 3-op trustline for an account that exists. */
+    mode: (exists ? "trustline" : "onboarding") as "trustline" | "onboarding",
   };
 
   // CHANNEL path — an independent sequence per concurrent onboarding (C1 fix).
@@ -155,6 +199,7 @@ export async function createAccountHandler(
         signer.publicKey(),
         input.recipientPublicKey,
         CHANNEL_TX_TIMEOUT_SECONDS,
+        exists,
       );
       tx.sign(lease.keypair); // channel = tx source (lends its sequence, pays the fee)
       await signer.sign(tx); // sponsor = begin + createAccount (the reserves)
@@ -170,7 +215,7 @@ export async function createAccountHandler(
 
   // SPONSOR path — the original behavior (tx.source = sponsor). Serializes on the
   // sponsor's single sequence; used only when no channel is configured/free.
-  const tx = await buildCreateAccountSandwich(server, config, signer.publicKey(), input.recipientPublicKey);
+  const tx = await buildCreateAccountSandwich(server, config, signer.publicKey(), input.recipientPublicKey, exists);
   await signer.sign(tx);
   return { xdr: tx.toXDR(), via: "sponsor", ...base };
 }

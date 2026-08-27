@@ -28,7 +28,12 @@ import {
   TransactionBuilder,
   type Transaction,
 } from "@stellar/stellar-sdk";
-import { assertSponsoredOnboarding, assertHealthMatchesPin, pinnedUsdcIssuer } from "./tx-guard";
+import {
+  assertSponsoredOnboarding,
+  assertSponsoredTrustline,
+  assertHealthMatchesPin,
+  pinnedUsdcIssuer,
+} from "./tx-guard";
 
 let passed = 0;
 let failed = 0;
@@ -142,7 +147,53 @@ console.log("\n[5] nothing else may ride along");
 ok("refuses a fifth operation", !accepts(sandwich({ extraOp: true })));
 ok("refuses a missing operation", !accepts(sandwich({ dropOp: true })));
 
-console.log("\n[6] the /health canary");
+console.log("\n[6] the 3-op trustline, for an account that already exists");
+
+/** The same sandwich minus createAccount, round-tripped through XDR like everything else here. */
+function trustlineOnly(shape: Shape = {}): Transaction {
+  const source = new Account(shape.txSource ?? channel, "1");
+  const b = new TransactionBuilder(source, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
+    .addOperation(
+      Operation.beginSponsoringFutureReserves({ sponsoredId: shape.sponsoredId ?? me, source: sponsor }),
+    )
+    .addOperation(
+      Operation.changeTrust({
+        asset: shape.trustAsset ?? USDC,
+        ...(shape.trustLimit !== undefined ? { limit: shape.trustLimit } : {}),
+        source: shape.trustSource ?? me,
+      }),
+    )
+    .addOperation(Operation.endSponsoringFutureReserves({ source: shape.endSource ?? me }));
+  if (shape.extraOp) {
+    b.addOperation(Operation.payment({ destination: sponsor, asset: USDC, amount: "1", source: me }));
+  }
+  const tx = b.setTimeout(180).build();
+  return TransactionBuilder.fromXDR(tx.toXDR(), Networks.TESTNET) as Transaction;
+}
+
+function acceptsTrustline(tx: Transaction): boolean {
+  try {
+    assertSponsoredTrustline(tx, me, NET);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+ok("accepts the three-op trustline", acceptsTrustline(trustlineOnly()));
+ok("refuses a tx sourced by us", !acceptsTrustline(trustlineOnly({ txSource: me })));
+ok("refuses sponsorship of another account", !acceptsTrustline(trustlineOnly({ sponsoredId: sponsor })));
+ok("refuses changeTrust sourced by somebody else", !acceptsTrustline(trustlineOnly({ trustSource: sponsor })));
+ok("refuses another issuer", !acceptsTrustline(trustlineOnly({ trustAsset: new Asset("USDC", Keypair.random().publicKey()) })));
+ok("refuses a zero limit (that deletes a trustline)", !acceptsTrustline(trustlineOnly({ trustLimit: "0" })));
+ok("refuses a fourth operation", !acceptsTrustline(trustlineOnly({ extraOp: true })));
+/* The two shapes must not be interchangeable. A claim signs with a key that is about to hold
+   money and its account is always brand new, so a three-op answer there means the server is
+   describing an account that already exists — refuse rather than sign. */
+ok("the onboarding guard rejects the three-op shape", !accepts(trustlineOnly()));
+ok("the trustline guard rejects the four-op shape", !acceptsTrustline(sandwich()));
+
+console.log("\n[7] the /health canary");
 ok("accepts the pinned asset", (() => {
   try {
     assertHealthMatchesPin({ usdcCode: "USDC", usdcIssuer: ISSUER }, NET);

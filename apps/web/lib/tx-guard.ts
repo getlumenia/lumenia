@@ -80,6 +80,51 @@ function isPinnedUsdc(line: unknown, issuer: string): boolean {
  * Throws if anything differs. Call it immediately before signing, on every path that signs a
  * server-built transaction with a key that holds money.
  */
+/**
+ * The 3-op sibling: a USDC trustline for an account that ALREADY EXISTS.
+ *
+ *   beginSponsoringFutureReserves(sponsoredId = me)  [source: sponsor]
+ *   changeTrust(USDC)                                [source: me]   ← we authorize this
+ *   endSponsoringFutureReserves()                    [source: me]   ← and this
+ *
+ * Same rule as its four-op sibling, one op shorter: our signature only ever authorizes the two ops
+ * we source, and nothing may spend our sequence or our fee. It exists because an account that is
+ * already on-ledger cannot be sent a `createAccount` op — Horizon answers `op_already_exists` —
+ * so the only path to a trustline for such an account was a transaction guaranteed to fail.
+ *
+ * DELIBERATELY NOT accepted on the claim paths. A claim creates a brand-new account, so a
+ * three-op answer there would mean the server is talking about an account that already exists,
+ * which is exactly the case a claim must refuse rather than sign.
+ */
+export function assertSponsoredTrustline(tx: Transaction, me: string, net: NetworkId): void {
+  const issuer = pinnedUsdcIssuer(net);
+  const txSource = tx.source;
+  if (txSource === me) throw new Error(REFUSED);
+
+  const ops = tx.operations;
+  if (ops.length !== 3) throw new Error(REFUSED);
+  const [begin, trust, end] = ops as Array<Record<string, unknown> & { type: string; source?: string }>;
+
+  if (
+    begin.type !== "beginSponsoringFutureReserves" ||
+    begin.sponsoredId !== me ||
+    effectiveSource(begin, txSource) === me
+  ) {
+    throw new Error(REFUSED);
+  }
+  if (
+    trust.type !== "changeTrust" ||
+    !isPinnedUsdc(trust.line, issuer) ||
+    effectiveSource(trust, txSource) !== me ||
+    !(amount(trust.limit) > 0)
+  ) {
+    throw new Error(REFUSED);
+  }
+  if (end.type !== "endSponsoringFutureReserves" || effectiveSource(end, txSource) !== me) {
+    throw new Error(REFUSED);
+  }
+}
+
 export function assertSponsoredOnboarding(tx: Transaction, me: string, net: NetworkId): void {
   const issuer = pinnedUsdcIssuer(net);
   const txSource = tx.source;

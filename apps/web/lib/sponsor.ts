@@ -16,7 +16,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { activeNetwork } from "./network";
 import type { Signer } from "./signer";
-import { assertSponsoredOnboarding } from "./tx-guard";
+import { assertSponsoredOnboarding, assertSponsoredTrustline } from "./tx-guard";
 
 export interface ClaimParams {
   sponsorUrl: string;
@@ -94,8 +94,19 @@ export async function prepareAccount({
     recipientPublicKey: signer.publicKey(),
   })) as { xdr: string };
   const sandwich = TransactionBuilder.fromXDR(created.xdr, NETWORK) as Transaction;
-  // This key holds the user's real balance — never sign a server-built tx unexamined.
-  assertSponsoredOnboarding(sandwich, signer.publicKey(), net.id);
+  /* This key holds the user's real balance — never sign a server-built tx unexamined.
+   *
+   * TWO legitimate shapes here, and the op count tells them apart without trusting a field the
+   * server chose: four ops when the account has to be created, three when it already exists and
+   * only needs the trustline (an account funded from outside, or one that lost its line). Each is
+   * checked in full by its own assertion — this is a choice of WHICH contract to enforce, never a
+   * relaxation of either. `prepareAccount` is the only caller that may accept the shorter one; the
+   * claim paths keep demanding the four-op sandwich, because a claim's account is always new. */
+  if (sandwich.operations.length === 3) {
+    assertSponsoredTrustline(sandwich, signer.publicKey(), net.id);
+  } else {
+    assertSponsoredOnboarding(sandwich, signer.publicKey(), net.id);
+  }
   await signer.sign(sandwich);
   const res = await server.submitTransaction(sandwich);
   return { hash: (res as { hash: string }).hash };
