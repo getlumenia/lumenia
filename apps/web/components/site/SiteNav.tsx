@@ -152,7 +152,7 @@ export function SiteNav() {
             </>
           ) : (
             <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
-              <Link href="/welcome">Get started</Link>
+              <Link href="/welcome?start=1">Get started</Link>
             </Button>
           )}
         </div>

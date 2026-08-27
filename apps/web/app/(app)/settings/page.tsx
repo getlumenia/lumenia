@@ -69,7 +69,7 @@ export default function SettingsPage() {
             one yourself, on practice money, in a few seconds.
           </p>
           <Link
-            href="/welcome"
+            href="/welcome?start=1"
             className="mt-4 inline-flex rounded-full border border-line px-4 py-2.5 text-sm font-medium text-ink"
           >
             Get started

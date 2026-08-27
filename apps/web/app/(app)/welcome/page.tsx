@@ -20,7 +20,7 @@
  * between a word and this account's whole record — is stated on the step where the name is chosen,
  * not buried afterwards. Skipping is offered in the same size and weight as continuing.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -189,6 +189,33 @@ export default function WelcomePage() {
     }
   }, [createAccount]);
 
+  /**
+   * "Get started" MEANS "open me an account", so pressing it should not land on a screen that asks
+   * the same question again. The intent travels with the navigation (`?start=1`) and is acted on
+   * here.
+   *
+   * WHY AN INTENT PARAM AND NOT SIMPLY "no account → create one". Because this screen is a URL, and
+   * a URL is opened by crawlers, link previews, and anybody who bookmarks it. Creating an account
+   * on arrival would hand the sponsor a reserve to park for every one of those. The click is the
+   * gesture; carrying it across the navigation is what makes a second confirmation unnecessary.
+   *
+   * Guarded by a ref rather than by state: this must fire exactly once even if the effect is
+   * re-entered, because the thing it does is not free.
+   */
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (status !== "ready" || account || autoStarted.current) return;
+    const wants = new URLSearchParams(window.location.search).get("start") === "1";
+    if (!wants) return;
+    // Never on real money without an invite — the same gate the button itself carries.
+    if (network === "public" && !mainnetApproved) return;
+    autoStarted.current = true;
+    void createAccountHere();
+    // The param has done its job; leaving it would re-arm this on a reload after a failure.
+    window.history.replaceState({}, "", "/welcome");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, account, network, mainnetApproved]);
+
   const skip = useCallback(() => {
     markWelcomeSeen();
     setStep("done");
@@ -241,9 +268,13 @@ export default function WelcomePage() {
       <div className="flex flex-col gap-5 py-6">
         <Mascot step="hello" />
         <header className="text-center">
-          <h1 className="text-2xl font-bold text-ink">Let&apos;s get you an account.</h1>
+          <h1 className="text-2xl font-bold text-ink">
+            {busy ? "Opening your account…" : "Let’s get you an account."}
+          </h1>
           <p className="mx-auto mt-2 max-w-xs text-sm text-ink-soft">
-            It takes a few seconds and there is nothing to sign up for — no app, no seed phrase.
+            {busy
+              ? "A few seconds. We’re putting it on the public record so money can reach you."
+              : "It takes a few seconds and there is nothing to sign up for — no app, no seed phrase."}
           </p>
         </header>
 
