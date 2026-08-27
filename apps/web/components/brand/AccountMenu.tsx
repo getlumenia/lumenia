@@ -37,7 +37,7 @@ function short(address: string): string {
 }
 
 export function AccountMenu() {
-  const { account, accounts } = useWallet();
+  const { account, accounts, network } = useWallet();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
@@ -133,6 +133,16 @@ export function AccountMenu() {
             </span>
             <span className="app-menu-id-sub">{copied ? "Copied" : short(account.address)}</span>
           </button>
+          {/* THE ADDRESS IS THE SAME KEY ON EVERY CHAIN; THE ACCOUNT IS NOT. On practice money this
+              account exists on the test network and nowhere else, so real dollars sent to it from an
+              exchange or another wallet simply do not arrive — the sending wallet answers "the
+              destination account doesn't exist" and flags the payment. Said here, at the one moment
+              the address is being handed to somebody, rather than after the money has gone. */}
+          {network !== "public" && (
+            <p className="app-menu-row-s" style={{ margin: "2px 12px 6px" }}>
+              Practice address — real dollars sent here won&apos;t arrive.
+            </p>
+          )}
 
           {others.length > 0 && (
             <Link href="/settings" className="app-menu-row" onClick={close}>

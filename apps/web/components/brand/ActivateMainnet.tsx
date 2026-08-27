@@ -22,65 +22,24 @@
  *
  * It renders nothing at all in every other state, including while it is working.
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useWallet } from "../../lib/wallet";
-import { activeNetwork, USDC_ISSUER } from "../../lib/network";
-import { prepareAccount } from "../../lib/sponsor";
+import { ensureCanReceive, type Receivable } from "../../lib/receivable";
 import { MoneyCard } from "./MoneyCard";
 import { PrimaryButton } from "./PrimaryButton";
-
-type State = "checking" | "ready" | "working" | "locked" | "error";
 
 export function ActivateMainnet() {
   const { network, account, getSigner } = useWallet();
   const router = useRouter();
   const pathname = usePathname();
-  const [state, setState] = useState<State>("checking");
-  const [err, setErr] = useState("");
-  // Bumped by "Try again" — the effect keys off it, since network/account have not changed.
+  const [result, setResult] = useState<Receivable | null>(null);
   const [attempt, setAttempt] = useState(0);
-  // At most one attempt per mount: the thing it does costs the sponsor a reserve.
-  const attempted = useRef(false);
 
   useEffect(() => {
     if (network !== "public" || !account) return;
     let alive = true;
-    const net = activeNetwork();
-    const issuer = USDC_ISSUER[net.id];
-
-    async function open() {
-      if (attempted.current) return;
-      attempted.current = true;
-      const signer = await getSigner().catch(() => null);
-      if (!alive) return;
-      if (!signer) return setState("locked");
-      setState("working");
-      try {
-        await prepareAccount({ sponsorUrl: net.sponsorUrl, signer });
-        if (alive) setState("ready");
-      } catch (e) {
-        if (alive) {
-          setErr((e as Error).message);
-          setState("error");
-        }
-      }
-    }
-
-    fetch(`${net.horizonUrl}/accounts/${account.address}`)
-      .then(async (res) => {
-        if (!alive) return;
-        if (res.status === 404) return open(); // no account on this chain yet
-        if (!res.ok) return setState("error");
-        const acc = (await res.json()) as { balances?: { asset_code?: string; asset_issuer?: string }[] };
-        const hasUsdc = (acc.balances ?? []).some(
-          (b) => b.asset_code === "USDC" && b.asset_issuer === issuer,
-        );
-        // Already able to hold dollars — there was never anything to do here.
-        return hasUsdc ? setState("ready") : open();
-      })
-      .catch(() => alive && setState("error"));
-
+    void ensureCanReceive(account.address, getSigner).then((r) => alive && setResult(r));
     return () => {
       alive = false;
     };
@@ -90,9 +49,9 @@ export function ActivateMainnet() {
   if (network !== "public") return null;
   // "working" renders nothing on purpose: a spinner here would be the machinery announcing itself,
   // and nothing on this screen is waiting on it.
-  if (state === "checking" || state === "ready" || state === "working") return null;
+  if (!result || result.state === "ready") return null;
 
-  if (state === "locked") {
+  if (result.state === "locked") {
     return (
       <MoneyCard className="p-5">
         <p className="font-semibold text-ink">Unlock to finish setting up</p>
@@ -115,13 +74,11 @@ export function ActivateMainnet() {
         Money sent here from another wallet won&apos;t arrive until this works. Your own money is
         safe.
       </p>
-      {err && <p className="mt-2 text-sm text-danger">{err}</p>}
+      <p className="mt-2 text-sm text-danger">{result.error}</p>
       <div className="mt-4">
         <PrimaryButton
           onClick={() => {
-            attempted.current = false;
-            setErr("");
-            setState("checking");
+            setResult(null);
             setAttempt((n) => n + 1);
           }}
         >

@@ -15,6 +15,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bell, LifeBuoy, Send, HandCoins } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
+import { ensureCanReceive } from "../../lib/receivable";
 import { loadUnreadCount } from "../../lib/notifications";
 import { TestnetBanner } from "./TestnetBanner";
 import { FeedbackDialog } from "../FeedbackDialog";
@@ -47,6 +48,31 @@ const NAV: { href: string; label: string; optional?: boolean }[] = [
  * also not a nav link any more but a CTA pill: it is a task, not a place, and a plain grey link at
  * the end of a full row was invisible on dark the moment the row had to trim it.
  */
+/**
+ * OPEN THE ACCOUNT WHEREVER THE PERSON IS.
+ *
+ * The address is copyable from the account menu, which is in this shell and therefore on every
+ * screen. Opening the account on chain used to live on two pages, so somebody could copy an address
+ * from the nav, paste it into an outside wallet, and be told "the destination account doesn't
+ * exist" — because it did not. The wallet then flagged the payment as suspicious, which is exactly
+ * what a wallet should do about a payment to an account that is not there.
+ *
+ * Renders nothing, ever. The visible states — a locked account, a failure — stay on /account and
+ * /add-money where there is room to explain them; `ensureCanReceive` shares one guard between both
+ * callers so the sponsor is never asked for two reserves.
+ */
+function KeepAccountReceivable() {
+  const { network, account, getSigner } = useWallet();
+  useEffect(() => {
+    if (network !== "public" || !account) return;
+    void ensureCanReceive(account.address, getSigner).catch(() => {
+      /* /account says so where there is room to say it */
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [network, account]);
+  return null;
+}
+
 function StartSendingLink() {
   const { status, account, network, pilotState } = useWallet();
   const pathname = usePathname();
@@ -212,6 +238,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 about balances; it is now one tap from every screen, which is what it should always
                 have been for a product whose keys live on the phone. */}
             <AccountMenu />
+            <KeepAccountReceivable />
             {/* The theme switch used to sit here and no longer does. Measured, not guessed: the row
                 needs 257px for its links and has 193px even on a 430px phone, so something had to
                 leave, and this was the only control that is (a) a preference rather than something
