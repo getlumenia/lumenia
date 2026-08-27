@@ -237,7 +237,11 @@ export default function SendPage() {
       return setError(`During the pilot you can send up to $${PILOT_TX_CAP_USD} at a time.`);
     }
     const directTo = request?.to; // paying a returning asker straight to her account
-    if (!directTo && !from.trim()) return setError("Add your name so they know who it's from.");
+    /* No name, no problem. This used to refuse the send — which was fine while the form ASKED for
+       a name, and became a dead end the moment it stopped: the field is collapsed now, so the
+       person would have been blocked by something they could not see. An unnamed sender is a
+       legitimate thing to be, and the claim page has always had a word for it. */
+    const senderName = from.trim() || "Someone";
     const lockWith = !directTo && wantPassword ? password : "";
     if (!directTo && wantPassword) {
       const problem = claimPasswordProblem(password);
@@ -290,7 +294,7 @@ export default function SendPage() {
         sponsorUrl: sponsorUrl(),
         signer,
         amount: amt.toFixed(2),
-        from: from.trim(),
+        from: senderName,
         webOrigin: window.location.origin,
         password: lockWith || undefined,
       });
@@ -301,7 +305,7 @@ export default function SendPage() {
         balanceId: result.linkHex, // the v2 drop id (the link key); reused by "my links"
         hasLink: true,
         amount: amt.toFixed(2),
-        from: from.trim(),
+        from: senderName,
         at: new Date().toISOString(),
       });
       // The sponsor has always allowed this one; nothing ever fired it. Paired with send_started it
