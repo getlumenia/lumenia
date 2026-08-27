@@ -106,7 +106,7 @@ function shortName(name: string): string {
 }
 
 export default function SendPage() {
-  const { status, account, accounts, getSigner } = useWallet();
+  const { status, account, accounts, getSigner, createAccount, network, mainnetApproved } = useWallet();
   const router = useRouter();
   const [balance, setBalance] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
@@ -200,8 +200,49 @@ export default function SendPage() {
       });
   }, [account]);
 
+  /**
+   * "GET STARTED" LANDS HERE, AND OPENS THE ACCOUNT ON ARRIVAL.
+   *
+   * It used to land on /welcome, which opened the account and then asked for a name — so the
+   * shortest path from wanting to send money to having a link ran through two screens that were
+   * not about sending money. /welcome is still there and still worth taking; it is reached from
+   * settings and from the nudge on /home, rather than standing in front of the money.
+   *
+   * WHY AN INTENT PARAM AND NOT "no account → just create one". This screen is a URL, and URLs are
+   * opened by crawlers, link previews and bookmarks. Creating an account on arrival would hand the
+   * sponsor a reserve to park for every one of those, and on real money that reserve never comes
+   * back. The click is the gesture; carrying it across the navigation is what makes a second
+   * confirmation unnecessary without making the page itself a trigger.
+   *
+   * READ DURING RENDER, NOT IN THE EFFECT. The `!account` guard below runs before any effect, so an
+   * intent discovered in useEffect arrives exactly one render too late — the screen has already
+   * bounced to /home. Hence the lazy initialiser: the first render is `status === "loading"` either
+   * way, so nothing is painted differently for it.
+   */
+  const [starting, setStarting] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("start") === "1",
+  );
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!starting || autoStarted.current || status !== "ready") return;
+    if (account) return setStarting(false);
+    // NEVER on real money without an invite — the same gate /welcome and /settings carry, because
+    // every new mainnet account parks a reserve the sponsor does not get back. Falling through to
+    // /home is the right landing: that is where the pilot gate explains itself.
+    if (network === "public" && !mainnetApproved) return setStarting(false);
+    autoStarted.current = true;
+    // The param has done its job; leaving it would re-arm this on a reload after a failure.
+    window.history.replaceState({}, "", "/send");
+    void createAccount()
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setStarting(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [starting, status, account, network, mainnetApproved]);
+
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
   if (!account) {
+    // An account asked for by ?start=1 is being opened — wait for it instead of bouncing home.
+    if (starting) return <p className="py-10 text-center text-ink-soft">Opening your account…</p>;
     if (typeof window !== "undefined") router.replace("/home");
     return null;
   }

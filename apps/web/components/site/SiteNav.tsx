@@ -131,12 +131,14 @@ export function SiteNav() {
         <div className="pointer-events-auto relative flex items-center gap-1.5 justify-self-end">
           <ThemeToggle />
           {/* The cell answers who is looking. Someone with an account on this device gets a door to
-              their money plus their next step; a first-timer gets ONBOARDING — not the demo link it
-              used to point at. The demo is still the best pitch and still one tap away on /try, but
-              as the answer to "Get started" it was the wrong shape: it hands you $5 of practice
-              money through a claim link, which explains the product without ever giving you an
-              account. /welcome now opens one in a few seconds, on practice money, which is what a
-              person pressing that button is actually asking for. */}
+              their money plus their next step; a first-timer gets an ACCOUNT AND THE SEND SCREEN.
+              Not the demo link this once pointed at — the demo is still the best pitch and still
+              one tap away on /try, but as the answer to "Get started" it hands you $5 through a
+              claim link and never gives you an account. And no longer /welcome either: opening the
+              account there meant two screens standing between pressing this button and having a
+              link to send, neither of them about sending money. The account is opened on arrival at
+              /send instead, and /welcome keeps its place one step off the path — from settings, and
+              from the nudge on /home. */}
           {hasAccount ? (
             <>
               {/* `text-foreground` explicitly, matching the nav links beside it. The ghost variant
@@ -156,7 +158,7 @@ export function SiteNav() {
             </>
           ) : (
             <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
-              <Link href="/welcome?start=1">Get started</Link>
+              <Link href="/send?start=1">Get started</Link>
             </Button>
           )}
         </div>
