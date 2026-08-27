@@ -35,7 +35,17 @@ const PROOF_MEMORY_SEC = PROOF_SKEW_SEC * 2 + 60;
 
 const KEY_NAME = "lumenia:handle:";
 const KEY_SKEL = "lumenia:handle-skel:";
+/**
+ * Reverse lookup, keyed by the ACCOUNT ALONE — not by network.
+ *
+ * A keypair is the same key on every chain: the address somebody practices with is the address they
+ * later activate on mainnet. Keying this per network meant switching to real money hid the person's
+ * own name from them, and the settings screen offered to claim a name they already had.
+ *
+ * `KEY_OF_LEGACY` is the shape that mistake wrote, read on a miss and healed forward.
+ */
 const KEY_OF = "lumenia:handle-of:";
+const KEY_OF_LEGACY = (network: NetworkId, pubkey: string) => `lumenia:handle-of:${network}:${pubkey}`;
 const KEY_PROOF = "lumenia:handle-proof:";
 
 /**
@@ -313,11 +323,21 @@ export async function lookupHandle(
   return { name, pubkey: rec.pubkey, network: rec.network };
 }
 
-/** The name this account holds on this network, or null. */
-export async function handleOf(rawPubkey: unknown, network: NetworkId): Promise<string | null> {
+/** The name this account holds, on any chain — see KEY_OF. */
+export async function handleOf(rawPubkey: unknown): Promise<string | null> {
   const pubkey = String(rawPubkey ?? "");
   if (!StrKey.isValidEd25519PublicKey(pubkey)) return null;
-  return kvGet(`${KEY_OF}${network}:${pubkey}`);
+  const current = await kvGet(KEY_OF + pubkey);
+  if (current) return current;
+  // Heal a name written under the old per-network key, whichever network it was claimed on, so it
+  // follows its owner from then on.
+  for (const network of ["testnet", "mainnet"] as NetworkId[]) {
+    const legacy = await kvGet(KEY_OF_LEGACY(network, pubkey));
+    if (!legacy) continue;
+    await kvSet(KEY_OF + pubkey, legacy);
+    return legacy;
+  }
+  return null;
 }
 
 /**
@@ -372,15 +392,21 @@ export async function claimHandle(input: ProofInput): Promise<ClaimResult | Hand
       return { ok: false, reason: "That name was given up recently and is not available yet." };
     }
     if (!existing.releasedUntil) {
-      return existing.pubkey === input.pubkey
-        ? { ok: true, name, pubkey: input.pubkey, network: input.network } // already yours
-        : { ok: false, reason: "That name is taken." };
+      if (existing.pubkey !== input.pubkey) return { ok: false, reason: "That name is taken." };
+      // Already yours. Re-home it to the network you are on now: the record's network is what
+      // federation answers with, and an account that practiced and then activated on mainnet
+      // should be payable at its name there too.
+      if (existing.network !== input.network) {
+        await kvSet(KEY_NAME + name, JSON.stringify({ ...existing, network: input.network }));
+      }
+      await kvSet(KEY_OF + input.pubkey, name);
+      return { ok: true, name, pubkey: input.pubkey, network: input.network };
     }
   }
 
   // The account may hold only one name. Checked before we take anything, and enforced again by the
   // NX on the reverse key below — this read is the friendly answer, that write is the guarantee.
-  const already = await handleOf(input.pubkey, input.network);
+  const already = await handleOf(input.pubkey);
   if (already && already !== name) {
     return { ok: false, reason: `This account is already @${already}. Give that name up first.` };
   }
@@ -407,7 +433,7 @@ export async function claimHandle(input: ProofInput): Promise<ClaimResult | Hand
     return { ok: false, reason: "That name is taken." };
   }
 
-  const tookOf = await kvSetNx(`${KEY_OF}${input.network}:${input.pubkey}`, name);
+  const tookOf = await kvSetNx(KEY_OF + input.pubkey, name);
   if (!tookOf) {
     await kvDel(KEY_NAME + name);
     if (tookSkel) await kvDel(KEY_SKEL + skel);
@@ -443,7 +469,8 @@ export async function releaseHandle(input: ProofInput): Promise<{ ok: true; name
   // The skeleton stays reserved for exactly as long as the tombstone, so a lookalike cannot move in
   // during the cooldown either.
   await kvSet(KEY_SKEL + skeleton(name), name, RELEASE_COOLDOWN_SEC);
-  await kvDel(`${KEY_OF}${rec.network}:${rec.pubkey}`);
+  await kvDel(KEY_OF + rec.pubkey);
+  await kvDel(KEY_OF_LEGACY(rec.network, rec.pubkey)); // and the shape the old key used
   return { ok: true, name };
 }
 
@@ -492,8 +519,12 @@ export async function federationLookup(
     };
   }
   if (type === "id") {
-    const name = await handleOf(q, network);
+    const name = await handleOf(q);
     if (!name) return { ok: false, reason: "not found" };
+    // A name is chain-independent; an ANSWER is an instruction to pay on THIS chain, so it is held
+    // to the same rule as the forward lookup above.
+    const record = await lookupHandle(name);
+    if (!record || record.network !== network) return { ok: false, reason: "not found" };
     return { stellar_address: `${name}*${federationDomain()}`, account_id: q };
   }
   return { ok: false, reason: "unsupported federation type" };

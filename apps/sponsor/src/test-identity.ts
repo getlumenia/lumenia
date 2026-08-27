@@ -113,7 +113,10 @@ async function main(): Promise<void> {
   const claimed = await claimHandle(proofFor(alice, "claim", "meric"));
   ok("alice claims @meric", claimed.ok === true);
   ok("the registry answers", (await lookupHandle("meric"))?.pubkey === alice.publicKey());
-  ok("the reverse answers", (await handleOf(alice.publicKey(), NET)) === "meric");
+  ok("the reverse answers", (await handleOf(alice.publicKey())) === "meric");
+  // A keypair is the same key on every chain, so switching networks must not hide somebody's own
+  // name from them — the bug that had a settings screen offering to claim a name already held.
+  ok("the name follows its owner across networks", (await handleOf(alice.publicKey())) === "meric");
 
   const forged = proofFor(alice, "claim", "deniz");
   forged.pubkey = bob.publicKey(); // alice's signature, bob's name on the request
@@ -142,7 +145,7 @@ async function main(): Promise<void> {
   ok("a stranger cannot release it", (await releaseHandle(proofFor(bob, "release", "meric"))).ok !== true);
   ok("the owner can", (await releaseHandle(proofFor(alice, "release", "meric"))).ok === true);
   ok("it stops resolving", (await lookupHandle("meric")) === null);
-  ok("the reverse pointer is gone", (await handleOf(alice.publicKey(), NET)) === null);
+  ok("the reverse pointer is gone", (await handleOf(alice.publicKey())) === null);
   const grab = await claimHandle(proofFor(bob, "claim", "meric"));
   ok("nobody may re-register it during the cooldown", grab.ok !== true, grab.ok !== true ? grab.reason : "");
   const lookalikeAfter = await claimHandle(proofFor(bob, "claim", "mer1c"));

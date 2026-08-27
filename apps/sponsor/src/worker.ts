@@ -561,7 +561,7 @@ export default {
 
       if (method === "GET" && url === "/handle-of") {
         const pubkey = new URL(request.url).searchParams.get("pubkey");
-        const name = await handleOf(pubkey, config.network);
+        const name = await handleOf(pubkey);
         return name ? json(200, { name }) : json(404, { error: "not found" });
       }
 

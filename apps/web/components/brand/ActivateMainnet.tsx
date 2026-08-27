@@ -81,6 +81,22 @@ export function ActivateMainnet() {
         hold dollars — we cover the cost, and it stays yours. You&apos;ll need it before money can be
         sent here from another wallet or an exchange.
       </p>
+      {/* Say what "we cover the cost" actually is. Stellar will not hold an account, or let it hold
+          dollars, without a reserve locked against it — 1.5 XLM for the account and its dollar
+          line, at today's rates. Naming the number costs nothing and removes the one honest
+          question this card otherwise invites: what is the catch? There is none, and the reason
+          there is none is worth stating: the reserve is parked in the user's name, not spent, and
+          the account still holds no XLM of its own. */}
+      <details className="group mt-3">
+        <summary className="cursor-pointer list-none text-xs font-medium text-ink-soft underline-offset-2 hover:underline [&::-webkit-details-marker]:hidden">
+          What does it cost?
+        </summary>
+        <p className="mt-2 text-xs text-ink-soft">
+          Nothing, to you. Stellar keeps a small deposit locked against every account — 1.5 XLM here,
+          for the account and its dollar line. We put that up and it stays locked, not spent; your
+          account still holds no XLM at all, and you never need any to send or receive.
+        </p>
+      </details>
       {err && <p className="mt-2 text-sm text-danger">{err}</p>}
       <div className="mt-4">
         <PrimaryButton loading={busy} loadingLabel="Activating…" onClick={activate}>

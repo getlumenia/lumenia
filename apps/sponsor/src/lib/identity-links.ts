@@ -279,7 +279,7 @@ export interface CheckResult {
 export async function checkIdentity(resolved: ResolvedIdentity, network: NetworkId): Promise<CheckResult> {
   const row = await readRow(resolved.id);
   if (!row) return { taken: false, provider: resolved.provider, label: resolved.label };
-  const handle = await handleOf(row.address, row.network);
+  const handle = await handleOf(row.address);
   return {
     taken: true,
     address: row.address,
@@ -312,7 +312,7 @@ export async function attachIdentity(
 
   const existing = await readRow(resolved.id);
   if (existing && existing.address !== address) {
-    const handle = await handleOf(existing.address, existing.network);
+    const handle = await handleOf(existing.address);
     return {
       ok: false,
       reason: "That is already connected to another account.",
@@ -352,7 +352,7 @@ export async function fetchByIdentity(
 ): Promise<{ address: string; handle?: string; box?: RecoveryBox } | null> {
   const row = await readRow(resolved.id);
   if (!row) return null;
-  const handle = await handleOf(row.address, row.network);
+  const handle = await handleOf(row.address);
   return { address: row.address, handle: handle ?? undefined, box: row.box };
 }
 
