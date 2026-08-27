@@ -57,19 +57,27 @@ const NAV: { href: string; label: string; optional?: boolean }[] = [
  * exist" — because it did not. The wallet then flagged the payment as suspicious, which is exactly
  * what a wallet should do about a payment to an account that is not there.
  *
+ * IT RUNS AGAIN THE MOMENT THE ACCOUNT IS UNLOCKED, and that dependency is the entire mechanism.
+ * A trustline is sourced by the account itself, so Stellar will not let anyone but the account's
+ * own key open one — and on real money that key is behind a password, deliberately, so an unlocked
+ * phone cannot spend. There is therefore no version of this that never needs the password. What
+ * there is, is a version that never asks for it SEPARATELY: the person unlocks once, for whatever
+ * they were already doing, and the account opens itself in the background on that signature.
+ *
  * Renders nothing, ever. The visible states — a locked account, a failure — stay on /account and
- * /add-money where there is room to explain them; `ensureCanReceive` shares one guard between both
- * callers so the sponsor is never asked for two reserves.
+ * /add-money where there is room to explain them, plus one line in the account menu at the moment
+ * an address is copied. `ensureCanReceive` shares one guard between every caller so the sponsor is
+ * never asked for two reserves.
  */
 function KeepAccountReceivable() {
-  const { network, account, getSigner } = useWallet();
+  const { network, account, getSigner, unlocked } = useWallet();
   useEffect(() => {
     if (network !== "public" || !account) return;
     void ensureCanReceive(account.address, getSigner).catch(() => {
-      /* /account says so where there is room to say it */
+      /* the account menu says so, at the point the address is handed out */
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [network, account]);
+  }, [network, account, unlocked]);
   return null;
 }
 

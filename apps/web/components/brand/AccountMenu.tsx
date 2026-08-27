@@ -27,6 +27,7 @@ import Link from "next/link";
 import { Check, ChevronRight, Copy, LogOut, Settings, User, Wallet } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { handleOf } from "../../lib/handles";
+import { ensureCanReceive, type Receivable } from "../../lib/receivable";
 import { hasBackup } from "../../lib/recovery-api";
 import { markPublished } from "../../lib/keystore";
 import { DisconnectButton } from "./DisconnectButton";
@@ -37,12 +38,13 @@ function short(address: string): string {
 }
 
 export function AccountMenu() {
-  const { account, accounts, network } = useWallet();
+  const { account, accounts, network, getSigner } = useWallet();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [receivable, setReceivable] = useState<Receivable | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -72,6 +74,21 @@ export function AccountMenu() {
       window.removeEventListener("mousedown", onDown);
     };
   }, [open, close]);
+
+  /* CAN THIS ADDRESS ACTUALLY BE PAID? Asked when the menu OPENS, which is the moment before it is
+     copied and sent to somebody. On real money the account may not be on chain yet — and it cannot
+     be put there without the account's own key, so a locked phone leaves an address that another
+     wallet will answer with "the destination account doesn't exist". Better to say that here than
+     to let it be found out by the person trying to pay. */
+  useEffect(() => {
+    if (!open || !account || network !== "public") return;
+    let alive = true;
+    void ensureCanReceive(account.address, getSigner).then((r) => alive && setReceivable(r));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, account, network]);
 
   // The name is worth showing and not worth a request nobody asked for: fetched on first open.
   useEffect(() => {
@@ -142,6 +159,24 @@ export function AccountMenu() {
             <p className="app-menu-row-s" style={{ margin: "2px 12px 6px" }}>
               Practice address — real dollars sent here won&apos;t arrive.
             </p>
+          )}
+          {/* On real money the blocker is not the chain, it is the key: opening the account needs
+              the account's own signature. Say which errand it is — a Phase-1 account has no
+              password yet and must set one, a Phase-2 account only has to unlock. */}
+          {network === "public" && receivable?.state === "locked" && (
+            <Link
+              href={account.phase === 1 ? "/account" : `/unlock?next=${encodeURIComponent("/account")}`}
+              className="app-menu-row"
+              onClick={close}
+            >
+              <span className="app-menu-row-t">
+                {account.phase === 1 ? "Set a password to finish" : "Unlock to finish setting up"}
+                <span className="app-menu-row-s">
+                  Until then, money sent to this address won&apos;t arrive.
+                </span>
+              </span>
+              <ChevronRight className="size-4 opacity-40" aria-hidden="true" />
+            </Link>
           )}
 
           {others.length > 0 && (

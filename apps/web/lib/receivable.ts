@@ -23,7 +23,12 @@ import { prepareAccount } from "./sponsor";
 import type { Signer } from "./signer";
 
 /** ready = it can hold dollars · locked = only the password is in the way · error = say so. */
-export type Receivable = { state: "ready" } | { state: "locked" } | { state: "error"; error: string };
+export type Receivable =
+  | { state: "ready" }
+  /** The key is needed and not available. `reason` is getSigner's own words — a Phase-1 account on
+   *  mainnet is told to SET a password, a Phase-2 one to unlock, and those are different errands. */
+  | { state: "locked"; reason: string }
+  | { state: "error"; error: string };
 
 let inFlight: Promise<Receivable> | null = null;
 const settled = new Set<string>();
@@ -62,8 +67,12 @@ export async function ensureCanReceive(
     }
 
     // A trustline is sourced by the account itself, so this cannot be done without its key.
-    const signer = await getSigner().catch(() => null);
-    if (!signer) return { state: "locked" };
+    let signer: Signer;
+    try {
+      signer = await getSigner();
+    } catch (e) {
+      return { state: "locked", reason: (e as Error).message };
+    }
 
     try {
       await prepareAccount({ sponsorUrl: net.sponsorUrl, signer });
