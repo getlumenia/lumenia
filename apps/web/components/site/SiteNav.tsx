@@ -139,10 +139,14 @@ export function SiteNav() {
               person pressing that button is actually asking for. */}
           {hasAccount ? (
             <>
+              {/* `text-foreground` explicitly, matching the nav links beside it. The ghost variant
+                  was resolving to the RETIRED green system's root ink (#1c2b23) — a near-black that
+                  does not flip with the theme, so on dark this button was black text on a black
+                  header. The links next to it were already immune because they name the token. */}
               <Button
                 asChild
                 variant="ghost"
-                className="rounded-xl px-3 transition-transform duration-200 hover:-translate-y-0.5"
+                className="rounded-xl px-3 text-foreground/80 transition-transform duration-200 hover:-translate-y-0.5 hover:text-foreground"
               >
                 <Link href="/start">Activate</Link>
               </Button>
