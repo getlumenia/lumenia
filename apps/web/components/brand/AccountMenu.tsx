@@ -24,10 +24,11 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, LogOut, Settings, User, Wallet } from "lucide-react";
+import { Check, ChevronRight, Copy, LogOut, Settings, User, Wallet } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { handleOf } from "../../lib/handles";
 import { hasBackup } from "../../lib/recovery-api";
+import { markPublished } from "../../lib/keystore";
 import { DisconnectButton } from "./DisconnectButton";
 import { ThemeToggle } from "../site/ThemeToggle";
 
@@ -41,6 +42,7 @@ export function AccountMenu() {
   const [name, setName] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [copied, setCopied] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -105,10 +107,32 @@ export function AccountMenu() {
         <div ref={panelRef} className="app-menu" role="dialog" aria-label="Your account">
           {/* Who you are. The name if there is one, the address if there is not — never a
               placeholder that implies an account is unfinished when it is simply unnamed. */}
-          <div className="app-menu-id">
-            <p className="app-menu-id-name">{name ? `@${name}` : "Your account"}</p>
-            <p className="app-menu-id-sub">{short(account.address)}</p>
-          </div>
+          {/* The address, one tap from every screen. It used to live only on /account, which is a
+              navigation away from wherever somebody is when a person asks them "where do I send
+              it?". Copying is also the moment the address becomes PUBLISHED — handed to somebody
+              else — and /home's consolidation closes any account it may sweep, so this records it
+              exactly as /account does. */}
+          <button
+            type="button"
+            className="app-menu-id"
+            onClick={async () => {
+              void markPublished(account.address).catch(() => undefined);
+              try {
+                await navigator.clipboard.writeText(account.address);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1600);
+              } catch {
+                /* clipboard blocked — the address is still on screen to read */
+              }
+            }}
+            aria-label="Copy your address"
+          >
+            <span className="app-menu-id-row">
+              <span className="app-menu-id-name">{name ? `@${name}` : "Your account"}</span>
+              {copied ? <Check className="size-4 text-money" /> : <Copy className="size-4 opacity-50" />}
+            </span>
+            <span className="app-menu-id-sub">{copied ? "Copied" : short(account.address)}</span>
+          </button>
 
           {others.length > 0 && (
             <Link href="/settings" className="app-menu-row" onClick={close}>

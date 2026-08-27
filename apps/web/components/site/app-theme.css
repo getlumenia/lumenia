@@ -180,7 +180,13 @@
 }
 :root[data-theme="dark"] .app-menu { box-shadow: 0 4px 10px rgba(0, 0, 0, .35), 0 24px 48px -20px rgba(0, 0, 0, .6) }
 
-.app-menu-id { padding: 10px 10px 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px }
+.app-menu-id {
+  display: block; width: 100%; text-align: left; border: 0; background: none; cursor: pointer;
+  padding: 10px 10px 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px; border-radius: 11px 11px 0 0;
+}
+.app-menu-id:hover { background: color-mix(in srgb, var(--ink) 4%, transparent) }
+.app-menu-id:focus-visible { outline: 2px solid var(--money); outline-offset: -2px }
+.app-menu-id-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-soft) }
 .app-menu-id-name { font-size: 15px; font-weight: 700; color: var(--ink) }
 .app-menu-id-sub { margin-top: 1px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--ink-soft) }
 
