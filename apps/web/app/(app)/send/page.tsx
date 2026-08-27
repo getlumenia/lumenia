@@ -300,16 +300,37 @@ export default function SendPage() {
     if (!Number.isFinite(amt) || amt < 0.01 || amt >= 1_000_000_000) {
       return setError("Enter an amount to send.");
     }
-    /* WAIT FOR MONEY THAT IS ALREADY ON ITS WAY. This screen asks for practice money on arrival, so
-       on a brand-new account the form appears BEFORE the money does. Somebody who types an amount
-       and presses the button in that window used to get "We couldn't finish" — on a screen where
-       nothing was wrong and the money landed a second later, leaving the error sitting there.
-       Reproduced on the deployed build; it is not a corner case, it is simply typing quickly.
-       Their press is honoured instead: the wait was going to happen either way. */
+    /* MAKE SURE THERE IS MONEY TO SEND, rather than trusting that the arrival top-up already ran.
+       This screen is usable the instant the account exists, which is BEFORE its balance has been
+       read and therefore before the top-up can even start. Somebody who types an amount and
+       presses in that window got "We couldn't finish" — on a screen where nothing was wrong, with
+       the money landing a second later and the error left sitting there.
+
+       My first attempt at this only awaited a top-up that had ALREADY STARTED, which is precisely
+       the case that never happens here: the top-up effect is gated on a balance that has not
+       arrived yet. So this reads the balance itself instead of trusting an effect to have run.
+       Three situations, in order, and none of them is a step the person can see:
+         - a top-up is in flight  → wait for it,
+         - the balance is unknown → read it now,
+         - practice money is short → get some, once.
+       Real money is untouched: nothing can conjure that, and short means short. */
     let known = balance;
     if (topUp.current) {
       known = (await topUp.current) ?? known;
       topUp.current = null;
+    } else if (known === null) {
+      known = await loadTotalUsd(accounts.map((a) => a.address))
+        .then((t) => t.usd)
+        .catch(() => null);
+    }
+    if (
+      !activeNetwork().isMainnet &&
+      !toppedUp.current &&
+      known !== null &&
+      amt > Number.parseFloat(known)
+    ) {
+      toppedUp.current = true;
+      known = await getTestMoney();
     }
     if (known !== null && amt > Number.parseFloat(known)) return setError("That's more than you have.");
     // The pilot cap is enforced by the sponsor, but only AFTER the transaction is signed — and on
