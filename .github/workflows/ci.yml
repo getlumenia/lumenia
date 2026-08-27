@@ -38,6 +38,10 @@ jobs:
         run: pnpm --filter @lumenia/sponsor exec tsc --noEmit
       - name: Typecheck — web
         run: pnpm --filter @lumenia/web exec tsc --noEmit
+      # Narrow on purpose — rules-of-hooks above all. A conditional useEffect on /send shipped a
+      # white screen to production that typecheck and the Next build both passed happily.
+      - name: Lint — web (react-hooks + next)
+        run: pnpm --filter @lumenia/web lint --max-warnings 0
       - name: Anti-drain policy suite (no network)
         run: pnpm --filter @lumenia/sponsor test:antidrain
       # Every offline sponsor suite runs here, not just anti-drain — the recovery selftest

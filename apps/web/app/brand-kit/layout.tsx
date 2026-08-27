@@ -38,7 +38,7 @@ export default function BrandKitLayout({ children }: { children: React.ReactNode
 
   return (
     <>
-      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+      { }
       <link rel="stylesheet" href={FONTSHARE} />
       {/* Stellar's own pairing (Lora + Inter), shown as a funder-alignment option. */}
       {/* eslint-disable-next-line @next/next/no-page-custom-font */}

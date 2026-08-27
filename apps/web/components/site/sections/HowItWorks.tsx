@@ -28,7 +28,7 @@ function HiwFrame({ i, last, step, p }: { i: number; last: number; step: (typeof
   // Subtle zoom kept ABOVE 1 so the illustration always fully covers the frame — no gaps.
   const scale = useTransform(p, [clamp(c - w - 0.05), clamp(c + w + 0.05)], [1.06, 1.0]);
   return (
-    // eslint-disable-next-line @next/next/no-img-element
+     
     <motion.img className="hiw-fr" style={{ opacity, scale }} src={step.img} loading="lazy" decoding="async" alt="" aria-hidden="true" />
   );
 }

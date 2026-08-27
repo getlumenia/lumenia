@@ -174,7 +174,7 @@ export default function HomePage() {
           await removeAccount(other.address);
         } catch (e) {
           if (process.env.NODE_ENV !== "production") {
-            // eslint-disable-next-line no-console
+             
             console.warn("[home] consolidation skipped an account (money is still safe):", (e as Error).message);
           }
         }
