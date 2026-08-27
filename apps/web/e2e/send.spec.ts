@@ -47,7 +47,9 @@ test("claim → send $7 onward → the onward link is claimable (loop closed)", 
   await page.getByRole("link", { name: /send money to someone/i }).click();
   await expect(page).toHaveURL(/\/send/);
   await page.getByPlaceholder("0.00").fill("7");
-  await page.getByPlaceholder(/e\.g\./).fill("Meric");
+  // Deliberately NOT naming the sender. The name is optional now — the field is folded away behind
+  // "Sent as … — change" — and this is the shortest real path through the screen, so it is the one
+  // worth guarding. request.spec covers opening that fold and typing a name.
   await page.getByRole("button", { name: /create a money link/i }).click();
   await expect(page.getByText(/your money link is ready/i)).toBeVisible({ timeout: 120_000 });
 

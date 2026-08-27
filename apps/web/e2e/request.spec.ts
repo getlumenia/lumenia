@@ -133,7 +133,10 @@ test("first-time asker: request with no account → payer sends the link back �
   await payerPage.getByRole("button", { name: /pay zeynep/i }).click();
   await expect(payerPage).toHaveURL(/\/send\?/);
   await expect(payerPage.getByPlaceholder("0.00")).toHaveValue("3.00");
-  await payerPage.getByPlaceholder(/e\.g\./).fill("Meric"); // bearer path still names the sender
+  // The name lives behind a fold now, so naming the sender means opening it first — which is also
+  // the only coverage that the fold OPENS at all. It stayed shut for a whole test run once.
+  await payerPage.getByText(/sent as .* — change/i).click();
+  await payerPage.getByPlaceholder(/e\.g\./).fill("Meric");
   await payerPage.getByRole("button", { name: /pay zeynep/i }).click();
   await expect(payerPage.getByText(/send this link back to zeynep/i)).toBeVisible({ timeout: 120_000 });
   const claimLink = (await payerPage.getByTestId("money-link").textContent())?.trim() ?? "";
