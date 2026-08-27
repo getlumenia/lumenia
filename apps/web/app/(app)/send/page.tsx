@@ -106,7 +106,7 @@ function shortName(name: string): string {
 }
 
 export default function SendPage() {
-  const { status, account, accounts, getSigner, createAccount, network, mainnetApproved } = useWallet();
+  const { status, account, accounts, getSigner, createAccount } = useWallet();
   const router = useRouter();
   const [balance, setBalance] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
@@ -214,37 +214,59 @@ export default function SendPage() {
    * back. The click is the gesture; carrying it across the navigation is what makes a second
    * confirmation unnecessary without making the page itself a trigger.
    *
-   * READ DURING RENDER, NOT IN THE EFFECT. The `!account` guard below runs before any effect, so an
-   * intent discovered in useEffect arrives exactly one render too late — the screen has already
-   * bounced to /home. Hence the lazy initialiser: the first render is `status === "loading"` either
-   * way, so nothing is painted differently for it.
+   * THE DECISION IS MADE IN AN EFFECT, AND THE RENDER PATH NO LONGER REDIRECTS. Written the other
+   * way — reading window.location during render, next to the `!account` guard — it did not work at
+   * all: a <Link> transition renders the destination BEFORE window.location reports the new URL, so
+   * the intent read as absent and the screen bounced to /home before the effect ever ran. Measured
+   * on the deployed build, which is the only place that ordering shows itself.
+   *
+   * REAL MONEY IS SENT TO /welcome INSTEAD, deliberately. Every new mainnet account parks a reserve
+   * the sponsor never gets back, so creation there is gated on a pilot approval that arrives
+   * asynchronously — "not approved yet" and "not loaded yet" look identical for a moment, and that
+   * is not a moment to be opening accounts in. /welcome already owns that conversation. Practice
+   * money is what a first-timer pressing the button is on anyway.
    */
-  const [starting, setStarting] = useState(
-    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("start") === "1",
-  );
-  const autoStarted = useRef(false);
+  const [starting, setStarting] = useState(false);
+  const decided = useRef(false);
   useEffect(() => {
-    if (!starting || autoStarted.current || status !== "ready") return;
-    if (account) return setStarting(false);
-    // NEVER on real money without an invite — the same gate /welcome and /settings carry, because
-    // every new mainnet account parks a reserve the sponsor does not get back. Falling through to
-    // /home is the right landing: that is where the pilot gate explains itself.
-    if (network === "public" && !mainnetApproved) return setStarting(false);
-    autoStarted.current = true;
+    if (status !== "ready" || account || decided.current) return;
+    decided.current = true;
+    if (new URLSearchParams(window.location.search).get("start") !== "1") {
+      router.replace("/home");
+      return;
+    }
+    // activeNetwork() rather than the wallet's `network` state: this reads storage synchronously,
+    // and a child effect can run before the provider effect that populates that state.
+    if (activeNetwork().isMainnet) {
+      router.replace("/welcome?start=1");
+      return;
+    }
+    setStarting(true);
     // The param has done its job; leaving it would re-arm this on a reload after a failure.
     window.history.replaceState({}, "", "/send");
     void createAccount()
       .catch((e) => setError((e as Error).message))
       .finally(() => setStarting(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [starting, status, account, network, mainnetApproved]);
+  }, [status, account]);
 
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
   if (!account) {
-    // An account asked for by ?start=1 is being opened — wait for it instead of bouncing home.
-    if (starting) return <p className="py-10 text-center text-ink-soft">Opening your account…</p>;
-    if (typeof window !== "undefined") router.replace("/home");
-    return null;
+    // No redirect here — see above. Either an account is being opened, or the effect is about to
+    // send this person somewhere better than a blank screen.
+    return (
+      <p className="py-10 text-center text-ink-soft">
+        {error ? (
+          <>
+            {error} <Link href="/home" className="underline">Go to your money</Link>
+          </>
+        ) : starting ? (
+          "Opening your account…"
+        ) : (
+          "One moment…"
+        )}
+      </p>
+    );
   }
 
   async function getTestMoney() {
