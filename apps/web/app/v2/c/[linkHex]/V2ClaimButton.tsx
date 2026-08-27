@@ -18,6 +18,7 @@ import Link from "next/link";
 import { claimV2ToSponsoredAccount } from "../../../../lib/lumendrop";
 import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { savePhase1 } from "../../../../lib/keystore";
+import { sendEvent } from "../../../../lib/events";
 import { resolveNetwork, setActiveNetwork, type NetworkConfig } from "../../../../lib/network";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
@@ -35,6 +36,9 @@ export default function V2ClaimButton({
   sender: string;
 }) {
   const [state, setState] = useState<State>("idle");
+  /* The account this claim creates, captured the instant the relayer reports it. A ref, not state:
+     it is read inside the same async function that sets it, and a re-render would be pointless. */
+  const claimedAccount = useRef<string | null>(null);
   const [hash, setHash] = useState("");
   const [noKey, setNoKey] = useState(false);
   const [error, setError] = useState("");
@@ -66,9 +70,18 @@ export default function V2ClaimButton({
         setNoKey(true);
       }
       history.replaceState(null, "", window.location.pathname + window.location.search);
+      /* The TOP of the funnel: somebody arrived holding a real key. Fired only when a key is
+         actually present, so a crawler or a link preview opening this URL is not counted as a
+         person about to claim — the completion rate is only honest if the denominator is. There is
+         no account yet, so this one carries the link id alone. */
+      void sendEvent("claim_opened", linkHex);
     } else if (!secretRef.current && !seedRef.current) {
       setNoKey(true);
     }
+    // Deliberately mount-only: it reads the URL fragment, which is stripped on the first pass, so a
+    // re-run would find nothing and fire nothing. `linkHex` comes from the route and cannot change
+    // without a remount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function claimWith(secret: string) {
@@ -83,6 +96,7 @@ export default function V2ClaimButton({
            then fails or the connection drops, the worst case is an empty account on this phone —
            not money sitting somewhere whose only key we threw away. */
         onAccountReady: async (publicKey, seed) => {
+          claimedAccount.current = publicKey;
           try {
             await savePhase1(publicKey, seed);
           } catch {
@@ -104,11 +118,18 @@ export default function V2ClaimButton({
 
       setHash(r.hash);
       setState("done");
+      /* THE FUNNEL'S INPUT SIDE, which this route did not have. v2 is the live money loop — every
+         link /send hands out today is a v2 link — and it emitted no events at all, so "how many
+         people claimed" was being answered from the v1 route almost nobody arrives on any more.
+         The account goes with it: it is the id that joins a claim to whatever that person does
+         next, and this is the moment it comes into existence. */
+      void sendEvent("claim_succeeded", linkHex, claimedAccount.current ?? undefined);
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
     } catch (e) {
       console.error("[v2-claim]", e);
       setError((e as Error).message);
       setState("error");
+      void sendEvent("claim_failed", linkHex, claimedAccount.current ?? undefined);
     }
   }
 

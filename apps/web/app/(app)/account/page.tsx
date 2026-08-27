@@ -388,7 +388,7 @@ export default function AccountPage() {
           <div className="flex shrink-0 flex-col items-end gap-1">
             <Link
               href="/cash-out"
-              onClick={() => account && void sendEvent("cashout_guide_opened", account.address)}
+              onClick={() => account && void sendEvent("cashout_guide_opened", account.address, account.address)}
               className="text-sm font-medium text-money underline-offset-2 hover:underline"
             >
               Guide →

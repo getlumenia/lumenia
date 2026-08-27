@@ -57,12 +57,29 @@ async function hashId(id: string): Promise<string> {
   }
 }
 
-export async function sendEvent(event: string, claimId: string): Promise<void> {
+/**
+ * `account` is what makes the funnel a funnel.
+ *
+ * The comment above describes the flaw honestly and then leaves it in place: claim events carried a
+ * hashed CLAIM id, send events carried a hashed ACCOUNT, and two id spaces cannot be joined — so the
+ * data could say how many claims happened and how many sends happened, and never whether the same
+ * person did both. That is H3, the question this whole period exists to answer.
+ *
+ * The fix needed no new identifier and no change to the claim route. Every claim CREATES an account,
+ * so the account was in hand at claim time all along; it simply was not sent. Passing it here puts
+ * one id space — `aid` — across both halves, and claimed→acted becomes a set intersection.
+ *
+ * It stays as non-reversible as the other id: SHA-256 truncated to 8 bytes, hashed on this device,
+ * so the server never receives the address it came from. A Stellar address is public data; joining
+ * it to behaviour is the part that would be careless, and that is the part this avoids.
+ */
+export async function sendEvent(event: string, claimId: string, account?: string): Promise<void> {
   try {
     if (!ALLOWED.has(event)) return;
     if (typeof navigator === "undefined" || !navigator.sendBeacon) return;
     const cid = await hashId(claimId);
-    const body = JSON.stringify({ event, cid }); // NEVER url / fragment (C2)
+    const aid = account ? await hashId(account) : undefined;
+    const body = JSON.stringify({ event, cid, ...(aid ? { aid } : {}) }); // NEVER url / fragment (C2)
     // text/plain keeps this a "simple" CORS request (no preflight); response ignored.
     navigator.sendBeacon(`${SPONSOR_URL}/events`, new Blob([body], { type: "text/plain" }));
   } catch {

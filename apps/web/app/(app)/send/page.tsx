@@ -368,7 +368,7 @@ export default function SendPage() {
         router.push(`/unlock?next=${encodeURIComponent(back)}`);
         return;
       }
-      void sendEvent("send_started", account!.address);
+      void sendEvent("send_started", account!.address, account!.address);
 
       if (directTo) {
         const result = await payToAddress({
@@ -415,7 +415,7 @@ export default function SendPage() {
       // The sponsor has always allowed this one; nothing ever fired it. Paired with send_started it
       // is the only way to see the send flow's own drop-off — how many people who begin a send end
       // up with a link they can share.
-      void sendEvent("send_link_created", account!.address);
+      void sendEvent("send_link_created", account!.address, account!.address);
       if (request?.nonce) void sendEvent("request_paid", request.nonce);
       setPassword(""); // it lives in the link's derivation now; keep it out of memory
       setReady({ kind: "link", link: result.link, balanceId: result.linkHex, locked: Boolean(lockWith) });

@@ -390,7 +390,7 @@ export default function HomePage() {
           </Link>
           <Link
             href="/cash-out"
-            onClick={() => account && void sendEvent("cashout_guide_opened", account.address)}
+            onClick={() => account && void sendEvent("cashout_guide_opened", account.address, account.address)}
             className="inline-flex h-10 items-center rounded-full border border-line px-4 text-sm font-medium text-ink"
           >
             {copy.cashOut.guideCta}

@@ -97,7 +97,7 @@ export default function ClaimButton({
       const result = await runClaim({ sponsorUrl: SPONSOR_URL, bearerSecret, balanceId });
       setHash(result.hash);
       setState("done");
-      void sendEvent("claim_succeeded", claimId);
+      void sendEvent("claim_succeeded", claimId, Keypair.fromSecret(bearerSecret).publicKey());
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
       // Phase 1 — persist the claimed account locally (WebCrypto-wrapped seed in
       // IndexedDB) so /home has it. Best-effort: never block the success screen.

@@ -2,7 +2,7 @@
   "name": "@lumenia/sponsor",
   "version": "0.0.0",
   "private": true,
-  "description": "Lumenia sponsor service — sponsored create + fee-bump (HOT key, KMS)",
+  "description": "Lumenia sponsor service \u2014 sponsored create + fee-bump (HOT key, KMS)",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
@@ -41,7 +41,8 @@
     "test:recovery-store": "tsx src/test-recovery-store.ts",
     "test:identity": "tsx src/test-identity.ts",
     "test:identity-routes": "tsx src/test-identity-routes.ts",
-    "test:integration": "tsx src/test-integration.ts"
+    "test:integration": "tsx src/test-integration.ts",
+    "test:events": "tsx src/test-events.ts"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "16.1.0",

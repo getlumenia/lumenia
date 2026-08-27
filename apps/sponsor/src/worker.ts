@@ -26,7 +26,7 @@ import { demoLinkHandler } from "./lib/demo-link.js";
 import { takeDemoLink, refillDemoPool } from "./lib/demo-pool.js";
 import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
-import { handleEvent } from "./lib/events.js";
+import { handleEvent, recordEvent, eventsSummary } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp, idForEmail } from "./lib/recovery-otp.js";
 import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState, verifyApprovalToken } from "./lib/pilot.js";
@@ -475,11 +475,27 @@ export default {
         const rl = await enforceRateLimit(clientIp(request));
         if (rl.limited) return json(429, { error: rl.reason });
         try {
-          handleEvent((await readJson(request)) as { event?: string; cid?: string });
+          const input = (await readJson(request)) as { event?: string; cid?: string; aid?: string };
+          handleEvent(input);
+          // Counted AFTER the response, so the store's latency is never on a claim's path. An
+          // event that fails to be written is a missing number, not a failed claim.
+          const counted = recordEvent(input);
+          if (ctx?.waitUntil) ctx.waitUntil(counted);
         } catch {
           /* ignore — the beacon is fire-and-forget */
         }
         return json(200, { ok: true });
+      }
+
+      /* The tallies, aggregate-only. There is nothing per-person to return here by construction:
+         the store holds counters and two sets of hashed account ids, never an event log. Left
+         readable without a token for the same reason /health is — it discloses no more than a
+         funding report already publishes, and gating it behind a secret would mean the numbers get
+         copied by hand into documents instead of read from the thing that produced them. */
+      if (method === "GET" && url === "/events/summary") {
+        const summary = await eventsSummary();
+        if (!summary) return json(503, { error: "no event store configured" });
+        return json(200, summary);
       }
 
       if (method === "POST" && url === "/recovery-otp") {

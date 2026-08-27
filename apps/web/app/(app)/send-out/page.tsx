@@ -285,7 +285,7 @@ export default function SendOutPage() {
         memo: destination.muxed ? undefined : effectiveMemo,
         memoKind: destination.muxed ? "none" : effectiveMemoKind,
       });
-      void sendEvent("cashout_sent", account!.address);
+      void sendEvent("cashout_sent", account!.address, account!.address);
       try {
         sessionStorage.removeItem(DRAFT_KEY());
         // Only ever save a destination the ledger just accepted.

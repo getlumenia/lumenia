@@ -47,13 +47,14 @@ jobs:
       # Every offline sponsor suite runs here, not just anti-drain — the recovery selftest
       # crash of 2026-08 stayed invisible for days precisely because CI only ran one suite.
       # Network-dependent suites (test:integration, test:watchdog, test:concurrency*) stay out.
-      - name: Sponsor offline suites (kms + caps + channels + pilot + recovery-store + identity)
+      - name: Sponsor offline suites (kms + caps + channels + pilot + recovery-store + identity + events)
         # The identity suites run against the in-memory store fallback: no KV_REST_API_* exists in
         # CI, so they cannot reach — let alone write to — the production registry.
         run: |
           pnpm --filter @lumenia/sponsor test:kms
           pnpm --filter @lumenia/sponsor test:caps
           pnpm --filter @lumenia/sponsor test:channels
+          pnpm --filter @lumenia/sponsor test:events
           pnpm --filter @lumenia/sponsor test:pilot
           pnpm --filter @lumenia/sponsor test:recovery-store
           pnpm --filter @lumenia/sponsor test:identity
