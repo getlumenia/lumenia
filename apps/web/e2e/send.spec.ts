@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { expectMoneyLanded } from "./landed";
 import { mintClaimLink } from "./mintLink";
 
 /**
@@ -40,7 +41,7 @@ test("claim → send $7 onward → the onward link is claimable (loop closed)", 
   await page.goto(link.url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await page.getByRole("button", { name: /claim my money/i }).click();
-  await expect(page.getByText(/in your account/i)).toBeVisible({ timeout: 120_000 });
+  await expectMoneyLanded(page);
 
   // 2. send $7 onward
   await page.getByRole("link", { name: /send money to someone/i }).click();
@@ -57,6 +58,6 @@ test("claim → send $7 onward → the onward link is claimable (loop closed)", 
   await expect(page.getByText("$7.00")).toBeVisible();
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await page.getByRole("button", { name: /claim my money/i }).click();
-  await expect(page.getByText(/in your account/i)).toBeVisible({ timeout: 120_000 });
+  await expectMoneyLanded(page);
   console.log("\n✅ loop closed: claim $20 → send $7 onward → onward claim OK\n");
 });

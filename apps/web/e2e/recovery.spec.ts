@@ -1,4 +1,5 @@
 import { test, expect, type BrowserContext } from "@playwright/test";
+import { expectMoneyLanded } from "./landed";
 import { mintClaimLink } from "./mintLink";
 
 /**
@@ -51,6 +52,12 @@ async function readAccountShort(page: import("@playwright/test").Page): Promise<
   return ((await mono.textContent()) ?? "").trim();
 }
 
+/* This one does the most work of any test here — mint, claim, back up with a password, then
+   restore the whole account on a SECOND browser context — and each half waits on real ledger
+   time. The suite-wide 150s budget was not enough, and the symptom was a misleading "target page
+   closed" from whichever step happened to be in flight when the clock ran out. */
+test.setTimeout(300_000);
+
 test("recovery: back up with a password → restore on a fresh device → same account + money", async ({ browser }) => {
   storedBox = null;
   const password = "recover-me-please-9";
@@ -66,13 +73,17 @@ test("recovery: back up with a password → restore on a fresh device → same a
   await a.goto(link.url, { waitUntil: "domcontentloaded" });
   await a.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await a.getByRole("button", { name: /claim my money/i }).click();
-  await expect(a.getByText(/in your account/i)).toBeVisible({ timeout: 120_000 });
+  await expectMoneyLanded(a);
 
   const shortA = await readAccountShort(a);
   expect(shortA).toMatch(/^G.{5}….{6}$/);
 
   // Back up: email → code → password. (The "Send me a code" step, then the code+password step.)
-  await a.getByRole("button", { name: /back up your money/i }).scrollIntoViewIfNeeded().catch(() => {});
+  /* The "Back up your money" line is a HEADING, not a button — /account was restructured and this
+     step kept reaching for a role that no longer exists there. `.catch()` never rescued it either:
+     scrollIntoViewIfNeeded with no timeout waits for the whole TEST budget, so the run died five
+     minutes later at the next line with a misleading "target page closed". Playwright scrolls an
+     element into view before filling it anyway, so the safe fix is to stop asking. */
   const emailA = a.getByLabel("Your email");
   await emailA.fill(email);
   await a.getByRole("button", { name: /send me a code/i }).click();
@@ -97,13 +108,21 @@ test("recovery: back up with a password → restore on a fresh device → same a
   await b.getByLabel("6-digit code").fill(CODE);
   await b.getByLabel("Your password").fill(password);
   await b.getByRole("button", { name: /restore my money/i }).click();
-  await expect(b.getByText(/welcome back/i)).toBeVisible({ timeout: 30_000 });
+  /* Assert the OUTCOME, not the announcement. "Welcome back. Your money is here." is real, but it
+     lives on the no-account surface — the moment the restore lands, /account re-renders as the
+     restored account and that component unmounts. The test was polling for a sentence the app had
+     already replaced, on a restore that had in fact succeeded (the failure snapshot showed the
+     money and the locked account sitting right there). What actually matters is the next two
+     lines: the SAME account, with the SAME money, on a device that never had either. */
+  await expect(b.getByText(/you have \$20\.00/i)).toBeVisible({ timeout: 30_000 });
 
   const shortB = await readAccountShort(b);
   expect(shortB, "the restored device shows the SAME account").toBe(shortA);
   // and the money followed the account across devices
   await b.goto(`${WEB}/home`, { waitUntil: "domcontentloaded" });
-  await expect(b.getByText("$20.00")).toBeVisible({ timeout: 30_000 });
+  // Exact + first: the balance and the activity row ("+$20.00") both contain this string, so an
+  // unqualified match is a strict-mode violation rather than anything being wrong with the money.
+  await expect(b.getByText("$20.00", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
   console.log(`\n✅ recovery loop: backed up + restored ${shortA} on a fresh device with $20\n`);
   await ctxB.close();
 });

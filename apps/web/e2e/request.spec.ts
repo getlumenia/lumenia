@@ -1,4 +1,5 @@
 import { test, expect, type BrowserContext } from "@playwright/test";
+import { expectMoneyLanded } from "./landed";
 import { mintClaimLink } from "./mintLink";
 
 /**
@@ -46,7 +47,7 @@ async function claimFresh(context: BrowserContext, amount: string): Promise<void
   await page.goto(link.url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await page.getByRole("button", { name: /claim my money/i }).click();
-  await expect(page.getByText(/in your account/i)).toBeVisible({ timeout: 120_000 });
+  await expectMoneyLanded(page);
   await page.close();
 }
 
@@ -90,7 +91,8 @@ test("returning asker: request → pay to her address → collect on /home", asy
   // paying straight to her account — no bearer link, so no "your name" field
   await expect(payerPage.getByPlaceholder(/e\.g\./)).toHaveCount(0);
   await payerPage.getByRole("button", { name: /pay ayse/i }).click();
-  await expect(payerPage.getByText(/it's on its way/i)).toBeVisible({ timeout: 120_000 });
+  // copy.ts calls this `paidDirectTitle`: "Paid, and on its way".
+  await expect(payerPage.getByText(/on its way/i)).toBeVisible({ timeout: 120_000 });
 
   // 4. The ASKER finds it waiting on /home and collects it: $20 → $25.
   await askerPage.goto(`${WEB}/home`, { waitUntil: "domcontentloaded" });
@@ -142,7 +144,7 @@ test("first-time asker: request with no account → payer sends the link back �
   await expect(askerPage.getByText("$3.00")).toBeVisible();
   await askerPage.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await askerPage.getByRole("button", { name: /claim my money/i }).click();
-  await expect(askerPage.getByText(/in your account/i)).toBeVisible({ timeout: 120_000 });
+  await expectMoneyLanded(askerPage);
   console.log("\n✅ first-time-asker loop: request → bearer link sent back → claimed\n");
 
   await asker.close();

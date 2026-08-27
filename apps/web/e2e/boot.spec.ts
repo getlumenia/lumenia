@@ -65,10 +65,21 @@ test.describe("boot opening", () => {
     // The field must be there at first paint and must be animating itself away.
     const field = page.locator(".op-boot");
     await expect(field).toBeAttached();
-    expect(await field.evaluate((el) => getComputedStyle(el).animationName)).toBe("op-boot-drain");
+    /* POLL, do not snapshot. This read used to happen the instant domcontentloaded fired, which is
+       before the stylesheet that carries the animation has been applied — so it saw "none" and
+       reported the JS-free opening as broken when the opening was fine (verified separately: with
+       scripts disabled the field really does animate `op-boot-drain`).
+       `op-boot-leave` is the honest second answer: under prefers-reduced-motion the field is
+       supposed to leave without draining, and a browser that emulates reduced motion by default
+       must not read as a failure either. */
+    await expect
+      .poll(async () => field.evaluate((el) => getComputedStyle(el).animationName), { timeout: 10_000 })
+      .toMatch(/^op-boot-(drain|leave)$/);
 
     // And the greeting must arrive on its own, rather than waiting for a script that never runs.
-    await expect(page.locator(".op-greet-stage")).toHaveCSS("opacity", "1", { timeout: 5000 });
+    // The greeting fades in on its own; under reduced motion it is simply there. Either way it
+    // must reach full opacity WITHOUT a script running, which is the whole claim of this test.
+    await expect(page.locator(".op-greet-stage")).toHaveCSS("opacity", "1", { timeout: 10_000 });
     await context.close();
   });
 });

@@ -9,7 +9,15 @@ import { test, expect } from "@playwright/test";
  */
 const SPIKE_URL = process.env.SPIKE_URL ?? "http://localhost:3000/spike/keys";
 
+/**
+ * SKIPPED unless its dev server is actually up. The file already says this is "NOT part of the
+ * default regression" and needs `NEXT_PUBLIC_ENABLE_SPIKE=1 next dev` — but it still ran, still
+ * failed on ERR_CONNECTION_REFUSED, and a suite with a permanent red in it is a suite people stop
+ * reading. Point SPIKE_URL at a running server (or start one) and it runs as before.
+ */
 test("key-lifecycle: encrypt → persist → decrypt → sign real testnet op", async ({ page }) => {
+  const reachable = await fetch(SPIKE_URL, { method: "HEAD" }).then((r) => r.ok).catch(() => false);
+  test.skip(!reachable, `spike harness not running at ${SPIKE_URL} (see the note above)`);
   page.on("pageerror", (e) => console.log("[pageerror]", e.message));
   await page.goto(SPIKE_URL, { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: /key-lifecycle spike/i })).toBeVisible();
