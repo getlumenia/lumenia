@@ -180,12 +180,14 @@ export default function SendPage() {
    * on `account`, so the position costs nothing and buys the crash back.
    */
   const toppedUp = useRef(false);
+  const topUp = useRef<Promise<string | null> | null>(null);
   useEffect(() => {
     if (!account || balance === null || faucetBusy || toppedUp.current) return;
     if (activeNetwork().isMainnet) return;
     if (Number.parseFloat(balance) > 0) return;
     toppedUp.current = true;
-    void getTestMoney();
+    // Kept, not discarded: a send pressed before this lands must wait for it, not fail.
+    topUp.current = getTestMoney();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account, balance, faucetBusy]);
 
@@ -269,7 +271,7 @@ export default function SendPage() {
     );
   }
 
-  async function getTestMoney() {
+  async function getTestMoney(): Promise<string | null> {
     setFaucetBusy(true);
     setError("");
     try {
@@ -281,8 +283,10 @@ export default function SendPage() {
       if (!res.ok) throw new Error((await res.json()).error ?? "faucet unavailable");
       const t = await loadTotalUsd(accounts.map((a) => a.address));
       setBalance(t.usd);
+      return t.usd;
     } catch (e) {
       setError((e as Error).message);
+      return null;
     } finally {
       setFaucetBusy(false);
     }
@@ -296,7 +300,18 @@ export default function SendPage() {
     if (!Number.isFinite(amt) || amt < 0.01 || amt >= 1_000_000_000) {
       return setError("Enter an amount to send.");
     }
-    if (balance !== null && amt > Number.parseFloat(balance)) return setError("That's more than you have.");
+    /* WAIT FOR MONEY THAT IS ALREADY ON ITS WAY. This screen asks for practice money on arrival, so
+       on a brand-new account the form appears BEFORE the money does. Somebody who types an amount
+       and presses the button in that window used to get "We couldn't finish" — on a screen where
+       nothing was wrong and the money landed a second later, leaving the error sitting there.
+       Reproduced on the deployed build; it is not a corner case, it is simply typing quickly.
+       Their press is honoured instead: the wait was going to happen either way. */
+    let known = balance;
+    if (topUp.current) {
+      known = (await topUp.current) ?? known;
+      topUp.current = null;
+    }
+    if (known !== null && amt > Number.parseFloat(known)) return setError("That's more than you have.");
     // The pilot cap is enforced by the sponsor, but only AFTER the transaction is signed — and on
     // mainnet the reason is masked, so an over-cap send asked for the password, then failed with a
     // generic "try again" that no amount of retrying could fix. Check it here, before we ask the
