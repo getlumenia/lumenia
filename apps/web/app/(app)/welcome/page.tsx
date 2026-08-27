@@ -216,10 +216,19 @@ export default function WelcomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, account, network, mainnetApproved]);
 
+  /**
+   * Skipping goes HOME, not to a third screen.
+   *
+   * "You're all set" is a lovely sentence and it cost a tap: somebody who had just declined to pick
+   * a name was shown a page whose only content was congratulating them on declining, with a button
+   * to finally reach their money. The confirmation people actually want after skipping is their
+   * balance, so that is what they get. Taking a name still ends on the done beat, because there
+   * the screen has something to show: the name, and the address it resolves as.
+   */
   const skip = useCallback(() => {
     markWelcomeSeen();
-    setStep("done");
-  }, []);
+    router.push("/home");
+  }, [router]);
 
   const finish = useCallback(() => {
     markWelcomeSeen();

@@ -19,7 +19,7 @@
  * is read once from window.location on mount — the /unlock idiom — so the page
  * stays out of the useSearchParams/Suspense machinery.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
@@ -33,6 +33,7 @@ import { formatUsd } from "../../../lib/money";
 import { netKey } from "../../../lib/scoped-store";
 import { activeNetwork } from "../../../lib/network";
 import { copy } from "../../../lib/copy";
+import { handleOf } from "../../../lib/handles";
 import { rememberLink } from "../../../lib/sent-links";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { AmountDisplay } from "../../../components/brand/AmountDisplay";
@@ -167,6 +168,38 @@ export default function SendPage() {
     if (typeof window !== "undefined") router.replace("/home");
     return null;
   }
+
+  /**
+   * Two things this screen used to ASK for, which it can simply know.
+   *
+   * PRACTICE MONEY: a sender with $0 on the test network cannot send, so the screen offered a
+   * button to go and get some. That is a step, a decision and an explanation in front of money
+   * that is not real. It now tops itself up on arrival — once, guarded by a ref, and only on
+   * practice money with a zero balance. Real money is untouched: nothing can conjure that.
+   *
+   * WHO IT IS FROM: if the account has a name, that is the answer. Asking again is asking somebody
+   * to type something we already have.
+   */
+  const toppedUp = useRef(false);
+  useEffect(() => {
+    if (!account || balance === null || faucetBusy || toppedUp.current) return;
+    if (activeNetwork().isMainnet) return;
+    if (Number.parseFloat(balance) > 0) return;
+    toppedUp.current = true;
+    void getTestMoney();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, balance, faucetBusy]);
+
+  const namedFrom = useRef(false);
+  useEffect(() => {
+    if (!account || namedFrom.current) return;
+    namedFrom.current = true;
+    void handleOf(account.address)
+      .then((name) => name && setFrom((current) => current || name))
+      .catch(() => {
+        /* no registry, no name — the claim page says "Someone", which is true */
+      });
+  }, [account]);
 
   async function getTestMoney() {
     setFaucetBusy(true);
@@ -439,7 +472,9 @@ export default function SendPage() {
            raw error landed on a money screen — under a button offering free money and a line saying
            the money isn't real, to someone who had just been approved to move real dollars. */
         <div className="flex flex-col gap-3">
-          <p className="text-ink-soft">You don&apos;t have any money to send yet.</p>
+          {activeNetwork().isMainnet && (
+            <p className="text-ink-soft">You don&apos;t have any money to send yet.</p>
+          )}
           {activeNetwork().isMainnet ? (
             <>
               <Link href="/add-money" className="block">
@@ -450,12 +485,13 @@ export default function SendPage() {
               </p>
             </>
           ) : (
-            <>
-              <PrimaryButton loading={faucetBusy} loadingLabel="Getting test money…" onClick={getTestMoney}>
-                Get test money
-              </PrimaryButton>
-              <p className="text-xs text-ink-soft">Test network. This money isn&apos;t real.</p>
-            </>
+            /* PRACTICE MONEY TOPS ITSELF UP. This used to be a button and a sentence explaining
+               the test network — a whole step, and a decision, in front of money that is not real
+               and costs nobody anything. Asking permission to hand somebody play money is pure
+               ceremony, so it just happens; all that is left is a line saying it is happening.
+               (Real money keeps its step: nothing can conjure that, and the person has to go and
+               get it.) */
+            <p className="text-ink-soft">Getting you some practice money…</p>
           )}
         </div>
       ) : (
@@ -476,16 +512,24 @@ export default function SendPage() {
           {/* Paying straight to a returning asker's account needs no sender name —
               nothing ever displays it. The bearer-link path still does (the claim
               page says "<from> sent you money"). */}
+          {/* WHO IT IS FROM is not a question this screen needs to ask. If the account has a
+              name it is already the answer; if it does not, the claim page says "Someone sent you
+              money", which is true and costs nobody a keystroke. It stays editable — one tap, out
+              of the main line of the form — because a person sending to their mother may well want
+              to be "Mum's daughter" rather than @simon. */}
           {!request?.to && (
-            <label className="text-sm text-ink-soft">
-              Your name
+            <details className="text-sm text-ink-soft">
+              <summary className="cursor-pointer list-none underline-offset-2 hover:underline [&::-webkit-details-marker]:hidden">
+                Sent as {from.trim() || "Someone"} — change
+              </summary>
               <input
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
                 placeholder="e.g. Alex"
-                className="mt-1 w-full rounded-[14px] border border-line bg-surface px-3 py-3 text-ink"
+                aria-label="Your name"
+                className="mt-2 w-full rounded-[14px] border border-line bg-surface px-3 py-3 text-ink"
               />
-            </label>
+            </details>
           )}
           {/* Optional lock. Only for a bearer LINK — a direct pay already lands in one
               named account, so a password there would protect nothing. Off by default;
