@@ -151,11 +151,6 @@ export default function SendOutPage() {
     };
   }, []);
 
-  if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
-  if (!account) {
-    if (typeof window !== "undefined") router.replace("/home");
-    return null;
-  }
 
   // A pasted deposit link carries the address and the tag together; a pasted address
   // is just an address. Both end up as the same three values.
@@ -201,6 +196,17 @@ export default function SendOutPage() {
     void confirm();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, unlocked, busy, destination, amount]);
+
+  /* The guards sit BELOW the hook above, not above it — and that is the whole point. Written
+     first, they made `useRef`/`useEffect` conditional: a cold /send-out rendered nine hooks and
+     then eleven, which is React #310 and a white screen on the cash-out surface. The derived
+     values the effect reads come from state alone, so they compute happily before an account
+     exists, and the effect's own `status !== "ready"` check does the gating the returns used to. */
+  if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
+  if (!account) {
+    if (typeof window !== "undefined") router.replace("/home");
+    return null;
+  }
 
   const needsTag = Boolean(destination && !destination.muxed);
   // Not a Stellar address? Name the network they actually copied instead of shrugging.

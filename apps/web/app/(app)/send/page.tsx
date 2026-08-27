@@ -163,12 +163,6 @@ export default function SendPage() {
     }
   }, []);
 
-  if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
-  if (!account) {
-    if (typeof window !== "undefined") router.replace("/home");
-    return null;
-  }
-
   /**
    * Two things this screen used to ASK for, which it can simply know.
    *
@@ -179,6 +173,11 @@ export default function SendPage() {
    *
    * WHO IT IS FROM: if the account has a name, that is the answer. Asking again is asking somebody
    * to type something we already have.
+   *
+   * BOTH HOOKS SIT ABOVE THE EARLY RETURNS, and must stay there. Written below them they ran only
+   * once the wallet had loaded, so a cold /send rendered twelve hooks and then sixteen — React #310,
+   * a white screen for anyone whose keys had not hydrated by first paint. The bodies already guard
+   * on `account`, so the position costs nothing and buys the crash back.
    */
   const toppedUp = useRef(false);
   useEffect(() => {
@@ -200,6 +199,12 @@ export default function SendPage() {
         /* no registry, no name — the claim page says "Someone", which is true */
       });
   }, [account]);
+
+  if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
+  if (!account) {
+    if (typeof window !== "undefined") router.replace("/home");
+    return null;
+  }
 
   async function getTestMoney() {
     setFaucetBusy(true);
