@@ -17,7 +17,12 @@ import { kvConfigFromEnv } from "./rate-limit.js";
 const LISTS = new Set<string>(["waitlist", "cashout", "pilot"]);
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export async function saveContact(list: string, email: string): Promise<{ ok: true }> {
+/**
+ * Returns whether this address was NEW to the list. The caller uses it to decide whether anyone
+ * needs telling: a set makes a repeat sign-up a no-op, and a repeat should not become a repeat
+ * notification.
+ */
+export async function saveContact(list: string, email: string): Promise<{ ok: true; added: boolean }> {
   if (!LISTS.has(list)) throw new Error("unknown list");
   const clean = email.trim().toLowerCase();
   if (clean.length > 200 || !EMAIL_RE.test(clean)) throw new Error("invalid email");
@@ -26,12 +31,17 @@ export async function saveContact(list: string, email: string): Promise<{ ok: tr
   if (!kv) {
     // No store configured — log it (isolated: list + email only, never a pubkey).
     console.log(`[contact:${list}] ${clean}`);
-    return { ok: true };
+    return { ok: true, added: true };
   }
   const res = await fetch(`${kv.url}/sadd/lumenia:${list}/${encodeURIComponent(clean)}`, {
     method: "POST",
     headers: { authorization: `Bearer ${kv.token}` },
   });
-  if (!res.ok) console.log(`[contact:${list}] ${clean} (store returned ${res.status})`);
-  return { ok: true };
+  if (!res.ok) {
+    console.log(`[contact:${list}] ${clean} (store returned ${res.status})`);
+    return { ok: true, added: false };
+  }
+  // Upstash SADD answers 1 for a new member, 0 for one that was already there.
+  const body = (await res.json().catch(() => ({}))) as { result?: number };
+  return { ok: true, added: body.result === 1 };
 }

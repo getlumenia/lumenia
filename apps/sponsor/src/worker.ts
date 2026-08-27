@@ -30,7 +30,7 @@ import { handleEvent } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp, idForEmail } from "./lib/recovery-otp.js";
 import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState, verifyApprovalToken } from "./lib/pilot.js";
-import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected } from "./lib/pilot-request.js";
+import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected, notifyPilotInterest } from "./lib/pilot-request.js";
 import { isPublicRefusal } from "./lib/caps.js";
 import {
   resolveProof,
@@ -359,7 +359,17 @@ export default {
         if (rl.limited) return json(429, { error: rl.reason });
         const body = (await readJson(request)) as { list?: string; email?: string };
         if (!body.list || !body.email) return json(400, { error: "list and email are required" });
-        await saveContact(body.list, body.email);
+        const saved = await saveContact(body.list, body.email);
+        // Asking for real money is a request TO somebody. The other two lists are notify-me
+        // captures with nobody waiting on them, but this one had a person on the other end who
+        // was never told — the ask reached a database and stopped there. Only for a NEW address,
+        // so a second attempt is not a second email, and after the response, so the mail never
+        // slows the person down.
+        if (body.list === "pilot" && saved.added) {
+          const notify = notifyPilotInterest(body.email, new URL(request.url).origin).catch(() => undefined);
+          if (ctx?.waitUntil) ctx.waitUntil(notify);
+          else await notify;
+        }
         return json(200, { ok: true });
       }
 

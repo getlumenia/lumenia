@@ -215,6 +215,48 @@ ${actionHtml}`;
 }
 
 /**
+ * Tell the owner that somebody with NO ACCOUNT asked for real money.
+ *
+ * The account path (`notifyPilotRequest`) has always emailed; this one had nothing at all. A person
+ * who has not opened an account yet has no public key to approve, so their ask is stored on the
+ * waitlist — and the store is silent by design, which meant the ask reached a database and nobody
+ * else. Somebody asking to be let in and hearing nothing back, from anyone, ever, is the failure
+ * this closes.
+ *
+ * Best-effort, exactly like its sibling: a mail that will not send must not fail the ask. And it is
+ * only called for an address that was NEW to the list, so a second attempt from the same person
+ * does not become a second email.
+ */
+export async function notifyPilotInterest(email: string, origin?: string): Promise<void> {
+  const clean = email.trim().toLowerCase();
+  if (!EMAIL_RE.test(clean)) return;
+  const to = process.env.OWNER_EMAIL;
+  const key = process.env.RESEND_API_KEY;
+  const network = process.env.STELLAR_NETWORK ?? "testnet";
+  if (!to || !key) {
+    // Visible in `wrangler tail` even without a mailer, so the ask is never invisible everywhere.
+    console.log(`[pilot:interest] ${clean} (${network}) — no OWNER_EMAIL/RESEND_API_KEY`);
+    return;
+  }
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
+      to: [to],
+      subject: `Real-money interest — ${clean} (${network})`,
+      text:
+        `Somebody asked for real money from onboarding, with no account yet.\n\n` +
+        `Contact: ${clean}\n` +
+        `Where:   ${origin ?? "unknown"}\n\n` +
+        `There is no wallet to approve — they have not opened an account. When they do, they can ` +
+        `ask from /pilot and that request will carry their address.\n`,
+    }),
+  });
+  if (!res.ok) console.log(`[pilot:interest] resend ${res.status} — ${clean}`);
+}
+
+/**
  * Tell an approved user they are in the mainnet pilot. Best-effort: logs (visible in
  * `wrangler tail`) when Resend isn't configured, so an approval is never blocked by mail.
  * Sending to a real user's inbox needs a VERIFIED sender domain (RESEND_FROM =
