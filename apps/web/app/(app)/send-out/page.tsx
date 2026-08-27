@@ -24,7 +24,7 @@
  * wrong one destroys the money. Not naming it there would be a vocabulary rule enforced
  * at the user's expense.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
@@ -70,7 +70,7 @@ interface SavedDestination {
 type Step = "form" | "review" | "done";
 
 export default function SendOutPage() {
-  const { status, account, getSigner } = useWallet();
+  const { status, account, getSigner, unlocked } = useWallet();
   const router = useRouter();
 
   const [balance, setBalance] = useState<string | null>(null);
@@ -164,6 +164,44 @@ export default function SendOutPage() {
   const tagFromLink = Boolean(uri?.memo);
   const effectiveMemo = tagFromLink ? uri!.memo! : memo.trim();
   const effectiveMemoKind: MemoKind = tagFromLink ? (uri!.memoKind ?? "text") : memoKind;
+
+  /**
+   * FINISH THE SEND THE PASSWORD WAS FOR.
+   *
+   * A locked account sends the person to /unlock and back, and they then had to press the button a
+   * second time — but typing the password IS the confirmation; the second tap carried no new
+   * information and read as if the first one had failed.
+   *
+   * Auto-continuing a REAL MONEY transfer needs to be narrow, so all four of these must hold, and
+   * the flag is consumed before anything is signed:
+   *   - the draft was written by this page routing to /unlock (`resumeAt` exists),
+   *   - it happened in the last two minutes, so a tab reopened later never fires,
+   *   - the account is actually unlocked now, so this cannot run as a bare page visit,
+   *   - and it runs at most once, whatever React does with the effect.
+   */
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (status !== "ready" || !unlocked || busy || resumed.current) return;
+    type ResumableDraft = { resumeAt?: number; raw?: string; amount?: string };
+    let draft: ResumableDraft | null = null;
+    try {
+      draft = JSON.parse(sessionStorage.getItem(DRAFT_KEY()) ?? "null") as ResumableDraft | null;
+    } catch {
+      return;
+    }
+    if (!draft?.resumeAt || Date.now() - draft.resumeAt > 120_000) return;
+    if (!destination || !amount) return; // the restored draft has not landed in state yet
+    resumed.current = true;
+    // Consumed BEFORE signing: a failure must not leave a live trigger behind.
+    try {
+      sessionStorage.setItem(DRAFT_KEY(), JSON.stringify({ ...draft, resumeAt: undefined }));
+    } catch {
+      /* storage blocked — the one-shot ref still holds for this page */
+    }
+    void confirm();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, unlocked, busy, destination, amount]);
+
   const needsTag = Boolean(destination && !destination.muxed);
   // Not a Stellar address? Name the network they actually copied instead of shrugging.
   const otherNetwork = !destination && raw.trim() !== "" ? guessOtherNetwork(uri?.destination ?? raw) : null;
@@ -220,7 +258,11 @@ export default function SendOutPage() {
       } catch {
         // Locked account: keep the draft so nothing has to be retyped on the way back.
         try {
-          sessionStorage.setItem(DRAFT_KEY(), JSON.stringify({ raw, memo, memoKind, amount }));
+          // `resumeAt` is what lets the send finish itself on the way back — see the effect below.
+          sessionStorage.setItem(
+            DRAFT_KEY(),
+            JSON.stringify({ raw, memo, memoKind, amount, resumeAt: Date.now() }),
+          );
         } catch {
           /* storage blocked — the form is lost, but no money moved */
         }
