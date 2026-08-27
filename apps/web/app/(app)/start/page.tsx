@@ -127,7 +127,7 @@ export default function StartPage() {
       id: "mainnet",
       title: "Switch to real money",
       body:
-        "Everything so far was practice money. Switching opens your account on the real network with a dollar trustline, so real dollars can reach you.",
+        "Everything so far was practice money. Switching opens your account on the real network, so real dollars can reach you.",
       doneNote: "You are on real money.",
       href: "/account",
       cta: "Switch to real money",

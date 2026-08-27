@@ -51,7 +51,14 @@ function StartSendingLink() {
   const { status, account, network, pilotState } = useWallet();
   const pathname = usePathname();
   if (status === "loading" || !account) return null;
-  const ready = account.phase === 2 && network === "public" && pilotState === "approved";
+  /* ONLY ON REAL MONEY. Written as "not yet fully set up", this pill was permanent for every
+     practice user — pointing at a five-step checklist for becoming a sender, shown to somebody who
+     already becomes one in three taps. Nothing about a practice account needs activating, so the
+     pill was a standing instruction to go and do work that does not exist.
+     On real money it still means something: an account that is not backed up, or not on the pilot
+     list, genuinely cannot send yet, and /start is where that is explained. */
+  if (network !== "public") return null;
+  const ready = account.phase === 2 && pilotState === "approved";
   if (ready) return null;
   return (
     <Link

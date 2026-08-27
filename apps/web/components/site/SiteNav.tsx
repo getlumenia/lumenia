@@ -140,22 +140,14 @@ export function SiteNav() {
               /send instead, and /welcome keeps its place one step off the path — from settings, and
               from the nudge on /home. */}
           {hasAccount ? (
-            <>
-              {/* `text-foreground` explicitly, matching the nav links beside it. The ghost variant
-                  was resolving to the RETIRED green system's root ink (#1c2b23) — a near-black that
-                  does not flip with the theme, so on dark this button was black text on a black
-                  header. The links next to it were already immune because they name the token. */}
-              <Button
-                asChild
-                variant="ghost"
-                className="rounded-xl px-3 text-foreground/80 transition-transform duration-200 hover:-translate-y-0.5 hover:text-foreground"
-              >
-                <Link href="/start">Activate</Link>
-              </Button>
-              <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
-                <Link href="/home">My money</Link>
-              </Button>
-            </>
+            /* ONE DOOR for somebody who already has an account: their money. "Activate" used to sit
+               beside it, pointing at the sender checklist — and this header cannot tell a practice
+               account from a real one, so it showed that instruction to people with nothing to
+               activate. The in-app pill still offers it where the state is actually known, and only
+               on real money. */
+            <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
+              <Link href="/home">My money</Link>
+            </Button>
           ) : (
             <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
               <Link href="/send?start=1">Get started</Link>
