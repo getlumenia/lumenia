@@ -86,6 +86,7 @@ export default function SendOutPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [hash, setHash] = useState("");
+  const [copiedProof, setCopiedProof] = useState(false);
   const [saved, setSaved] = useState<SavedDestination | null>(null);
 
   useEffect(() => {
@@ -330,14 +331,41 @@ export default function SendOutPage() {
             you tapped, and the record below proves it.
           </p>
         </MoneyCard>
-        <a
-          href={explorer(hash)}
-          target="_blank"
-          rel="noreferrer"
-          className="text-sm font-medium text-money underline-offset-2 hover:underline"
-        >
-          See it on the public record ↗
-        </a>
+        {/* THE RECORD, IN A FORM THAT SURVIVES LEAVING THIS SCREEN.
+            A link you can only click is proof only while you are standing here: screenshot it and
+            the reader sees underlined words they cannot follow, paste it and you have nothing. The
+            transaction id is therefore ON the screen — a screenshot of this carries the evidence —
+            and the full URL is one tap from the clipboard, for a message, a support thread, or a
+            funding document that has to be checkable by somebody who was not here. */}
+        <MoneyCard className="p-4">
+          <p className="text-sm text-ink">The public record of this transfer</p>
+          <p className="mt-1 break-all font-mono text-xs text-ink-soft">{hash}</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <a
+              href={explorer(hash)}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm font-medium text-money underline-offset-2 hover:underline"
+            >
+              Open it ↗
+            </a>
+            <button
+              type="button"
+              className="text-sm font-medium text-ink-soft underline-offset-2 hover:underline"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(explorer(hash));
+                  setCopiedProof(true);
+                  setTimeout(() => setCopiedProof(false), 1600);
+                } catch {
+                  /* clipboard blocked — the id is on screen to read */
+                }
+              }}
+            >
+              {copiedProof ? "Copied" : "Copy the link"}
+            </button>
+          </div>
+        </MoneyCard>
         <Link href="/account" className="text-sm text-ink-soft underline-offset-2 hover:underline">
           Back to my account
         </Link>
