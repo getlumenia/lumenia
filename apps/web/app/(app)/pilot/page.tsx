@@ -143,9 +143,14 @@ export default function PilotPage() {
         </p>
       </header>
 
-      {!lockedToYou ? (
+      {/* BOTH HALVES OF THE ASK, AT ONCE.
+          These used to swap: the email field did not exist until the account was locked and backed
+          up, so somebody set a password without ever seeing what it was for, and then met a second
+          request they had not been told about. The security step is still required and still first
+          on the page, but nothing about the ask is hidden while it is being done. */}
+      {!lockedToYou && (
         <MoneyCard className="p-5">
-          <p className="font-semibold text-ink">First, secure your account</p>
+          <p className="font-semibold text-ink">1. Secure your account</p>
           <p className="mt-1 text-sm text-ink-soft">
             The pilot moves real money, so before you can join, lock it to a password (and Face ID,
             if your phone offers it). This same step also backs your money up, so a new phone can
@@ -155,31 +160,38 @@ export default function PilotPage() {
             <RecoveryFlow mode="secure" />
           </div>
         </MoneyCard>
-      ) : (
-        <form onSubmit={submit} className="flex flex-col gap-3">
-          <p className="text-sm text-money">Your money is locked and backed up. One more step.</p>
-          <label className="text-sm text-ink-soft">
-            Your email
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="mt-1 w-full rounded-[14px] border border-line bg-surface px-3 py-3 text-ink outline-none"
-            />
-          </label>
-          <p className="text-xs text-ink-soft">
-            You&apos;d join with this account:
-            <br />
-            <span className="break-all font-mono">{account.address}</span>
-          </p>
-          {error && <p className="text-sm text-danger">{error}</p>}
-          <PrimaryButton loading={busy} loadingLabel="Sending…">
-            Ask to join the pilot
-          </PrimaryButton>
-        </form>
       )}
+
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        {lockedToYou ? (
+          <p className="text-sm text-money">Your money is locked and backed up. One more step.</p>
+        ) : (
+          <p className="text-sm font-semibold text-ink">2. Leave your email</p>
+        )}
+        <label className="text-sm text-ink-soft">
+          Your email
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            className="mt-1 w-full rounded-[14px] border border-line bg-surface px-3 py-3 text-ink outline-none"
+          />
+        </label>
+        <p className="text-xs text-ink-soft">
+          You&apos;d join with this account:
+          <br />
+          <span className="break-all font-mono">{account.address}</span>
+        </p>
+        {error && <p className="text-sm text-danger">{error}</p>}
+        {/* The security rule is enforced here rather than by hiding the form: a pilot user's real
+            money must never sit under a device key anyone holding the phone could spend. The button
+            names the outstanding step instead of leaving a dead control. */}
+        <PrimaryButton loading={busy} loadingLabel="Sending…" disabled={!lockedToYou}>
+          {lockedToYou ? "Ask to join the pilot" : "Finish step 1 first"}
+        </PrimaryButton>
+      </form>
     </div>
   );
 }
