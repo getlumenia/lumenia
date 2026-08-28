@@ -119,6 +119,7 @@ export default function SendPage() {
   const [busy, setBusy] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [error, setError] = useState("");
+  const [refusedByPilot, setRefusedByPilot] = useState(false);
   /* A deposit we submitted but could not confirm. Distinct from `error` on purpose: an error screen
      invites a retry, and retrying this is the failure mode. */
   const [uncertain, setUncertain] = useState<{ linkHex: string; link: string; amount: string } | null>(null);
@@ -294,6 +295,7 @@ export default function SendPage() {
 
   async function send() {
     setError("");
+    setRefusedByPilot(false);
     // Validate the ROUNDED amount — "0.001" parses > 0 but formats to "0.00",
     // which the ledger (and /r's parser) rejects. The guard must see what ships.
     const amt = Math.round(Number.parseFloat(amount) * 100) / 100;
@@ -449,6 +451,11 @@ export default function SendPage() {
       const pilotReason = /403/.test(msg) ? msg.slice(msg.indexOf("{")) : "";
       const reason = pilotReason.match(/"error"\s*:\s*"([^"]+)"/)?.[1];
       setError(reason ? `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.` : copy.errors.moneySafe);
+      /* A refusal from the pilot gate is the one error with an answer, so it carries the answer.
+         Without this the sponsor's "this wallet is not on the pilot allowlist yet" was a sentence
+         and nothing else: a closed door with no handle, on the screen where somebody was trying to
+         send real money. */
+      setRefusedByPilot(Boolean(reason));
     } finally {
       setBusy(false);
     }
@@ -573,6 +580,20 @@ export default function SendPage() {
             You have <AmountDisplay value={balance} size="md" tone="ink" className="!text-base" /> to send.
           </p>
         )}
+        {/* THE ONE PLACE REAL MONEY IS MENTIONED ON THIS SCREEN, and only on practice money.
+            "Get started" now opens an account and lands here, which is three taps instead of five
+            but skips the screen that used to say real money exists at all. Somebody could send
+            practice links for a week without learning there was anything else. One line, no
+            interruption, and it says what it costs: it is invite-only. */}
+        {!activeNetwork().isMainnet && (
+          <p className="mt-2 text-sm text-ink-soft">
+            This is practice money.{" "}
+            <Link href="/pilot" className="underline underline-offset-2 hover:text-ink">
+              Ask to send real money
+            </Link>{" "}
+            — it&apos;s invite-only while the pilot is small.
+          </p>
+        )}
       </header>
 
       {zeroBalance ? (
@@ -688,6 +709,11 @@ export default function SendPage() {
             </div>
           )}
           {error && <p className="text-sm text-danger">{error}</p>}
+          {refusedByPilot && (
+            <Link href="/pilot" className="text-sm underline underline-offset-2 text-ink-soft hover:text-ink">
+              Ask to join the pilot
+            </Link>
+          )}
           {/* Held until the balance is known when paying an ask: the amount
               arrives prefilled, so an instant tap could otherwise submit a
               guaranteed-underfunded pay before the "more than you have" guard
