@@ -118,6 +118,9 @@ AUDIT_BANK_PACKAGE.md
 DECISION_PACKET_MAINNET.md
 SOW2.md
 SOW2_EVIDENCE_KIT.md
+SOW2_TR.md
+SOW2_B2B_EMAIL.md
+OPS_STORE_CREDENTIALS.md
 
 # cargo-mutants / cargo-fuzz working output — reports, not sources
 contracts/lumen-drop/mutants.out/

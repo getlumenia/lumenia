@@ -106,7 +106,10 @@ export default function NotificationsPage() {
         await collectIncoming({ sponsorUrl: sponsorUrl(), signer, balanceId: n.balanceId });
       }
       await reload();
-    } catch {
+    } catch (e) {
+      // The UI stays calm and codeless, but a swallowed error is undiagnosable: without this the
+      // only signal a failed take-back leaves anywhere is "Please try again".
+      console.error("[recover]", n.kind, n.via ?? "classic", n.balanceId, e);
       // Terminal (already collected / reclaimed) vs. transient — never leak a result code.
       // For a classic CB, re-read existence for calm "it's gone" copy; a v2 drop just refreshes.
       if (n.via === "v2") {
