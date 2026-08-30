@@ -39,11 +39,14 @@ function loadSent(id: string): SentRecord | null {
 }
 
 export default function SentPage() {
-  const { account } = useWallet();
+  const { status, account } = useWallet();
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [rec, setRec] = useState<SentRecord | null | undefined>(undefined);
-  const [linkStatus, setLinkStatus] = useState<"pending" | "settled" | "loading" | "unknown">("loading");
+  // "unknown" is a read that FAILED; "no-account" is a read that was never possible on this
+  // device. Same non-claim about the money, different truth to tell — and neither may ever fall
+  // through to the settled branch below.
+  const [linkStatus, setLinkStatus] = useState<"pending" | "settled" | "loading" | "unknown" | "no-account">("loading");
   const [copied, setCopied] = useState(false);
   // The link is decrypted on demand from the device-key store, not read out of localStorage.
   const [link, setLink] = useState<string | null>(null);
@@ -51,20 +54,29 @@ export default function SentPage() {
   useEffect(() => {
     const r = loadSent(id);
     setRec(r);
-    if (r && account) {
-      // Which reader depends on which KIND of link this is, and the id shape is the tell: a classic
-      // Claimable Balance id is 72 hex and lives on Horizon; a v2 escrow drop id is the 64-hex link
-      // pubkey and lives in the Soroban contract. Asking Horizon about a 64-hex id 400s rather than
-      // 404s, so this used to throw on EVERY v2 send and the catch below reported "pending" — every
-      // link a sender made read "Still waiting to be claimed" forever, including after it was paid.
-      const isV2 = /^[0-9a-f]{64}$/i.test(r.balanceId);
-      const read = isV2
-        ? loadV2DropStatus(r.balanceId, account.address)
-        : loadLinkStatus(r.balanceId);
-      void read.then(setLinkStatus).catch(() => setLinkStatus("unknown"));
-      if (r.hasLink) void recallLink(id).then(setLink);
+    if (!r) return;
+    if (status !== "ready") return; // the wallet is still resolving; nothing is settled yet
+    // The stored link is device-local — recallable whether or not this device still carries an
+    // account, which is why it no longer sits behind one.
+    if (r.hasLink) void recallLink(id).then(setLink);
+    // Which reader depends on which KIND of link this is, and the id shape is the tell: a classic
+    // Claimable Balance id is 72 hex and lives on Horizon; a v2 escrow drop id is the 64-hex link
+    // pubkey and lives in the Soroban contract. Asking Horizon about a 64-hex id 400s rather than
+    // 404s, so this used to throw on EVERY v2 send and the catch below reported "pending" — every
+    // link a sender made read "Still waiting to be claimed" forever, including after it was paid.
+    const isV2 = /^[0-9a-f]{64}$/i.test(r.balanceId);
+    // Only the contract read needs an account to simulate from; Horizon answers on its own. The
+    // whole read used to sit behind `account`, so a device carrying none sat on "Checking…" with
+    // nothing on the way that could ever finish it.
+    if (isV2 && !account) {
+      setLinkStatus("no-account");
+      return;
     }
-  }, [id, account]);
+    const read = isV2 && account
+      ? loadV2DropStatus(r.balanceId, account.address)
+      : loadLinkStatus(r.balanceId);
+    void read.then(setLinkStatus).catch(() => setLinkStatus("unknown"));
+  }, [id, account, status]);
 
   if (rec === undefined) return <p className="py-10 text-center text-ink-soft">Loading…</p>;
 
@@ -110,6 +122,14 @@ export default function SentPage() {
           <StatusPill status="waiting" label="Checking…" />
         ) : linkStatus === "pending" ? (
           <StatusPill status="waiting" />
+        ) : linkStatus === "unknown" || linkStatus === "no-account" ? (
+          // A read that did not complete is not evidence of anything. Both readers return
+          // "unknown" so an outage can never be mistaken for settlement; this branch is what
+          // keeps that promise, and its absence told senders their unclaimed link was paid.
+          <StatusPill
+            status="waiting"
+            label={linkStatus === "no-account" ? "Can't check on this device" : "Couldn't check just now"}
+          />
         ) : (
           // The ledger read only says the held money is GONE — for a direct pay
           // that is "collected by them" OR "came back to you after 7 days", and
@@ -118,12 +138,18 @@ export default function SentPage() {
         )}
       </div>
 
-      {linkStatus === "pending" && (
+      {/* Neither unreadable state loses the copy button: a link we could not read may well still be
+          live, and the sender is the only person who can share it again. */}
+      {(linkStatus === "pending" || linkStatus === "unknown" || linkStatus === "no-account") && (
         <MoneyCard className="p-5">
           <p className="text-sm text-ink-soft">
-            {rec.toName
-              ? `Waiting for ${rec.toName} to add it to their money. If it isn't collected, it comes back to you 7 days after you sent it.`
-              : "Still waiting to be claimed. If nobody claims it, the money comes back to you 7 days after you sent it."}
+            {linkStatus === "no-account"
+              ? "We can't check this one on this device — that check runs from your account, and there isn't one on this phone right now. It doesn't change the money: if it isn't collected, it comes back to you 7 days after you sent it. Bring your account back onto this phone and this page can tell you where it stands."
+              : linkStatus === "unknown"
+                ? "We couldn't check on this one just now — that's about the connection, not your money. Nothing about it has changed: if it isn't collected, it comes back to you 7 days after you sent it. Open this again in a moment."
+                : rec.toName
+                  ? `Waiting for ${rec.toName} to add it to their money. If it isn't collected, it comes back to you 7 days after you sent it.`
+                  : "Still waiting to be claimed. If nobody claims it, the money comes back to you 7 days after you sent it."}
           </p>
           {/* a pay-to-address send has no bearer link — nothing to re-copy */}
           {link && (

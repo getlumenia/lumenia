@@ -23,6 +23,7 @@ import { loadBalance, loadActivityForAccounts, loadIncomingClaims, loadLinkStatu
 import { collectIncoming } from "../../../lib/claim";
 import { sweepIntoHome } from "../../../lib/sweep";
 import { unlockPhase1, removeAccount, isPublished } from "../../../lib/keystore";
+import { isNeedsPassword } from "../../../lib/signer-error";
 import { indicativeRate, getLiveRate } from "../../../lib/rate";
 import { formatUsd } from "../../../lib/money";
 import { BalanceHeader } from "../../../components/brand/BalanceHeader";
@@ -143,15 +144,21 @@ export default function HomePage() {
           if (await isPublished(other.address)) continue;
           // Drive off the USDC BALANCE: the frozen /c/[id] route already claimed the
           // incoming CB into the throwaway, so the money sits as plain USDC (no open
-          // CB) — the production bug case. Sweep that balance home with the claim-less
-          // 3-op path.
+          // CB) — the production bug case, and the only shape this sweep completes.
+          // Sweep that balance home with the claim-less 3-op path.
           const bal = await loadBalance(other.address);
           const issuer = bal?.issuer;
           const amount = bal?.usd ?? "0";
           if (!issuer || Number.parseFloat(amount) <= 0) continue; // empty husk → leave it
-          // If the throwaway still has an OPEN incoming CB (e.g. a claim that failed
-          // after account-creation), claim it first (4-op path). Otherwise omit
-          // balanceId for the claim-less sweep.
+          // An OPEN incoming CB is NOT handled, whatever the 4-op path below looks like. A
+          // throwaway holding only the CB never gets here — the balance guard above drops it —
+          // and one holding both pays `amount`, which is the balance BEFORE the claim, so the
+          // claimed dollars stay behind and changeTrust(0) rejects the residue: the sweep fails
+          // on every load. Doing it properly means the amount covering every CB claimed AND the
+          // sweep claiming all of them, because accountMerge closes the account that any CB left
+          // behind is claimable from. Until then the money is safe and simply unswept — the
+          // balance keeps counting in the total above, and the CB waits for the sender's 7-day
+          // reclaim. No screen surfaces a CB held against a throwaway.
           const cbs = await loadIncomingClaims(other.address, issuer);
           const balanceId = cbs[0]?.balanceId;
           const seed = await unlockPhase1(other.address);
@@ -236,7 +243,19 @@ export default function HomePage() {
       let signer;
       try {
         signer = await getSigner();
-      } catch {
+      } catch (e) {
+        /* An account with no password has nothing to unlock, and /unlock turns it straight back to
+           here — a loop with no errand named anywhere in it. The errand has one name everywhere,
+           "set a password", and one destination, /account — except here, where it is finished
+           without leaving the money: LockMoneyCard renders below for exactly this account. A
+           different place therefore gets different words, naming that card by its own heading, so
+           the sentence can never be read as the trip to /account the other screens offer. */
+        if (isNeedsPassword(e)) {
+          setCollectError(
+            "Set a password to finish setting up, then collect this. The “Lock this money to you” card below does it.",
+          );
+          return;
+        }
         router.push("/unlock?next=/home");
         return;
       }

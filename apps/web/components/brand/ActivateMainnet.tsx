@@ -52,17 +52,40 @@ export function ActivateMainnet() {
   if (!result || result.state === "ready") return null;
 
   if (result.state === "locked") {
+    // WHICH errand it is comes from the account, not from the failure: a Phase-1 account has no
+    // password yet and must set one — /unlock would send it straight back where it came from —
+    // while a Phase-2 account only has to unlock. Same split, same words, as the account menu.
+    const needsPassword = account?.phase === 1;
+    /* Setting a password has one destination, /account — and this card is rendered ON /account as
+       well as on /add-money. A button that pushes the route it is already standing on cannot move,
+       so on that page the errand is named where it actually lives instead. The unlock half keeps
+       its button everywhere: /unlock is a different route from both. */
+    const passwordIsOnThisPage = needsPassword && pathname === "/account";
     return (
       <MoneyCard className="p-5">
-        <p className="font-semibold text-ink">Unlock to finish setting up</p>
-        <p className="mt-1 text-sm text-ink-soft">
-          Your password is needed once, so dollars sent from another wallet can reach you.
+        <p className="font-semibold text-ink">
+          {needsPassword ? "Set a password to finish" : "Unlock to finish setting up"}
         </p>
-        <div className="mt-4">
-          <PrimaryButton onClick={() => router.push(`/unlock?next=${encodeURIComponent(pathname)}`)}>
-            Unlock
-          </PrimaryButton>
-        </div>
+        <p className="mt-1 text-sm text-ink-soft">
+          {needsPassword
+            ? "This account needs a password of its own, so dollars sent from another wallet can reach you."
+            : "Your password is needed once, so dollars sent from another wallet can reach you."}
+        </p>
+        {passwordIsOnThisPage ? (
+          <p className="mt-2 text-sm text-ink-soft">
+            You set one under “Back up your money”, further down this page.
+          </p>
+        ) : (
+          <div className="mt-4">
+            <PrimaryButton
+              onClick={() =>
+                router.push(needsPassword ? "/account" : `/unlock?next=${encodeURIComponent(pathname)}`)
+              }
+            >
+              {needsPassword ? "Set a password" : "Unlock"}
+            </PrimaryButton>
+          </div>
+        )}
       </MoneyCard>
     );
   }

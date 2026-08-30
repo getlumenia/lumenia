@@ -15,6 +15,7 @@ import { loadNotices, markAllSeen, type Notice } from "../../../lib/notification
 import { loadLinkStatus } from "../../../lib/horizon";
 import { collectIncoming } from "../../../lib/claim";
 import { reclaimV2 } from "../../../lib/lumendrop";
+import { isNeedsPassword } from "../../../lib/signer-error";
 import { formatUsd } from "../../../lib/money";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
@@ -49,6 +50,8 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(false);
   const [collectingId, setCollectingId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  /** The account has no password yet — a different errand from a locked one, and /unlock can't do it. */
+  const [needsPassword, setNeedsPassword] = useState(false);
 
   const reload = useCallback(async () => {
     if (!account) return;
@@ -89,12 +92,23 @@ export default function NotificationsPage() {
   async function recover(n: Notice) {
     if (!n.balanceId) return;
     setError("");
+    setNeedsPassword(false);
     setCollectingId(n.id);
     try {
       let signer;
       try {
         signer = await getSigner();
-      } catch {
+      } catch (e) {
+        /* An account with no password has nothing to unlock, and /unlock turns it straight back
+           here. Setting one lives on /account — the same name and the same place the account menu
+           and the money screens send this errand to. It is offered rather than jumped to: a tap
+           about money coming back must not end on a screen the person never asked for, with no
+           sentence anywhere saying why they are there. */
+        if (isNeedsPassword(e)) {
+          setError("Set a password to finish — until then, this money can't come back to you.");
+          setNeedsPassword(true);
+          return;
+        }
         router.push("/unlock?next=/notifications");
         return;
       }
@@ -182,7 +196,15 @@ export default function NotificationsPage() {
       {error && (
         <p className="text-sm text-danger">
           {error}{" "}
-          <FeedbackDialog trigger={copy.feedback.somethingWrong} triggerClassName="fb-trigger-inline" defaultCategory="money" />
+          {/* An errand the person can finish is not a fault report: offer the way to do it, in the
+              same words and to the same place every other money screen names. */}
+          {needsPassword ? (
+            <Link href="/account" className="font-semibold text-money underline-offset-2 hover:underline">
+              Set a password
+            </Link>
+          ) : (
+            <FeedbackDialog trigger={copy.feedback.somethingWrong} triggerClassName="fb-trigger-inline" defaultCategory="money" />
+          )}
         </p>
       )}
     </div>
