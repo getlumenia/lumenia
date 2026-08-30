@@ -29,7 +29,12 @@ export function passwordStrength(pw: string): Strength {
   const p = pw;
   if (p.length < 10) return { ok: false, reason: "Use at least 10 characters. This is the only key to your money." };
   const lower = p.toLowerCase();
-  if (COMMON.has(lower)) return { ok: false, reason: "That's a very common password. Pick something only you would choose." };
+  // The 10-char floor already puts the bare entries out of reach, so the list only earns its keep
+  // against the stem: "Password12" and "qwerty!!!" are the same guess with a suffix bolted on.
+  const stem = lower.replace(/[^a-z]+$/, "");
+  if (COMMON.has(lower) || COMMON.has(stem)) {
+    return { ok: false, reason: "That's a very common password. Pick something only you would choose." };
+  }
   if (/^(.)\1+$/.test(p)) return { ok: false, reason: "Too easy to guess. Don't repeat one character." };
   if (/^(?:0123456789|1234567890|abcdefghij|qwertyuiop)/i.test(p)) {
     return { ok: false, reason: "Too easy to guess. Avoid keyboard or number runs." };

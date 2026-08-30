@@ -17,18 +17,28 @@ import { unlockPhase1, savePhase2 } from "../../lib/keystore";
 import { DEFAULT_ARGON } from "../../lib/argon";
 import { copy } from "../../lib/copy";
 import { useWallet } from "../../lib/wallet";
+import { passwordStrength } from "../../lib/password-strength";
 
 export function LockMoneyCard() {
   const { account, refresh, setSessionSeed } = useWallet();
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   if (!account || account.phase !== 1) return null; // only offer it to unlocked (Phase 1) accounts
 
   async function lock() {
-    if (password.length < 6) {
-      setError("Choose a password of at least 6 characters.");
+    // The password chosen here is not only a device lock: backing up later re-uses it verbatim as
+    // the key to server-stored ciphertext (lib/wallet.tsx::secureRecovery), which an attacker who
+    // fetched that ciphertext gets to guess offline. Same floor, therefore, as the wrap itself.
+    const strong = passwordStrength(password);
+    if (!strong.ok) {
+      setError(strong.reason ?? "Pick a stronger password.");
+      return;
+    }
+    if (confirm !== password) {
+      setError("Those two don't match. Type the same password twice.");
       return;
     }
     setBusy(true);
@@ -61,7 +71,20 @@ export function LockMoneyCard() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         placeholder="Choose a password"
+        aria-label="Choose a password"
         className="mt-3 w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-ink"
+      />
+      {/* Typed once, this password is one typo away from locking money nobody can open again —
+          there is no reset, so the second field is the only proof it is what they think it is. */}
+      <input
+        type="password"
+        inputMode="text"
+        autoComplete="new-password"
+        value={confirm}
+        onChange={(e) => setConfirm(e.target.value)}
+        placeholder="Type it again"
+        aria-label="Type the password again"
+        className="mt-2 w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-ink"
       />
       <p className="mt-2 text-xs text-ink-soft">
         If you forget this password, nobody can recover this money, Lumenia included.

@@ -2,9 +2,15 @@
  * Recovery blob store — the SERVER side of the zero-knowledge recovery box
  * (RECOVERY_ARCHITECTURE §4.2 + §12 step 2). Stores ONLY ciphertext + KDF params,
  * keyed by an opaque high-entropy id (the client's hashed identity). It NEVER holds a
- * seed, password, or PRF secret, and is NEVER joined to a pubkey or any money data — a
- * SEPARATE store, isolated from the sponsor signing key. The endpoint touches no keys
- * and no anti-drain policy (it signs nothing).
+ * seed, password, or PRF secret, and no money data — a SEPARATE store, isolated from the
+ * sponsor signing key. The endpoint touches no keys and no anti-drain policy (it signs
+ * nothing).
+ *
+ * The one thing a row carries beyond ciphertext is a HASH of the key allowed to replace it
+ * (`putBox`, `putAliasBox`). That is a write gate, not an address book: no key and no address is
+ * stored, so a row names nobody — though a hash will confirm an address somebody already guesses.
+ * Elsewhere this service does put an address next to a person (the pilot list); the claim made
+ * here is this store's alone.
  *
  * Reuses the Upstash REST pair (kvConfigFromEnv) as a keyed value store; an in-memory
  * Map is the local/test fallback (single-process only — without KV a box would NOT
@@ -16,6 +22,8 @@
  * The client wrap/unwrap lives in apps/web/lib/recovery.ts (Spike S1, proven 7/7).
  */
 import { kvConfigFromEnv } from "./rate-limit.js";
+import { PublicRefusal } from "./caps.js";
+import { verifyHandleProof, type ProofInput } from "./handles.js";
 
 const ID_RE = /^[0-9a-f]{64}$/; // SHA-256 hex — an opaque, high-entropy (256-bit) lookup key
 const MAX_BOX_BYTES = 4096;
@@ -103,13 +111,46 @@ const KEY_EMAIL = "lumenia:recovery:";
 const KEY_ALIAS = "lumenia:recovery-pk:";
 
 /**
- * What is actually stored. Older rows are a bare `RecoveryBox`; newer alias rows are wrapped so the
- * box can carry the owner proof described on `putAliasBox`. Both shapes are read.
+ * What is actually stored. Older rows are a bare `RecoveryBox`; newer ones are wrapped so the box
+ * can travel with the hash that says who may replace it. Both shapes are read.
  */
 interface StoredRow {
   box: RecoveryBox;
   /** SHA-256 of the alias owner proof. Alias rows only. */
   proofHash?: string;
+  /** SHA-256 of the account key that may replace this row. Email rows only. */
+  ownerHash?: string;
+}
+
+/**
+ * What the ACCOUNT signs to authorize a write — the same `links` proof the identity routes take,
+ * over this box's id, built client-side by apps/web/lib/handles.ts::signHandleProof.
+ */
+export type OwnerProof = Omit<ProofInput, "action" | "name" | "network">;
+
+/** The chain this deployment answers for: a proof signed for one must not verify on the other. */
+function networkFromEnv(): "testnet" | "mainnet" {
+  return process.env.STELLAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
+}
+
+/**
+ * Check an owner proof and return what a row records of it, or null when none was offered.
+ * A proof that is present but does not verify throws: a bad signature is not "no signature".
+ */
+async function ownerHashFrom(id: string, owner: OwnerProof | undefined): Promise<string | null> {
+  if (!owner) return null;
+  const pubkey = String(owner.pubkey ?? "");
+  const signed = await verifyHandleProof({
+    action: "links",
+    name: id,
+    pubkey,
+    ts: Number(owner.ts),
+    nonce: String(owner.nonce ?? ""),
+    network: networkFromEnv(),
+    proof: String(owner.proof ?? ""),
+  });
+  if (signed.ok !== true) throw new Error(signed.reason);
+  return sha256Hex(pubkey);
 }
 
 function parseRow(raw: string): StoredRow {
@@ -149,19 +190,50 @@ async function writeRow(prefix: string, id: string, row: StoredRow): Promise<voi
   if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
 }
 
-async function putBoxAt(prefix: string, rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
-  await writeRow(prefix, validateId(rawId), { box: validateBox(rawBox) });
-  return { ok: true };
-}
-
 async function getBoxAt(prefix: string, rawId: unknown): Promise<RecoveryBox | null> {
   const row = await readRow(prefix, validateId(rawId));
   return row?.box ?? null;
 }
 
-/** Store (or replace) the EMAIL-keyed box. Always OTP-gated at the route. */
-export async function putBox(rawId: unknown, rawBox: unknown): Promise<{ ok: true }> {
-  return putBoxAt(KEY_EMAIL, rawId, rawBox);
+/**
+ * Store the EMAIL-keyed box. Always OTP-gated at the route.
+ *
+ * OWNERSHIP. The code proves control of an INBOX, and the id is SHA-256 of the address it was
+ * mailed to, so on its own an emailed code is the whole distance between somebody else's mailbox
+ * and the only copy of their key. Creating a FIRST box asks no more than that code — a new user has
+ * no account to prove yet, and a backup that is hard to make is a backup nobody has. Once a row
+ * carries an owner, replacing it takes a signature from that account, so a stolen inbox cannot
+ * paint over a working backup with ciphertext the owner's password cannot open.
+ *
+ * WHO REACHES THIS ARGUMENT. The live Worker (worker.ts /recovery) forwards `owner`, and
+ * apps/web/lib/recovery-api.ts::storeRecoveryBox signs it whenever the backup flow hands it a
+ * signer. Two callers still pass nothing: index.ts (the local dev server) and the web's own
+ * RecoveryFlow, which does not yet forward a signer into the store step — so rows written by that
+ * path remain ownerless, and a mailed code alone still replaces those.
+ *
+ * An ownerless row stays replaceable and adopts the first proof it is given — the same line the
+ * alias rows below take, for the same reason. A row can therefore only be bound by a caller that
+ * CAN sign, which is what keeps the refusals below from stranding anybody: whoever bound a row can
+ * always re-prove it.
+ *
+ * Both refusals are PublicRefusal so their text survives on a mainnet-configured host. Neither says
+ * anything the caller does not already know — it just passed the OTP for this id.
+ */
+export async function putBox(rawId: unknown, rawBox: unknown, owner?: OwnerProof): Promise<{ ok: true }> {
+  const id = validateId(rawId);
+  const box = validateBox(rawBox);
+  const ownerHash = await ownerHashFrom(id, owner);
+  const existing = await readRow(KEY_EMAIL, id);
+  if (existing?.ownerHash) {
+    if (!ownerHash) {
+      throw new PublicRefusal("Replacing this backup needs a signature from the account it belongs to.");
+    }
+    if (ownerHash !== existing.ownerHash) {
+      throw new PublicRefusal("That email already holds a backup for a different account. Use another email address for this one.");
+    }
+  }
+  await writeRow(KEY_EMAIL, id, { box, ...(ownerHash ? { ownerHash } : {}) });
+  return { ok: true };
 }
 
 /** Fetch the EMAIL-keyed box, or null. Always OTP-gated at the route. */
@@ -203,7 +275,9 @@ export async function putAliasBox(
   const proofHash = await sha256Hex(proof);
   const existing = await readRow(KEY_ALIAS, id);
   if (existing?.proofHash && existing.proofHash !== proofHash) {
-    throw new Error("this Face ID backup belongs to a different passkey");
+    // Public for the same reason the email refusals above are: a caller that cannot read this is
+    // told only "request failed", and there is no action behind that.
+    throw new PublicRefusal("This Face ID backup belongs to a different passkey.");
   }
   await writeRow(KEY_ALIAS, id, { box, proofHash });
   return { ok: true };

@@ -12,6 +12,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase1, savePhase2, setHome, setActive, removeAccount, isPublished, type Phase, type AccountKind } from "./keystore";
 import { createUserAccount } from "./new-account";
 import { localSignerFromSeed, type Signer } from "./signer";
+import { NeedsPasswordError } from "./signer-error";
+import { passwordStrength } from "./password-strength";
 import { activeNetwork, setActiveNetwork, mainnetConfig, type NetworkId } from "./network";
 import { DEFAULT_ARGON } from "./argon";
 import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, emptyBox, putCopy, findCopy, prfToBoxId, prfToAliasProof, type RecoveryBox } from "./recovery";
@@ -65,9 +67,17 @@ interface WalletState {
   /**
    * Back up the home seed into a portable, server-storable box (RECOVERY_ARCHITECTURE
    * §12): the same `password` locks the account locally (Phase 2) AND wraps the seed for
-   * recovery. Returns ONLY the ciphertext box — the seed never leaves this module.
+   * recovery. Only ciphertext leaves this module — `commit` is handed the box and must put it
+   * somewhere durable; the local Phase-2 lock is written only after it resolves.
+   *
+   * `newPassword` REPLACES an existing one, which is the only way past a password too weak to be
+   * the offline-crack floor for the box.
    */
-  secureRecovery: (password: string) => Promise<RecoveryBox>;
+  secureRecovery: (
+    password: string,
+    commit: (box: RecoveryBox) => Promise<void>,
+    newPassword?: string,
+  ) => Promise<void>;
   /**
    * Restore on a fresh device: open a fetched box with `password`, adopt the seed as the
    * home account (locked with that password), and unlock it for the session.
@@ -251,7 +261,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // survives as an override for forcing Phase 2 on a testnet build too.
     const onMainnet = activeNetwork().id === "public";
     if (account.phase === 1 && (onMainnet || process.env.NEXT_PUBLIC_REQUIRE_PHASE2 === "1")) {
-      throw new Error("Lock your money with a password first, then try again.");
+      // Typed, not generic: every money screen sends a signer failure to /unlock, and /unlock sends
+      // an account without a password back to /home. Undistinguished, this branch is that loop.
+      throw new NeedsPasswordError();
     }
     let signer: Signer;
     if (account.phase === 1) {
@@ -273,22 +285,34 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [account]);
 
   const secureRecovery = useCallback(
-    async (password: string): Promise<RecoveryBox> => {
+    async (
+      password: string,
+      commit: (box: RecoveryBox) => Promise<void>,
+      newPassword?: string,
+    ): Promise<void> => {
       if (!account) throw new Error("no local account");
-      let seed: Uint8Array;
-      if (account.phase === 1) {
-        // First lock: the same password locks this account locally (Phase 2)…
-        seed = await unlockPhase1(account.address);
-        await savePhase2(account.address, seed, password, DEFAULT_ARGON);
-      } else {
-        // Already locked: verify the password by decrypting with it (throws if wrong).
-        seed = (await unlockPhase2(password, account.address)).seed;
-      }
-      // …and wraps the seed into a portable box. Only the ciphertext leaves this module.
-      const box = putCopy(emptyBox(), await wrapWithPassword(seed, password));
+      // Whatever wraps the box is what somebody holding the fetched ciphertext gets to guess
+      // OFFLINE, bounded only by Argon2id. So the floor is enforced at the wrap, not merely in the
+      // form above it: a screen that locks first and backs up second could otherwise carry a
+      // 6-character device password straight into the server copy.
+      const key = newPassword ?? password;
+      const strong = passwordStrength(key);
+      if (!strong.ok) throw new Error(strong.reason ?? "Pick a stronger password.");
+      const wasPhase1 = account.phase === 1;
+      const seed = wasPhase1
+        ? await unlockPhase1(account.address)
+        : // Already locked: verify the password by decrypting with it (throws if wrong).
+          (await unlockPhase2(password, account.address)).seed;
+      const box = putCopy(emptyBox(), await wrapWithPassword(seed, key));
       setSessionSeed(seed); // keep unlocked this session (the session owns the seed)
+      // The backup has to LAND before this device is locked to the password behind it. Locking
+      // first left anyone whose emailed code was wrong or expired holding a Phase-2 account whose
+      // password had been typed exactly once and whose seed existed nowhere else.
+      await commit(box);
+      if (wasPhase1 || newPassword) {
+        await savePhase2(account.address, seed, key, DEFAULT_ARGON);
+      }
       await refresh(); // the phase may have changed 1 → 2
-      return box;
     },
     [account, refresh, setSessionSeed],
   );
@@ -430,6 +454,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const lockWithPassword = useCallback(
     async (password: string): Promise<void> => {
       if (!account) throw new Error("no local account");
+      // The same floor as the wrap: this password becomes the account's password, and a later
+      // backup hands it verbatim to secureRecovery as the key to server-stored ciphertext.
+      const strong = passwordStrength(password);
+      if (!strong.ok) throw new Error(strong.reason ?? "Pick a stronger password.");
       const seed = sessionSeed.current ?? (await unlockPhase1(account.address));
       await savePhase2(account.address, seed, password, DEFAULT_ARGON);
       setSessionSeed(seed);

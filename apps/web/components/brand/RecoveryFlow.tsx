@@ -5,11 +5,15 @@
  * RECOVERY_ARCHITECTURE §12 step 4. Value-first + vocabulary-clean: money + people,
  * "your password", "your email" — never wallet/crypto/seed jargon. The seed never leaves
  * lib/wallet.tsx + lib/recovery.ts; this component only moves an email, a one-time code,
- * a password (never stored or sent raw), and ciphertext. Warm-paper (app) styling.
+ * a password (never stored or sent raw), ciphertext, and — on a backup — a signer handle the
+ * store step uses to prove the account owns the row. Warm-paper (app) styling.
  *
  * Flow: email → 6-digit code (emailed) → password → done. On restore the fetched box is
  * cached, so a wrong password retries without a fresh code. Argon2id params are the
  * provisional DEFAULT_ARGON, tuned later from the on-device Spike #3 measurement.
+ *
+ * On the "secure" side the STORE happens before the device is locked (lib/wallet.tsx passes the
+ * store step in as `commit`), so a wrong or expired code leaves the account exactly as it was.
  */
 import { useEffect, useState } from "react";
 import { PrimaryButton } from "./PrimaryButton";
@@ -23,7 +27,7 @@ const field = "w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
-  const { account, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId } = useWallet();
+  const { account, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId } = useWallet();
   const secure = mode === "secure";
   /* In "secure" mode the SAME field means two opposite things, and saying "Choose a password" for
      both is what made this unusable: on a Phase-1 account the password you type BECOMES the
@@ -35,6 +39,13 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  /* An account locked before the strength floor existed cannot back up under that password — it
+     would become the key to ciphertext an attacker can fetch and grind offline. Replacing it is
+     the way through. Revealed only after a submit attempt, so the extra fields don't blink in and
+     out of the form while somebody is still typing. */
+  const [rekey, setRekey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fetched, setFetched] = useState<RecoveryBox | null>(null);
@@ -58,10 +69,16 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
      people out of their own account: a password set before the floor existed would be refused by
      the client before it ever got the chance to decrypt anything. */
   const settingNew = secure && !alreadyLocked;
-  const pwCheck = settingNew
-    ? passwordStrength(password)
-    : { ok: password.length >= 6, reason: undefined as string | undefined };
-  const pwOk = pwCheck.ok;
+  // The field that OPENS an existing account only has to be plausible.
+  const openOk = settingNew || password.length >= 6;
+  /* The floor lives on whichever field will WRAP the box — the chosen one on a fresh account, the
+     replacement on a re-key. lib/wallet.tsx::secureRecovery refuses a weak key at the wrap too, so
+     this form is never the only guard. */
+  const choosing = settingNew || rekey;
+  const chosen = settingNew ? password : newPassword;
+  const chosenCheck = passwordStrength(chosen);
+  const matches = confirm === chosen;
+  const pwOk = openOk && (!choosing || (chosenCheck.ok && matches));
 
   async function sendCode() {
     setError("");
@@ -78,24 +95,44 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
 
   async function finish() {
     setError("");
+    if (secure && !choosing && !passwordStrength(password).ok) {
+      // Ask for a replacement rather than letting the wrap refuse it: the password they just typed
+      // is the one they already have, and there is no other way for them to get a backup at all.
+      setRekey(true);
+      return;
+    }
     setBusy(true);
     try {
       if (secure) {
-        let box = await secureRecovery(password);
-        // The alias id is what makes a later "find my money with Face ID" possible: a second copy
-        // of this same ciphertext, stored where only this passkey can address it. Stored in the
-        // same request, behind the same verified code.
-        let alias: { aliasId: string; aliasProof: string } | undefined;
-        if (addFaceId && faceCapable) {
-          try {
-            const added = await addFaceIdBackup(box); // add a second (Face ID) copy before storing
-            box = added.box;
-            alias = { aliasId: added.aliasId, aliasProof: added.aliasProof };
-          } catch {
-            /* declined / unavailable on this device → ship the password-only box (still a full backup) */
-          }
-        }
-        await storeRecoveryBox(email.trim(), code.trim(), box, alias);
+        await secureRecovery(
+          password,
+          async (box) => {
+            // The alias id is what makes a later "find my money with Face ID" possible: a second
+            // copy of this same ciphertext, stored where only this passkey can address it. Stored
+            // in the same request, behind the same verified code.
+            let sealed = box;
+            let alias: { aliasId: string; aliasProof: string } | undefined;
+            if (addFaceId && faceCapable) {
+              try {
+                const added = await addFaceIdBackup(sealed); // a second (Face ID) copy before storing
+                sealed = added.box;
+                alias = { aliasId: added.aliasId, aliasProof: added.aliasProof };
+              } catch {
+                /* declined / unavailable on this device → ship the password-only box (still a full backup) */
+              }
+            }
+            /* What binds the stored row to THIS account. The emailed code proves control of an
+               inbox and the row's id is derived from that address, so without a signature a mailed
+               code alone is the whole distance between somebody else's mailbox and the only copy of
+               their key. secureRecovery holds the seed open across this callback, which is the one
+               moment in the flow where the account can sign for itself. No signer available right
+               now (a device that still refuses to unlock) → store unbound rather than refuse: an
+               unbound row is replaceable, a missing one is unrecoverable. */
+            const signer = await getSigner().catch(() => undefined);
+            await storeRecoveryBox(email.trim(), code.trim(), sealed, alias, signer);
+          },
+          rekey ? newPassword : undefined,
+        );
         if (account) markBackedUp(account.address); // only now is "backed up" true
       } else {
         let box = fetched;
@@ -139,7 +176,9 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
     return (
       <p className="text-sm font-medium text-money">
         {secure
-          ? "Your money is backed up. On a new phone, your email and password bring it back."
+          ? rekey
+            ? "Your money is backed up, and the new password is the one that opens it from now on."
+            : "Your money is backed up. On a new phone, your email and password bring it back."
           : "Welcome back. Your money is here."}
       </p>
     );
@@ -173,7 +212,8 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
           {alreadyLocked ? (
             <p className="text-xs text-ink-soft">
               This account already has a password. Enter <strong className="text-ink">that</strong> one
-              — it&apos;s the only thing that can open your money, so we can&apos;t change it here.
+              — it&apos;s the only thing that can open your money
+              {rekey ? ", and the only thing that can replace it." : ", so we can't change it here."}
             </p>
           ) : null}
           <input
@@ -194,10 +234,42 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
             onChange={(e) => setPassword(e.target.value)}
             className={field}
           />
+          {rekey && (
+            <>
+              <p className="text-xs text-ink-soft">
+                That password is too easy to be the only key to your money once a sealed copy of it
+                is stored. Choose a stronger one — it replaces the old one on this phone too.
+              </p>
+              <input
+                type="password"
+                autoComplete="new-password"
+                aria-label="Choose a stronger password"
+                placeholder="Choose a stronger password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className={field}
+              />
+            </>
+          )}
+          {/* Typed once, in a field that shows nothing back, for a password that cannot be reset. */}
+          {choosing && (
+            <input
+              type="password"
+              autoComplete="new-password"
+              aria-label="Type the password again"
+              placeholder="Type it again"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              className={field}
+            />
+          )}
           {secure && (
             <>
-              {password && !pwOk && pwCheck.reason && (
-                <p className="text-xs text-danger">{pwCheck.reason}</p>
+              {choosing && chosen && !chosenCheck.ok && chosenCheck.reason && (
+                <p className="text-xs text-danger">{chosenCheck.reason}</p>
+              )}
+              {choosing && chosenCheck.ok && confirm && !matches && (
+                <p className="text-xs text-danger">Those two don&apos;t match.</p>
               )}
               <p className="text-xs text-ink-soft">
                 Remember it, because it can&apos;t be reset. It is the only key to your money.

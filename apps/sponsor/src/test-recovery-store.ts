@@ -12,10 +12,17 @@
  *  anyone who knows a victim's email address could compute SHA-256 of it and fetch their backup
  *  with no code at all. The first two checks below ARE that guarantee, in both directions.
  *
+ *  The other half is WHO MAY WRITE. An emailed code proves control of an inbox, and the email id is
+ *  SHA-256 of that address — so a code alone would let whoever reads the mail paint over somebody's
+ *  only backup. Both namespaces bind a replacement to a key, and the last two sections pin that.
+ *
  *  RUN: pnpm --filter @lumenia/sponsor test:recovery-store   (no network, no keys)
  * ============================================================================
  */
+import { Keypair } from "@stellar/stellar-sdk";
 import { putBox, getBox, putAliasBox, getAliasBox, validateBox } from "./lib/recovery-store.js";
+import { handleProofMessage, proofNonce } from "./lib/handles.js";
+import { isPublicRefusal } from "./lib/caps.js";
 
 let passed = 0;
 let failed = 0;
@@ -45,6 +52,36 @@ const BOX = {
     { kind: "password", iv: "AAAA", ct: "BBBB", salt: "CCCC", argon: { memMiB: 48, time: 2, parallelism: 1 } },
   ],
 };
+/** A second, distinguishable box — what a re-backup writes, and what an attacker would write. */
+const OTHER_BOX = {
+  formatVersion: 1,
+  copies: [{ kind: "prf", iv: "DDDD", ct: "EEEE", hkdfSalt: "FFFF" }],
+};
+
+const alice = Keypair.random();
+const mallory = Keypair.random();
+
+/** The account's own authorization to write box `id` — signed exactly as the client signs it. */
+function ownerProof(
+  kp: Keypair,
+  id: string,
+  ts = Math.floor(Date.now() / 1000),
+  network: "testnet" | "mainnet" = "testnet",
+) {
+  const nonce = proofNonce();
+  const message = handleProofMessage("links", id, kp.publicKey(), ts, nonce, network);
+  return { pubkey: kp.publicKey(), ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
+}
+
+/** Reject, AND with text the caller may read — see the PublicRefusal section at the end. */
+async function rejectsPublicly(name: string, fn: () => Promise<unknown>) {
+  try {
+    await fn();
+    ok(name, false, "did NOT reject");
+  } catch (e) {
+    ok(name, isPublicRefusal(e), (e as Error).message.slice(0, 60));
+  }
+}
 
 async function main(): Promise<void> {
   console.log("============================================================");
@@ -107,6 +144,88 @@ async function main(): Promise<void> {
   );
   await rejects("alias put requires a proof at all", () => putAliasBox(hex("1"), BOX, undefined), "aliasProof");
   await rejects("alias put rejects a malformed proof", () => putAliasBox(hex("2"), BOX, "nope"), "aliasProof");
+
+  /* ---- EMAIL BOX OWNERSHIP: a code proves control of an INBOX, never of the account ---- */
+  const BOUND_ID = hex("3");
+  const LEGACY_ID = hex("4");
+
+  ok(
+    "a first box needs no signature — a new user has no account to prove yet",
+    await putBox(LEGACY_ID, BOX).then(() => true, () => false),
+  );
+  ok(
+    "a box written without one stays replaceable (rows that predate the binding)",
+    await putBox(LEGACY_ID, OTHER_BOX).then(() => true, () => false),
+  );
+  await rejects(
+    "a first write whose signature does not verify is refused, not treated as unsigned",
+    () => putBox(hex("5"), BOX, { ...ownerProof(alice, hex("5")), proof: ownerProof(mallory, hex("5")).proof }),
+    "does not match",
+  );
+  ok("and nothing was stored under it", (await getBox(hex("5"))) === null);
+
+  ok(
+    "a first box may bind itself to the account that made it",
+    await putBox(BOUND_ID, BOX, ownerProof(alice, BOUND_ID)).then(() => true, () => false),
+  );
+  await rejects(
+    "a verified code alone cannot then overwrite it (a stolen inbox is not the account)",
+    () => putBox(BOUND_ID, OTHER_BOX),
+    "signature",
+  );
+  await rejects(
+    "nor can another account's signature",
+    () => putBox(BOUND_ID, OTHER_BOX, ownerProof(mallory, BOUND_ID)),
+    "different account",
+  );
+  await rejects(
+    "nor the owner's own signature over a different box id",
+    () => putBox(BOUND_ID, OTHER_BOX, ownerProof(alice, LEGACY_ID)),
+    "does not match",
+  );
+  await rejects(
+    "nor a signature old enough to have been scraped from somewhere",
+    () => putBox(BOUND_ID, OTHER_BOX, ownerProof(alice, BOUND_ID, Math.floor(Date.now() / 1000) - 4000)),
+    "expired",
+  );
+  ok("the refused overwrites left the original box intact", JSON.stringify(await getBox(BOUND_ID)) === JSON.stringify(BOX));
+  ok(
+    "the account itself may still re-back-up",
+    await putBox(BOUND_ID, OTHER_BOX, ownerProof(alice, BOUND_ID)).then(() => true, () => false),
+  );
+  ok("and that write took effect", JSON.stringify(await getBox(BOUND_ID)) === JSON.stringify(OTHER_BOX));
+
+  await putBox(LEGACY_ID, BOX, ownerProof(alice, LEGACY_ID));
+  await rejects(
+    "an unbound row adopts the first proof it is given, and is bound from then on",
+    () => putBox(LEGACY_ID, OTHER_BOX, ownerProof(mallory, LEGACY_ID)),
+    "different account",
+  );
+
+  /* ---- The proof is pinned to the chain THIS deployment answers for ----
+     The web client posts every recovery call at one host whatever network the device is spending
+     on, so it signs for the HOST's chain rather than the device's. Signing for the other one has to
+     fail here, or that client bug would look like a refusal aimed at the user. */
+  await rejects(
+    "a proof signed for the other chain does not verify (network is not the caller's to choose)",
+    () => putBox(hex("6"), BOX, ownerProof(alice, hex("6"), Math.floor(Date.now() / 1000), "mainnet")),
+    "does not match",
+  );
+  ok("and nothing was stored under it", (await getBox(hex("6"))) === null);
+
+  /* ---- Refusals a person has to be able to READ ----
+     On a mainnet-configured host the Worker collapses every error that is not a PublicRefusal to
+     "request failed", which is not something anybody can act on. These three are the only refusals
+     this store aims at a user, so all three keep their text. */
+  await rejectsPublicly("the 'needs a signature' refusal survives mainnet error-hiding", () =>
+    putBox(BOUND_ID, OTHER_BOX),
+  );
+  await rejectsPublicly("so does the 'different account' refusal", () =>
+    putBox(BOUND_ID, OTHER_BOX, ownerProof(mallory, BOUND_ID)),
+  );
+  await rejectsPublicly("so does the alias 'different passkey' refusal", () =>
+    putAliasBox(ALIAS_ID, BOX, OTHER_PROOF),
+  );
 
   /* ---- validateBox is genuinely SHARED, not re-implemented per namespace ---- */
   ok("validateBox accepts the good box", (() => {
