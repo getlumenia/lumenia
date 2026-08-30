@@ -12,7 +12,7 @@ import { Copy, Check } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
 import { buildRequestLink, clampAskName, makeNonce, saveAsk } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
-import { formatUsd } from "../../../lib/money";
+import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
 import { shareMoneyLink } from "../../../lib/share";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
@@ -97,7 +97,7 @@ export default function SplitPage() {
           <input
             inputMode="decimal"
             value={total}
-            onChange={(e) => setTotal(e.target.value.replace(/[^0-9.]/g, ""))}
+            onChange={(e) => setTotal(sanitizeAmountInput(e.target.value))}
             placeholder="0.00"
             className="w-full bg-transparent px-2 py-3 text-lg text-ink outline-none"
           />

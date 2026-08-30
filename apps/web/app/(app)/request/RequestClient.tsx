@@ -13,7 +13,7 @@ import { Copy, Check } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
 import { buildRequestLink, clampAskName, loadAsks, makeNonce, saveAsk, type AskRecord } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
-import { formatUsd } from "../../../lib/money";
+import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
@@ -134,7 +134,7 @@ export function RequestClient() {
           <input
             inputMode="decimal"
             value={amount}
-            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+            onChange={(e) => setAmount(sanitizeAmountInput(e.target.value))}
             placeholder="0.00"
             className="w-full bg-transparent px-2 py-3 text-lg text-ink outline-none"
           />

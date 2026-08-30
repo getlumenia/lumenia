@@ -12,6 +12,7 @@
  */
 import {
   rpc,
+  Account,
   Horizon,
   Address,
   Contract,
@@ -58,7 +59,13 @@ const dropContracts = (net: NetworkConfig): string[] => [
 ];
 const UNIT = 10_000_000n; // 1 USDC = 1e7 stroops
 
-const usdcStroops = (amount: string) => BigInt(Math.round(Number.parseFloat(amount) * Number(UNIT)));
+/* Split the decimal string; never multiply a float by 1e7. Past ~$900M that product crosses
+   MAX_SAFE_INTEGER before the rounding can catch it, and the escrow would be handed an amount that
+   is not the one the sender typed. Same conversion lib/horizon.ts sums balances with. */
+const usdcStroops = (amount: string): bigint => {
+  const [whole, frac = ""] = amount.trim().split(".");
+  return BigInt(whole || "0") * UNIT + BigInt(`${frac}0000000`.slice(0, 7));
+};
 const stroopsToUsdc = (s: bigint): string => {
   const neg = s < 0n;
   const a = neg ? -s : s;
@@ -129,6 +136,12 @@ export async function createV2Link(opts: {
   const prepared = rpc.assembleTransaction(tx, sim).build();
   await opts.signer.sign(prepared); // sender authorizes (source-account auth covers the SAC transfer)
 
+  /* The instant this signed transaction stops being includable, and therefore the instant an empty
+     escrow starts meaning anything. The sponsor gives up watching after ~60s while the tx keeps its
+     full validity window, so "no drop yet" before this is still in flight, not a refusal. A tx
+     without an upper bound would never reach that point. */
+  const retrySafeAfter = Number(prepared.timeBounds?.maxTime ?? 0) * 1000 || Number.POSITIVE_INFINITY;
+
   // Gasless: the sponsor fee-bumps + submits the sender-signed inner (the sender pays no XLM).
   /* Assembled BEFORE the deposit is submitted. The link is a pure function of the key we just
      generated, so having it early costs nothing — and it means an unconfirmed deposit can still be
@@ -152,7 +165,8 @@ export async function createV2Link(opts: {
      * convenient answer. */
     const landed = await v2DepositLanded(linkHex, sender);
     if (landed === true) return { link: url, linkHex, hash: "" };
-    if (landed === "unknown") throw new DepositUncertainError(linkHex, url);
+    if (landed === "unknown" || Date.now() < retrySafeAfter)
+      throw new DepositUncertainError(linkHex, url, retrySafeAfter);
     throw new Error("couldn't reach the sponsor");
   }
   /* Three outcomes, and conflating them is what lost money.
@@ -161,9 +175,10 @@ export async function createV2Link(opts: {
    *
    * 202 — accepted by the ledger, not yet observed. NOT a failure. Ask the escrow directly; it is
    *       the only authority on whether this drop exists. If it does, the send succeeded and the
-   *       user gets their link. If the escrow says no, nothing moved and a retry is safe. If we
-   *       cannot read it either, we say so — and the caller must not offer a plain "try again",
-   *       because a retry mints a SECOND drop under a fresh link key.
+   *       user gets their link. An empty escrow only means "nothing moved" once the signed tx can
+   *       no longer be included — until then it may still be in the queue, and a retry mints a
+   *       SECOND drop under a fresh link key. If we cannot read the escrow either, we say so — and
+   *       the caller must not offer a plain "try again".
    *
    * A rejected request (4xx/5xx) never reached the ledger, so those still throw normally: the
    * pilot gate, the caps and the anti-drain validator all answer before anything is submitted.
@@ -171,8 +186,9 @@ export async function createV2Link(opts: {
   const text = await res.text();
   if (res.status === 202) {
     const landed = await v2DepositLanded(linkHex, sender);
+    if (landed === "unknown" || (landed === false && Date.now() < retrySafeAfter))
+      throw new DepositUncertainError(linkHex, url, retrySafeAfter);
     if (landed === false) throw new Error(`/v2-deposit → not submitted: ${text}`);
-    if (landed === "unknown") throw new DepositUncertainError(linkHex, url);
     // landed === true → it did happen; fall through and hand back the link.
   } else if (!res.ok) {
     throw new Error(`/v2-deposit → ${res.status}: ${text}`);
@@ -251,9 +267,97 @@ export async function claimV2(opts: {
 
 
 /**
+ * What a claim attempt actually did. A discriminated result rather than a thrown Error, because
+ * these three failures are the escrow's settled answer about the drop itself — the claim screen has
+ * to name which one it is and must not offer a retry — while everything that CAN be retried (the
+ * RPC, the relayer, a dropped connection) still arrives as a throw.
+ */
+export type V2ClaimOutcome =
+  | { kind: "claimed"; hash: string; publicKey: string; seed: Uint8Array }
+  | { kind: "already-claimed" }
+  | { kind: "no-such-drop" }
+  /** Group drops only: `claim_share` is refused from the expiry on, a one-to-one `claim` is not. */
+  | { kind: "expired" };
+
+/**
+ * True when asking again cannot change the answer. A "claimed" outcome is not a retry question —
+ * it already paid out — and every retryable failure reaches the caller as a thrown error instead.
+ */
+export function isTerminalClaimOutcome(o: V2ClaimOutcome): boolean {
+  return o.kind !== "claimed";
+}
+
+/** A read-only simulation needs a source account, not an existing one — the SDK's impossible one. */
+const NULL_SOURCE = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+/**
+ * Can this link still pay out? Asked of whichever escrow holds it, and asked BEFORE anything is
+ * created for the claim.
+ *
+ * The order is the point. Creating the sponsored account first meant every tap on a dead link burnt
+ * a sponsor reserve and filed an empty account into this device's keystore, which then costs a
+ * balance read on every /home, /send and /account for as long as the device keeps it — so anyone
+ * holding a spent link could run that up with the retry button.
+ *
+ * A read we could not finish is not "no such drop": it throws, so the caller keeps its retry.
+ */
+async function readClaimState(
+  server: rpc.Server,
+  linkHex: string,
+  group: boolean,
+  net: NetworkConfig,
+): Promise<"claimable" | "already-claimed" | "no-such-drop" | "expired"> {
+  const view = group ? "get_pool" : "get_drop";
+  let unread = false;
+  for (const contract of dropContracts(net)) {
+    try {
+      const tx = new TransactionBuilder(new Account(NULL_SOURCE, "0"), {
+        fee: "1000000",
+        networkPassphrase: net.passphrase,
+      })
+        .addOperation(new Contract(contract).call(view, xdr.ScVal.scvBytes(Buffer.from(linkHex, "hex"))))
+        .setTimeout(60)
+        .build();
+      const sim = await server.simulateTransaction(tx);
+      if (rpc.Api.isSimulationError(sim)) {
+        unread = true;
+        continue;
+      }
+      const val = (sim as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+      if (!val) {
+        unread = true;
+        continue;
+      }
+      const d = scValToNative(val) as {
+        claimed?: boolean | number;
+        expiry?: bigint | number;
+        slots?: number;
+        remaining?: bigint;
+        amount_per?: bigint;
+      } | null;
+      if (d == null) continue; // this escrow doesn't hold it ⇒ try the next
+      if (!group) return d.claimed ? "already-claimed" : "claimable";
+      // claim_share is the one entrypoint the contract refuses once expiry passes; a one-to-one
+      // drop stays claimable until the sender reclaims it, and that is what sets `claimed`.
+      if (Math.floor(Date.now() / 1000) >= Number(d.expiry ?? 0)) return "expired";
+      const exhausted =
+        Number(d.claimed ?? 0) >= Number(d.slots ?? 0) || (d.remaining ?? 0n) < (d.amount_per ?? 0n);
+      return exhausted ? "already-claimed" : "claimable";
+    } catch {
+      unread = true; // unreachable escrow ⇒ try the next one
+    }
+  }
+  // "No drop" only holds if EVERY escrow said so. One we could not reach may be the one holding the
+  // money, and "your link is dead" is the one answer that must never be a guess.
+  if (unread) throw new Error("couldn't read the escrow");
+  return "no-such-drop";
+}
+
+/**
  * The walletless recipient path for the v2 UI: create a fresh account with a sponsored USDC
  * trustline (reusing the sponsor's /create-account — 0 XLM to the recipient), then claim the v2
- * drop straight into it via the relayer. Returns the new account + seed to persist locally.
+ * drop straight into it via the relayer. On success the outcome carries the new account + seed to
+ * persist locally.
  *
  * (A classic account needs a USDC trustline to hold the SAC balance — hence the sponsored
  * create-account; the trustline reserve is the sponsor's. The zero-reserve win fully lands once
@@ -267,9 +371,17 @@ export async function claimV2ToSponsoredAccount(opts: {
   group?: boolean;
   /** Called once the payout account exists on-ledger, BEFORE the claim is relayed. */
   onAccountReady?: (publicKey: string, seed: Uint8Array) => Promise<void> | void;
-}): Promise<{ hash: string; publicKey: string; seed: Uint8Array }> {
+}): Promise<V2ClaimOutcome> {
   const net = opts.net ?? defaultNet();
   const base = (opts.sponsorUrl || net.sponsorUrl).replace(/\/$/, "");
+  const server = new rpc.Server(net.rpcUrl);
+  const linkHex = Buffer.from(Keypair.fromSecret(opts.linkSecret).rawPublicKey()).toString("hex");
+
+  // Everything below this line spends a sponsor reserve and leaves an account on this device. A
+  // drop that can never pay out must cost neither, however many times the button is pressed.
+  const state = await readClaimState(server, linkHex, Boolean(opts.group), net);
+  if (state !== "claimable") return { kind: state };
+
   const horizon = new Horizon.Server(net.horizonUrl);
   const payout = Keypair.random();
 
@@ -304,7 +416,7 @@ export async function claimV2ToSponsoredAccount(opts: {
     net,
     group: opts.group,
   });
-  return { hash, publicKey: payout.publicKey(), seed: new Uint8Array(payout.rawSecretKey()) };
+  return { kind: "claimed", hash, publicKey: payout.publicKey(), seed: new Uint8Array(payout.rawSecretKey()) };
 }
 
 /* -------------------------- v2 reclaim (C2 recovery) -------------------------- */
@@ -403,6 +515,10 @@ export class DepositUncertainError extends Error {
     /** The claim URL this attempt would produce. Carried because the deposit may yet land, and a
      *  recipient cannot be paid with a drop whose link we threw away. */
     readonly link: string,
+    /** Unix ms after which the signed deposit can no longer be included, so an empty escrow is at
+     *  last proof that nothing moved. A re-check before this can only ever answer "not yet"; only
+     *  past it may the UI offer to send again. */
+    readonly retrySafeAfter: number,
   ) {
     super("deposit submitted but not confirmed");
     this.name = "DepositUncertainError";

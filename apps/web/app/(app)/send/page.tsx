@@ -23,13 +23,14 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
+import { isNeedsPassword } from "../../../lib/signer-error";
 import { loadTotalUsd } from "../../../lib/horizon";
 import { payToAddress } from "../../../lib/send";
 import { createV2Link, DepositUncertainError, v2DepositLanded } from "../../../lib/lumendrop";
 import { claimPasswordProblem } from "../../../lib/claim-password";
 import { isValidAddress } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
-import { formatUsd } from "../../../lib/money";
+import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
 import { netKey } from "../../../lib/scoped-store";
 import { activeNetwork } from "../../../lib/network";
 import { copy } from "../../../lib/copy";
@@ -54,6 +55,34 @@ import { LinkReadyCard } from "../../../components/brand/LinkReadyCard";
  */
 /** Must match MAX_DROP_USDC on the mainnet Worker; same env var the /pilot page promises. */
 const PILOT_TX_CAP_USD = process.env.NEXT_PUBLIC_PILOT_TX_CAP_USD ?? "5";
+
+/**
+ * When an empty escrow becomes EVIDENCE that nothing was submitted.
+ *
+ * A signed deposit stays includable until its transaction's own time bound expires, so until then
+ * "this link holds nothing" is "not yet", not "never" — and telling somebody inside that window
+ * that nothing left their account invites the retry that mints a second drop and pays twice. The
+ * bound belongs to the transaction, so it travels on the failure. The stand-in is for a deposit
+ * path that named none, and is longer than the window such a transaction is built with; it is
+ * measured from the moment the send gave up, which is already past the build.
+ */
+const RETRY_SAFE_AFTER_MS = 150_000;
+
+function retrySafeAt(e: DepositUncertainError): number {
+  const carried = (e as { retrySafeAfter?: unknown }).retrySafeAfter;
+  return typeof carried === "number" && !Number.isNaN(carried)
+    ? carried
+    : Date.now() + RETRY_SAFE_AFTER_MS;
+}
+
+/** The wait is the only answer a re-check inside the window has. A transaction built with no
+ *  upper bound carries an infinite one, so this must survive a wait it cannot name. */
+function waitHint(safeAt: number): string {
+  const left = safeAt - Date.now();
+  if (!Number.isFinite(left) || left <= 0) return "Check again in a moment.";
+  const mins = Math.ceil(left / 60_000);
+  return `We'll know for sure in about ${mins === 1 ? "a minute" : `${mins} minutes`}.`;
+}
 
 function sponsorUrl(): string {
   return activeNetwork().sponsorUrl;
@@ -117,13 +146,29 @@ export default function SendPage() {
   const [wantPassword, setWantPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  /* Whether a send is already running, readable the instant the second tap arrives. `busy` cannot
+     answer that: it applies on the next render, and the reads a send does first are awaited. */
+  const sending = useRef(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [error, setError] = useState("");
   const [refusedByPilot, setRefusedByPilot] = useState(false);
+  /** The account has no password yet — a different errand from a locked one, and /unlock can't do it. */
+  const [needsPassword, setNeedsPassword] = useState(false);
   /* A deposit we submitted but could not confirm. Distinct from `error` on purpose: an error screen
      invites a retry, and retrying this is the failure mode. */
-  const [uncertain, setUncertain] = useState<{ linkHex: string; link: string; amount: string } | null>(null);
+  const [uncertain, setUncertain] = useState<{
+    linkHex: string;
+    link: string;
+    amount: string;
+    /** before this, an empty escrow is not yet evidence — see RETRY_SAFE_AFTER_MS. */
+    safeAt: number;
+    /** carried so a drop that turns up later is still described as the one that was made. */
+    locked: boolean;
+  } | null>(null);
   const [rechecking, setRechecking] = useState(false);
+  /* What a re-check found when it could not conclude. The window is minutes long, so most taps
+     land there — and with nothing to show for one, the screen is identical before and after. */
+  const [notYet, setNotYet] = useState("");
   const [ready, setReady] = useState<Ready | null>(null);
 
   /* Sum EVERY stored account, the way /home and /account do. Reading only the home account meant a
@@ -293,9 +338,23 @@ export default function SendPage() {
     }
   }
 
+  /* The button stays live through the reads below — a top-up in flight, a balance that has not
+     arrived — because nothing has re-rendered yet. Two taps in that window each ran a whole send:
+     two signed deposits, two funded links, and only the second one on screen. */
   async function send() {
+    if (sending.current) return;
+    sending.current = true;
+    try {
+      await sendOnce();
+    } finally {
+      sending.current = false;
+    }
+  }
+
+  async function sendOnce() {
     setError("");
     setRefusedByPilot(false);
+    setNeedsPassword(false);
     // Validate the ROUNDED amount — "0.001" parses > 0 but formats to "0.00",
     // which the ledger (and /r's parser) rejects. The guard must see what ships.
     const amt = Math.round(Number.parseFloat(amount) * 100) / 100;
@@ -359,7 +418,20 @@ export default function SendPage() {
       let signer;
       try {
         signer = await getSigner();
-      } catch {
+      } catch (e) {
+        /* Two different errands arrive as the same refusal, and only one of them is "locked".
+           /unlock opens a Phase-2 blob and turns everything else straight back to /home, so an
+           account that simply has no password yet was bounced through two screens and left where it
+           started, with nothing naming the thing it has to do. Same distinction the account menu
+           draws, and the same screen it sends people to.
+
+           Offered, not jumped to: a sentence set on the way out of a page is a sentence nobody
+           reads, and being moved off the amount you just typed reads as the send having failed. */
+        if (isNeedsPassword(e) || account!.phase === 1) {
+          setError("Set a password to finish — until then, this money can't be sent.");
+          setNeedsPassword(true);
+          return;
+        }
         // Phase-2 account is locked → unlock, then come back and finish. Carry
         // the CURRENT amount in the return URL — the mount effect re-prefills
         // from the query, and reverting a payer's edited amount to the full
@@ -443,7 +515,14 @@ export default function SendPage() {
         // Persist the link now, not on success: if this deposit lands later, the only copy of the
         // claim URL is the one we are holding here, and a reload would otherwise lose it.
         void rememberLink(e.linkHex.slice(-8), e.link);
-        setUncertain({ linkHex: e.linkHex, link: e.link, amount: amt.toFixed(2) });
+        setNotYet(""); // a verdict on the previous attempt, not this one
+        setUncertain({
+          linkHex: e.linkHex,
+          link: e.link,
+          amount: amt.toFixed(2),
+          safeAt: retrySafeAt(e),
+          locked: Boolean(lockWith),
+        });
         return; // deliberately skips setError — this is not an error screen
       }
 
@@ -467,17 +546,32 @@ export default function SendPage() {
   if (uncertain) {
     async function recheck() {
       setRechecking(true);
+      setNotYet("");
       try {
         const landed = await v2DepositLanded(uncertain!.linkHex, account!.address);
         if (landed === true) {
-          setReady({ kind: "link", link: uncertain!.link, balanceId: uncertain!.linkHex, locked: false });
+          setReady({
+            kind: "link",
+            link: uncertain!.link,
+            balanceId: uncertain!.linkHex,
+            locked: uncertain!.locked,
+          });
           setUncertain(null);
-        } else if (landed === false) {
-          // Definitively nothing there — sending again is safe, so let them.
+        } else if (landed === false && Date.now() >= uncertain!.safeAt) {
+          // Nothing there, and nothing can reach it any more — sending again is safe, so let them.
           setUncertain(null);
           setError("That one didn't go through. Nothing left your account — you can try again.");
+        } else {
+          /* "unknown", or an empty escrow the money could still land in ⇒ stay exactly here.
+             Claiming either verdict would be inventing an answer; saying nothing at all left the
+             tap indistinguishable from a screen that had stopped working, which is why the wait
+             gets named instead. */
+          setNotYet(
+            landed === "unknown"
+              ? "We couldn't check just now. Nothing has changed — try again in a moment."
+              : `It hasn't arrived yet, and it can still get there. ${waitHint(uncertain!.safeAt)}`,
+          );
         }
-        // "unknown" ⇒ stay exactly here. Saying anything else would be inventing an answer.
       } finally {
         setRechecking(false);
       }
@@ -498,6 +592,7 @@ export default function SendPage() {
             Check again in a moment. If it went through, your link appears here. If it didn&apos;t,
             we&apos;ll say so and nothing will have left your account.
           </p>
+          {notYet && <p className="mt-3 text-sm font-medium text-ink">{notYet}</p>}
           <div className="mt-4">
             <PrimaryButton loading={rechecking} loadingLabel="Checking…" onClick={recheck}>
               Check again
@@ -632,7 +727,7 @@ export default function SendPage() {
               <input
                 inputMode="decimal"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+                onChange={(e) => setAmount(sanitizeAmountInput(e.target.value))}
                 placeholder="0.00"
                 className="w-full bg-transparent px-2 py-3 text-lg text-ink outline-none"
               />
@@ -709,6 +804,13 @@ export default function SendPage() {
             </div>
           )}
           {error && <p className="text-sm text-danger">{error}</p>}
+          {/* The errand's one name, pointing at its one destination — the same words and the same
+              place /send-out, /notifications and the account menu use for it. */}
+          {needsPassword && (
+            <Link href="/account" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
+              Set a password
+            </Link>
+          )}
           {refusedByPilot && (
             <Link href="/pilot" className="text-sm underline underline-offset-2 text-ink-soft hover:text-ink">
               Ask to join the pilot

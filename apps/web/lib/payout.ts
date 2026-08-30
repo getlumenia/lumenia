@@ -31,6 +31,7 @@ import {
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
+import { loadTransfer } from "./horizon";
 import { activeNetwork } from "./network";
 import { assertHealthMatchesPin, pinnedUsdcIssuer } from "./tx-guard";
 
@@ -186,6 +187,91 @@ export interface PayoutResult {
 }
 
 /**
+ * Thrown when the payment was handed over but its outcome could not be established. Same
+ * doctrine, same vocabulary as `DepositUncertainError` in lib/lumendrop.ts — one word for one
+ * thing, so nobody has to learn two.
+ *
+ * It is NOT a failure. The transaction stays valid until its timebound expires, so it may still
+ * be included; the caller must not offer a retry, because a second attempt here is a second
+ * payment to an exchange, with no reclaim window and no link to un-send.
+ *
+ * It is also not permanent. It carries the two things that end it — the hash to ask the public
+ * record about, and the moment after which that record's silence is proof — so a caller can
+ * resolve it (`payoutRecord`) rather than leave someone holding a warning nothing can lift.
+ */
+export class PayoutUncertainError extends Error {
+  constructor(
+    /**
+     * The payment's own transaction hash. The sponsor wraps it in a fee-bump before submitting,
+     * but Horizon resolves a fee-bumped transaction by its INNER hash as well, so this is the id
+     * that settles the question — and the only pointer that survives an answer that never came.
+     */
+    readonly hash: string,
+    /**
+     * Unix ms after which the signed payment can no longer be included, so its absence from the
+     * public record is at last proof that nothing moved. A read taken before this can only ever
+     * answer "not yet"; only past it may a caller offer to send again.
+     */
+    readonly retrySafeAfter: number,
+  ) {
+    super("payout submitted but not confirmed");
+    this.name = "PayoutUncertainError";
+  }
+}
+
+/**
+ * Answers that decide nothing. Horizon times out with the transaction still queued, an edge that
+ * dies mid-request says nothing about what the sponsor already submitted, and 202 is "accepted,
+ * outcome unknown" — the shape /v2-deposit already answers with, accepted here so that a sponsor
+ * which marks an unconfirmed submission is believed without a second change on this side. 503 is
+ * deliberately absent: the kill-switch answers before anything is submitted, so it genuinely
+ * means nothing moved.
+ */
+const UNCONFIRMED_STATUS = new Set([202, 408, 500, 502, 504, 522, 524]);
+
+/**
+ * The sponsor's mainnet answer when it will not say why: `{"error":"request failed","ref":…}`
+ * (apps/sponsor/src/worker.ts), which every reason that isn't a published product rule collapses
+ * into. Caps and floors keep their text on every network and the rate limiter answers 429 with
+ * its own, but this one body still covers BOTH a submission Horizon never ruled on AND a refusal
+ * decided before anything was submitted — a definitive `op_underfunded` reads exactly like a
+ * gateway timeout. So it is a reason to go and ask the ledger, never on its own an answer.
+ */
+function sponsorGaveNoReason(text: string): boolean {
+  try {
+    return (JSON.parse(text) as { error?: unknown }).error === "request failed";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What the public record says about one payment.
+ *
+ *  - `confirmed` — included and successful: the money moved.
+ *  - `rejected`  — included and failed: the fee was consumed, the payment was not made. Final.
+ *  - `absent`    — no such transaction. Final ONLY once the signed payment can no longer be
+ *                  included (`retrySafeAfter`); before that it means "not yet", not "never".
+ *  - `unknown`   — a read that did not complete. Never reported as either of the others.
+ */
+export type PayoutRecord = "confirmed" | "rejected" | "absent" | "unknown";
+
+/**
+ * Ask the ledger about a payment by its hash — the authority the send-out screen already points
+ * people at, reachable here directly instead of only by hand. Callers must weigh `absent` against
+ * `PayoutUncertainError.retrySafeAfter` before treating it as proof that nothing moved.
+ */
+export async function payoutRecord(hash: string): Promise<PayoutRecord> {
+  try {
+    const tx = await loadTransfer(hash);
+    if (!tx) return "absent";
+    return tx.successful ? "confirmed" : "rejected";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
  * Send dollars out: one sender-signed `payment` with the memo attached, fee-bumped by
  * the sponsor so a 0-XLM user can still move their own money. The sponsor's /payout
  * policy re-checks the destination and amount against what we declare here, so a
@@ -225,17 +311,57 @@ export async function sendOut(opts: PayoutInput): Promise<PayoutResult> {
   const inner = builder.build();
   await opts.signer.sign(inner);
 
-  const res = await fetch(`${base}/payout`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      xdr: inner.toXDR(),
-      senderPublicKey: sender,
-      destination: opts.destination,
-      amount: opts.amount,
-    }),
-  });
-  const text = await res.text();
+  const hash = inner.hash().toString("hex");
+  /* The moment after which the ledger's silence stops being "not yet" and becomes proof. A
+   * transaction with no upper bound would never reach it, so absence could never settle anything. */
+  const retrySafeAfter = Number(inner.timeBounds?.maxTime ?? 0) * 1000 || Number.POSITIVE_INFINITY;
+
+  /* An answer that decided nothing is not a verdict, and neither is a guess about it. Ask the one
+   * authority that can rule — the same public record the screen tells people to check — and report
+   * what it actually says. Only where it cannot yet rule does the payment stay undecided. */
+  const settle = async (detail: string): Promise<PayoutResult> => {
+    const record = await payoutRecord(hash);
+    if (record === "confirmed") return { hash };
+    if (record === "rejected" || (record === "absent" && Date.now() >= retrySafeAfter)) {
+      throw new Error(detail);
+    }
+    throw new PayoutUncertainError(hash, retrySafeAfter);
+  };
+
+  let res: Response;
+  let text: string;
+  try {
+    res = await fetch(`${base}/payout`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        xdr: inner.toXDR(),
+        senderPublicKey: sender,
+        destination: opts.destination,
+        amount: opts.amount,
+      }),
+    });
+    text = await res.text();
+  } catch {
+    /* No answer at all. A phone that loses signal mid-flight looks identical to one whose request
+     * never left, and the sponsor may already have submitted the payment. */
+    return await settle("/payout → no answer");
+  }
+  /* Three outcomes, and conflating them is what sends money twice.
+   *
+   * A definite rejection that says why never reached the ledger: the caps and floors keep their
+   * text on every network and the rate limiter answers 429 with its own, so those throw normally.
+   *
+   * Everything else is undecided BY THIS ANSWER, and only by it. `submit unconfirmed` is the
+   * sponsor's word for a submission Horizon never ruled on (apps/sponsor/src/lib/stellar.ts) and
+   * reaches us verbatim only where the Worker passes error text through; the status list covers a
+   * dead edge that writes no body at all; and on mainnet a withheld reason hides a submission and
+   * a plain refusal behind the same body. None of the three is grounds to tell someone their money
+   * is safe — this is the one screen where a wrong "nothing moved" pays the exchange twice — but
+   * none is grounds to leave them with an unresolvable warning either, so each goes to the ledger. */
+  if (UNCONFIRMED_STATUS.has(res.status) || /submit unconfirmed/i.test(text) || sponsorGaveNoReason(text)) {
+    return await settle(`/payout → ${res.status}: ${text}`);
+  }
   if (!res.ok) throw new Error(`/payout → ${res.status}: ${text}`);
   return JSON.parse(text) as PayoutResult;
 }

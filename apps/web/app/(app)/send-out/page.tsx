@@ -38,10 +38,13 @@ import {
   parsePaymentUri,
   sendOut,
   MEMO_TEXT_MAX_BYTES,
+  PayoutUncertainError,
   type DestinationCheck,
   type MemoKind,
 } from "../../../lib/payout";
-import { formatUsd } from "../../../lib/money";
+import { isNeedsPassword } from "../../../lib/signer-error";
+import { pinnedUsdcIssuer } from "../../../lib/tx-guard";
+import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
 import { sendEvent } from "../../../lib/events";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
@@ -59,11 +62,22 @@ const DRAFT_KEY = () => netKey("lumenia.sendout.draft");
  * hijacked clipboard. Local only; never sent anywhere.
  */
 const SAVED_KEY = () => netKey("lumenia.sendout.destination");
+/**
+ * A payment that was handed over and never ruled on. Kept on the device because the screen that
+ * says "don't send it again yet" is worthless if the back button, a tab reopened later or a plain
+ * reload turns it back into a form. Cleared only when the person says they have checked.
+ */
+const PENDING_KEY = () => netKey("lumenia.sendout.pending");
 
 interface SavedDestination {
   address: string;
   memo: string;
   memoKind: MemoKind;
+  at: string;
+}
+
+interface PendingPayout {
+  amount: string;
   at: string;
 }
 
@@ -74,7 +88,6 @@ export default function SendOutPage() {
   const router = useRouter();
 
   const [balance, setBalance] = useState<string | null>(null);
-  const [issuer, setIssuer] = useState<string | null>(null);
   const [raw, setRaw] = useState("");
   const [memo, setMemo] = useState("");
   const [memoKind, setMemoKind] = useState<MemoKind>("text");
@@ -85,6 +98,10 @@ export default function SendOutPage() {
   const [understood, setUnderstood] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  /** The account has no password yet — a different errand from a locked one, and /unlock can't do it. */
+  const [needsPassword, setNeedsPassword] = useState(false);
+  /** Handed to the network, never confirmed. Its own screen, because it is not an error. */
+  const [pending, setPending] = useState<PendingPayout | null>(null);
   const [hash, setHash] = useState("");
   const [copiedProof, setCopiedProof] = useState(false);
   const [saved, setSaved] = useState<SavedDestination | null>(null);
@@ -97,6 +114,14 @@ export default function SendOutPage() {
   // a typo gets introduced, so losing the form to a password prompt would be its own
   // hazard. Nothing secret is kept here: an address and an amount, for this tab only.
   useEffect(() => {
+    // Read first, and on its own: an undecided payment has to reach the screen even if the draft
+    // below is unreadable.
+    try {
+      const held = localStorage.getItem(PENDING_KEY());
+      if (held) setPending(JSON.parse(held) as PendingPayout);
+    } catch {
+      /* storage blocked — nothing to restore */
+    }
     try {
       const draft = sessionStorage.getItem(DRAFT_KEY());
       if (draft) {
@@ -137,22 +162,6 @@ export default function SendOutPage() {
     if (parsed?.amount) setAmount((a) => (a === "" ? parsed.amount! : a));
   }, [raw]);
 
-  // The exact dollars we hold — needed to tell whether the destination can receive them.
-  // Mainnet-aware: an approved user on real money must read the issuer from the MAINNET
-  // sponsor (its own USDC), not testnet — otherwise the destination check runs against the
-  // wrong asset. activeNetwork() is testnet by default, so nothing changes for practice money.
-  useEffect(() => {
-    let alive = true;
-    fetch(`${activeNetwork().sponsorUrl.replace(/\/$/, "")}/health`)
-      .then((r) => r.json() as Promise<{ usdcIssuer?: string }>)
-      .then((h) => alive && setIssuer(h.usdcIssuer ?? null))
-      .catch(() => alive && setIssuer(null));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-
   // A pasted deposit link carries the address and the tag together; a pasted address
   // is just an address. Both end up as the same three values.
   const uri = parsePaymentUri(raw);
@@ -168,16 +177,19 @@ export default function SendOutPage() {
    * second time — but typing the password IS the confirmation; the second tap carried no new
    * information and read as if the first one had failed.
    *
-   * Auto-continuing a REAL MONEY transfer needs to be narrow, so all four of these must hold, and
+   * Auto-continuing a REAL MONEY transfer needs to be narrow, so all five of these must hold, and
    * the flag is consumed before anything is signed:
    *   - the draft was written by this page routing to /unlock (`resumeAt` exists),
    *   - it happened in the last two minutes, so a tab reopened later never fires,
    *   - the account is actually unlocked now, so this cannot run as a bare page visit,
+   *   - no payment is already awaiting an answer — the consume below is a storage write and can
+   *     fail, and the one-shot ref lasts only as long as this mount, so a remount inside the two
+   *     minutes is the one way this could pay an exchange twice with nobody touching anything,
    *   - and it runs at most once, whatever React does with the effect.
    */
   const resumed = useRef(false);
   useEffect(() => {
-    if (status !== "ready" || !unlocked || busy || resumed.current) return;
+    if (status !== "ready" || !unlocked || busy || resumed.current || pending) return;
     type ResumableDraft = { resumeAt?: number; raw?: string; amount?: string };
     let draft: ResumableDraft | null = null;
     try {
@@ -196,7 +208,7 @@ export default function SendOutPage() {
     }
     void confirm();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, unlocked, busy, destination, amount]);
+  }, [status, unlocked, busy, destination, amount, pending]);
 
   /* The guards sit BELOW the hook above, not above it — and that is the whole point. Written
      first, they made `useRef`/`useEffect` conditional: a cold /send-out rendered nine hooks and
@@ -215,6 +227,23 @@ export default function SendOutPage() {
   const memoTooLong = effectiveMemoKind === "text" && memoTextBytes(effectiveMemo) > MEMO_TEXT_MAX_BYTES;
   const memoNotANumber = effectiveMemoKind === "id" && effectiveMemo !== "" && !/^\d+$/.test(effectiveMemo);
 
+  /* One error slot, rendered on both screens that can raise one: `confirm` runs from the review
+     screen, and also straight from the form when the unlock detour resumes it. An account with no
+     password has to be able to reach the errand from either. */
+  const errorBlock = error ? (
+    <div className="text-sm text-danger">
+      <p>{error}</p>
+      {needsPassword && (
+        <Link
+          href="/account"
+          className="mt-1 inline-block font-semibold text-money underline-offset-2 hover:underline"
+        >
+          Set a password
+        </Link>
+      )}
+    </div>
+  ) : null;
+
   async function review() {
     setError("");
     if (!destination) return setError("That doesn't look like a deposit address. Copy it again from the exchange.");
@@ -229,14 +258,20 @@ export default function SendOutPage() {
 
     setChecking(true);
     try {
-      const result = issuer ? await checkDestination(destination.address, issuer) : null;
+      /* The asset comes from this build, not from /health. A check that never RAN is not a check
+         that passed: the issuer used to be read off the sponsor at mount, and a single failed read
+         walked the user to the confirm screen with no existence check, no trustline check and no
+         memo-required check — on the screen whose own header calls the missing tag the biggest way
+         money is lost here. The pinned constant is also the asset `sendOut` actually sends, so the
+         lookup now asks about the dollars that will really leave the account. */
+      const result = await checkDestination(destination.address, pinnedUsdcIssuer(activeNetwork().id));
       setCheck(result);
-      if (result && !result.exists) {
+      if (!result.exists) {
         return setError(
           "We can't find that account. Check the address against the exchange character for character, and make sure it's the one it gave you for the Stellar network.",
         );
       }
-      if (result && !result.canHoldDollars) {
+      if (!result.canHoldDollars) {
         // The most common real failure, and the reason this screen checks first: most
         // Turkish exchanges don't accept these dollars on this network at all. Saying
         // "wrong address" would send people back to re-copy a correct address.
@@ -257,12 +292,24 @@ export default function SendOutPage() {
   async function confirm() {
     if (!destination) return;
     setError("");
+    setNeedsPassword(false);
     setBusy(true);
     try {
       let signer;
       try {
         signer = await getSigner();
-      } catch {
+      } catch (e) {
+        /* An account with NO password is a different errand from a locked one, and /unlock cannot
+           run it: with nothing to decrypt it turns straight back to /home, so the send could never
+           finish and no screen ever said why. Name the errand instead of restarting the loop. */
+        if (isNeedsPassword(e)) {
+          setError(
+            (e as Error).message ||
+              "Set a password first — it's what keeps this money yours if this phone is lost.",
+          );
+          setNeedsPassword(true);
+          return;
+        }
         // Locked account: keep the draft so nothing has to be retyped on the way back.
         try {
           // `resumeAt` is what lets the send finish itself on the way back — see the effect below.
@@ -305,10 +352,97 @@ export default function SendOutPage() {
       setStep("done");
     } catch (e) {
       console.error("[send-out]", e);
+      /* The one sentence this screen must never guess at. "Your money hasn't moved. Try again."
+         is true and kind everywhere else; here it can be flatly false, and a retry on a balance
+         that still covers the amount makes a SECOND payment to the exchange — no reclaim window,
+         no link to un-send. An undecided payment therefore gets its own screen, not an error. */
+      if (e instanceof PayoutUncertainError) {
+        const held: PendingPayout = { amount, at: new Date().toISOString() };
+        /* Two stores, two attempts. A localStorage write that refuses — a full quota is the
+           realistic one, this device already keeps sent links, contacts and records there — must
+           not take the draft removal down with it: the draft left behind is exactly what re-arms
+           the same address and amount on the next load, and it would do it with no warning. */
+        try {
+          // The draft's errand — surviving the unlock detour — ended the moment the payment was
+          // handed over.
+          sessionStorage.removeItem(DRAFT_KEY());
+        } catch {
+          /* storage blocked — nothing was ever written there to come back */
+        }
+        try {
+          localStorage.setItem(PENDING_KEY(), JSON.stringify(held));
+        } catch {
+          /* storage blocked — the warning holds for as long as this screen does */
+        }
+        setPending(held);
+        return; // deliberately skips setError — this is not an error screen
+      }
       setError(copy.errors.moneySafe);
     } finally {
       setBusy(false);
     }
+  }
+
+  /* Handed to the network, never confirmed. The whole job of this screen is to stop a second
+     payment: it says what is known and what isn't, names the two places that will answer, and
+     offers nothing that spends again. There is no "check again" button here — unlike a link send,
+     there is no escrow to ask, and the two authorities are the public record and the exchange.
+
+     It is also the one screen here that must outlive its own tab. Checking the two authorities
+     means LEAVING — to activity, to the exchange's app — and the ordinary way back is the back
+     button. Held in React state alone, the warning died on that gesture and handed back a form
+     carrying the same address and amount, two taps from paying the exchange twice. So it is
+     restored from the device on mount and stays until the person says they have checked. */
+  if (pending) {
+    return (
+      <div className="flex flex-col gap-4 py-4">
+        <h1 className="text-xl font-bold text-ink">We couldn&apos;t confirm this one</h1>
+        <MoneyCard className="p-5">
+          <p className="text-sm text-ink">
+            Your {formatUsd(pending.amount)} was handed to the network, but no confirmation came
+            back. It may well have gone through. We don&apos;t know yet, and we won&apos;t guess.
+          </p>
+          <p className="mt-2 text-sm font-semibold text-ink">
+            Don&apos;t send it again yet — you could send it twice, and this one can&apos;t be undone.
+          </p>
+          <p className="mt-2 text-sm text-ink-soft">
+            Two places will tell you. Your activity shows the transfer as soon as it reaches the
+            public record. The exchange shows the deposit once it credits you, which usually takes a
+            few minutes longer. Check both before you send anything again.
+          </p>
+          {/* Which send this was. On a screen that can be reopened hours later, "no confirmation
+              came back" without a date is a sentence about nothing. */}
+          <p className="mt-3 text-xs text-ink-soft">
+            Handed over {new Date(pending.at).toLocaleString()}.
+          </p>
+        </MoneyCard>
+        <Link href="/activity" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
+          See my activity
+        </Link>
+        <Link href="/account" className="text-sm text-ink-soft underline-offset-2 hover:underline">
+          Back to my account
+        </Link>
+        {/* The only way back to the form, and deliberately the dullest thing here: clearing this
+            warning is a claim that both places have been checked, so it is a button nobody presses
+            by accident, and it lands on the form rather than on the confirm screen the send left. */}
+        <button
+          type="button"
+          onClick={() => {
+            setPending(null);
+            setUnderstood(false);
+            setStep("form");
+            try {
+              localStorage.removeItem(PENDING_KEY());
+            } catch {
+              /* nothing to clear */
+            }
+          }}
+          className="flex h-10 items-center self-start rounded-full border border-line px-4 text-sm font-medium text-ink-soft"
+        >
+          I&apos;ve checked both — let me send again
+        </button>
+      </div>
+    );
   }
 
   if (step === "done") {
@@ -467,7 +601,7 @@ export default function SendOutPage() {
           </span>
         </label>
 
-        {error && <p className="text-sm text-danger">{error}</p>}
+        {errorBlock}
 
         <PrimaryButton loading={busy} loadingLabel="Sending…" disabled={!understood} onClick={confirm}>
           Send {amount ? formatUsd(amount) : ""}
@@ -620,7 +754,7 @@ export default function SendOutPage() {
           <input
             inputMode="decimal"
             value={amount}
-            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+            onChange={(e) => setAmount(sanitizeAmountInput(e.target.value))}
             placeholder="0.00"
             className="w-full bg-transparent px-2 py-3 text-lg text-ink outline-none"
           />
@@ -638,7 +772,7 @@ export default function SendOutPage() {
         </div>
       </label>
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {errorBlock}
 
       <PrimaryButton loading={checking} loadingLabel="Checking the address…" onClick={review}>
         Review the transfer
