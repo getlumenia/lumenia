@@ -35,14 +35,20 @@ test("fresh makelink → claim in a real browser → USDC lands (tx hash)", asyn
   // 3. claim — one decision, one button.
   await page.getByRole("button", { name: /claim my money/i }).click();
 
-  // 4. success: the money landed. Vocabulary-law clean UI (no visible crypto), so
-  // the on-chain tx hash is surfaced via the "public record" link href + a
-  // data-tx-hash attribute — assert on those, not on visible hash text.
-  await expect(page.getByText(/in your account/i)).toBeVisible({ timeout: 120_000 });
+  // 4. success: the money landed. Anchored to the start of the line, because the
+  // already-claimed screen says the same words mid-sentence ("This link was claimed — it's
+  // in your account already.") and a substring match would pass on a claim this run never
+  // made. Vocabulary-law clean UI (no visible crypto), so the on-chain tx hash is surfaced
+  // via the "public record" link href + a data-tx-hash attribute — assert on both, not on
+  // visible hash text.
+  await expect(page.getByText(/^\s*it['’]s in your account\b/i)).toBeVisible({ timeout: 120_000 });
   const receipt = page.getByRole("link", { name: /public record/i });
   await expect(receipt).toBeVisible();
   const href = (await receipt.getAttribute("href")) ?? "";
-  const hash = /\/tx\/([a-f0-9]{64})/i.exec(href)?.[1] ?? "";
+  // This route is pinned to testnet, so its receipt must be a testnet receipt: a link to any
+  // other network would be a record of a transaction that is not the one just made.
+  const hash = /\/explorer\/testnet\/tx\/([a-f0-9]{64})/i.exec(href)?.[1] ?? "";
   expect(hash).toMatch(/^[a-f0-9]{64}$/i);
+  await expect(page.locator("[data-tx-hash]")).toHaveAttribute("data-tx-hash", hash);
   console.log(`\n✅ live claim OK — tx https://stellar.expert/explorer/testnet/tx/${hash}\n`);
 });

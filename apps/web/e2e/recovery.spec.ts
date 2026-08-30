@@ -8,7 +8,7 @@ import { mintClaimLink } from "./mintLink";
  * → the SAME account + money come back.
  *
  * The blob store + OTP are STUBBED (the OTP email can't be read headless; the sponsor recovery
- * store is separately unit-tested — test-recovery-store.ts, 17/17). ONLY the three /recovery* endpoints
+ * store is separately unit-tested — test-recovery-store.ts, 35/35). ONLY the three /recovery* endpoints
  * are stubbed; /create-account + /feebump still hit the real Worker, so the account is a genuine
  * testnet account that really holds $20 — this proves the CLIENT crypto + the secure/restore UI
  * drive it correctly across devices.
@@ -89,7 +89,15 @@ test("recovery: back up with a password → restore on a fresh device → same a
   await a.getByRole("button", { name: /send me a code/i }).click();
   await a.getByLabel("6-digit code").fill(CODE);
   await a.getByLabel("Choose a password").fill(password);
-  await a.getByRole("button", { name: /back up my money/i }).click();
+  /* A recovery password can never be reset, so the form takes it twice and keeps the submit
+     disabled until the second field matches the first. Filling only "Choose a password" leaves a
+     button that never becomes actionable, and the click below then waits out the whole test
+     budget before reporting itself as something else entirely. */
+  await a.getByLabel("Type the password again").fill(password);
+  const backUp = a.getByRole("button", { name: /back up my money/i });
+  // Name the real cause in seconds if this form ever grows another required field.
+  await expect(backUp).toBeEnabled({ timeout: 10_000 });
+  await backUp.click();
   await expect(a.getByText(/backed up/i)).toBeVisible({ timeout: 30_000 });
   expect(storedBox, "the sealed box reached the (stubbed) server").toBeTruthy();
   await ctxA.close();

@@ -32,9 +32,12 @@ test("claim → persisted → /home shows the real balance + activity", async ({
   // honest custody label for a fresh (Phase 1) account
   await expect(page.getByText(/not locked/i)).toBeVisible();
 
-  // Phase 2 — "lock this money to you" (Argon2id re-encrypt)
+  // Phase 2 — "lock this money to you" (Argon2id re-encrypt). The card wraps the seed with this
+  // password and there is no reset, so it accepts nothing that fails the strength floor
+  // (lib/password-strength.ts) and nothing typed only once: both fields must match.
   const PW = "spike-password-123";
   await page.getByPlaceholder("Choose a password").fill(PW);
+  await page.getByPlaceholder("Type it again").fill(PW);
   await page.getByRole("button", { name: /^lock it$/i }).click();
   await expect(page.getByText(/locked with your password/i)).toBeVisible({ timeout: 30_000 });
 

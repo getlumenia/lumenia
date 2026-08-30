@@ -46,6 +46,8 @@ export async function mintClaimLink(opts: {
 
   const url = stdout.split(/\r?\n/).map((l) => l.trim()).find((l) => /^https?:\/\/\S+#S\S+$/.test(l));
   if (!url) throw new Error(`could not parse a claim URL from makelink output:\n${stdout}`);
-  const balanceId = /balanceId\s+(\S+)/.exec(stdout)?.[1] ?? "";
+  // The CLI prints the id inside a parenthesised summary line, so the capture has to stop at the
+  // closing paren — `\S+` swallows it and hands back an id no Horizon lookup can match.
+  const balanceId = /balanceId\s+([^\s)]+)/.exec(stdout)?.[1] ?? "";
   return { url, amount, from, balanceId };
 }

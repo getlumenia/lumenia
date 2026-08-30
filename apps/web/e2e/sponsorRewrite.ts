@@ -11,16 +11,13 @@ import type { BrowserContext } from "@playwright/test";
  * unchanged as the post-deploy live regression.
  */
 /**
- * TWO baked origins, not one. Every surface now falls back to the Cloudflare Worker, which
- * is the only sponsor we deploy. The FROZEN claim route (/c/[id]) still carries the old
- * Vercel origin, because that file is grant evidence and cannot be edited — so a local run
- * of the claim spec would otherwise call an origin nothing rewrites. Both are listed, and
- * both get redirected at the target.
+ * ONE baked origin. Every surface that talks to the sponsor — the v1 claim route (/c/[id])
+ * included — falls back to the Cloudflare Worker, and the shipped CSP `connect-src`
+ * (next.config.ts) allows only that origin, so an origin absent from this list is also an
+ * origin a page is not permitted to call. Keep it in step with the `NEXT_PUBLIC_SPONSOR_URL`
+ * fallbacks: an origin the build bakes but this list omits is one a local run cannot reach.
  */
-const BAKED_SPONSORS = [
-  "https://lumenia-sponsor.avakit.workers.dev",
-  "https://lumenia-sponsor.vercel.app", // frozen /c/[id] only — do not remove while that route is frozen
-] as const;
+const BAKED_SPONSORS = ["https://lumenia-sponsor.avakit.workers.dev"] as const;
 
 export async function rewriteSponsor(
   context: BrowserContext,
