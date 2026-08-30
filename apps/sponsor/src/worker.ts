@@ -27,11 +27,11 @@ import { takeDemoLink, refillDemoPool } from "./lib/demo-pool.js";
 import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent, recordEvent, eventsSummary } from "./lib/events.js";
-import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
+import { putBox, getBox, putAliasBox, getAliasBox, type OwnerProof } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp, idForEmail } from "./lib/recovery-otp.js";
 import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState, verifyApprovalToken } from "./lib/pilot.js";
 import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected, notifyPilotInterest } from "./lib/pilot-request.js";
-import { isPublicRefusal } from "./lib/caps.js";
+import { isPublicRefusal, PublicRefusal, checkOnboardingBudget, onboardingBudgetFromEnv } from "./lib/caps.js";
 import {
   resolveProof,
   checkIdentity,
@@ -48,6 +48,7 @@ import {
   type Provider,
   type IdentityProof,
   type OAuthProvider,
+  type AccountProof,
 } from "./lib/identity-links.js";
 import {
   claimHandle,
@@ -95,9 +96,46 @@ function clientIp(request: Request): string {
   return fwd ? fwd.split(",")[0]!.trim() : "unknown";
 }
 
-async function readJson(request: Request): Promise<Record<string, unknown>> {
+/** A body over MAX_BODY_BYTES. Carried to the top-level catch, which answers 413. */
+class BodyTooLarge extends Error {}
+
+/**
+ * Read the body with the cap enforced on the bytes ACTUALLY READ. `content-length` is a claim,
+ * not a measurement — a chunked request carries none at all — so the header check in `fetch` is
+ * only an early-out, and this is what bounds what workerd ends up buffering.
+ */
+async function readCapped(request: Request): Promise<string> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
   try {
-    const b = await request.json();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) throw new BodyTooLarge("request body too large");
+      chunks.push(value);
+    }
+  } catch (e) {
+    await reader.cancel().catch(() => {});
+    throw e;
+  }
+  const joined = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    joined.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+}
+
+async function readJson(request: Request): Promise<Record<string, unknown>> {
+  const text = await readCapped(request);
+  if (!text) return {};
+  try {
+    const b = JSON.parse(text) as unknown;
     return (b ?? {}) as Record<string, unknown>;
   } catch {
     return {};
@@ -190,7 +228,9 @@ export default {
       }
 
       // Body cap before any parse: workerd will happily buffer a very large body, and every
-      // route's own validation runs only after JSON.parse has already paid for it.
+      // route's own validation runs only after JSON.parse has already paid for it. This is the
+      // free half — a sender that declares its size. `readCapped` enforces the same ceiling on
+      // what is actually read, which is the half that a chunked or header-less body reaches.
       if (method === "POST") {
         const len = Number(request.headers.get("content-length") ?? "0");
         if (Number.isFinite(len) && len > MAX_BODY_BYTES) {
@@ -214,7 +254,23 @@ export default {
         if (!body.recipientPublicKey) return json(400, { error: "recipientPublicKey is required" });
         const rl = await enforceRateLimit(clientIp(request), body.recipientPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        return json(200, await createAccountHandler(server, config, signer, { recipientPublicKey: body.recipientPublicKey }, channels));
+        /* The per-account limiter above cannot fire here: `recipientPublicKey` is a key the caller
+           mints fresh for every request, so the per-IP window is the whole of what is left — and
+           each account it admits locks ~1 XLM of sponsor reserve that nothing ever returns. Two
+           budgets are the ceiling on that (lib/caps.ts): the day's total, and this caller's share
+           of it, so exhausting one connection cannot refuse everybody else's claim for the rest of
+           the day. The caller is keyed from the same address the rate limiter just used. The route
+           itself stays open by design. */
+        const budget = await checkOnboardingBudget(onboardingBudgetFromEnv(), clientIp(request));
+        if (!budget.ok) throw new PublicRefusal(budget.reason!);
+        try {
+          return json(200, await createAccountHandler(server, config, signer, { recipientPublicKey: body.recipientPublicKey }, channels));
+        } catch (e) {
+          // The handler threw, so no sandwich was handed out — the only outcome this service can
+          // see. A sandwich that IS handed out and then abandoned keeps its slot (lib/caps.ts).
+          await budget.release?.();
+          throw e;
+        }
       }
 
       if (method === "POST" && url === "/feebump") {
@@ -321,6 +377,10 @@ export default {
       }
 
       if (method === "POST" && url === "/faucet") {
+        // Testnet in CODE, not merely by leaving FAUCET_SECRET unset. The faucet hands out free
+        // asset to anyone who asks; a mainnet deployment that inherited that secret would be
+        // giving away real dollars, and one forgotten variable should not be what stands between.
+        if (config.network !== "testnet") return json(403, { error: "the faucet is testnet-only" });
         if (!faucet) return json(503, { error: "faucet not configured" });
         const body = (await readJson(request)) as { recipientPublicKey?: string };
         if (!body.recipientPublicKey) return json(400, { error: "recipientPublicKey is required" });
@@ -341,6 +401,10 @@ export default {
        * An empty pool mints inline, exactly as before — a slow link beats an error.
        */
       if (method === "POST" && url === "/demo-link") {
+        // Same refusal as /faucet, and it has to be HERE: lib/demo-pool.ts already refuses to
+        // operate off testnet, but the inline-mint fallback below never asked, so an empty pool
+        // was a path straight to a real Claimable Balance funded from a real faucet.
+        if (config.network !== "testnet") return json(403, { error: "the demo link is testnet-only" });
         if (!faucet) return json(503, { error: "demo not configured" });
         const rl = await enforceRateLimit(clientIp(request));
         if (rl.limited) return json(429, { error: rl.reason });
@@ -493,6 +557,10 @@ export default {
          funding report already publishes, and gating it behind a secret would mean the numbers get
          copied by hand into documents instead of read from the thing that produced them. */
       if (method === "GET" && url === "/events/summary") {
+        // Metered like every other read route: one anonymous GET costs a pipeline that SMEMBERS
+        // and SINTERs the funnel sets, and those grow with the funnel rather than staying still.
+        const rl = await enforceRateLimit(clientIp(request));
+        if (rl.limited) return json(429, { error: rl.reason });
         const summary = await eventsSummary();
         if (!summary) return json(503, { error: "no event store configured" });
         return json(200, summary);
@@ -509,10 +577,17 @@ export default {
         const rl = await enforceRateLimit(`rec:${clientIp(request)}`);
         if (rl.limited) return json(429, { error: rl.reason });
         const body = (await readJson(request)) as {
-          id?: unknown; box?: unknown; code?: unknown; aliasId?: unknown; aliasProof?: unknown;
+          id?: unknown; box?: unknown; code?: unknown; owner?: unknown; aliasId?: unknown; aliasProof?: unknown;
         };
         if (!(await verifyOtp(body.id, body.code))) return json(401, { error: "invalid or expired code" });
-        await putBox(body.id, body.box);
+        // The code proves control of an INBOX. `owner` is the account's own signature over this
+        // box's id, and it is what binds the row so a later write from a stolen inbox is refused
+        // (see putBox) — a row only ever carries one if the write that made it carried one.
+        await putBox(
+          body.id,
+          body.box,
+          body.owner && typeof body.owner === "object" ? (body.owner as OwnerProof) : undefined,
+        );
         // Optional PRF alias, written behind the SAME verified code. Refusing aliasId === id is not
         // defensive noise: it would drop an email-derived (low-entropy) id into the namespace whose
         // fetch route has no OTP, which is exactly the bypass the two namespaces exist to prevent.
@@ -702,12 +777,16 @@ export default {
           const done = await detachIdentity(resolved);
           return done.ok ? json(200, done) : json(404, { error: done.reason });
         }
+        // Two different proofs, so two different keys: `proof` above is the identity's, and
+        // `accountProof` is the account agreeing to be what that identity opens. attachIdentity
+        // refuses without the second, so a route that never forwarded it could never attach.
         const attached = await attachIdentity(
           resolved,
           String(b.address ?? ""),
           config.network,
           b.box,
           typeof b.passkeyProof === "string" ? b.passkeyProof : undefined,
+          b.accountProof && typeof b.accountProof === "object" ? (b.accountProof as AccountProof) : undefined,
         );
         return attached.ok ? json(200, attached) : json(409, { error: attached.reason, conflict: attached.conflict });
       }
@@ -768,6 +847,7 @@ export default {
 
       return json(404, { error: "not found" });
     } catch (e) {
+      if (e instanceof BodyTooLarge) return json(413, { error: "request body too large" });
       // The reason text is genuinely useful while building against testnet — anti-drain says
       // exactly which rule rejected a transaction. On mainnet the same channel hands an attacker a
       // precise oracle (config state, Horizon internals, the sponsor's own address, which policy

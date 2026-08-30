@@ -91,6 +91,16 @@ LUMENDROP_WASM_HASH = "38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce2
 MAX_DROP_USDC = "5"
 MAX_DAY_USDC = "50"
 CAPS_FAIL_CLOSED = "1"
+# Onboarding reserve budget (lib/caps.ts). /create-account moves no dollars, so the caps above
+# cannot see it, yet every account it hands out permanently locks ~1 XLM of sponsor reserve. The
+# route is open by design — a recipient is not a pilot wallet — so these two are its only ceilings,
+# and the 500/day fallback is testnet-shaped: this pilot's whole run has opened fewer than that.
+# Keep both well clear of an honest day (a claim retry re-calls the route, so one recipient can
+# spend more than one) — a recipient refused here is holding real money they cannot reach.
+# The share bounds ONE connection (IPv6 /64, IPv4 as-is), so a caller that exhausts its own cannot
+# refuse everybody else's claim until UTC midnight.
+MAX_DAY_ACCOUNTS = "40"
+MAX_DAY_ACCOUNTS_PER_SOURCE = "20"
 # The float is meant to be tiny; alert well before it runs out.
 SPONSOR_MIN_XLM = "3"
 # Pilot mode ON for mainnet: only owner-approved wallets may move value here.
