@@ -6,7 +6,7 @@
  * on-chain tx hash. The CLI plays both the sender (creates the Claimable Balance)
  * and the recipient (claims it through the live /create-account + /feebump).
  *
- *   RUN:  USDC_ISSUER_SECRET=S... pnpm --filter @lumenia/sponsor claim -- --url https://lumenia-sponsor.vercel.app
+ *   RUN:  USDC_ISSUER_SECRET=S... pnpm --filter @lumenia/sponsor claim -- --url https://lumenia-sponsor.avakit.workers.dev
  *   NEEDS: internet (Horizon testnet + friendbot) + the sponsor's USDC issuer secret
  *          (so the Claimable Balance asset matches the sponsor's trustline).
  *   Testnet only, no real money.

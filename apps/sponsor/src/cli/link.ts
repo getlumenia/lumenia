@@ -7,8 +7,8 @@
  * so the page can render value-first), the bearer key in the #fragment (client-only).
  *
  *   RUN:  USDC_ISSUER_SECRET=S... pnpm --filter @lumenia/sponsor link -- \
- *           --sponsor https://lumenia-sponsor.vercel.app \
- *           --web https://lumenia-chi.vercel.app --amount 20 --from "Alvin"
+ *           --sponsor https://lumenia-sponsor.avakit.workers.dev \
+ *           --web https://getlumenia.com --amount 20 --from "Alvin"
  */
 import { Asset, BASE_FEE, Claimant, Horizon, Keypair, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { passphraseFor, defaultHorizon } from "../lib/config.js";
@@ -25,8 +25,8 @@ function arg(name: string, fallback?: string): string {
 }
 
 async function main() {
-  const sponsorUrl = arg("sponsor", "https://lumenia-sponsor.vercel.app").replace(/\/$/, "");
-  const webUrl = arg("web", "https://lumenia-chi.vercel.app").replace(/\/$/, "");
+  const sponsorUrl = arg("sponsor", "https://lumenia-sponsor.avakit.workers.dev").replace(/\/$/, "");
+  const webUrl = arg("web", "https://getlumenia.com").replace(/\/$/, "");
   const amount = arg("amount", "20");
   const from = arg("from", "Alvin");
   const issuerSecret = process.env.USDC_ISSUER_SECRET;
