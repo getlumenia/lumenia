@@ -15,6 +15,7 @@
     "test:receive": "tsx lib/receive.selftest.ts",
     "test:horizon": "tsx lib/horizon.selftest.ts",
     "test:claimerr": "tsx lib/claim-error.selftest.ts",
+    "test:money": "tsx lib/money.selftest.ts",
     "lint": "eslint ."
   },
   "dependencies": {
