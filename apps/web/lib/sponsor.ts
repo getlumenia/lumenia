@@ -14,15 +14,21 @@ import {
   TransactionBuilder,
   type Transaction,
 } from "@stellar/stellar-sdk";
-import { activeNetwork } from "./network";
+import { activeNetwork, type NetworkConfig } from "./network";
 import type { Signer } from "./signer";
-import { assertSponsoredOnboarding, assertSponsoredTrustline } from "./tx-guard";
+import { assertSponsoredOnboarding, assertSponsoredTrustline, pinnedUsdcIssuer } from "./tx-guard";
 
 export interface ClaimParams {
   sponsorUrl: string;
   /** S... bearer key from the link's #fragment (never leaves the client). */
   bearerSecret: string;
   balanceId: string;
+  /**
+   * The chain the LINK lives on — passed in, never read off the device. A claim link is minted on
+   * one network and is claimable only there, so a device switched to another one must still build
+   * this claim against the ledger holding the money.
+   */
+  network: NetworkConfig;
 }
 
 export interface ClaimOutcome {
@@ -41,8 +47,39 @@ async function postJson(url: string, body: unknown): Promise<Record<string, unkn
   return JSON.parse(text) as Record<string, unknown>;
 }
 
-export async function runClaim({ sponsorUrl, bearerSecret, balanceId }: ClaimParams): Promise<ClaimOutcome> {
-  const net = activeNetwork();
+/**
+ * The account as the LEDGER has it, or null when Horizon says it is not there. Anything other than
+ * a 404 is rethrown: "we could not ask" must never be read as "it does not exist".
+ */
+async function loadIfPresent(
+  server: Horizon.Server,
+  pub: string,
+): Promise<Awaited<ReturnType<Horizon.Server["loadAccount"]>> | null> {
+  try {
+    return await server.loadAccount(pub);
+  } catch (e) {
+    if ((e as { response?: { status?: number } })?.response?.status === 404) return null;
+    throw e;
+  }
+}
+
+/** Does this account already trust the dollar this build escrows? */
+function trustsPinnedUsdc(balances: unknown[], issuer: string): boolean {
+  return balances.some((entry) => {
+    const line = entry as { asset_code?: string; asset_issuer?: string };
+    return line.asset_code === "USDC" && line.asset_issuer === issuer;
+  });
+}
+
+/* Worded so lib/claim-error.ts classifies it with the tx-guard refusals — terminal, no retry. */
+const NOT_ON_LEDGER = "The server described an account that is not on the ledger, so nothing was signed.";
+
+export async function runClaim({
+  sponsorUrl,
+  bearerSecret,
+  balanceId,
+  network: net,
+}: ClaimParams): Promise<ClaimOutcome> {
   const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = net;
   const server = new Horizon.Server(HORIZON_URL);
   const claimKey = Keypair.fromSecret(bearerSecret);
@@ -52,9 +89,27 @@ export async function runClaim({ sponsorUrl, bearerSecret, balanceId }: ClaimPar
   // 1. Sponsor creates the 0-XLM account + USDC trustline; the bearer key co-signs.
   const created = (await postJson(`${base}/create-account`, { recipientPublicKey: pub })) as { xdr: string };
   const sandwich = TransactionBuilder.fromXDR(created.xdr, NETWORK) as Transaction;
-  assertSponsoredOnboarding(sandwich, pub, net.id);
-  sandwich.sign(claimKey);
-  await server.submitTransaction(sandwich);
+  /* TWO legitimate shapes, because the sponsor asks the ledger whether this account is already
+   * there: four ops to create it, three when it exists and only needs the trustline. A claim
+   * reaches the three-op case whenever a first tap onboarded the account and step 2 then failed —
+   * demanding four ops on that retry refuses forever and the link can never be claimed.
+   *
+   * The shorter shape is accepted only when its precondition holds, and that is confirmed against
+   * the ledger rather than against the server that chose it; each shape is then asserted in full by
+   * its own guard. This is a choice of WHICH contract to enforce, never a relaxation of either. */
+  let onboardingNeeded = true;
+  if (sandwich.operations.length === 3) {
+    const existing = await loadIfPresent(server, pub);
+    if (!existing) throw new Error(NOT_ON_LEDGER);
+    if (trustsPinnedUsdc(existing.balances, pinnedUsdcIssuer(net.id))) onboardingNeeded = false;
+    else assertSponsoredTrustline(sandwich, pub, net.id);
+  } else {
+    assertSponsoredOnboarding(sandwich, pub, net.id);
+  }
+  if (onboardingNeeded) {
+    sandwich.sign(claimKey);
+    await server.submitTransaction(sandwich);
+  }
 
   // 2. Build + sign the claim; the sponsor anti-drain-validates + fee-bumps it.
   const acc = await server.loadAccount(pub);
@@ -100,8 +155,7 @@ export async function prepareAccount({
    * server chose: four ops when the account has to be created, three when it already exists and
    * only needs the trustline (an account funded from outside, or one that lost its line). Each is
    * checked in full by its own assertion — this is a choice of WHICH contract to enforce, never a
-   * relaxation of either. `prepareAccount` is the only caller that may accept the shorter one; the
-   * claim paths keep demanding the four-op sandwich, because a claim's account is always new. */
+   * relaxation of either. */
   if (sandwich.operations.length === 3) {
     assertSponsoredTrustline(sandwich, signer.publicKey(), net.id);
   } else {

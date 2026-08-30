@@ -92,9 +92,8 @@ function isPinnedUsdc(line: unknown, issuer: string): boolean {
  * already on-ledger cannot be sent a `createAccount` op — Horizon answers `op_already_exists` —
  * so the only path to a trustline for such an account was a transaction guaranteed to fail.
  *
- * DELIBERATELY NOT accepted on the claim paths. A claim creates a brand-new account, so a
- * three-op answer there would mean the server is talking about an account that already exists,
- * which is exactly the case a claim must refuse rather than sign.
+ * The two shapes stay separate assertions and must never become interchangeable: a caller picks
+ * one by establishing its precondition, and gets that contract enforced whole.
  */
 export function assertSponsoredTrustline(tx: Transaction, me: string, net: NetworkId): void {
   const issuer = pinnedUsdcIssuer(net);

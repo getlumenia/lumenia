@@ -6,6 +6,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { copy } from "../../../lib/copy";
 import { runClaim } from "../../../lib/sponsor";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../lib/claim-error";
+import { resolveNetwork } from "../../../lib/network";
 import { sendEvent } from "../../../lib/events";
 import { savePhase1 } from "../../../lib/keystore";
 import { MoneyMovingAnimation } from "../../../components/brand/MoneyMovingAnimation";
@@ -22,7 +23,11 @@ import { Confetti } from "../../../components/brand/Confetti";
  * pulse → success bloom + confetti) is CSS-only. runClaim is unchanged.
  * Out of scope this sprint: recovery/passkeys/Argon2id — the key comes from the link.
  */
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.vercel.app";
+const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
+/* These links were minted on testnet and are claimable only there, so the network is pinned to the
+ * link rather than taken from the device — a reader who has switched this device to mainnet would
+ * otherwise build against one chain while the money sits on the other. */
+const CLAIM_NETWORK = resolveNetwork(null);
 const explorer = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;
 
 type State = "idle" | "claiming" | "done" | "error";
@@ -94,7 +99,12 @@ export default function ClaimButton({
       const bearerSecret = secretRef.current;
       if (!bearerSecret) throw new Error("This link is invalid (missing key).");
       if (!balanceId) throw new Error("This link is invalid (missing balance info).");
-      const result = await runClaim({ sponsorUrl: SPONSOR_URL, bearerSecret, balanceId });
+      const result = await runClaim({
+        sponsorUrl: SPONSOR_URL,
+        bearerSecret,
+        balanceId,
+        network: CLAIM_NETWORK,
+      });
       setHash(result.hash);
       setState("done");
       void sendEvent("claim_succeeded", claimId, Keypair.fromSecret(bearerSecret).publicKey());
@@ -210,6 +220,10 @@ export default function ClaimButton({
         return copy.claim.errOfflineBody;
       case "link-invalid":
         return copy.claim.errLinkBody;
+      case "refused":
+        // We stopped before putting a signature on anything, so "try again" would be false advice:
+        // the same answer refuses the same way. Nothing about the money changed.
+        return "We stopped before signing anything — what came back didn't match what this app asked for. Your money is untouched. Open the link from the original message again a little later.";
       default:
         // Cause unknown — the original wording, which is honest when we do not know: the money has
         // not moved, and trying again is reasonable.

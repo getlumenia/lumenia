@@ -53,6 +53,7 @@ const channel = Keypair.random().publicKey();
 interface Shape {
   /** Who sources the transaction — the sponsor, a leased channel, or (hostile) us. */
   txSource?: string;
+  beginSource?: string;
   sponsoredId?: string;
   destination?: string;
   startingBalance?: string;
@@ -154,7 +155,10 @@ function trustlineOnly(shape: Shape = {}): Transaction {
   const source = new Account(shape.txSource ?? channel, "1");
   const b = new TransactionBuilder(source, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
     .addOperation(
-      Operation.beginSponsoringFutureReserves({ sponsoredId: shape.sponsoredId ?? me, source: sponsor }),
+      Operation.beginSponsoringFutureReserves({
+        sponsoredId: shape.sponsoredId ?? me,
+        source: shape.beginSource ?? sponsor,
+      }),
     )
     .addOperation(
       Operation.changeTrust({
@@ -187,11 +191,62 @@ ok("refuses changeTrust sourced by somebody else", !acceptsTrustline(trustlineOn
 ok("refuses another issuer", !acceptsTrustline(trustlineOnly({ trustAsset: new Asset("USDC", Keypair.random().publicKey()) })));
 ok("refuses a zero limit (that deletes a trustline)", !acceptsTrustline(trustlineOnly({ trustLimit: "0" })));
 ok("refuses a fourth operation", !acceptsTrustline(trustlineOnly({ extraOp: true })));
-/* The two shapes must not be interchangeable. A claim signs with a key that is about to hold
-   money and its account is always brand new, so a three-op answer there means the server is
-   describing an account that already exists — refuse rather than sign. */
+/* The two shapes must not be interchangeable. Each caller establishes the precondition for the
+   shape it expects — the account is on-ledger, or it is not — and then gets that whole contract
+   enforced; neither guard may stand in for the other. */
 ok("the onboarding guard rejects the three-op shape", !accepts(trustlineOnly()));
 ok("the trustline guard rejects the four-op shape", !acceptsTrustline(sandwich()));
+
+/* The claim path reaches this shape on any retry after the account was already onboarded, so
+   "three ops" is no longer a shape only one screen can see. Everything a hostile server could put
+   in three ops has to bounce off the same wall the four-op sandwich has. */
+ok("refuses beginSponsoring sourced by us", !acceptsTrustline(trustlineOnly({ beginSource: me })));
+ok("refuses endSponsoring sourced by somebody else", !acceptsTrustline(trustlineOnly({ endSource: sponsor })));
+// The same round-trip trap as startingBalance: the default limit is not the string it was built as.
+ok(
+  "accepts a default limit that came back as 922337203685.4775807",
+  (trustlineOnly().operations[1] as { limit?: string }).limit === "922337203685.4775807",
+  "compared by value, never as a string",
+);
+
+/** Three ops that are NOT the trustline sandwich — same length, entirely different intent. */
+function threeHostileOps(middle: Parameters<TransactionBuilder["addOperation"]>[0]): Transaction {
+  const b = new TransactionBuilder(new Account(channel, "1"), {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: me, source: sponsor }))
+    .addOperation(middle)
+    .addOperation(Operation.endSponsoringFutureReserves({ source: me }));
+  const tx = b.setTimeout(180).build();
+  return TransactionBuilder.fromXDR(tx.toXDR(), Networks.TESTNET) as Transaction;
+}
+
+ok(
+  "refuses three ops whose middle one drains us",
+  !acceptsTrustline(
+    threeHostileOps(Operation.payment({ destination: sponsor, asset: USDC, amount: "100", source: me })),
+  ),
+);
+ok(
+  "refuses three ops that hand our account to somebody else",
+  !acceptsTrustline(
+    threeHostileOps(Operation.setOptions({ signer: { ed25519PublicKey: sponsor, weight: 255 }, source: me })),
+  ),
+);
+ok("refuses a two-op shape", !acceptsTrustline(
+  (() => {
+    const tx = new TransactionBuilder(new Account(channel, "1"), {
+      fee: BASE_FEE,
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: me, source: sponsor }))
+      .addOperation(Operation.changeTrust({ asset: USDC, source: me }))
+      .setTimeout(180)
+      .build();
+    return TransactionBuilder.fromXDR(tx.toXDR(), Networks.TESTNET) as Transaction;
+  })(),
+));
 
 console.log("\n[7] the /health canary");
 ok("accepts the pinned asset", (() => {

@@ -16,13 +16,25 @@
  * Invariants covered:
  *   - an already-claimed balance is recognised from BOTH ends of runClaim, and is never retryable
  *   - a rate limit and an outage are retryable; a pause and a broken link are not
+ *   - a tx-guard refusal is terminal — a retry gets refused identically, forever
  *   - an unrecognised error falls back to retryable (safe advice when we do not know)
  *   - the classifier never throws, whatever it is handed
  *   - the detail string never leaks a bearer key
  *
  * RUN: pnpm --filter @lumenia/web test:claimerr   (offline, no keys, no network)
  */
+import {
+  Account,
+  Asset,
+  BASE_FEE,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+  type Transaction,
+} from "@stellar/stellar-sdk";
 import { classifyClaimError } from "./claim-error";
+import { assertSponsoredOnboarding } from "./tx-guard";
 
 let passed = 0;
 let failed = 0;
@@ -53,6 +65,37 @@ function horizonError(opCodes: string[]): unknown {
 /** How lib/sponsor.ts postJson reports a non-2xx from the sponsor. */
 function sponsorError(path: string, status: number, body: string): unknown {
   return new Error(`${path} → ${status}: ${body}`);
+}
+
+/**
+ * A REAL tx-guard refusal, not a restatement of one: a hostile transaction goes through XDR the way
+ * the browser receives it, and what comes back is whatever lib/tx-guard.ts actually threw. If the
+ * two files ever drift apart on the wording, this is what notices.
+ */
+function guardRefusal(): unknown {
+  const me = Keypair.random().publicKey();
+  const attacker = Keypair.random().publicKey();
+  const built = new TransactionBuilder(new Account(attacker, "1"), {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.payment({
+        destination: attacker,
+        asset: new Asset("USDC", attacker),
+        amount: "100",
+        source: me,
+      }),
+    )
+    .setTimeout(180)
+    .build();
+  const parsed = TransactionBuilder.fromXDR(built.toXDR(), Networks.TESTNET) as Transaction;
+  try {
+    assertSponsoredOnboarding(parsed, me, "testnet");
+  } catch (e) {
+    return e;
+  }
+  throw new Error("the guard accepted a hostile transaction — this test is no longer testing anything");
 }
 
 function main() {
@@ -93,6 +136,33 @@ function main() {
   const noKey = classifyClaimError(new Error("This link is invalid (missing key)."));
   ok("a link with no bearer key reads as link-invalid", noKey.kind === "link-invalid");
   ok("  …and is not retryable", noKey.retryable === false);
+
+  // --- the device refused to sign --------------------------------------------------------------
+  // Nothing was signed and nothing moved, so a retry gets the same answer for as long as the
+  // server keeps sending it. Landing in "unknown" here handed the recipient a button that could
+  // only fail again.
+  const refused = classifyClaimError(guardRefusal());
+  ok("a tx-guard refusal reads as refused", refused.kind === "refused");
+  ok("  …and is NOT offered a retry", refused.retryable === false);
+
+  const wrongAsset = classifyClaimError(
+    new Error("This sponsor reports a different dollar asset than this app is built for. Nothing was signed."),
+  );
+  ok("the /health canary refusal reads as refused too", wrongAsset.kind === "refused");
+
+  // lib/sponsor.ts refuses the 3-op shape when the ledger does not agree the account is there.
+  const notOnLedger = classifyClaimError(
+    new Error("The server described an account that is not on the ledger, so nothing was signed."),
+  );
+  ok("a shape whose precondition failed reads as refused", notOnLedger.kind === "refused");
+  ok("  …and is NOT offered a retry", notOnLedger.retryable === false);
+
+  // --- a missing trustline is not a claimed balance ---------------------------------------------
+  // `op_no_trust` says the destination cannot hold the asset yet — it says nothing about the
+  // balance. It was bucketed with already-claimed, which told people they had money they did not.
+  const noTrust = classifyClaimError(horizonError(["op_no_trust"]));
+  ok("op_no_trust is NOT reported as already-claimed", noTrust.kind !== "already-claimed");
+  ok("  …and IS retryable — the retry re-opens the missing trustline", noTrust.retryable === true);
 
   // --- the fallback --------------------------------------------------------------------------
   const weird = classifyClaimError(new Error("something nobody has seen before"));
