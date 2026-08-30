@@ -9,21 +9,29 @@
  *      Falling under the floor means either the top-up stopped or something is spending faster
  *      than expected.
  *   2. **Sponsor sourcing value** — the sponsor creates accounts and pays fees. It must NEVER
- *      source a payment or merge its account. One of those in the history is the signature of a
- *      stolen key, and it is the alert that should wake someone up.
+ *      source a payment, merge its account, or rewrite its own signers. One of those in the
+ *      history is the signature of a stolen key, and it is the alert that should wake someone up.
  *   3. **Escrow governance calls** — pause/unpause/upgrade/ownership are rare and human-initiated.
  *      An unexpected one means the owner key is compromised.
  *
  * Alerts go to the console (visible in `wrangler tail`) and, when RESEND_API_KEY +
- * ALERT_NOTIFY_TO are set, by email. Cursors live in the same Upstash store as the rate limiter;
- * with no store the watchdog still performs every check, it just re-scans a fixed recent window
- * instead of resuming exactly where it left off.
+ * ALERT_NOTIFY_TO are set, by email. Without those nothing reaches a human, which from the
+ * outside looks exactly like a healthy service — so "alerting is not configured" is itself an
+ * alert and a field on the report (see `alertingStatus`). Cursors live in the same Upstash store
+ * as the rate limiter; with no store the watchdog still performs every check, it just re-scans a
+ * fixed recent window instead of resuming exactly where it left off.
  */
 import { Address, scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { SponsorConfig } from "./config.js";
 import { kvConfigFromEnv } from "./rate-limit.js";
 
-/** Operations the sponsor must never be the source of — each is a way to move value out. */
+/**
+ * Operations the sponsor must never be the source of. Most are a way to move value out; the
+ * sponsor legitimately sources only begin-sponsoring, createAccount and Soroban invocations
+ * (see anti-drain.ts `SPONSOR_SOURCEABLE_OPS`). `set_options` moves nothing by itself — it is
+ * how a stolen key adds a signer or drops a threshold BEFORE the op that does, and catching the
+ * preparation is the only chance to catch it in time.
+ */
 const FORBIDDEN_SOURCE_OPS = new Set([
   "payment",
   "path_payment_strict_send",
@@ -31,6 +39,9 @@ const FORBIDDEN_SOURCE_OPS = new Set([
   "account_merge",
   "manage_sell_offer",
   "manage_buy_offer",
+  "create_passive_sell_offer",
+  "create_claimable_balance",
+  "set_options",
 ]);
 
 /**
@@ -67,9 +78,16 @@ export interface Alert {
   detail: string;
 }
 
+/** Whether a page can actually leave the Worker, and what is missing if it cannot. */
+export interface AlertingStatus {
+  configured: boolean;
+  missing: string[];
+}
+
 export interface WatchdogReport {
   checked: string[];
   alerts: Alert[];
+  alerting: AlertingStatus;
 }
 
 /* ------------------------------- cursor storage ------------------------------- */
@@ -173,14 +191,18 @@ async function checkSponsorAccount(
   const recipientsLeft = Math.floor(available / RESERVE_PER_RECIPIENT_XLM);
   const capFloor = capacityFloor();
   if (recipientsLeft < capFloor) {
+    /* The count stays out of the title. `alertSlug` keys the email cooldown off the title, and
+     * this number ticks down with every recipient onboarded — a title carrying it would mint a
+     * fresh key on each run and re-email the one condition most likely to persist for hours. */
     alerts.push({
       severity: "page",
-      title: `Sponsor can onboard only ${recipientsLeft} more recipients`,
+      title: "Sponsor onboarding capacity below the floor",
       detail:
-        `${xlm} XLM held, but ${minimum} is locked as the minimum balance for ${sponsoring} sponsored ` +
-        `entries — ${available.toFixed(4)} XLM is actually spendable, which is ${recipientsLeft} more ` +
-        `recipients at ${RESERVE_PER_RECIPIENT_XLM} XLM each (floor ${capFloor}). Top up before ` +
-        `/create-account starts failing; the raw balance will still look healthy when it does.`,
+        `Only ${recipientsLeft} more recipients can be onboarded (floor ${capFloor}). ${xlm} XLM held, ` +
+        `but ${minimum} is locked as the minimum balance for ${sponsoring} sponsored entries — ` +
+        `${available.toFixed(4)} XLM is actually spendable, at ${RESERVE_PER_RECIPIENT_XLM} XLM per ` +
+        `recipient. Top up before /create-account starts failing; the raw balance will still look ` +
+        `healthy when it does.`,
     });
   }
 
@@ -203,7 +225,7 @@ async function checkSponsorAccount(
     if (source === sponsorPublicKey && FORBIDDEN_SOURCE_OPS.has(type)) {
       alerts.push({
         severity: "page",
-        title: "Sponsor SOURCED a value-moving operation",
+        title: "Sponsor SOURCED a forbidden operation",
         detail:
           `The sponsor only creates accounts and pays fees — it must never source a ${type}. ` +
           `Transaction ${String(op.transaction_hash ?? "?")}. Treat the key as compromised: halt ` +
@@ -392,6 +414,21 @@ export async function withoutRepeats(alerts: Alert[]): Promise<Alert[]> {
   return due;
 }
 
+/**
+ * Whether the email path is wired at all. Exported so an operator can read it from /health
+ * instead of inferring it from an inbox that has been quiet for a month: a watchdog with no
+ * delivery keys is silent for exactly the same reason a healthy one is, and the two have to be
+ * told apart from the outside.
+ */
+export function alertingStatus(): AlertingStatus {
+  const missing: string[] = [];
+  if (!process.env.RESEND_API_KEY) missing.push("RESEND_API_KEY");
+  if (!(process.env.ALERT_NOTIFY_TO ?? process.env.FEEDBACK_NOTIFY_TO)) {
+    missing.push("ALERT_NOTIFY_TO (or FEEDBACK_NOTIFY_TO)");
+  }
+  return { configured: missing.length === 0, missing };
+}
+
 async function emailAlerts(alerts: Alert[]): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.ALERT_NOTIFY_TO ?? process.env.FEEDBACK_NOTIFY_TO;
@@ -416,7 +453,9 @@ async function emailAlerts(alerts: Alert[]): Promise<void> {
 
 /**
  * Run every check. Never throws: a watchdog that crashes is a watchdog that stops watching, so
- * a failing check becomes its own alert.
+ * a failing check becomes its own PAGE. A check that cannot run leaves the thing it watches
+ * unobserved, and an unobserved contract reads exactly like a quiet one — only `page` is
+ * emailed, so anything less would leave the blind spot in a log nobody reads.
  */
 export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: string): Promise<WatchdogReport> {
   const alerts: Alert[] = [];
@@ -427,9 +466,9 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
     checked.push("sponsor-account");
   } catch (e) {
     alerts.push({
-      severity: "info",
+      severity: "page",
       title: "Watchdog check failed: sponsor account",
-      detail: (e as Error).message,
+      detail: `The sponsor float and forbidden-op scan did not run: ${(e as Error).message}`,
     });
   }
 
@@ -438,9 +477,9 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
     checked.push("escrow-governance");
   } catch (e) {
     alerts.push({
-      severity: "info",
+      severity: "page",
       title: "Watchdog check failed: escrow governance",
-      detail: (e as Error).message,
+      detail: `Governance events are unobserved until this clears: ${(e as Error).message}`,
     });
   }
 
@@ -449,9 +488,21 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
     checked.push("escrow-wasm");
   } catch (e) {
     alerts.push({
-      severity: "info",
+      severity: "page",
       title: "Watchdog check failed: escrow wasm hash",
-      detail: (e as Error).message,
+      detail: `An upgrade would go unnoticed until this clears: ${(e as Error).message}`,
+    });
+  }
+
+  const alerting = alertingStatus();
+  if (!alerting.configured) {
+    alerts.push({
+      severity: "page",
+      title: "Watchdog cannot deliver alerts",
+      detail:
+        `${alerting.missing.join(" and ")} unset, so every alert on this run — including any above ` +
+        `— exists only in \`wrangler tail\`. Set them (wrangler secret put) or the sponsor is ` +
+        `running unmonitored.`,
     });
   }
 
@@ -460,7 +511,12 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
     if (a.severity === "page") console.error(line);
     else console.log(line);
   }
-  await emailAlerts(await withoutRepeats(alerts.filter((a) => a.severity === "page")));
+  /* With no delivery there is nothing to de-duplicate, and running the cooldown anyway would
+   * stamp every live condition as "already sent" — buying hours of silence on the first run
+   * after someone finally sets the keys. */
+  if (alerting.configured) {
+    await emailAlerts(await withoutRepeats(alerts.filter((a) => a.severity === "page")));
+  }
 
-  return { checked, alerts };
+  return { checked, alerts, alerting };
 }

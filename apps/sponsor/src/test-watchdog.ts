@@ -2,12 +2,13 @@
  * WATCHDOG SMOKE TEST — runs every check against the LIVE testnet sponsor + escrow and prints
  * what it found. It asserts the watchdog is WIRED and reads real data; it does not assert an
  * empty alert list, because a real alert (e.g. a low float) is a true finding, not a failure.
+ * The de-duplication and alert-delivery assertions are pure; only the live reads need a network.
  *
  * RUN: SPONSOR_SECRET=S… pnpm --filter @lumenia/sponsor test:watchdog
  */
 import { makeConfig } from "./lib/config.js";
 import { signerFromSecret } from "./lib/signer.js";
-import { runWatchdog, withoutRepeats, type Alert } from "./lib/watchdog.js";
+import { alertingStatus, runWatchdog, withoutRepeats, type Alert } from "./lib/watchdog.js";
 
 function need(name: string): string {
   const v = process.env[name];
@@ -61,6 +62,52 @@ async function main() {
     (await withoutRepeats([{ severity: "page", title, detail: "it is back" }])).length === 1,
     "a recurrence was swallowed by a stale cooldown",
   );
+  /* The title IS the cooldown key, so a number inside one mints a fresh key every time that
+   * number moves — and the condition re-emails on every run instead of once. */
+  check(
+    "no alert title carries a changing number",
+    report.alerts.every((a) => !/\d/.test(a.title)),
+    report.alerts.filter((a) => /\d/.test(a.title)).map((a) => a.title).join("; "),
+  );
+
+  /* Delivery. A watchdog with no keys is silent for the same reason a healthy one is, so it has
+   * to say which it is — on the report, and loudly enough for an operator to trip over. */
+  check("the run reports whether a page can reach a human", typeof report.alerting?.configured === "boolean");
+  check(
+    "an undeliverable watchdog says so in its own alerts",
+    report.alerting?.configured === true ||
+      report.alerts.some((a) => a.title === "Watchdog cannot deliver alerts"),
+    "alerting is unconfigured and nothing on the report admits it",
+  );
+  const saved = {
+    key: process.env.RESEND_API_KEY,
+    to: process.env.ALERT_NOTIFY_TO,
+    fallback: process.env.FEEDBACK_NOTIFY_TO,
+  };
+  try {
+    delete process.env.RESEND_API_KEY;
+    delete process.env.ALERT_NOTIFY_TO;
+    delete process.env.FEEDBACK_NOTIFY_TO;
+    const missing = alertingStatus();
+    check(
+      "missing delivery keys are named, not just counted",
+      !missing.configured && missing.missing.length === 2,
+      missing.missing.join(", "),
+    );
+    process.env.FEEDBACK_NOTIFY_TO = "ops@example.com";
+    check("the feedback address stands in for a missing alert address", alertingStatus().missing.length === 1);
+    process.env.RESEND_API_KEY = "re_not_a_real_key";
+    check("both keys present means configured", alertingStatus().configured);
+  } finally {
+    for (const [name, value] of [
+      ["RESEND_API_KEY", saved.key],
+      ["ALERT_NOTIFY_TO", saved.to],
+      ["FEEDBACK_NOTIFY_TO", saved.fallback],
+    ] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 
   console.log(`\n  findings: ${report.alerts.length === 0 ? "none" : ""}`);
   for (const a of report.alerts) console.log(`    [${a.severity}] ${a.title} — ${a.detail}`);

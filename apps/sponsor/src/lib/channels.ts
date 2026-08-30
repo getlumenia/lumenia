@@ -126,7 +126,8 @@ export function memoryLeaseStore(): LeaseStore {
  * Pick the lease backend. Durable (shared) when a KV store is configured; in-memory
  * otherwise. NOTE: in-memory is per-isolate and therefore only correct on a single
  * instance (local/test). On a multi-isolate serverless deploy, channels REQUIRE the KV
- * store — this is asserted loudly below.
+ * store — on mainnet a pool without it disables itself rather than lease per-isolate (see
+ * ChannelManager).
  */
 export function defaultLeaseStore(): LeaseStore {
   const kv = kvConfigFromEnv();
@@ -148,17 +149,30 @@ export interface ChannelLease {
 export class ChannelManager {
   private readonly keypairs: Keypair[];
   private readonly store: LeaseStore;
-  /** true when at least one channel is configured. */
+  /** true when at least one channel is configured AND the pool may safely hand out leases. */
   readonly enabled: boolean;
   /** true when channels are configured but only an in-memory (per-isolate) store exists. */
   readonly inMemoryOnly: boolean;
 
   constructor(channelSecrets: string[], store?: LeaseStore) {
     this.keypairs = channelSecrets.map((s) => Keypair.fromSecret(s));
-    this.enabled = this.keypairs.length > 0;
     this.store = store ?? defaultLeaseStore();
-    this.inMemoryOnly = this.enabled && !store && kvConfigFromEnv() === null;
-    if (this.inMemoryOnly) {
+    this.inMemoryOnly = this.keypairs.length > 0 && !store && kvConfigFromEnv() === null;
+    // Per-isolate leasing hands the same channel + sequence to two isolates at once — the exact
+    // collision the pool exists to remove — so on mainnet the pool stays SHUT. Shut, not fatal:
+    // this runs inside the per-request service bootstrap, so a throw here would 400 every route,
+    // including the claim of money already escrowed on the ledger.
+    const unsafeOnMainnet = this.inMemoryOnly && process.env.STELLAR_NETWORK === "mainnet";
+    this.enabled = this.keypairs.length > 0 && !unsafeOnMainnet;
+    if (unsafeOnMainnet) {
+      console.error(
+        "[channels] CHANNEL_SECRETS is set on mainnet but no KV store is configured " +
+          "(KV_REST_API_URL/KV_REST_API_TOKEN) — leasing would be per-isolate and two isolates " +
+          "could lend the same channel sequence. The pool is DISABLED: every onboarding falls back " +
+          "to the sponsor-sourced path (serialized under concurrency). Configure the KV store to " +
+          "bring channels back.",
+      );
+    } else if (this.inMemoryOnly) {
       console.warn(
         "[channels] CHANNEL_SECRETS set but no KV store (KV_REST_API_URL/TOKEN) — leasing is " +
           "IN-MEMORY (per-isolate). Safe for a single instance; UNSAFE on a multi-isolate deploy. " +

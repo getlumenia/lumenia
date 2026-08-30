@@ -9,6 +9,7 @@
  *   B  bounded by pool size    — N+K concurrent over N channels → exactly N leased, K null
  *   C  release → reuse         — releasing a channel returns it to the pool
  *   F  disabled when empty     — no CHANNEL_SECRETS ⇒ lease() returns null (fallback path)
+ *   G  mainnet needs the store — a pool with only per-isolate leasing disables itself
  *
  * RUN: pnpm --filter @lumenia/sponsor test:channels   (offline, deterministic)
  */
@@ -114,6 +115,72 @@ async function main() {
     ok("enabled === false", mgr.enabled === false);
     ok("size === 0", mgr.size === 0);
     ok("lease() returns null", (await mgr.lease({ attempts: 1 })) === null);
+  }
+
+  /* --- G: mainnet disables a pool it can only lease per-isolate --- */
+  console.log("\n[G] mainnet fail-closed — a configured pool with no shared store disables itself");
+  {
+    const throws = (secrets: string[]) => {
+      try {
+        new ChannelManager(secrets);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    // The pool is a speed-up; the claim of money already escrowed is not. Per-isolate leasing on
+    // mainnet must therefore SHUT the pool, never fail the bootstrap every route is built on.
+    const disabledNotFatal = async (secrets: string[]) => {
+      try {
+        const mgr = new ChannelManager(secrets);
+        return mgr.enabled === false && (await mgr.lease({ attempts: 1 })) === null;
+      } catch {
+        return false;
+      }
+    };
+    const savedNet = process.env.STELLAR_NETWORK;
+    // kvConfigFromEnv() reads the UPSTASH_* names too — clearing only KV_* would let a shell
+    // that exports Upstash silently exercise the has-a-store branch under a no-store label.
+    const KV_VARS = [
+      "KV_REST_API_URL",
+      "KV_REST_API_TOKEN",
+      "UPSTASH_REDIS_REST_URL",
+      "UPSTASH_REDIS_REST_TOKEN",
+    ] as const;
+    const savedKv = KV_VARS.map((k) => [k, process.env[k]] as const);
+    const clearKv = () => {
+      for (const k of KV_VARS) delete process.env[k];
+    };
+    clearKv();
+
+    process.env.STELLAR_NETWORK = "mainnet";
+    ok(
+      "mainnet + channels + no KV store ⇒ constructs with the pool DISABLED (onboarding falls back to the sponsor-sourced path)",
+      await disabledNotFatal(makeSecrets(2)),
+    );
+    ok("mainnet + NO channels ⇒ still constructs (sponsor-sourced fallback survives)", !throws([]));
+    ok(
+      "mainnet + an injected store ⇒ constructs (the store is the thing that matters)",
+      (() => {
+        try {
+          return new ChannelManager(makeSecrets(2), memoryLeaseStore()).enabled;
+        } catch {
+          return false;
+        }
+      })(),
+    );
+    process.env.KV_REST_API_URL = "https://fake-kv.test";
+    process.env.KV_REST_API_TOKEN = "t";
+    ok("mainnet + channels + a configured KV store ⇒ constructs", !throws(makeSecrets(2)));
+    clearKv();
+
+    process.env.STELLAR_NETWORK = "testnet";
+    ok("testnet + channels + no KV store ⇒ still constructs (local dev keeps working)", !throws(makeSecrets(2)));
+
+    if (savedNet === undefined) delete process.env.STELLAR_NETWORK;
+    else process.env.STELLAR_NETWORK = savedNet;
+    clearKv();
+    for (const [k, v] of savedKv) if (v !== undefined) process.env[k] = v;
   }
 
   console.log("\n============================================================");
