@@ -2,7 +2,10 @@
 
 This file records **only the work that has actually been done** (not plans or decisions — those live in [README.md](README.md) and [stack.md](stack.md)). The next agent reads this to see "what really exists." Be honest about the line between *proven* and *unverified* (the §6 table is the single source of truth for that).
 
-Last updated: 2026-08-13 · Network: **testnet** · No real money used.
+Last updated: 2026-08-30 · Networks: **testnet** (the open product and the grant deliverable) **and
+a capped, allowlisted mainnet pilot that moves real Circle USDC** — hand-approved wallets only, $5
+per transfer, $50 per day, caps fail closed. "No real money is used" stopped being true on
+2026-07-26; see §6 and §12.
 
 > **Instawards sprint (25.06 → ~24.07): see §10** — the live sponsor service, the
 > end-to-end browser claim (binary metric MET on-chain) and the hardened anti-drain
@@ -50,8 +53,7 @@ lumenia/  (working dir: faceid-wallet)
 │       ├── wrangler.toml                 # Cloudflare Worker config (the LIVE deploy)
 │       └── src/
 │           ├── worker.ts                    # ✅ Cloudflare Worker entry — all endpoints (the LIVE host)
-│           ├── lib/                          # create-account · feebump · send · sweep · channels · soroban-relay · anti-drain · recovery-*
-│           ├── vercel/                       # esbuild-bundled deprecated 12-fn Vercel fallback
+│           ├── lib/                          # create-account · feebump · send · sweep · channels · soroban-relay · anti-drain · caps · pilot · watchdog · recovery-*
 │           ├── spike1-sponsored-claim.ts   # ✅ Spike #1  — sponsored 0-XLM claim economics
 │           ├── spike1b-kms-rawsign.ts      # ✅ Spike #1b — external raw Ed25519 → DecoratedSignature
 │           ├── spike1c-wire-parity.ts      # ✅ Spike #1c — web→sponsor XDR wire-parity + fee-bump
@@ -137,7 +139,7 @@ Proves the Stellar-specific half of the CCTP bridge leg (off-ramp Path 3) on liv
 
 ## 5. 🔎 Day-1 finding caught (mempool-class)
 
-`@stellar/stellar-sdk@16` ESM build blows up under Node ESM on its internal `@stellar/js-xdr` import (`does not provide an export named 'config'`). **Original fix** was running `apps/sponsor` as CommonJS. **Superseded during the sprint (§10):** the package is now ESM (`"type":"module"`, tsx runs it fine); what still needs CJS is the **Vercel deploy**, handled by the esbuild self-contained bundle (`build-vercel.mjs`). Web (Next.js bundler) unaffected. (Details in [apps/sponsor/README.md](apps/sponsor/README.md).)
+`@stellar/stellar-sdk@16` ESM build blows up under Node ESM on its internal `@stellar/js-xdr` import (`does not provide an export named 'config'`). **Original fix** was running `apps/sponsor` as CommonJS. **Superseded during the sprint (§10):** the package is now ESM (`"type":"module"`, tsx runs it fine). The esbuild CJS bundle existed only for the Vercel host, and **that host is gone** — `src/vercel/`, `build-vercel.mjs` and the `build:vercel` script were deleted; the Cloudflare Worker runs the ESM source directly. Web (Next.js bundler) unaffected. (Details in [apps/sponsor/README.md](apps/sponsor/README.md).)
 
 ---
 
@@ -147,19 +149,20 @@ Proves the Stellar-specific half of the CCTP bridge leg (off-ramp Path 3) on liv
 |---|---|
 | Sponsored 0-XLM onboarding + fee-bumped claim economics | ✅ PROVEN (Spike #1, testnet) |
 | Anti-drain validator rejects reserve/principal drain vectors | ✅ PROVEN (**60/60** unit + **6/6** integration tests; gates the live `/feebump` — §10) |
-| Sponsor key behind external raw-Ed25519 signer (KMS path) | ✅ PROVEN mechanically (Spike #1b); an AWS-KMS signer is now **code-complete** behind the existing signer interface with **13/13 offline tests** (byte-parity with the SDK's own signing — §11). ⚠️ Live AWS provisioning has **not** happened: the deployed testnet service still uses an env hot-key (SOW scope) |
+| Sponsor key behind external raw-Ed25519 signer (KMS path) | ✅ PROVEN mechanically (Spike #1b); the AWS-KMS signer is **wired** — `lib/kms-signer.ts` implements the same `SponsorSigner` interface and `getServiceAsync()` selects it whenever `KMS_KEY_ID` is set, with **13/13 offline tests** (byte-parity with the SDK's own signing — §11). ⚠️ Live AWS provisioning has **not** happened, so **both** deployed Workers (testnet and the mainnet pilot) still sign with an env hot-key |
 | web→sponsor XDR wire-parity + fee-bump of re-parsed tx | ✅ PROVEN (Spike #1c + live browser claim — §10) |
 | **Live sponsor service + end-to-end walletless browser claim** | ✅ **PROVEN on-chain** (§10: tx `b9ef1844…` — 20 USDC landed, 0 XLM held, sponsor paid the fee) |
 | Fee-abuse / rate-limit economic defense | ✅ PROVEN live — durable cross-instance 429 on the deployed service (Upstash store; §10) + integration test |
 | v2 Soroban `LumenDrop` escrow (late-bound payout; the default shareable link-send) | ✅ PROVEN (testnet) — **29** unit + property tests over a written 14-invariant spec, plus **7/7** escrow + **5/5** relayer + **10/10** governance on-chain proofs against the current contract; deposit→claim→reclaim live over HTTP with the sponsor paying the fees (§10, §11). Production now points at the **hardened** contract, with superseded contracts still readable/exitable via the legacy fallback (§11). ❌ **No professional audit** — the static-analysis, property-test, fuzz and mutation-testing pass is complete, but that is self-assessment; a professional audit is pending. |
-| Escrow **canary caps** (per-drop + rolling-UTC-day ceiling on both escrow-creating paths) | ✅ PROVEN offline — **31/31** (`test:caps`): boundaries, day rollover, reserve/release, both store-outage behaviours. Amounts are read from the transaction XDR, not a client field. Live on testnet at 100 / 1000 USDC; mainnet should start at 20 / 500 with `CAPS_FAIL_CLOSED=1` (§11) |
+| Escrow **canary caps** (per-drop + rolling-UTC-day ceiling on both escrow-creating paths) + the **onboarding budget** (accounts/day) | ✅ PROVEN offline — **52/52** (`test:caps`): boundaries, day rollover, reserve/release, both store-outage behaviours, the separate accounts-per-day bucket and its network namespacing. Amounts are read from the transaction XDR, not a client field. **Deployed values:** testnet 100 / 1000 USDC; the mainnet pilot runs **5 / 50 with `CAPS_FAIL_CLOSED=1`** (§11's "start at 20 / 500" was a pre-deploy suggestion — the live setting is tighter) |
 | **Legacy-contract read/exit fallback** (a drop can only be released by the contract holding it) | ✅ PROVEN on testnet — **9/9** real transactions (`test:legacy`): a drop in a superseded contract claims through the relayer, a drop in the current one claims with no `contract` argument, a foreign contract id is rejected before any network spend, and a deposit into a superseded contract is rejected (§11) |
 | **Watchdog** (Cloudflare Cron Trigger, every 15 min: sponsor float · sponsor-sourced value ops · escrow governance + wasm hash) | ✅ PROVEN on testnet — smoke test **3/3** (`test:watchdog`), plus **both tripwires fired against real transactions**: a live `pause` produced a page naming the tx hash, and a deliberately wrong pinned wasm hash produced the wasm-changed page (§11) |
 | v2 escrow tool-clean (static analysis, property tests, fuzz, mutation testing) | ✅ DONE 2026-07-25 (§11) — Scout 0 findings, strict clippy 0, cargo-deny ok, 0 `unsafe`, 99.16% line coverage, 51/58 mutants caught. **This is not an audit**; a professional audit is pending. |
 | Sponsor concurrency (channel-account pool; was the #1 mainnet blocker) | ✅ PROVEN live — 20/20 concurrent `/create-account`, 0 `tx_bad_seq`, 20/20 via:channel (§10) |
 | Recovery (password + email-OTP + WebAuthn-PRF "Face ID") | ◑ SHIPPED in code + crypto self-test 18/18 (multi-account keystore + sweep also shipped, Spike #7 8/8). Real-device PRF (Spike #2) + Resend domain-verify still gate real users. |
-| Sponsor runs as a single Cloudflare Worker (env hot-key signer) | ✅ LIVE — `lumenia-sponsor.avakit.workers.dev`; the Vercel esbuild-CJS path is a deprecated 12-fn fallback. KMS raw-signer proven mechanically (Spike #1b), not wired. |
-| 🔑 Recipient can turn Stellar-USDC into spendable TRY (off-ramp) | ⚠️ PATHS IDENTIFIED, real-world unconfirmed. **CCTP V2 is live on Stellar testnet+mainnet** (bridge leg is **testnet-testable now**, no money/KYC). Two **direct** Stellar-USDC exits need no bridge: **KAST card** (TRY spend) and **Binance Global→Binance TR→IBAN**. MASAK: ~$3k/day, 72h first withdrawal. Official anchor directory (anchors.stellar.org) checked 2026-06-18: TR anchors = Banxa/BiLira/Onramp.money/Digibank/Arf, but **Banxa rejects Stellar-USDC** (XLM buy-only) and **no anchor offers a direct TRY off-ramp for Stellar-USDC** — Banxa/BiLira are BD leads ("accept USDC on Stellar?"), not a ready path. Plan tracked in a local working doc — Spike #4 (CCTP testnet) done; KAST/Binance real-account checks pending. |
+| Sponsor runs as a single Cloudflare Worker (env hot-key signer) | ✅ LIVE — `lumenia-sponsor.avakit.workers.dev`, plus a separate `lumenia-sponsor-mainnet` for the pilot. The Vercel host is **gone** (source, bundler and script deleted; the deployment is dead), so the Worker is the only sponsor host. |
+| **Mainnet pilot — real Circle USDC, allowlisted + capped** | ✅ LIVE since 2026-07-26. Owner-approved wallets only (`PILOT_MODE=1`, fail-closed), $5 per transfer, $50 per day, `CAPS_FAIL_CLOSED=1`, a per-wallet budget of 5 ledger-confirmed value ops, kill-switch, 15-min watchdog. Counted 2026-08-28: **74 approved wallets, 69 accounts opened, 53 funded, 109 real-money transfers** — every account and transfer is on the public ledger. ❌ **Not** an open mainnet launch and **not** audited: opening it up is gated on a professional audit, the owner cold key becoming a multisig, and KMS provisioning. Pilot guard tests **36/36** offline (`test:pilot`). |
+| 🔑 Recipient can turn Stellar-USDC into spendable TRY (off-ramp) | ◑ **WALKED ONCE BY HAND, not productized (2026-08-28).** Real USDC left a Lumenia mainnet account on Stellar (tx `3ac2c428…`), a licensed exchange credited it, an internal move reached that exchange's Turkish entity, it sold for lira, and the lira arrived in a Turkish bank account — about 30 minutes end to end, 0.145% in fees. **Honest scope: one run, two dollars, the founder's own fully-KYC'd accounts, every leg manual.** It shows the route exists; it is not an integration, no user can do it in-product, and MASAK's ~$3k/day cap + 72h first-withdrawal hold still apply. **Correction:** the earlier "two direct exits" line was wrong — a review found **KAST funds only from Solana/EVM, not Stellar**, so it is not an exit for Stellar-USDC. Still true from the 2026-06-18 anchor-directory check: **no Stellar anchor offers a direct TRY off-ramp**, and Banxa rejects Stellar-USDC. **CCTP V2** (live on Stellar testnet+mainnet, Spike #4 done) remains the partner-independent fallback. |
 | WebAuthn PRF round-trip on real devices (Spike #2) | ❌ UNVERIFIED (needs hardware); Argon2id is the mandatory floor |
 | WhatsApp webview claim + escape-to-browser + Argon2id (Spike #3) | ❌ UNVERIFIED (needs hardware); architecture researched (value-first + escape-to-browser) |
 | Serwist + Turbopack PWA service worker | ❌ UNVERIFIED; webpack fallback still supported in Next 16 |
@@ -182,10 +185,10 @@ Six deep research briefs were produced to de-risk the review-flagged unknowns. H
 ## 8. NOT DONE YET (for the next agent)
 
 - ✅ ~~`apps/web` skeleton~~ → **built, deployed and wired** (value-first claim page → live sponsor; §10). Recovery/passkeys, off-ramp adapters and the Serwist SW remain stubs (SOW out-of-scope).
-- ✅ ~~`apps/sponsor` HTTP service~~ → **live on Vercel** with anti-drain gate, fee cap and per-IP/per-account rate limit (§10). Still open from the old sub-list: **provisioning** the KMS key (the signer itself is code-complete + 13/13 offline, but the deployed service still runs the env hot-key — §11), and the exact op-sequence matcher from the architecture review (the live `/feebump` policy pins `maxOps: 1`, which covers the claim path).
+- ✅ ~~`apps/sponsor` HTTP service~~ → **live as a Cloudflare Worker** (deployed twice: testnet + the mainnet pilot) with the anti-drain gate, fee cap, canary caps and per-IP/per-account rate limit (§10). Still open from the old sub-list: **provisioning** the KMS key (the signer is wired behind `KMS_KEY_ID` + 13/13 offline, but both deployments still run the env hot-key — §11), and promoting the mainnet contract owner from a single cold key to a multisig with a timelock.
 - ❌ **Spike #2** (WebAuthn PRF round-trip on a real device) — requires hardware.
 - ❌ **Spike #3** (WhatsApp webview claim + escape-to-browser + Argon2id fallback) — requires hardware.
-- ❌ 🔑 **CASP / off-ramp confirmation** — still the highest-leverage off-code task; research narrowed it to "confirm a CCTP-bridged or card cash-out actually works for a TR recipient."
+- ◑ 🔑 **CASP / off-ramp** — the founder walked one exit to a Turkish bank by hand on 2026-08-28 (§6), so the route is no longer theoretical. What is **not** done: any in-product path, a second run, a run by someone who is not the founder, and the MASAK first-withdrawal hold measured on a real recipient.
 - ◑ **Recovery** (password + email-OTP + PRF "Face ID") is SHIPPED in code (real-device PRF / Spike #2 + Resend domain-verify pending) and **request-money** is SHIPPED (push-only, **not** SEP-7 — the first-time-asker case has no destination account). Still unbuilt: an off-chain split ledger and a production DB (the live stores are Upstash Redis + on-chain; there is no Postgres).
 
 ---
@@ -198,9 +201,28 @@ pnpm install        # entire workspace
 pnpm spike1         # Spike #1   → testnet → "✅ SPIKE #1 PASS"
 pnpm test:antidrain # validator  → "✅ ANTI-DRAIN TESTS PASS (60/60)" (no network)
 pnpm --filter @lumenia/sponsor test:integration  # → "✅ INTEGRATION TESTS PASS (6/6)" (testnet)
-pnpm --filter @lumenia/sponsor test:caps         # → 31/31 canary caps (no network)
 pnpm --filter @lumenia/sponsor test:legacy       # → 9/9 legacy-contract fallback (testnet)
 pnpm --filter @lumenia/sponsor test:watchdog     # → 3/3 watchdog smoke test (testnet)
+
+# the offline suites CI runs on every push (no network, no secrets)
+pnpm --filter @lumenia/sponsor test:caps            # → 52/52 canary caps + onboarding budget
+pnpm --filter @lumenia/sponsor test:pilot           # → 36/36 pilot allowlist + budget
+pnpm --filter @lumenia/sponsor test:kms             # → 13/13 KMS signer path
+pnpm --filter @lumenia/sponsor test:events          # → 22/22 event beacon
+pnpm --filter @lumenia/sponsor test:recovery-store  # → 30/30 recovery blob store
+pnpm --filter @lumenia/sponsor test:identity        # → 66/66 names + ways-back-in registries
+pnpm --filter @lumenia/sponsor test:identity-routes # → 37/37 the same, through worker.fetch
+pnpm --filter @lumenia/sponsor test:channels        # channel-lease correctness
+pnpm --filter @lumenia/web test:recovery            # → 18/18 recovery crypto
+pnpm --filter @lumenia/web test:money               # → 36/36 amount parsing + formatting
+pnpm --filter @lumenia/web test:txguard             # → 32/32 client-side signing guard
+pnpm --filter @lumenia/web test:claimerr            # → 24/24 claim-error classification
+pnpm --filter @lumenia/web test:claimpw             # → 13/13 password-locked links
+pnpm --filter @lumenia/web test:receive             # → 14/14
+pnpm --filter @lumenia/web test:horizon             # → 17/17
+pnpm --filter @lumenia/web test:suggest             # → 8/8 name suggestions
+
+# the remaining testnet spikes
 pnpm spike1b        # Spike #1b  → testnet → "✅ SPIKE #1b PASS"
 pnpm spike1c        # Spike #1c  → testnet → "✅ SPIKE #1c PASS"
 pnpm spike4         # Spike #4   → testnet → "✅ SPIKE #4 PASS" (CCTP Stellar-side interface)
@@ -214,12 +236,12 @@ pnpm spike4         # Spike #4   → testnet → "✅ SPIKE #4 PASS" (CCTP Stell
 
 The 30-day SOW ([INSTAWARDS_SOW.md](INSTAWARDS_SOW.md)) integrates the proven spikes into one live flow. Status per deliverable — see [EVIDENCE.md](EVIDENCE.md) for the reviewer-facing package:
 
-- **D1 — live sponsor service:** now deployed as a single **Cloudflare Worker** at `https://lumenia-sponsor.avakit.workers.dev` (`/health`, `/create-account`, `/feebump`, plus the post-sprint `/send-link` `/sweep` `/faucet` `/demo-link` `/events` `/waitlist` `/feedback` and v2/recovery endpoints); env hot-key signer; fee cap; per-IP + per-account rate limiting, **durable across instances** (Upstash Redis, `KV_REST_API_URL/TOKEN`; in-memory fallback). Proven live: 12 concurrent `/create-account` for one account → exactly 5×200 (cap) + 7×429. (The Vercel esbuild-CJS deploy is a deprecated 12-fn fallback — the move was forced by Vercel Hobby's 12-function cap once recovery pushed the count to 15.)
+- **D1 — live sponsor service:** now deployed as a single **Cloudflare Worker** at `https://lumenia-sponsor.avakit.workers.dev` (`/health`, `/create-account`, `/feebump`, plus the post-sprint `/send-link` `/sweep` `/faucet` `/demo-link` `/events` `/waitlist` `/feedback` and v2/recovery endpoints); env hot-key signer; fee cap; per-IP + per-account rate limiting, **durable across instances** (Upstash Redis, `KV_REST_API_URL/TOKEN`; in-memory fallback). Proven live: 12 concurrent `/create-account` for one account → exactly 5×200 (cap) + 7×429. (The move off Vercel was forced by its Hobby 12-function cap once recovery pushed the count to 15; the esbuild-CJS fallback that briefly existed for that host has since been deleted along with the host — §5.)
 - **D2 — end-to-end walletless claim:** ✅ **binary metric MET.** A real browser tapped a claim link on `https://lumenia-chi.vercel.app`, the sponsor created a 0-XLM account + USDC trustline, and the fee-bumped claim landed **20 USDC with the recipient holding 0 XLM** — tx `b9ef1844c6ca2df732648b965a2f991ba0197643057b2c9e2a60ab52c3e23746` (fee paid by the sponsor; verify on stellar.expert).
 - **D3 — anti-drain, wired and tested:** the validator (`apps/sponsor/src/lib/anti-drain.ts`, hardened to **strict-by-default**) gates every live `/feebump`. **44/44** unit tests (18 claim + 7 send + 12 sweep + 4 op-sequence + 3 golden-policy) + **6/6** integration tests (happy claim / happy send / drain rejection / rate-limit 429 over real HTTP); a live drain attempt against the deployed endpoint returns `400 — "op 'payment' sourced from sponsor (drain attempt)"`. Three separate tight policies (CLAIM / SEND / SWEEP); the claim allowlist is never widened. Write-up: [ANTI_DRAIN.md](ANTI_DRAIN.md).
 - **Web claim UI:** value-first page (amount before any credential; bearer key in the `#fragment`, never sent to a server), on-screen explorer tx link after the claim, and the delegated cash-out **placeholder** (disabled "Spend with a card / Convert to Turkish lira" — a licensed provider converts, Lumenia never does; SOW §4.1 note).
 - **Evidence:** [EVIDENCE.md](EVIDENCE.md) + the test-output capture `evidence/tests-25-25-and-6-6.png`.
-- **Still open (W4):** the 60-second demo video (user-recorded).
+- **60-second demo video:** ✅ recorded and published — a phone opening the claim link on the live page, USDC arriving with no wallet, no setup and no gas (the SOW-scoped **testnet** v1 flow). Link in [EVIDENCE.md](EVIDENCE.md).
 
 ---
 
@@ -345,3 +367,68 @@ a middleware bypass and SSRF in Server Actions); the dependency audit is now cle
 **CI.** Every push now runs strict clippy, the contract test suite, `cargo-audit`, `cargo-deny` and a
 **90% line-coverage gate**; a weekly workflow runs Scout, OpenZeppelin's `soroban-scanner`, fuzzing and
 mutation testing.
+
+---
+
+## 12. Correctness pass, 2026-08-30 (real-money paths + doc truth)
+
+A review of the money paths now that real dollars move through them, and of the public docs that had
+drifted behind the deployment. **No new product surface** — the changes below make existing paths
+tell the truth about what happened.
+
+**The doctrine that drove most of it: an unconfirmed transaction is not a failed one.** Reporting
+"nothing moved" when the network simply did not answer invites a retry that spends the money twice.
+
+- **v2 deposit / `/send`.** A deposit that cannot be confirmed now says so and offers no retry until
+  the signed transaction's own timebound has passed — the instant after which it genuinely cannot be
+  included. Before that, "we couldn't confirm" stays on screen.
+- **Cash-out (`/send-out`).** Horizon timeouts, 5xx and no-answer-at-all now raise a distinct
+  "couldn't confirm" state instead of "your money hasn't moved, try again", with **no retry
+  affordance**; the sponsor distinguishes the same case (`SubmitUnconfirmedError`) rather than
+  collapsing it into a generic failure. The `/payout` route still carries no status or field of its
+  own for it, so on **mainnet** the client reads the redacted `request failed` answer as unconfirmed
+  — deliberately conservative on the one screen where saying "nothing moved" pays an exchange twice,
+  at the cost of every other withheld reason on that route reading the same way.
+- **v1 claim.** A link retried after a partial claim no longer bricks: the client accepts the
+  sponsor's 3-op reply after independently confirming on Horizon that the account exists, instead of
+  demanding the 4-op shape forever. Guard refusals are now **terminal** (no button offering an
+  identical refusal), `op_no_trust` is no longer misread as "already claimed", the frozen route's
+  fallback host was pointed at the live Worker, and the route is pinned to testnet.
+- **v2 claim.** The escrow is read **before** an account is minted, so a dead or already-claimed
+  link costs no sponsor reserve and files no orphan key; already-claimed / no-such-drop get their own
+  settled screens instead of "your money is still safe, try again"; double-tap is guarded; an
+  Argon2id derivation that cannot run says so instead of leaving "Checking…" forever.
+- **`/sent/[id]`.** A status read that failed renders as "couldn't check just now", not "Received".
+- **Amounts.** Four money fields deleted a decimal comma, turning `1,50` into `150`. They now read it
+  (`lib/money.ts`, `test:money` **36/36**). USDC→stroop conversion no longer round-trips through a
+  float.
+- **Recovery passwords.** The strength floor is enforced where the box is wrapped, not only on the
+  first screen, and the server-stored backup lands **before** the device locks — a wrong code no
+  longer leaves an account locked under a password with no copy anywhere. A confirm field was added
+  where a new password is set.
+- **Sponsor bounds.** `/create-account` was the one value route with no economic ceiling; it now
+  reserves against a per-UTC-day onboarding budget (fail-closed on mainnet, released when the
+  handout fails). The body cap is enforced on the bytes actually read rather than on a
+  `content-length` a client can omit. `/faucet` and `/demo-link` refuse off testnet **in code**, so
+  an inherited secret cannot give away real value. `/events/summary` is metered like the other reads.
+- **Watchdog.** Sponsor-sourced `set_options` / `create_passive_sell_offer` /
+  `create_claimable_balance` now page (a stolen key preparing a theft was invisible); the capacity
+  alert's title no longer carries a ticking number, so its 6-hour dedup works; a check that *fails to
+  run* pages instead of passing quietly; and a run that cannot deliver alerts says so rather than
+  marking conditions as already-sent.
+- **Connecting a way back in.** `/identity-attach` now takes **two** signatures, because two parties
+  have to agree: the identity's own proof, and the account's `links` signature over the literal
+  `attach` — rebuilt server-side from `address`, so no other key can stand in for it. Both halves are
+  wired end to end: the three connect paths take the signer first, the client sends `accountProof`,
+  the Worker forwards it, and the store verifies it before writing a row. A throwaway email is no
+  longer enough to hang connections off a stranger's address.
+- **Half-landed, recorded as such:** a recovery row can now carry a hash of the account key allowed
+  to replace it, so a stolen inbox cannot paint over a working backup, and the web helper knows how
+  to sign that proof — but the one screen that stores a backup does not hand it a signer, so rows are
+  still written unbound and stay replaceable by anyone who can read the mail.
+
+**Test counts after the pass** (all offline, all run): antidrain 60/60 · caps **52/52** · pilot
+**36/36** · recovery-store **30/30** · identity **66/66** · identity-routes 37/37 · kms 13/13 ·
+events 22/22 · web recovery 18/18 · **money 36/36 (new suite)** · txguard **32/32** · claimerr
+**24/24** · claimpw 13/13 · receive 14/14 · horizon 17/17 · suggest 8/8. `test:money` is wired into
+CI alongside the rest.
