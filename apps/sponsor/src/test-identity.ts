@@ -13,7 +13,9 @@
  *  WAYS BACK IN. A linked identity must never become a way to open the money, and a lookup must
  *  never become an oracle that tells a stranger which emails have accounts. So: attach refuses to
  *  re-point an identity that already leads somewhere else (and says where, by name), a passkey row
- *  is bound to its PRF proof on first write, and nothing is answered without a proof.
+ *  is bound to its PRF proof on first write, and nothing is answered without a proof. Attaching
+ *  needs a SECOND proof, from the account being pointed at — holding an identity is not standing to
+ *  hang it off a stranger's address.
  *
  *  Everything runs against the in-memory store fallback — no network, no keys, no KV.
  *
@@ -77,6 +79,13 @@ function proofFor(
     network: NET,
     proof: kp.sign(Buffer.from(message, "utf8")).toString("base64"),
   };
+}
+
+/** The account's own authorization for an attach — the `links` proof, over the literal `attach`. */
+function accountProof(kp: Keypair, ts = Math.floor(Date.now() / 1000)) {
+  const nonce = proofNonce();
+  const message = handleProofMessage("links", "attach", kp.publicKey(), ts, nonce, NET);
+  return { ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
 }
 
 const BOX = {
@@ -189,24 +198,45 @@ async function main(): Promise<void> {
   ok("a right code resolves the identity", goodEmail?.provider === "email");
   ok("an unknown ticket proves nothing", (await resolveProof({ kind: "ticket", ticket: hex("f").slice(0, 48) }, { verifyEmailOtp: async () => true })) === null);
 
-  console.log("\n[9] connecting, and the warning that makes it useful");
+  console.log("\n[9] the account has to agree too");
   const emailIdentity = goodEmail!;
   ok("nothing is connected yet", (await checkIdentity(emailIdentity, NET)).taken === false);
-  const attached = await attachIdentity(emailIdentity, alice.publicKey(), NET, BOX);
+  ok(
+    "holding the identity is not enough to hang it off an address",
+    (await attachIdentity(emailIdentity, alice.publicKey(), NET, BOX)).ok === false,
+  );
+  ok(
+    "another account's signature does not authorize it",
+    (await attachIdentity(emailIdentity, alice.publicKey(), NET, BOX, undefined, accountProof(bob))).ok === false,
+  );
+  ok(
+    "nor one old enough to have been scraped from somewhere",
+    (await attachIdentity(emailIdentity, alice.publicKey(), NET, BOX, undefined, accountProof(alice, Math.floor(Date.now() / 1000) - 4000)))
+      .ok === false,
+  );
+  ok("and none of that connected anything", (await checkIdentity(emailIdentity, NET)).taken === false);
+
+  console.log("\n[9b] connecting, and the warning that makes it useful");
+  const attached = await attachIdentity(emailIdentity, alice.publicKey(), NET, BOX, undefined, accountProof(alice));
   ok("alice connects her email", attached.ok === true);
   const check = await checkIdentity(emailIdentity, NET);
   ok("it now reports as connected", check.taken === true);
   ok("and names the account it opens", check.handle === "meric", check.handle ?? "no handle");
-  const stolen = await attachIdentity(emailIdentity, bob.publicKey(), NET, BOX);
+  // Bob signs for his OWN account here — the attach is authorized, and still refused, because the
+  // identity already leads somewhere else. Authorization and ownership are separate refusals.
+  const stolen = await attachIdentity(emailIdentity, bob.publicKey(), NET, BOX, undefined, accountProof(bob));
   ok("it refuses to re-point at another account", stolen.ok === false);
   ok("and the refusal carries the name", stolen.ok === false && stolen.conflict?.handle === "meric");
-  ok("alice's own re-attach still works", (await attachIdentity(emailIdentity, alice.publicKey(), NET, BOX)).ok === true);
+  ok(
+    "alice's own re-attach still works",
+    (await attachIdentity(emailIdentity, alice.publicKey(), NET, BOX, undefined, accountProof(alice))).ok === true,
+  );
 
   console.log("\n[10] a passkey row is bound to its own PRF proof");
   const passkeyProof = { kind: "passkey" as const, id: hex("c"), proof: hex("9") };
   const pk = await resolveProof(passkeyProof, { verifyEmailOtp: async () => false });
   ok("an unclaimed passkey id resolves", pk?.provider === "passkey");
-  await attachIdentity(pk!, alice.publicKey(), NET, BOX, passkeyProof.proof);
+  await attachIdentity(pk!, alice.publicKey(), NET, BOX, passkeyProof.proof, accountProof(alice));
   const impostor = await resolveProof({ kind: "passkey", id: hex("c"), proof: hex("8") }, { verifyEmailOtp: async () => false });
   ok("a different proof for the same id is refused", impostor === null);
   const rightful = await resolveProof(passkeyProof, { verifyEmailOtp: async () => false });

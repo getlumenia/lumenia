@@ -95,7 +95,22 @@ export interface AttachConflict {
 }
 
 /**
+ * The literal the account signs over to authorize an attach. Pinned to
+ * `apps/sponsor/src/lib/identity-links.ts::ATTACH_PROOF_NAME`; the two copies must stay identical or
+ * every connect is refused. It is a `links` proof because that is the action an account already
+ * signs to read and remove its own connections — adding one is the same standing.
+ */
+const ATTACH_PROOF_NAME = "attach";
+
+/**
  * Connect a proved identity to this account, filing the ciphertext box under it.
+ *
+ * TWO proofs, because two parties have to agree: `proof` is the identity's, and the signature built
+ * here is the account agreeing to be what that identity opens. Without the second, a throwaway
+ * email would be enough to hang connections off any address on the ledger.
+ *
+ * The server rebuilds the signed message with `address` rather than with any pubkey sent alongside
+ * it, so the signer must be the one that controls `address`.
  *
  * Throws with the OTHER account's name when the identity already leads somewhere else, rather than
  * taking it over — the person who set that up would otherwise lose their way back in with no event
@@ -104,10 +119,22 @@ export interface AttachConflict {
 export async function attachIdentity(
   proof: IdentityProof,
   address: string,
+  signer: Signer,
   box?: RecoveryBox,
   passkeyProof?: string,
 ): Promise<void> {
-  const res = await post("/identity-attach", { proof, address, box, passkeyProof });
+  if (signer.publicKey() !== address) {
+    throw new Error("That is not the account unlocked on this phone.");
+  }
+  const account = await signHandleProof(signer, "links", ATTACH_PROOF_NAME);
+  const res = await post("/identity-attach", {
+    proof,
+    address,
+    box,
+    passkeyProof,
+    // Only what the server reads back: it takes the pubkey from `address`, never from here.
+    accountProof: { ts: account.ts, nonce: account.nonce, proof: account.proof },
+  });
   if (res.ok) return;
   const body = (await res.json().catch(() => ({}))) as { error?: string; conflict?: AttachConflict };
   if (body.conflict) {

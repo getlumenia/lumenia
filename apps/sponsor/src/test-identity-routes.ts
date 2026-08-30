@@ -62,6 +62,14 @@ async function call(
   return { status: res.status, json };
 }
 
+/** The account's own authorization for an attach — the `links` proof, over the literal `attach`. */
+function accountProof(kp: Keypair) {
+  const ts = Math.floor(Date.now() / 1000);
+  const nonce = proofNonce();
+  const message = handleProofMessage("links", "attach", kp.publicKey(), ts, nonce, "testnet");
+  return { ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
+}
+
 function signed(kp: Keypair, action: "claim" | "release" | "links", name: string) {
   const ts = Math.floor(Date.now() / 1000);
   const nonce = proofNonce();
@@ -135,25 +143,54 @@ async function main(): Promise<void> {
   const badProof = await call("POST", "/identity-check", { proof: { kind: "ticket", ticket: hex("a").slice(0, 48) } });
   ok("a check with an unknown ticket is refused", badProof.status === 401);
 
-  const attach = await call("POST", "/identity-attach", {
+  // An attach is TWO agreements: `proof` is the identity's, and `accountProof` is the account
+  // agreeing to be what that identity opens. BOTH halves belong here. A route that refuses
+  // correctly and accepts nothing is indistinguishable from a route no user can get through, so
+  // the 409 below is what a stranger must get and the 200 after it is what every "Connect Face ID"
+  // needs. `accountProof` is the literal body key apps/web/lib/identity.ts sends — renaming it on
+  // either side has to fail here rather than in front of a user.
+  const unauthorized = await call("POST", "/identity-attach", {
     proof: { kind: "passkey", id: hex("c"), proof: hex("9") },
     address: alice.publicKey(),
     passkeyProof: hex("9"),
   });
-  ok("alice connects a passkey", attach.status === 200, String(attach.json.error ?? ""));
+  ok("an attach the account did not sign is refused", unauthorized.status === 409, String(unauthorized.json.error));
+  ok(
+    "and says so in words a screen can show",
+    typeof unauthorized.json.error === "string",
+    String(unauthorized.json.error),
+  );
+
+  const attach = await call("POST", "/identity-attach", {
+    proof: { kind: "passkey", id: hex("c"), proof: hex("9") },
+    address: alice.publicKey(),
+    passkeyProof: hex("9"),
+    accountProof: accountProof(alice),
+  });
+  ok(
+    "alice connects a passkey through the front door",
+    attach.status === 200 && attach.json.ok === true,
+    JSON.stringify(attach.json).slice(0, 80),
+  );
 
   const check = await call("POST", "/identity-check", { proof: { kind: "passkey", id: hex("c"), proof: hex("9") } });
   ok("checking it reports connected", check.status === 200 && check.json.taken === true);
   ok("and names the account by handle", check.json.handle === "meric", String(check.json.handle));
 
+  // Bob signs for his OWN account, so this gets past the authorization gate and reaches the case
+  // that matters: an identity already leading somewhere is not re-pointed. `conflict.handle` is
+  // what the screen turns into "that already opens @meric", so a refusal that dropped it would
+  // leave the user a blank failure.
   const steal = await call("POST", "/identity-attach", {
     proof: { kind: "passkey", id: hex("c"), proof: hex("9") },
     address: bob.publicKey(),
+    accountProof: accountProof(bob),
   });
-  ok("bob cannot re-point it at himself", steal.status === 409);
+  ok("bob cannot re-point it at himself", steal.status === 409, String(steal.json.error));
   ok(
     "and the refusal carries the name the UI shows",
     (steal.json.conflict as { handle?: string } | undefined)?.handle === "meric",
+    JSON.stringify(steal.json.conflict),
   );
 
   const wrongProof = await call("POST", "/identity-attach", {

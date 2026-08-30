@@ -26,7 +26,7 @@
 import { StrKey } from "@stellar/stellar-sdk";
 import { kvConfigFromEnv } from "./rate-limit.js";
 import { validateBox, type RecoveryBox } from "./recovery-store.js";
-import { handleOf } from "./handles.js";
+import { handleOf, verifyHandleProof, type ProofInput } from "./handles.js";
 
 export type Provider = "passkey" | "email" | "google" | "github" | "x";
 export const PROVIDERS: Provider[] = ["passkey", "email", "google", "github", "x"];
@@ -294,7 +294,24 @@ export type AttachResult =
   | { ok: false; reason: string; conflict?: { address: string; handle?: string } };
 
 /**
+ * What the ACCOUNT signs to authorize an attach: the `links` proof a listing already takes, over
+ * the literal below. It carries no pubkey of its own — the account is the address being attached
+ * to, and rebuilding the message with THAT address is what ties the signature to it.
+ *
+ * The message cannot name the identity, because an OAuth ticket is resolved to its id here on the
+ * server: the browser doing the signing has no id to sign over.
+ */
+export type AccountProof = Omit<ProofInput, "action" | "name" | "network" | "pubkey">;
+const ATTACH_PROOF_NAME = "attach";
+
+/**
  * Connect a proved identity to an account, optionally filing the account's ciphertext box under it.
+ *
+ * TWO parties have to agree. Proving the identity says nothing about the account it is being
+ * pointed at, so without a signature from that account a throwaway email is enough to hang links
+ * off any address on the ledger: filling MAX_LINKS_PER_ACCOUNT so the owner can add no real way
+ * back in, padding the listing they are shown, and filing a stranger's ciphertext under their
+ * account. The account-side detach already works this way; attaching is the same act, inverted.
  *
  * REFUSES to re-point an identity that already leads to a DIFFERENT account. Overwriting would
  * silently break the other account's way back in — the person who set it up would find their route
@@ -307,8 +324,20 @@ export async function attachIdentity(
   network: NetworkId,
   box: unknown,
   passkeyProof?: string,
+  accountProof?: AccountProof,
 ): Promise<AttachResult> {
   if (!StrKey.isValidEd25519PublicKey(address)) return { ok: false, reason: "invalid account address" };
+  if (!accountProof) return { ok: false, reason: "That account has to authorize this connection." };
+  const signed = await verifyHandleProof({
+    action: "links",
+    name: ATTACH_PROOF_NAME,
+    pubkey: address,
+    ts: Number(accountProof.ts),
+    nonce: String(accountProof.nonce ?? ""),
+    network,
+    proof: String(accountProof.proof ?? ""),
+  });
+  if (signed.ok !== true) return { ok: false, reason: signed.reason };
 
   const existing = await readRow(resolved.id);
   if (existing && existing.address !== address) {
