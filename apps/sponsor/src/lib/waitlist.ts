@@ -1,8 +1,14 @@
 /**
- * /waitlist — the only PII Lumenia stores (FRONTEND_PLAN §1: notify-me emails).
+ * /waitlist — the notify-me lists: an address, and the fact that it asked to hear about something.
  * Kept in an ISOLATED store, keyed by list name, NEVER joined to a pubkey or any
  * money data. Reuses the Upstash REST pair (if configured) as a set; falls back to
  * a structured log otherwise.
+ *
+ * This store holds no join, but it is not the whole picture: the mainnet pilot keeps an applicant's
+ * address beside the wallet it applied with, because the approve/decline mail has nowhere else to
+ * go. That is the service's one email↔address join, it carries a retention TTL and an erase path,
+ * and lib/pilot.ts says so where it is written. This file used to claim to be the only PII in the
+ * repo, which made the pilot's exception look like an oversight instead of a decision.
  *
  * Three lists, kept SEPARATE on purpose rather than merged into one "interested" bucket:
  *   "waitlist" — tell me when real money goes live (the landing's capture)

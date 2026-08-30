@@ -3,11 +3,23 @@
  * Offline: a fake in-memory KV stands in for Upstash, so this runs with no network and no
  * secrets. Proves: only approved wallets are admitted, each gets exactly PILOT_MAX_TX slots,
  * a failed op releases its slot, revoke locks a wallet out, the store is fail-closed, and the
- * allowlist is namespaced per network.
+ * allowlist is namespaced per network. Also pins the shape of the one email↔wallet join this
+ * service keeps: where it lives, that it expires, and that revoking erases it.
  *
  * RUN: pnpm --filter @lumenia/sponsor test:pilot
  */
-import { enforcePilot, approvePilot, revokePilot, pilotStatus, pilotEnabled, mintApprovalToken, verifyApprovalToken } from "./lib/pilot.js";
+import {
+  enforcePilot,
+  approvePilot,
+  revokePilot,
+  pilotStatus,
+  pilotEnabled,
+  mintApprovalToken,
+  verifyApprovalToken,
+  startPilotRequest,
+  getPilotEmail,
+  PILOT_EMAIL_RETENTION_SECONDS,
+} from "./lib/pilot.js";
 import { ipBucket } from "./lib/rate-limit.js";
 
 let pass = 0,
@@ -17,22 +29,33 @@ const check = (n: string, ok: boolean, d = "") => {
   ok ? pass++ : fail++;
 };
 
-/** In-memory stand-in for the Upstash REST pipeline lib/pilot.ts talks to (GET/SET/DEL/INCR/DECR). */
+/**
+ * In-memory stand-in for the Upstash REST pipeline lib/pilot.ts talks to (GET/SET/DEL/INCR/DECR).
+ * `ttls` records the `EX` seconds of a SET so a test can prove a key was written with an expiry —
+ * an unbounded write and a bounded one are otherwise indistinguishable from the outside.
+ */
 function installFakeKv() {
   const store = new Map<string, string>();
+  const ttls = new Map<string, number>();
   process.env.KV_REST_API_URL = "https://fake-kv.test";
   process.env.KV_REST_API_TOKEN = "t";
   globalThis.fetch = (async (_url: string | URL, init?: { body?: string }) => {
     const cmds = JSON.parse(String(init?.body ?? "[]")) as string[][];
-    const results = cmds.map(([op, key, arg]) => {
+    const results = cmds.map((cmd) => {
+      const [op, key, arg] = cmd;
       switch (op) {
         case "GET":
           return { result: store.has(key!) ? store.get(key!) : null };
-        case "SET":
+        case "SET": {
           store.set(key!, String(arg));
+          const ex = cmd.indexOf("EX");
+          ttls.delete(key!);
+          if (ex > 0 && cmd[ex + 1] !== undefined) ttls.set(key!, Number(cmd[ex + 1]));
           return { result: "OK" };
+        }
         case "DEL": {
           const had = store.delete(key!);
+          ttls.delete(key!);
           return { result: had ? 1 : 0 };
         }
         case "INCR": {
@@ -51,7 +74,7 @@ function installFakeKv() {
     });
     return { ok: true, status: 200, json: async () => results } as unknown as Response;
   }) as typeof fetch;
-  return store;
+  return { store, ttls };
 }
 function clearKv() {
   delete process.env.KV_REST_API_URL;
@@ -121,6 +144,32 @@ async function main() {
   delete process.env.STELLAR_NETWORK;
   delete process.env.PILOT_MODE;
   clearKv();
+
+  console.log("[9] the one email↔wallet join is bounded, and it is the only one");
+  {
+    const { store, ttls } = installFakeKv();
+    const APPLICANT = "someone@example.test";
+    await startPilotRequest(W, APPLICANT);
+    check("the outcome mail still has an address to go to", (await getPilotEmail(W)) === APPLICANT);
+    check(
+      "it is written with a retention TTL, not forever",
+      ttls.get(`pilot:testnet:email:${W}`) === PILOT_EMAIL_RETENTION_SECONDS,
+      String(ttls.get(`pilot:testnet:email:${W}`)),
+    );
+    check(
+      "no KEY NAME carries the address (the 'already applied' marker is hashed)",
+      [...store.keys()].every((k) => !k.includes(APPLICANT) && !k.includes("@")),
+    );
+    check(
+      "exactly ONE stored value is the address",
+      [...store.values()].filter((v) => v === APPLICANT).length === 1,
+    );
+    await approvePilot(W);
+    check("approval does not disturb it", (await getPilotEmail(W)) === APPLICANT);
+    await revokePilot(W);
+    check("revoking erases it", (await getPilotEmail(W)) === null);
+    clearKv();
+  }
 
   console.log("[approval links] a signed, per-wallet, expiring token — not the shared secret");
   process.env.PILOT_APPROVE_TOKEN = "test-owner-secret";

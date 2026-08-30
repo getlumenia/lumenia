@@ -103,8 +103,24 @@ function net(): string {
 // approval flag + spend counter, namespaced by network.
 const apprKey = (pk: string) => `pilot:${net()}:appr:${pk}`;
 const txKey = (pk: string) => `pilot:${net()}:tx:${pk}`;
-const emailKey = (pk: string) => `pilot:${net()}:email:${pk}`;
 const statusKey = (pk: string) => `pilot:${net()}:status:${pk}`;
+/**
+ * The applicant's contact address, keyed by the wallet it applied with.
+ *
+ * This is the ONE place in the service where an email sits next to a money address in the clear,
+ * and it is deliberate rather than incidental: the owner approves or declines a specific wallet,
+ * and the mail that tells that person the answer has nowhere else to look. Nothing else here works
+ * this way — the "already applied" marker below is keyed by hash, recovery-otp.ts keys its boxes by
+ * hash and stores no address at all, and the notify-me lists (waitlist.ts) carry no pubkey.
+ *
+ * Two bounds keep it from becoming a standing register of who holds which mainnet wallet: every
+ * write carries `PILOT_EMAIL_RETENTION_SECONDS`, so an application nobody ever decides expires on
+ * its own, and `revokePilot` / `forgetPilotEmail` erase it outright once there is nothing left to
+ * tell that person.
+ */
+const emailKey = (pk: string) => `pilot:${net()}:email:${pk}`;
+/** How long a contact address is kept — an owner's decision window, not a permanent record. */
+export const PILOT_EMAIL_RETENTION_SECONDS = 90 * 24 * 60 * 60;
 /**
  * The "this address already applied" marker. Keyed on a HASH of the address rather than the
  * address itself: a Redis key name is not a place to keep someone's email in the clear, and this
@@ -220,7 +236,7 @@ export async function startPilotRequest(
   await pipe(kv, [
     ["SET", statusKey(pubkey), "pending"],
     ["SET", seenKey, pubkey],
-    ["SET", emailKey(pubkey), clean],
+    ["SET", emailKey(pubkey), clean, "EX", PILOT_EMAIL_RETENTION_SECONDS],
   ]);
   return { created: true, state: "pending" };
 }
@@ -257,12 +273,23 @@ export async function rejectPilot(pubkey: string): Promise<void> {
 /**
  * Remember a pilot applicant's contact email so approval can notify them. Best-effort and
  * separate from the allowlist flag: a missing store just means the owner acts on the
- * notification email by hand. Namespaced by network like everything else here.
+ * notification email by hand. Namespaced by network like everything else here, and written
+ * under the same retention bound as the application itself.
  */
 export async function storePilotEmail(pubkey: string, email: string): Promise<void> {
   const kv = kvConfigFromEnv();
   if (!kv) return;
-  await pipe(kv, [["SET", emailKey(pubkey), email]]).catch(() => {});
+  await pipe(kv, [["SET", emailKey(pubkey), email, "EX", PILOT_EMAIL_RETENTION_SECONDS]]).catch(() => {});
+}
+
+/**
+ * Erase a wallet's stored contact address. The retention TTL is the backstop for an application
+ * nobody answers; this is the deliberate erase, for when there is no longer anything to tell them.
+ */
+export async function forgetPilotEmail(pubkey: string): Promise<void> {
+  const kv = kvConfigFromEnv();
+  if (!kv) return;
+  await pipe(kv, [["DEL", emailKey(pubkey)]]).catch(() => {});
 }
 
 /** The applicant's stored email, if any — used to send the "you're in" mail on approval. */
@@ -273,11 +300,19 @@ export async function getPilotEmail(pubkey: string): Promise<string | null> {
   return typeof v === "string" && v ? v : null;
 }
 
-/** Owner-only: remove a wallet from the pilot allowlist (its counter is left as an audit trail). */
+/**
+ * Owner-only: remove a wallet from the pilot allowlist (its counter is left as an audit trail).
+ * The contact address goes with it — there is no outcome left to mail, so keeping an email beside a
+ * mainnet address would be keeping it for nothing. A wallet revoked and later re-approved is
+ * approved silently; both callers already say so when there is no stored address.
+ */
 export async function revokePilot(pubkey: string): Promise<void> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
-  await pipe(kv, [["DEL", apprKey(pubkey)]]);
+  await pipe(kv, [
+    ["DEL", apprKey(pubkey)],
+    ["DEL", emailKey(pubkey)],
+  ]);
 }
 
 /** Read a wallet's pilot status — for the client status endpoint, owner CLI and audits. */
