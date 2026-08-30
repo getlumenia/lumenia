@@ -16,6 +16,12 @@ import V2ClaimButton from "./V2ClaimButton";
  * generic grey card — the visual signature of a phishing message, on the one link we are asking 20
  * people to trust. The v1 route has had this since launch; the v2 rewrite dropped it. Nothing
  * private is exposed: the amount and name are already query params, not fragment.
+ *
+ * Those same query params are why `robots` is declared here. This route sits at the top level, not
+ * inside the (app) group whose layout carries the noindex, so nothing else says it for it — and a
+ * URL naming a stranger's amount and sender has no business in an index even when the crawler can
+ * only see the URL. robots.ts Disallows the path too; a Disallow alone can still leave a
+ * link-discovered URL listed.
  */
 export async function generateMetadata({
   searchParams,
@@ -28,7 +34,12 @@ export async function generateMetadata({
   const who = (typeof sp.s === "string" ? sp.s : "").trim().slice(0, 24) || "Someone";
   const title = ok ? `${who} sent you ${formatUsd(sp.a as string)}` : `${who} sent you money`;
   const images = [`/c/x/og?${new URLSearchParams({ a: ok ? (sp.a as string) : "", s: who })}`];
-  return { title, openGraph: { title, images }, twitter: { card: "summary_large_image", title, images } };
+  return {
+    title,
+    robots: { index: false, follow: false },
+    openGraph: { title, images },
+    twitter: { card: "summary_large_image", title, images },
+  };
 }
 
 /**

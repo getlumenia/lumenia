@@ -82,7 +82,7 @@ export const metadata: Metadata = {
  * than guessing from the DOM. Kept minimal and TRUE: no aggregateRating, no fabricated review or
  * price markup — the same honesty rule the rest of the repo runs on applies to what we tell crawlers.
  */
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumenia-chi.vercel.app";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://getlumenia.com";
 const JSON_LD = {
   "@context": "https://schema.org",
   "@graph": [

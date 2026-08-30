@@ -10,13 +10,17 @@
  * Every other route in the group opens on ordinary content with no wordmark of its own, so the nav is
  * simply there — the scroll gate would leave those pages chrome-less until you scrolled, with no way
  * back to the site.
+ *
+ * The links cell is hidden below md, where most of this audience is. Without the disclosure panel
+ * below it, /how-it-works, /about and /developers exist on a phone only in the footer.
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -40,9 +44,50 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 export function SiteNav() {
   // The landing is the only route with an opening hero to clear, so it is the only one that gates.
-  const gated = usePathname() === "/";
+  const pathname = usePathname();
+  const gated = pathname === "/";
   const [scrolledPastHero, setScrolledPastHero] = useState(false);
   const shown = !gated || scrolledPastHero;
+
+  const reduce = useReducedMotion();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false);
+    menuTriggerRef.current?.focus();
+  }, []);
+
+  /* Escape closes and hands focus back; a tap elsewhere just closes (pulling focus to the trigger
+     on an outside tap would scroll the page back to the header). Deliberately NOT role="menu":
+     that promises arrow-key semantics this does not implement, and a column of links is already
+     operable with Tab. */
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeMenu();
+    }
+    function onDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (menuRef.current?.contains(target) || menuTriggerRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onDown);
+    };
+  }, [menuOpen, closeMenu]);
+
+  // A client navigation does not unmount the nav, so the panel would hang over the page it opened.
+  useEffect(() => setMenuOpen(false), [pathname]);
+
+  // Scrolling back into the landing's hero fades the trigger out; the panel must not outlive it.
+  useEffect(() => {
+    if (!shown) setMenuOpen(false);
+  }, [shown]);
 
   /* Whether this device already holds an account. Read once, from the keystore, after mount — the
      marketing shell has no WalletProvider and the record lives in IndexedDB, so there is nothing
@@ -86,7 +131,9 @@ export function SiteNav() {
           a cell, so with three columns declared the ACTIONS were auto-placed into the middle one and
           the third sat empty. The bar read as logo-left, buttons-adrift-in-the-middle, nothing right.
           Declaring the columns the page actually has puts the actions back on the right edge. */}
-      <nav className="relative grid w-full max-w-[clamp(64rem,58vw,90rem)] grid-cols-[1fr_auto] md:grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-2.5">
+      {/* The cell gap tightens below md: the phone row carries wordmark + menu + theme + CTA, which
+          does not fit inside a 360px screen at gap-4. */}
+      <nav className="relative grid w-full max-w-[clamp(64rem,58vw,90rem)] grid-cols-[1fr_auto] md:grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 py-2.5 md:gap-4">
         {/* The pill's chrome lives on its own gated layer so it can fade with the wordmark/links while
             the actions cell painted above it stays visible. Decorative — the cells carry the clicks. */}
         <motion.div
@@ -129,6 +176,29 @@ export function SiteNav() {
         {/* Actions cell — EXEMPT from the gate. Painted on first load so the landing always offers a
             way to convert; pointer-events re-enabled since the header itself is click-through. */}
         <div className="pointer-events-auto relative flex items-center gap-1.5 justify-self-end">
+          {/* The phone-sized stand-in for the links cell, so it follows the LINKS' gate rather than
+              this cell's exemption: on the landing those three pages appear at the same scroll
+              point they do on a desktop, and the opening hero keeps its own wordmark uncovered. */}
+          <motion.div
+            className="md:hidden"
+            initial={false}
+            animate={shown ? { y: 0, opacity: 1 } : { y: -22, opacity: 0 }}
+            transition={{ duration: 0.5, ease: [0.2, 0.7, 0.2, 1] }}
+            style={{ pointerEvents: shown ? "auto" : "none" }}
+          >
+            <Button
+              ref={menuTriggerRef}
+              variant="ghost"
+              size="icon"
+              className="rounded-xl text-foreground/70 hover:text-foreground"
+              aria-label={menuOpen ? "Close menu" : "Open menu"}
+              aria-expanded={menuOpen}
+              aria-controls="site-nav-menu"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              {menuOpen ? <X className="size-4" aria-hidden="true" /> : <Menu className="size-4" aria-hidden="true" />}
+            </Button>
+          </motion.div>
           <ThemeToggle />
           {/* The cell answers who is looking. Someone with an account on this device gets a door to
               their money plus their next step; a first-timer gets an ACCOUNT AND THE SEND SCREEN.
@@ -154,6 +224,33 @@ export function SiteNav() {
             </Button>
           )}
         </div>
+
+        {/* The panel hangs off the pill instead of taking the screen: three links do not warrant a
+            full-screen takeover, and the CTA above it stays reachable while it is open. Its box
+            repeats the pill's chrome so the two read as one piece of glass. */}
+        <AnimatePresence>
+          {menuOpen && (
+            <motion.div
+              id="site-nav-menu"
+              ref={menuRef}
+              className="pointer-events-auto absolute inset-x-0 top-full mt-2 flex flex-col gap-0.5 rounded-2xl border border-border/70 bg-background/95 p-2 shadow-[0_16px_44px_-24px_rgba(110,95,206,0.55)] backdrop-blur-xl md:hidden"
+              initial={reduce ? { opacity: 0 } : { opacity: 0, y: -8 }}
+              animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0 }}
+              exit={reduce ? { opacity: 0 } : { opacity: 0, y: -8 }}
+              transition={{ duration: reduce ? 0 : 0.22, ease: [0.2, 0.7, 0.2, 1] }}
+            >
+              {LINKS.map((l) => (
+                <Link
+                  key={l.href}
+                  href={l.href}
+                  className="rounded-xl px-3 py-2.5 text-sm font-medium text-foreground/80 transition-colors duration-200 hover:bg-muted hover:text-foreground"
+                >
+                  {l.label}
+                </Link>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </nav>
     </header>
   );

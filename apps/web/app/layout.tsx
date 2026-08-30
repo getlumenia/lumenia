@@ -6,7 +6,7 @@ import "./globals.css";
 // claim page /c/[id], whose hard budget is zero webfonts (FRONTEND_PLAN §5b). The
 // humanist heading font is introduced later in the (site)/app layouts only, so it
 // never reaches the claim route. Body font = system stack (see globals.css).
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumenia-chi.vercel.app";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://getlumenia.com";
 
 export const metadata: Metadata = {
   // metadataBase makes per-claim OG image URLs absolute (required by link crawlers).

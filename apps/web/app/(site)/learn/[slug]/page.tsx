@@ -18,7 +18,7 @@ import { Footer } from "../../../../components/site/sections/Footer";
 import "../../../../components/site/page.css";
 import "../../../../components/site/editorial.css";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumenia-chi.vercel.app";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://getlumenia.com";
 
 /**
  * Article + BreadcrumbList structured data — the two schema types that still earn

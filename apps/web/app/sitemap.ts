@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { GUIDES, GUIDES_UPDATED } from "../lib/learn";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumenia-chi.vercel.app";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://getlumenia.com";
 
 /**
  * sitemap.xml (Next native) — the public surface only.

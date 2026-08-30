@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumenia-chi.vercel.app";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://getlumenia.com";
 
 /**
  * robots.txt (Next native). Until now there was none, so /robots.txt 404'd into the not-found page.
@@ -10,6 +10,10 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lumenia-chi.vercel
  * names an amount, a sender and a balance id, and those are a stranger's money. They have no
  * business in an index. Disallowing here keeps the claim route's own HTML untouched (it is grant
  * evidence and frozen) while still keeping it out of search.
+ *
+ * `/v2/c/` is the same bearer link on the Soroban path and needs its own line: it sits at the top
+ * level rather than inside the noindexed (app) group, and its amount and sender are query params
+ * that render into the OG card.
  *
  * /spike and /dev are 404 in production already; listing them is belt-and-braces.
  *
@@ -25,7 +29,7 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: "/",
       // `/r/` keeps its trailing slash: a bare `/r` prefix would also block /roadmap.
-      disallow: ["/c/", "/r/", "/request", "/claimed", "/home", "/account", "/activity", "/contacts", "/notifications", "/split", "/send", "/sent/", "/unlock", "/brand-kit", "/dev$", "/spike"],
+      disallow: ["/c/", "/v2/c/", "/r/", "/request", "/claimed", "/home", "/account", "/activity", "/contacts", "/notifications", "/split", "/send", "/sent/", "/unlock", "/add-money", "/pilot", "/settings", "/start", "/welcome", "/brand-kit", "/dev$", "/spike"],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
     host: SITE_URL,
