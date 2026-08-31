@@ -3,6 +3,7 @@
 > Reviewer-facing evidence for the SOW deliverables ([INSTAWARDS_SOW.md](INSTAWARDS_SOW.md)).
 > Everything below is on the **public Stellar testnet** — no real money. Each claim is
 > independently verifiable: click the explorer links or re-run the commands.
+> One-page summary for a reader in a hurry: [`evidence/lumenia-evidence-pack.pdf`](evidence/lumenia-evidence-pack.pdf).
 
 ## The binary success metric — MET
 
@@ -69,18 +70,20 @@ capture remains valid evidence; this newer one shows the metric holds on today's
 > an address they name) plus its golden-allowlist case added 13 (44 → 57); and three **muxed-address
 > (M…) rejection** cases, added 2026-08-08, closed the muxed-source bypass class (57 → 60). The claim
 > allowlist was never widened — the count went up because coverage went up, and no SOW-era test was
-> removed or weakened. (The captures referenced below are historical: a 44/44 run from 2026-07-22 and the
-> SOW-era 25/25 capture at `evidence/tests-25-25-and-6-6.png`; re-running today prints 60/60.)
+> removed or weakened. The capture below is a full 60/60 run; the earlier 44/44 and 25/25 captures
+> were dropped once they no longer matched what the suite prints.
 
-### Test output (2026-07-22 capture — the suite has since grown to 60/60)
+### Test output (2026-08-31 capture)
 
-![44/44 anti-drain + 6/6 integration tests passing](evidence/tests-44-44-and-6-6.png)
+![60/60 anti-drain tests passing, case by case](evidence/tests-60-60-antidrain.png)
 
-Verbatim (as captured then — the anti-drain line now prints 60/60):
+Verbatim:
 
 ```
- ✅ ANTI-DRAIN TESTS PASS (44/44)
+ ✅ ANTI-DRAIN TESTS PASS (60/60)
 ```
+
+Integration suite, over real HTTP (2026-07-22 capture; re-running today still prints 6/6):
 
 ```
 === bootstrap sponsor + issuer (friendbot) ===
@@ -229,7 +232,7 @@ posture: [SECURITY.md](SECURITY.md).
 | Anti-drain validator | **60/60** (offline) | `pnpm --filter @lumenia/sponsor test:antidrain` |
 | Sponsor integration (real HTTP) | **6/6** (testnet) | `pnpm --filter @lumenia/sponsor test:integration` |
 | KMS Ed25519 signer (offline; byte-parity with the SDK's own signing) | **13/13** | `pnpm --filter @lumenia/sponsor test:kms` |
-| **Canary caps (new)** — per-drop + rolling-UTC-day escrow ceiling on both escrow-creating paths | **31/31** (offline) | `pnpm --filter @lumenia/sponsor test:caps` |
+| **Canary caps (new)** — per-drop + rolling-UTC-day escrow ceiling on both escrow-creating paths | **82/82** (offline) | `pnpm --filter @lumenia/sponsor test:caps` |
 | **Legacy-contract fallback (new)** — claim/reclaim a drop held by a superseded contract | **9/9** real testnet txs | `SPONSOR_SECRET=S… USDC_ISSUER_SECRET=S… pnpm --filter @lumenia/sponsor test:legacy` |
 | **Watchdog (new)** — cron tripwire smoke test | **3/3** (testnet) | `pnpm --filter @lumenia/sponsor test:watchdog` |
 
@@ -239,7 +242,7 @@ actually execute, not a client-supplied field. The per-drop cap is enforced loca
 call, so a store outage cannot disable it; the per-day total is an **atomic `INCRBY` reserve-then-check**
 in the same Upstash store as the rate limiter, so concurrent requests cannot slip through a
 read-then-write gap. A rejected request does not consume the day's budget and a failed transaction
-releases its reservation. The 31 cases cover boundaries, UTC-day rollover, reserve/release, both
+releases its reservation. The cases cover boundaries, UTC-day rollover, reserve/release, both
 store-outage behaviours (default **fail open**, `CAPS_FAIL_CLOSED=1` **fail closed**) and a malformed
 env value falling back to the default rather than to unlimited. Testnet values: `MAX_DROP_USDC=100`,
 `MAX_DAY_USDC=1000`.
@@ -273,6 +276,8 @@ claimable** (versioned storage survives). The owner has **no path that moves esc
 | Strict clippy · cargo-deny · cargo-geiger | 0 warnings · ok · **0 `unsafe`** in the contract crate | `cargo clippy --all-targets -- -D warnings …` · `cargo deny check` |
 | cargo-audit | clean apart from one unmaintained-crate advisory (`paste`, transitive); cargo-vet baseline established | `cargo audit` |
 | Fuzzing | a solvency target that runs in CI on Linux (it cannot link on macOS); the same invariant also runs as a property test everywhere | `cargo +nightly fuzz run escrow_solvency` |
+
+![29 contract tests passing and strict clippy clean](evidence/contract-29-tests-clippy-clean.png)
 
 CI runs the fast checks (strict clippy, contract tests, `cargo-audit`, `cargo-deny`, a **90%
 line-coverage gate**) on every push; Scout, OpenZeppelin's `soroban-scanner`, fuzzing and
@@ -319,7 +324,7 @@ pnpm install
 pnpm --filter @lumenia/sponsor test:antidrain     # 60/60, no network
 pnpm --filter @lumenia/sponsor test:integration   # 6/6, testnet (friendbot; can be slow if friendbot rate-limits)
 pnpm --filter @lumenia/sponsor test:kms           # 13/13 KMS signer tests, no network, no AWS
-pnpm --filter @lumenia/sponsor test:caps          # 31/31 canary caps, no network
+pnpm --filter @lumenia/sponsor test:caps          # 82/82 canary caps, no network
 pnpm --filter @lumenia/sponsor test:legacy        # 9/9 legacy-contract fallback, testnet (needs SPONSOR_SECRET + USDC_ISSUER_SECRET)
 pnpm --filter @lumenia/sponsor test:watchdog      # 3/3 watchdog smoke test, testnet
 curl https://lumenia-sponsor.avakit.workers.dev/health   # live service (Cloudflare Worker)
@@ -330,3 +335,8 @@ cd contracts/lumen-drop && cargo test            # 29 unit + invariant property 
 # deploy the sponsor (Cloudflare Worker):
 cd apps/sponsor && npx wrangler deploy
 ```
+
+The whole offline gate in one run, which is exactly what CI runs on every push: no network, no
+keys, **17 suites / 539 assertions / 0 failures** (captured 2026-08-31).
+
+![The offline test gate: 17 suites, 539 assertions, zero failures](evidence/offline-gate-17-suites-539.png)

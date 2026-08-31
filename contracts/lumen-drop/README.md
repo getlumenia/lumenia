@@ -81,7 +81,13 @@ These are the properties the test suite exists to defend. Numbers are referenced
     `now < expiry <= now + 30 days`.
 12. **Verify-or-revert atomicity.** A failed claim changes nothing (effects precede the transfer,
     and a bad signature traps the transaction).
-13. **Admin cannot move funds.** No owner/upgrade/pause path transfers escrow.
+13. **Admin cannot move funds, in this bytecode.** No owner entrypoint transfers escrow: the only
+    `token.transfer` sites are `claim`/`claim_share` (link-signature-gated) and
+    `reclaim`/`reclaim_pool` (sender-auth-gated); the owner surface is upgrade/pause/renounce.
+    `upgrade` is deliberately **outside** this invariant, because replacing the wasm can replace
+    the rules. That is precisely why the posture is upgradeable-with-safety-net now and
+    renounce-to-immutable after the professional audit, and why mainnet ownership belongs behind
+    a timelock + multisig.
 14. **Pause never traps funds.** All exits succeed regardless of pause state.
 
 ## Testing and tooling

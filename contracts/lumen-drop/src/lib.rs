@@ -464,6 +464,9 @@ impl LumenDrop {
  *   invariant 13 — the owner has NO entrypoint that can move escrowed funds: the ONLY
  *     `token.transfer` sites are `claim`/`claim_share` (link-signature-gated) and
  *     `reclaim`/`reclaim_pool` (sender-auth-gated). The owner surface is upgrade/pause/renounce.
+ *     SCOPE, stated plainly: that holds for THIS bytecode. `upgrade` installs different bytecode,
+ *     so it is the one owner power this invariant cannot bind — an owner-key compromise on mainnet
+ *     is an arbitrary upgrade. Hence timelock + multisig now, renounce-to-immutable after audit.
  *   invariant 14 — pause gates ONLY `deposit`/`create_drop`; every exit stays callable, so no
  *     reachable state can trap escrowed funds.
  * Owner on mainnet = a timelock + multisig (delay ≥ the drop lifetime so in-flight drops can

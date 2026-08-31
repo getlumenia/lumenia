@@ -144,3 +144,18 @@ lumenia-demo-script.txt
 lumenia-pitch-voice.opus
 lumenia-pitch-voice.json
 apps/web/e2e/demo/.raw/
+
+# User-test and demo recordings (two people's voice/face; this repo is public).
+# The generator and the published links are what belong in git, not the footage.
+user-onboard*.mp4
+user-onboard*.srt
+demo-*.mp4
+demo-*.mov
+demo-*.srt
+sow1-demo*.mp4
+sow1-demo*.mov
+sow1-demo*.srt
+
+# Traffic screenshots feed the local customer-development docs, not the public
+# evidence package, and they go stale by the week.
+evidence/vercel-analytics-*.png

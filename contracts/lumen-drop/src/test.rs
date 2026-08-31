@@ -534,6 +534,11 @@ fn pause_gates_only_new_escrow() {
 
 /// Invariant 13 — no owner action can move escrowed funds; and the owner surface itself is
 /// auth-gated (a stranger can neither pause nor upgrade).
+///
+/// What this proves: pause/unpause leave the escrow balance untouched, an unauthorized caller
+/// cannot reach the owner surface at all, and exits still work afterwards. What it CANNOT prove:
+/// anything about a wasm a compromised owner might install — `upgrade` replaces the rules, so it
+/// sits outside the invariant by construction (see the governance block in lib.rs).
 #[test]
 fn owner_surface_cannot_move_escrow_and_is_auth_gated() {
     let f = setup();
