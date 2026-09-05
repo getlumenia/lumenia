@@ -75,6 +75,16 @@ const nextConfig: NextConfig = {
       ...origin(process.env.NEXT_PUBLIC_HORIZON_MAINNET ?? "https://horizon.stellar.org"),
       ...origin(process.env.NEXT_PUBLIC_SOROBAN_RPC ?? "https://soroban-testnet.stellar.org"),
       ...origin(process.env.NEXT_PUBLIC_SOROBAN_RPC_MAINNET ?? "https://mainnet.sorobanrpc.com"),
+      // The anchor the cash-out leg talks to (SEP-1 discovery, SEP-10 sign-in, SEP-24 withdrawal,
+      // see lib/anchor.ts). It is read from the SAME env var lib/anchor.ts reads, so a deployment
+      // that points at a different anchor does not silently lose the ability to reach it. Only the
+      // origin is allowed, and only for fetch: the anchor's own hosted screen is opened as a
+      // top-level navigation, which `connect-src` does not govern and `form-action` still does.
+      ...origin(
+        process.env.NEXT_PUBLIC_ANCHOR_HOME_DOMAIN
+          ? `https://${process.env.NEXT_PUBLIC_ANCHOR_HOME_DOMAIN.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`
+          : undefined,
+      ),
       // Only reachable from the spike harness, which is build-gated off in production.
       ...(dev ? ["https://friendbot.stellar.org"] : []),
     ];

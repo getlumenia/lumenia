@@ -59,7 +59,7 @@ jobs:
           pnpm --filter @lumenia/sponsor test:recovery-store
           pnpm --filter @lumenia/sponsor test:identity
           pnpm --filter @lumenia/sponsor test:identity-routes
-      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money)
+      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + anchor)
         run: |
           pnpm --filter @lumenia/web test:recovery
           pnpm --filter @lumenia/web test:claimpw
@@ -69,6 +69,7 @@ jobs:
           pnpm --filter @lumenia/web test:suggest
           pnpm --filter @lumenia/web test:txguard
           pnpm --filter @lumenia/web test:money
+          pnpm --filter @lumenia/web test:anchor
 
   build:
     name: Build web

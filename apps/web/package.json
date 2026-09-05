@@ -2,7 +2,7 @@
   "name": "@lumenia/web",
   "version": "0.0.0",
   "private": true,
-  "description": "Lumenia PWA — Next.js web-first (web + installable mobile)",
+  "description": "Lumenia PWA \u2014 Next.js web-first (web + installable mobile)",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -16,6 +16,7 @@
     "test:horizon": "tsx lib/horizon.selftest.ts",
     "test:claimerr": "tsx lib/claim-error.selftest.ts",
     "test:money": "tsx lib/money.selftest.ts",
+    "test:anchor": "tsx lib/anchor.selftest.ts",
     "lint": "eslint ."
   },
   "dependencies": {
