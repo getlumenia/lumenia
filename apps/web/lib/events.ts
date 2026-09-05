@@ -5,7 +5,29 @@
  * funnel, never enough to reconstruct a link. Fire-and-forget; it must never break
  * or delay the claim (all failures swallowed).
  */
-const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
+import { activeNetwork } from "./network";
+
+/**
+ * Where a beacon goes: the sponsor for the network the device is ACTUALLY on.
+ *
+ * This used to be a module-level constant reading NEXT_PUBLIC_SPONSOR_URL, which is the testnet
+ * Worker. Every other client module resolves per network through `activeNetwork()`; this one did
+ * not, so every event fired while a device was on real money was posted to the testnet Worker and
+ * the mainnet summary answered zero. Nothing that happened on mainnet was measurable, which is a
+ * quiet way to have no evidence at all.
+ *
+ * Resolved per call rather than once at module load, because `activeNetwork()` reads localStorage
+ * in the browser and a person can switch networks inside a single session.
+ */
+function sponsorUrl(): string {
+  try {
+    const url = activeNetwork().sponsorUrl;
+    if (url) return url;
+  } catch {
+    /* fall through to the build-time default */
+  }
+  return process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
+}
 /**
  * Must stay in step with ALLOWED_EVENTS in apps/sponsor/src/lib/events.ts — this list is the one
  * that decides whether a beacon is sent at all, and it had drifted: the send half of the funnel was
@@ -81,7 +103,7 @@ export async function sendEvent(event: string, claimId: string, account?: string
     const aid = account ? await hashId(account) : undefined;
     const body = JSON.stringify({ event, cid, ...(aid ? { aid } : {}) }); // NEVER url / fragment (C2)
     // text/plain keeps this a "simple" CORS request (no preflight); response ignored.
-    navigator.sendBeacon(`${SPONSOR_URL}/events`, new Blob([body], { type: "text/plain" }));
+    navigator.sendBeacon(`${sponsorUrl()}/events`, new Blob([body], { type: "text/plain" }));
   } catch {
     /* analytics must never break the claim */
   }
