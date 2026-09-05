@@ -28,6 +28,7 @@ import {
   scValToNative,
   xdr,
 } from "@stellar/stellar-sdk";
+import { USDC_ISSUERS } from "./lib/config.js";
 
 const SPONSOR = (process.env.SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev").replace(/\/$/, "");
 const NET = Networks.TESTNET;
@@ -35,7 +36,7 @@ const RPC = new rpc.Server("https://soroban-testnet.stellar.org");
 const HZ = new Horizon.Server("https://horizon-testnet.stellar.org");
 const CURRENT = process.env.LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S";
 const LEGACY = process.env.LUMENDROP_LEGACY ?? "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF";
-const USDC = new Asset("USDC", "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC");
+const USDC = new Asset("USDC", USDC_ISSUERS.testnet);
 const UNIT = 10_000_000n;
 
 function need(n: string): string {

@@ -39,10 +39,10 @@ const TESTNET: NetworkConfig = {
   horizonUrl: process.env.NEXT_PUBLIC_HORIZON ?? "https://horizon-testnet.stellar.org",
   rpcUrl: process.env.NEXT_PUBLIC_SOROBAN_RPC ?? "https://soroban-testnet.stellar.org",
   contract:
-    process.env.NEXT_PUBLIC_LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S",
+    process.env.NEXT_PUBLIC_LUMENDROP_CONTRACT ?? "CAMCI5VPRLQUL6H4QKLZ6X7ASLVCEYBYWS7N3QG7JVOA25HCY2TN3HP3",
   legacyContracts: list(
     process.env.NEXT_PUBLIC_LUMENDROP_LEGACY ??
-      "CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF,CAKEJAGCATVMJB6CMB6LM736DHUJ37YOTOER23SWRNDHPLTU2ZJUDIAB",
+      "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S,CDYEDHBPMDOOZSJGB2Z6JVK7GS3S5CWNXNGTEPMJFS25TAWSYHTXA2RF,CAKEJAGCATVMJB6CMB6LM736DHUJ37YOTOER23SWRNDHPLTU2ZJUDIAB",
   ),
   sponsorUrl: process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev",
   isMainnet: false,
@@ -64,9 +64,21 @@ const MAINNET: NetworkConfig = {
   isMainnet: true,
 };
 
-/** The USDC each network escrows: Circle's on mainnet, our own test asset on testnet. */
+/**
+ * The USDC each network escrows: Circle's, on both.
+ *
+ * Testnet moved on 2026-09-06 from this project's own practice issuer (GDO7HI2W…) to Circle's own
+ * testnet USDC. Two reasons, and the first is the one that forced it: the Turkish sandbox ramp
+ * settles Circle's asset and no other, so while the two sides named different assets a dollar
+ * arriving from that anchor could not travel through a Lumenia link at all. Second, it puts
+ * practice money on the same issuer as real money, so the only difference between the two networks
+ * is the network, which is one less thing that behaves differently in testing than in production.
+ *
+ * Links already holding the old asset keep working: the escrow that holds them stays in the legacy
+ * list, which is read and exit only.
+ */
 export const USDC_ISSUER: Record<NetworkId, string> = {
-  testnet: "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC",
+  testnet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
   public: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 };
 

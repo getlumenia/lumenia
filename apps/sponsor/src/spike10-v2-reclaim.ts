@@ -34,13 +34,14 @@ import { signerFromSecret } from "./lib/signer.js";
 import { horizon, submit, friendbot, nativeBalance, trustlineBalance } from "./lib/stellar.js";
 import { createAccountHandler } from "./lib/create-account.js";
 import { relayDepositHandler, relayReclaimHandler } from "./lib/soroban-relay.js";
+import { USDC_ISSUERS } from "./lib/config.js";
 
 const NET = Networks.TESTNET;
 const RPC = new rpc.Server("https://soroban-testnet.stellar.org");
 // Overridable so the same proof can gate a redeploy (hardening passes deploy NEW contract ids).
 const CONTRACT =
   process.env.LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S";
-const USDC = new Asset("USDC", "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC");
+const USDC = new Asset("USDC", USDC_ISSUERS.testnet);
 const need = (n: string) => process.env[n] ?? (() => { throw new Error(`set ${n}`); })();
 const ISSUER = Keypair.fromSecret(need("USDC_ISSUER_SECRET"));
 const SPONSOR = Keypair.fromSecret(need("SPONSOR_SECRET"));

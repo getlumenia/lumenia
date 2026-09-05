@@ -27,13 +27,14 @@ import {
   xdr,
   BASE_FEE,
 } from "@stellar/stellar-sdk";
+import { USDC_ISSUERS } from "./lib/config.js";
 
 const NET = Networks.TESTNET;
 const RPC = new rpc.Server("https://soroban-testnet.stellar.org");
 const HZ = new Horizon.Server("https://horizon-testnet.stellar.org");
 const CONTRACT = process.env.LUMENDROP_CONTRACT ?? die("set LUMENDROP_CONTRACT");
 const WASM_HASH = process.env.WASM_HASH ?? die("set WASM_HASH (hex, from `stellar contract upload`)");
-const USDC = new Asset("USDC", "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC");
+const USDC = new Asset("USDC", USDC_ISSUERS.testnet);
 const ISSUER = Keypair.fromSecret(process.env.USDC_ISSUER_SECRET ?? die("set USDC_ISSUER_SECRET"));
 const OWNER = Keypair.fromSecret(process.env.OWNER_SECRET ?? die("set OWNER_SECRET"));
 const UNIT = 10_000_000n;

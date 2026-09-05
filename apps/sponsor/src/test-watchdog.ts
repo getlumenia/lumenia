@@ -9,6 +9,7 @@
 import { makeConfig } from "./lib/config.js";
 import { signerFromSecret } from "./lib/signer.js";
 import { alertingStatus, runWatchdog, withoutRepeats, type Alert } from "./lib/watchdog.js";
+import { USDC_ISSUERS } from "./lib/config.js";
 
 function need(name: string): string {
   const v = process.env[name];
@@ -30,7 +31,7 @@ async function main() {
   const config = makeConfig({
     network: "testnet",
     sponsorSecret: need("SPONSOR_SECRET"),
-    usdcIssuer: "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC",
+    usdcIssuer: USDC_ISSUERS.testnet,
     lumendropContract:
       process.env.LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S",
   });

@@ -10,6 +10,32 @@ import { Asset, Networks } from "@stellar/stellar-sdk";
 
 export type StellarNetwork = "testnet" | "mainnet";
 
+/**
+ * The USDC each network uses, in ONE place.
+ *
+ * These were pasted as literals into thirteen files, which is how a repoint becomes a half-day of
+ * grep instead of a one-line change. The live services read `USDC_ISSUER` from the environment;
+ * these constants are the default and the value every operator script and spike should import
+ * rather than restate.
+ *
+ * TESTNET moved on 2026-09-06 from the project's own practice issuer (GDO7HI2W…) to **Circle's own
+ * testnet USDC** (home_domain centre.io, verified on Horizon: auth_revocable true, clawback
+ * disabled, the same posture as the mainnet asset). The reason is interoperability: the Turkish
+ * sandbox ramp used at the September 2026 hackathon settles this asset and no other, so a dollar
+ * from that anchor could not travel through a Lumenia link while the two sides named different
+ * assets. Circle's faucet also becomes a valid funding source.
+ *
+ * Anything holding the old asset keeps working: the superseded escrow stays in
+ * LUMENDROP_LEGACY_CONTRACTS, which is exit-only by design.
+ */
+export const USDC_ISSUERS: Record<StellarNetwork, string> = {
+  testnet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  mainnet: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+};
+
+/** The superseded practice asset. Kept named so old testnet records stay readable. */
+export const LEGACY_TESTNET_USDC_ISSUER = "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC";
+
 export interface SponsorConfig {
   network: StellarNetwork;
   networkPassphrase: string;

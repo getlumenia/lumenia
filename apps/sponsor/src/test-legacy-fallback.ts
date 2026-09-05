@@ -33,6 +33,7 @@ import {
 import { makeConfig } from "./lib/config.js";
 import { signerFromSecret } from "./lib/signer.js";
 import { relayClaimHandler, relayDepositHandler } from "./lib/soroban-relay.js";
+import { USDC_ISSUERS } from "./lib/config.js";
 
 const NET = Networks.TESTNET;
 const RPC = new rpc.Server("https://soroban-testnet.stellar.org");
@@ -41,7 +42,7 @@ const HZ = new Horizon.Server("https://horizon-testnet.stellar.org");
 const CURRENT = process.env.LUMENDROP_CONTRACT ?? "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S";
 /** The interim hardened build — a real superseded escrow with the same interface. */
 const LEGACY = process.env.LUMENDROP_LEGACY ?? "CAKEJAGCATVMJB6CMB6LM736DHUJ37YOTOER23SWRNDHPLTU2ZJUDIAB";
-const USDC = new Asset("USDC", "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC");
+const USDC = new Asset("USDC", USDC_ISSUERS.testnet);
 const UNIT = 10_000_000n;
 
 function need(name: string): string {
