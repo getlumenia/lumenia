@@ -49,7 +49,13 @@ MAX_DAY_USDC = "1000"
 SPONSOR_MIN_XLM = "50"
 # The wasm the escrow is EXPECTED to run. An upgrade emits no event, so a mismatch here is the
 # only signal that the deployed bytecode changed. Update this whenever you intentionally upgrade.
-LUMENDROP_WASM_HASH = "38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a"
+#
+# 2026-09-06: this is the hash of the escrow deployed with the Circle-testnet-USDC repoint, built
+# with stellar-cli 27.1.0. It differs from the mainnet pin below even though the source is the same
+# apart from comments, because the build is not byte-reproducible across toolchain versions. Worth
+# knowing before anyone tries to source-verify the mainnet bytecode: it will need the toolchain that
+# produced it, not simply the same commit.
+LUMENDROP_WASM_HASH = "4b5780ebf4848913c4f1557df1468391e3c26f4106ef0ff23ec1e3caf79cb68b"
 
 # The watchdog (lib/watchdog.ts) — sponsor float + "sponsor sourced value" + escrow governance
 # calls. Alerts appear in `wrangler tail`; set RESEND_API_KEY + ALERT_NOTIFY_TO (secrets) to

@@ -150,18 +150,49 @@ function capacityFloor(): number {
   return Number.isFinite(n) && n > 0 ? n : 25;
 }
 
+/**
+ * Fetch JSON from an upstream the watchdog does not control, and fail in a way a human can read.
+ *
+ * Every call site used to be `(await (await fetch(url)).json())`. When Horizon or the RPC answered
+ * a 502 with a text body, `.json()` threw `Unexpected token 'e', "error code: 502..."` and the
+ * whole check reported itself as broken. That is a page that says nothing about what went wrong,
+ * for a condition that clears itself, and a monitor that cries wolf on a transient hiccup is one
+ * whose next alert gets ignored.
+ *
+ * So: one retry with a short backoff, because these are transient by nature and this runs every
+ * fifteen minutes; and on a real failure an error naming the host and the status, so the email is
+ * "Horizon answered 502" rather than a parser complaint.
+ */
+async function fetchJson<T>(url: string): Promise<T> {
+  let lastError = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1_500));
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        lastError = `${new URL(url).host} answered ${res.status}`;
+        continue;
+      }
+      return (await res.json()) as T;
+    } catch (e) {
+      lastError = `${new URL(url).host}: ${(e as Error).message}`;
+    }
+  }
+  throw new Error(lastError);
+}
+
 async function checkSponsorAccount(
   config: SponsorConfig,
   sponsorPublicKey: string,
   alerts: Alert[],
 ): Promise<void> {
   const base = config.horizonUrl.replace(/\/$/, "");
-  const acc = (await (await fetch(`${base}/accounts/${sponsorPublicKey}`)).json()) as {
+  const acc = await fetchJson<{
     balances?: Array<{ asset_type?: string; balance?: string }>;
     subentry_count?: number;
     num_sponsoring?: number;
     status?: number;
-  };
+  }>(`${base}/accounts/${sponsorPublicKey}`);
   const native = acc.balances?.find((b) => b.asset_type === "native");
   const xlm = Number.parseFloat(native?.balance ?? "0");
   if (!native) {
@@ -213,9 +244,9 @@ async function checkSponsorAccount(
   const url =
     `${base}/accounts/${sponsorPublicKey}/operations?order=asc&limit=100` +
     (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
-  const page = (await (await fetch(url)).json()) as {
+  const page = await fetchJson<{
     _embedded?: { records?: Array<Record<string, unknown>> };
-  };
+  }>(url);
   const records = page._embedded?.records ?? [];
   let last = cursor;
   for (const op of records) {
