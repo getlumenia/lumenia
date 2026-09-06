@@ -19,7 +19,10 @@ export interface DemoLinkResult {
   from: string;
 }
 
-const DEMO_AMOUNT = "5";
+// 5 until 2026-09-06. Lowered with FAUCET_AMOUNT for the same reason: practice money now comes
+// from Circle's rate-limited faucet rather than an issuer we control, so each demo link costs
+// real supply. See lib/faucet.ts.
+const DEMO_AMOUNT = "0.5";
 const DEMO_FROM = "Lumenia";
 const DEMO_RECLAIM_SECONDS = "3600"; // the faucet can reclaim an unclaimed demo link after 1 hour
 

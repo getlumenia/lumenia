@@ -28,8 +28,16 @@ export interface FaucetResult {
   amount: string;
 }
 
-/** Fixed test-USDC dispense amount. */
-export const FAUCET_AMOUNT = "20";
+/**
+ * Fixed test-USDC dispense amount.
+ *
+ * Dropped from 20 to 0.5 on 2026-09-06, when testnet moved onto Circle's testnet USDC. This
+ * project used to issue its own practice asset and could mint as much as it liked; Circle's
+ * faucet gives 20 USDC per address every two hours, so the supply is now finite and shared.
+ * At 0.5 a single top-up onboards forty people instead of one, which is what a room full of
+ * strangers actually needs. Nobody trying the flow is counting the dollars.
+ */
+export const FAUCET_AMOUNT = "0.5";
 
 export async function faucetHandler(
   server: Horizon.Server,
