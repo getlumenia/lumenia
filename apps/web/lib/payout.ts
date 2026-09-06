@@ -180,6 +180,14 @@ export interface PayoutInput {
   /** the memo the destination asked for; omit for a muxed address (it carries its own) */
   memo?: string;
   memoKind?: MemoKind;
+  /**
+   * Called with the payment's identity the moment it exists and BEFORE it is handed to the
+   * sponsor. A caller that records this first can, after a crash, a reload or a closed tab, ask
+   * the ledger what became of the payment instead of assuming nothing happened. Same reasoning as
+   * the latch in lib/offramp.ts: an attempt that was never written down looks like an attempt
+   * never made, and on this screen that reading pays an exchange twice.
+   */
+  onHandedOver?: (payment: { hash: string; retrySafeAfter: number }) => void;
 }
 
 export interface PayoutResult {
@@ -315,6 +323,7 @@ export async function sendOut(opts: PayoutInput): Promise<PayoutResult> {
   /* The moment after which the ledger's silence stops being "not yet" and becomes proof. A
    * transaction with no upper bound would never reach it, so absence could never settle anything. */
   const retrySafeAfter = Number(inner.timeBounds?.maxTime ?? 0) * 1000 || Number.POSITIVE_INFINITY;
+  opts.onHandedOver?.({ hash, retrySafeAfter });
 
   /* An answer that decided nothing is not a verdict, and neither is a guess about it. Ask the one
    * authority that can rule — the same public record the screen tells people to check — and report

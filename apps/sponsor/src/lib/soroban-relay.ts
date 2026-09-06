@@ -35,6 +35,12 @@ const DEPOSIT_ARITY: Record<string, number> = { deposit: 4, create_drop: 5 };
 const ALLOWED_RECLAIM_METHODS = new Set<string>(["reclaim", "reclaim_pool"]);
 /** Max fee (stroops) the sponsor will fee-bump a v2 deposit to (~2 XLM; a deposit costs ~0.2). */
 const V2_DEPOSIT_FEE_CAP = 20_000_000;
+/**
+ * How far above the simulated resource fee a relayed reclaim's inner fee may sit (stroops). The
+ * web client assembles its reclaim with a 0.2 XLM inclusion fee on top of the resource fee, so
+ * that is the honest figure plus slack; anything higher is somebody spending the sponsor's XLM.
+ */
+const V2_RECLAIM_INCLUSION_HEADROOM = 2_500_000;
 
 /**
  * Timebound (s) for a v2-claim tx AND the confirm-wait budget — kept EQUAL on purpose:
@@ -236,6 +242,20 @@ export async function relayDepositHandler(
   const cap = await checkCaps(amountStroops, capsFromEnv());
   if (!cap.ok) throw new PublicRefusal(`canary cap: ${cap.reason}`);
 
+  /* The day's budget goes back at most ONCE, and never once the transaction is on the network.
+   * Before this, a send ERROR or an on-ledger FAILED released the cap and then threw into the
+   * catch below, which released it again: every failed deposit handed back twice its amount, and
+   * the counter (a plain KV integer) could run negative, which is a day cap that no longer caps.
+   * The catch also fired for an RPC that died mid-poll AFTER the transaction was accepted, giving
+   * back the budget for a deposit that then landed. */
+  let released = false;
+  const releaseOnce = async () => {
+    if (released) return;
+    released = true;
+    await cap.release?.();
+  };
+  let onNetwork = false;
+
   try {
     const feeBump = TransactionBuilder.buildFeeBumpTransaction(
       signer.publicKey(),
@@ -250,11 +270,12 @@ export async function relayDepositHandler(
     // A send ERROR is the ledger refusing the transaction outright: nothing was accepted, nothing
     // will land. This is the ONLY branch that can honestly say the money did not move.
     if (sent.status === "ERROR") {
-      await cap.release?.();
+      await releaseOnce();
       throw new Error(`v2-deposit send failed: ${JSON.stringify(sent.errorResult)}`);
     }
 
     // From here the transaction IS on the network. Everything below is us trying to observe it.
+    onNetwork = true;
     let got = await server.getTransaction(sent.hash);
     for (let i = 0; i < 40 && got.status === "NOT_FOUND"; i++) {
       await sleep(1500);
@@ -266,7 +287,7 @@ export async function relayDepositHandler(
     // FAILED is a definitive on-ledger rejection — the deposit did not take effect, so the day's
     // budget goes back.
     if (got.status === rpc.Api.GetTransactionStatus.FAILED) {
-      await cap.release?.();
+      await releaseOnce();
       throw new Error(`v2-deposit tx ${got.status}`);
     }
 
@@ -281,9 +302,11 @@ export async function relayDepositHandler(
      * settles it against the escrow, which is the only authority on whether the drop exists. */
     return { hash: sent.hash, confirmed: false as const };
   } catch (e) {
-    // Reached only for pre-submit faults (signing, fee-bump construction, an unreachable RPC before
-    // sendTransaction) — those genuinely never touched the ledger.
-    await cap.release?.();
+    // Pre-submit faults (signing, fee-bump construction, an unreachable RPC before sendTransaction)
+    // genuinely never touched the ledger and get the budget back. Anything thrown after the
+    // transaction was accepted — an RPC that stopped answering mid-poll, or the two definitive
+    // branches above, which already released — keeps the reservation.
+    if (!onNetwork) await releaseOnce();
     throw e;
   }
 }
@@ -323,6 +346,27 @@ export async function relayReclaimHandler(
     throw new Error(`inner fee ${inner.fee} exceeds cap ${V2_DEPOSIT_FEE_CAP}`);
   }
 
+  const server = new rpc.Server(config.sorobanRpcUrl);
+
+  /* Simulate BEFORE the sponsor pays for anything, exactly as /v2-claim does. Until now this
+   * route fee-bumped whatever it was handed: a `reclaim` the contract would reject (not expired,
+   * not the sender's, already claimed) is still included and still charged, so any account holder
+   * could bill the sponsor up to the fee cap per request, thirty times a minute per address, with
+   * no drop of their own involved. A simulation that fails costs nothing and is refused here. A
+   * simulation that succeeds bounds the route by construction: the contract only releases a drop
+   * to the sender who made it, once, so the sponsor pays at most one fee per drop that sender was
+   * allowed (and capped) to create. */
+  const sim = await server.simulateTransaction(inner);
+  if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-reclaim would fail: ${sim.error}`);
+  /* And the fee is what the invoke needs, not what the caller wrote. The inner fee is signed by
+   * the sender and cannot be lowered here, so an inflated one is refused instead. The headroom is
+   * the client's own inclusion fee (0.2 XLM, lib/lumendrop.ts) plus a little slack; a simulation
+   * whose resource fee moved between the client's run and ours still fits. */
+  const needed = Number.parseInt(sim.minResourceFee, 10) + V2_RECLAIM_INCLUSION_HEADROOM;
+  if (Number.parseInt(inner.fee, 10) > needed) {
+    throw new Error(`inner fee ${inner.fee} exceeds what the reclaim needs (${needed})`);
+  }
+
   const feeBump = TransactionBuilder.buildFeeBumpTransaction(
     signer.publicKey(),
     inner.fee,
@@ -331,7 +375,6 @@ export async function relayReclaimHandler(
   );
   await signer.sign(feeBump);
 
-  const server = new rpc.Server(config.sorobanRpcUrl);
   const sent = await server.sendTransaction(feeBump);
   if (sent.status === "ERROR") throw new Error(`v2-reclaim send failed: ${JSON.stringify(sent.errorResult)}`);
   let got = await server.getTransaction(sent.hash);

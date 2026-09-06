@@ -138,10 +138,14 @@ function balanceFloor(): number {
  * 94 and left capacity for ten more recipients. A floor on the raw balance would have fired
  * long AFTER onboarding had already started failing, which is the one moment it exists for.
  *
- * Reserve per recipient: 2 entries x 0.5 XLM base reserve.
+ * Reserve per recipient: THREE entries x 0.5 XLM base reserve. A sponsored 0-XLM account costs
+ * its two base reserves (1 XLM) plus one for the USDC trustline, and every account the mainnet
+ * sponsor has created reports `num_sponsored = 3` on Horizon. This constant said two entries (1
+ * XLM) until 2026-09-06, which is why on that day the sponsor showed 33 "recipients left" against
+ * a floor of 25 and stayed quiet, while the ledger said 22.
  */
 const BASE_RESERVE_XLM = 0.5;
-const RESERVE_PER_RECIPIENT_XLM = 2 * BASE_RESERVE_XLM;
+const RESERVE_PER_RECIPIENT_XLM = 3 * BASE_RESERVE_XLM;
 
 /** Alert when fewer than this many recipients can still be onboarded. */
 function capacityFloor(): number {
@@ -149,6 +153,25 @@ function capacityFloor(): number {
   const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
   return Number.isFinite(n) && n > 0 ? n : 25;
 }
+
+/**
+ * Alert when the escrow contract's instance or code is fewer than this many days from archival.
+ *
+ * Soroban state expires. When the instance or the code entry passes its `liveUntilLedgerSeq` the
+ * contract is archived: the money in it is not destroyed, but every claim, reclaim and exit stops
+ * working until someone pays to restore it, and nothing in the product does that on its own. The
+ * deploy-time TTL was never extended on either network (found 2026-09-06: testnet had six days
+ * left, mainnet about twelve weeks), so this check exists to say so with weeks of notice rather
+ * than as a support ticket the morning the exits stop.
+ */
+function ttlFloorDays(): number {
+  const raw = process.env.SPONSOR_MIN_TTL_DAYS;
+  const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : 21;
+}
+
+/** Ledger close time the day count assumes. Stellar targets 5s; the alert says which it used. */
+const SECONDS_PER_LEDGER = 5;
 
 /**
  * Fetch JSON from an upstream the watchdog does not control, and fail in a way a human can read.
@@ -341,15 +364,24 @@ async function checkGovernance(config: SponsorConfig, alerts: Alert[]): Promise<
  * `LUMENDROP_WASM_HASH` pins the expected hash. On the first run with no pin, the observed hash
  * is recorded and used as the baseline from then on, so the check still works unconfigured.
  */
-async function checkWasmHash(config: SponsorConfig, alerts: Alert[]): Promise<void> {
-  if (!config.lumendropContract) return;
-  const key = xdr.LedgerKey.contractData(
+interface LedgerEntryRead {
+  latestLedger: number;
+  entries: Array<{ xdr: string; liveUntilLedgerSeq?: number }>;
+}
+
+/** The escrow contract's instance key, shared by the wasm and expiry checks. */
+function instanceKey(contractId: string): xdr.LedgerKey {
+  return xdr.LedgerKey.contractData(
     new xdr.LedgerKeyContractData({
-      contract: Address.fromString(config.lumendropContract).toScAddress(),
+      contract: Address.fromString(contractId).toScAddress(),
       key: xdr.ScVal.scvLedgerKeyContractInstance(),
       durability: xdr.ContractDataDurability.persistent(),
     }),
   );
+}
+
+/** `getLedgerEntries`, with the RPC's own latest ledger and each entry's expiry kept. */
+async function readLedgerEntries(config: SponsorConfig, keys: xdr.LedgerKey[]): Promise<LedgerEntryRead> {
   const res = (await (
     await fetch(config.sorobanRpcUrl, {
       method: "POST",
@@ -358,13 +390,86 @@ async function checkWasmHash(config: SponsorConfig, alerts: Alert[]): Promise<vo
         jsonrpc: "2.0",
         id: 1,
         method: "getLedgerEntries",
-        params: { keys: [key.toXDR("base64")] },
+        params: { keys: keys.map((k) => k.toXDR("base64")) },
       }),
     })
-  ).json()) as { result?: { entries?: Array<{ xdr?: string }> }; error?: { message?: string } };
+  ).json()) as {
+    result?: { latestLedger?: number; entries?: Array<{ xdr?: string; liveUntilLedgerSeq?: number }> };
+    error?: { message?: string };
+  };
   if (res.error) throw new Error(`getLedgerEntries: ${res.error.message}`);
+  return {
+    latestLedger: res.result?.latestLedger ?? 0,
+    entries: (res.result?.entries ?? []).flatMap((e) =>
+      e.xdr ? [{ xdr: e.xdr, liveUntilLedgerSeq: e.liveUntilLedgerSeq }] : [],
+    ),
+  };
+}
 
-  const entryXdr = res.result?.entries?.[0]?.xdr;
+/** The wasm hash an instance entry runs, or null for a built-in (SAC) executable. */
+function wasmHashOf(entryXdr: string): Buffer | null {
+  const data = xdr.LedgerEntryData.fromXDR(entryXdr, "base64").contractData();
+  const exec = data.val().instance().executable();
+  if (exec.switch().name !== "contractExecutableWasm") return null;
+  return Buffer.from(exec.wasmHash());
+}
+
+/**
+ * Days until the instance or the code archives, whichever is sooner, and a page when that is
+ * inside the floor. The alert carries the exact commands, because the moment it fires is not
+ * the moment to research them; any funded key may run them, no owner or sponsor key is needed.
+ */
+async function checkStateExpiry(config: SponsorConfig, alerts: Alert[]): Promise<void> {
+  if (!config.lumendropContract) return;
+  const inst = await readLedgerEntries(config, [instanceKey(config.lumendropContract)]);
+  const instance = inst.entries[0];
+  // A missing instance is already a page from checkWasmHash; this check has nothing to add.
+  if (!instance) return;
+  const hash = wasmHashOf(instance.xdr);
+  const code = hash
+    ? (await readLedgerEntries(config, [xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash }))])).entries[0]
+    : undefined;
+
+  const latest = inst.latestLedger;
+  const lives = [
+    { what: "instance", until: instance.liveUntilLedgerSeq },
+    { what: "code", until: code?.liveUntilLedgerSeq },
+  ].filter((l): l is { what: string; until: number } => typeof l.until === "number");
+  if (!latest || lives.length === 0) throw new Error("the RPC answered without ledger expiry data");
+
+  const soonest = lives.reduce((a, b) => (b.until < a.until ? b : a));
+  const ledgersLeft = soonest.until - latest;
+  const daysLeft = (ledgersLeft * SECONDS_PER_LEDGER) / 86_400;
+  const network = config.networkPassphrase.includes("Public") ? "mainnet" : "testnet";
+  const hex = hash ? hash.toString("hex") : "<wasm hash>";
+  const commands =
+    `stellar contract extend --id ${config.lumendropContract} --ledgers-to-extend 3000000 ` +
+    `--durability persistent --source-account <any funded key> --network ${network} ; ` +
+    `stellar contract extend --wasm-hash ${hex} --ledgers-to-extend 3000000 ` +
+    `--durability persistent --source-account <any funded key> --network ${network}`;
+  const summary = lives.map((l) => `${l.what} until ledger ${l.until}`).join(", ");
+
+  if (daysLeft < ttlFloorDays()) {
+    alerts.push({
+      severity: "page",
+      title: "Escrow contract state expiry approaching",
+      detail:
+        `The ${soonest.what} entry archives in ${ledgersLeft} ledgers, about ${daysLeft.toFixed(1)} days at ` +
+        `${SECONDS_PER_LEDGER}s per ledger (${summary}; latest ledger ${latest}; floor ${ttlFloorDays()} days). ` +
+        `Once archived every claim and reclaim fails until the entries are restored. Extend both now: ${commands}`,
+    });
+    return;
+  }
+  alerts.push({
+    severity: "info",
+    title: "Escrow contract state expiry",
+    detail: `${daysLeft.toFixed(0)} days of rent left (${summary}; latest ledger ${latest}).`,
+  });
+}
+
+async function checkWasmHash(config: SponsorConfig, alerts: Alert[]): Promise<void> {
+  if (!config.lumendropContract) return;
+  const entryXdr = (await readLedgerEntries(config, [instanceKey(config.lumendropContract)])).entries[0]?.xdr;
   if (!entryXdr) {
     alerts.push({
       severity: "page",
@@ -373,11 +478,9 @@ async function checkWasmHash(config: SponsorConfig, alerts: Alert[]): Promise<vo
     });
     return;
   }
-  const data = xdr.LedgerEntryData.fromXDR(entryXdr, "base64").contractData();
-  const instance = data.val().instance();
-  const exec = instance.executable();
-  if (exec.switch().name !== "contractExecutableWasm") return; // a SAC, not our contract
-  const observed = Buffer.from(exec.wasmHash()).toString("hex");
+  const running = wasmHashOf(entryXdr);
+  if (!running) return; // a SAC, not our contract
+  const observed = running.toString("hex");
 
   const pinned = process.env.LUMENDROP_WASM_HASH ?? (await kvGet(`watchdog:wasm:${config.lumendropContract}`));
   if (!pinned) {
@@ -522,6 +625,17 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
       severity: "page",
       title: "Watchdog check failed: escrow wasm hash",
       detail: `An upgrade would go unnoticed until this clears: ${(e as Error).message}`,
+    });
+  }
+
+  try {
+    await checkStateExpiry(config, alerts);
+    checked.push("escrow-ttl");
+  } catch (e) {
+    alerts.push({
+      severity: "page",
+      title: "Watchdog check failed: escrow state expiry",
+      detail: `Archival would arrive unannounced until this clears: ${(e as Error).message}`,
     });
   }
 

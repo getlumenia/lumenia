@@ -19,7 +19,7 @@ different footings, and the difference matters:
 | Footing | What it is |
 |---|---|
 | **Testnet** | The open product and the grant deliverable. Free-minted USDC, no value, anyone can use it. |
-| **Mainnet pilot** | **Live, with real Circle USDC**, since 2026-07-26. An owner-approved allowlist: every wallet admitted by hand, $5 per transfer, $50 per day, caps that fail closed. As of 2026-08-28: 74 approved wallets, 69 accounts opened, 53 funded, 109 real-money transfers. |
+| **Mainnet pilot** | **Live, with real Circle USDC**, since 2026-07-26. An owner-approved allowlist: every wallet admitted by hand, $5 per transfer, $50 per day, caps that fail closed. As of 2026-08-28: 74 approved wallets, 69 accounts opened, 53 funded, 109 real-money transfers. Re-counted from Horizon on 2026-09-06: 76 accounts opened by the sponsor (72 still open, 51 holding real USDC today), 92 USDC-moving operations attributable to the sponsor between 2026-08-24 and 2026-08-30, about **$4.4 moved in total**, of which $2.76 was 69 person-to-person payments with a **median of $0.002** and a maximum of $1.00; 65 of those 69 landed on 2026-08-24 in a scripted coverage run. The counts are real and small: this is a mechanism proven with real money, not volume. |
 | **Open public mainnet** | **Not open.** Dropping the allowlist or raising the caps is gated on a professional audit and the key-custody work described under [§9 Known risks](#9-known-risks). |
 
 ```bash
@@ -281,7 +281,7 @@ watchdog on both Workers. **Opening that to the public is gated on the audit bel
 - ✅ **v2 Soroban escrow (LumenDrop)** — built and deployed on testnet **and on mainnet** (where it backs the capped pilot); the default shareable link-send. Hardened 2026-07-25 (soroban-sdk 26.1, owner-gated pause/upgrade, 29 tests, tool-clean) — **a professional audit is still pending**
 - **WhatsApp auto-notifications** (Business API) — still future (email via Resend is the interim channel)
 - EU→TR inbound on-ramp (MyKobo EURC/SEPA + on-chain EURC→USDC swap)
-- ◑ **Mainnet, real USDC** — live since 2026-07-26 as an **allowlisted, capped pilot** (74 approved wallets, 109 real-money transfers as of 2026-08-28). Opening it to the public — no allowlist, higher caps — is what stays gated on the audit
+- ◑ **Mainnet, real USDC** — live since 2026-07-26 as an **allowlisted, capped pilot** (74 approved wallets, 109 real-money transfers as of 2026-08-28; about $4.4 moved in total, median payment $0.002, max $1.00, re-counted from Horizon 2026-09-06). Opening it to the public — no allowlist, higher caps — is what stays gated on the audit
 - ◑ **Cash-out** — one founder-run end-to-end exit to a Turkish bank walked on 2026-08-28 (§9). A licensed provider still does the converting; Lumenia never does
 - _claim-to-second-action ≥ 25% as a retention hypothesis to measure (not a v1 success gate)_
 

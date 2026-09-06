@@ -22,7 +22,7 @@ import { validateInnerTransaction, ALLOWED_SEND_OP_TYPES, type InnerTxPolicy } f
 import { capsFromEnv, checkCaps, PublicRefusal, USDC_STROOPS } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
-import { submit, createdBalanceIdFromResult } from "./stellar.js";
+import { submit, createdBalanceIdFromResult, isSubmitUnconfirmed } from "./stellar.js";
 
 export interface SendLinkInput {
   /** Client-signed send inner tx (base64 XDR). */
@@ -100,7 +100,12 @@ export async function sendLinkHandler(
     await signer.sign(feeBump);
     submitted = await submit(server, feeBump);
   } catch (e) {
-    await cap.release?.(); // the send never landed — give the day's budget back
+    /* Give the day's budget back only when the send definitely never landed. A submission Horizon
+     * never ruled on (timeout, 5xx) leaves a valid, signed transaction that may still be included;
+     * releasing its cap here let the same amount be sent again on top of it, and the counter ended
+     * the day under-counted by one real send. The undecided case keeps its reservation: the day's
+     * budget is the one thing that must err on the side of "spent". */
+    if (!isSubmitUnconfirmed(e)) await cap.release?.();
     throw e;
   }
   const { hash, ledger, resultXdr } = submitted;

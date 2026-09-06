@@ -40,8 +40,7 @@ import {
   MEMO_TEXT_MAX_BYTES,
   PayoutUncertainError,
   type DestinationCheck,
-  type MemoKind,
-} from "../../../lib/payout";
+  type MemoKind, payoutRecord } from "../../../lib/payout";
 import { isNeedsPassword } from "../../../lib/signer-error";
 import { pinnedUsdcIssuer } from "../../../lib/tx-guard";
 import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
@@ -50,6 +49,7 @@ import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { activeNetwork, explorerTx } from "../../../lib/network";
+import { anchorHomeDomain } from "../../../lib/anchor";
 
 import { netKey } from "../../../lib/scoped-store";
 const explorer = explorerTx;
@@ -79,7 +79,18 @@ interface SavedDestination {
 interface PendingPayout {
   amount: string;
   at: string;
+  /**
+   * The payment's own transaction hash, known BEFORE it was handed to the sponsor and written
+   * here first. It is what lets a reload ask the ledger what happened instead of assuming
+   * nothing did. Absent only on a record written by a build older than this field.
+   */
+  hash?: string;
+  /** Unix ms after which the ledger's silence about `hash` is proof that nothing moved. */
+  retrySafeAfter?: number;
 }
+
+/** What the ledger said about a held payment, for the screen that asked. */
+type PendingCheck = "not-yet" | "unreachable";
 
 type Step = "form" | "review" | "done";
 
@@ -102,6 +113,8 @@ export default function SendOutPage() {
   const [needsPassword, setNeedsPassword] = useState(false);
   /** Handed to the network, never confirmed. Its own screen, because it is not an error. */
   const [pending, setPending] = useState<PendingPayout | null>(null);
+  const [checkingPending, setCheckingPending] = useState(false);
+  const [pendingCheck, setPendingCheck] = useState<PendingCheck | null>(null);
   const [hash, setHash] = useState("");
   const [copiedProof, setCopiedProof] = useState(false);
   const [saved, setSaved] = useState<SavedDestination | null>(null);
@@ -118,7 +131,13 @@ export default function SendOutPage() {
     // below is unreadable.
     try {
       const held = localStorage.getItem(PENDING_KEY());
-      if (held) setPending(JSON.parse(held) as PendingPayout);
+      if (held) {
+        const record = JSON.parse(held) as PendingPayout;
+        setPending(record);
+        // A held payment with a hash can be settled by the ledger. Ask straight away: most
+        // reloads land here seconds after the hand-over, when the answer is already on record.
+        void settlePending(record);
+      }
     } catch {
       /* storage blocked — nothing to restore */
     }
@@ -190,6 +209,14 @@ export default function SendOutPage() {
   const resumed = useRef(false);
   useEffect(() => {
     if (status !== "ready" || !unlocked || busy || resumed.current || pending) return;
+    /* Ask the device as well as React. The mount effect above restores a held payment into state,
+       but this effect can run in the same commit and still see `pending` as null; the record on
+       the device is the one that is never a render behind. */
+    try {
+      if (localStorage.getItem(PENDING_KEY())) return;
+    } catch {
+      /* storage blocked — state is all there is */
+    }
     type ResumableDraft = { resumeAt?: number; raw?: string; amount?: string };
     let draft: ResumableDraft | null = null;
     try {
@@ -289,6 +316,50 @@ export default function SendOutPage() {
     }
   }
 
+  /**
+   * Ask the public record what became of a held payment, and act on a verdict. Confirmed: it is
+   * done, show the record. Rejected, or absent after the last ledger it could have entered: it
+   * never moved, say so and free the form. Anything else keeps the warning up, with the reason.
+   */
+  async function settlePending(held: PendingPayout) {
+    if (!held.hash) return; // an older record with no hash can only be cleared by the person
+    setCheckingPending(true);
+    setPendingCheck(null);
+    try {
+      const record = await payoutRecord(held.hash);
+      const clear = () => {
+        try {
+          localStorage.removeItem(PENDING_KEY());
+        } catch {
+          /* nothing to clear */
+        }
+        setPending(null);
+      };
+      if (record === "confirmed") {
+        clear();
+        setAmount(held.amount);
+        setHash(held.hash);
+        setStep("done");
+        return;
+      }
+      const pastDeadline = typeof held.retrySafeAfter === "number" && Date.now() >= held.retrySafeAfter;
+      if (record === "rejected" || (record === "absent" && pastDeadline)) {
+        clear();
+        setUnderstood(false);
+        setStep("form");
+        setError(
+          record === "rejected"
+            ? "The network rejected that payment, so nothing left your account. You can send again."
+            : "That payment never reached the public record and can no longer be included, so nothing left your account. You can send again.",
+        );
+        return;
+      }
+      setPendingCheck(record === "unknown" ? "unreachable" : "not-yet");
+    } finally {
+      setCheckingPending(false);
+    }
+  }
+
   async function confirm() {
     if (!destination) return;
     setError("");
@@ -331,8 +402,28 @@ export default function SendOutPage() {
         destination: destination.address,
         memo: destination.muxed ? undefined : effectiveMemo,
         memoKind: destination.muxed ? "none" : effectiveMemoKind,
+        /* THE LATCH. Written BEFORE the payment leaves this device, not after an answer comes
+           back. A reload or a crash between the hand-over and the answer used to leave nothing
+           behind: the page came back as an empty form while the sponsor was still submitting,
+           and the same amount could be paid again. Now the record exists first; if the answer
+           never arrives, the mount effect asks the ledger about this hash instead of assuming.
+           Same reasoning as the latch in lib/offramp.ts, here made to survive the tab. */
+        onHandedOver: ({ hash: h, retrySafeAfter }) => {
+          const held: PendingPayout = { amount, at: new Date().toISOString(), hash: h, retrySafeAfter };
+          try {
+            localStorage.setItem(PENDING_KEY(), JSON.stringify(held));
+          } catch {
+            /* storage blocked — the in-memory guard below still holds for this mount */
+          }
+        },
       });
       void sendEvent("cashout_sent", account!.address, account!.address);
+      try {
+        // The ledger answered: the latch has done its job.
+        localStorage.removeItem(PENDING_KEY());
+      } catch {
+        /* storage blocked — nothing was written to remove */
+      }
       try {
         sessionStorage.removeItem(DRAFT_KEY());
         // Only ever save a destination the ledger just accepted.
@@ -357,7 +448,12 @@ export default function SendOutPage() {
          that still covers the amount makes a SECOND payment to the exchange — no reclaim window,
          no link to un-send. An undecided payment therefore gets its own screen, not an error. */
       if (e instanceof PayoutUncertainError) {
-        const held: PendingPayout = { amount, at: new Date().toISOString() };
+        const held: PendingPayout = {
+          amount,
+          at: new Date().toISOString(),
+          hash: e.hash,
+          retrySafeAfter: e.retrySafeAfter,
+        };
         /* Two stores, two attempts. A localStorage write that refuses — a full quota is the
            realistic one, this device already keeps sent links, contacts and records there — must
            not take the draft removal down with it: the draft left behind is exactly what re-arms
@@ -376,6 +472,15 @@ export default function SendOutPage() {
         }
         setPending(held);
         return; // deliberately skips setError — this is not an error screen
+      }
+      /* Every other failure is decided: a refusal the sponsor gave before submitting, or a verdict
+         the ledger gave afterwards (lib/payout.ts settles the undecided answers itself and only
+         throws a plain error once the record has ruled). The latch written at hand-over must not
+         outlive a decided outcome, or the next visit would show a warning about nothing. */
+      try {
+        localStorage.removeItem(PENDING_KEY());
+      } catch {
+        /* storage blocked — nothing was written */
       }
       setError(copy.errors.moneySafe);
     } finally {
@@ -414,8 +519,32 @@ export default function SendOutPage() {
               came back" without a date is a sentence about nothing. */}
           <p className="mt-3 text-xs text-ink-soft">
             Handed over {new Date(pending.at).toLocaleString()}.
+            {typeof pending.retrySafeAfter === "number" && Number.isFinite(pending.retrySafeAfter) && (
+              <>
+                {" "}
+                If it is not on the public record by {new Date(pending.retrySafeAfter).toLocaleTimeString()}, it can no
+                longer go through, and we will say so here.
+              </>
+            )}
           </p>
+          {pending.hash && (
+            <p className="mt-2 break-all font-mono text-xs text-ink-soft">{pending.hash}</p>
+          )}
+          {pendingCheck === "not-yet" && (
+            <p className="mt-2 text-xs text-ink-soft">Not on the public record yet. It can still land.</p>
+          )}
+          {pendingCheck === "unreachable" && (
+            <p className="mt-2 text-xs text-ink-soft">We couldn&apos;t reach the public record just now. Try again in a moment.</p>
+          )}
         </MoneyCard>
+        {/* The one thing that can lift this warning on its own: the ledger's answer. It settles
+            in one direction only — a confirmed payment becomes the receipt, a rejected or expired
+            one frees the form — and never offers to send. */}
+        {pending.hash && (
+          <PrimaryButton onClick={() => void settlePending(pending)} disabled={checkingPending}>
+            {checkingPending ? "Checking the public record…" : "Check the public record"}
+          </PrimaryButton>
+        )}
         <Link href="/activity" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
           See my activity
         </Link>
@@ -626,6 +755,23 @@ export default function SendOutPage() {
           <p className="mt-2 text-sm text-ink-soft">You have {formatUsd(balance)} to send.</p>
         )}
       </header>
+
+      {/* The bank rail, when one is connected on this network: IBAN in, lira out, one approval.
+          Shown only when configured, so nobody is offered a door that opens onto nothing. */}
+      {anchorHomeDomain() && (
+        <MoneyCard className="p-4">
+          <p className="text-sm font-semibold text-ink">Cash out straight to a bank account</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            Type an IBAN, see the lira figure first, approve once. No exchange account needed.
+          </p>
+          <Link
+            href="/send-out/bank"
+            className="mt-3 inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+          >
+            Cash out to my bank
+          </Link>
+        </MoneyCard>
+      )}
 
       {/* Been here before? Repeat the address that already worked. Fewer taps, and one
           fewer chance to paste something wrong. */}

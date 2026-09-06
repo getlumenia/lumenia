@@ -32,12 +32,14 @@
  * domain and web auth domain are the ones we asked for. If any of that fails we throw before the
  * user's key is ever asked for a signature. Never relax this.
  *
- * WHAT THIS FILE DOES NOT DO. It does not do SEP-12 (we never collect or forward identity
- * documents; on SEP-24 the anchor's own hosted screen does its own know-your-customer step, and on
- * SEP-6 an anchor that demands documents is one this product should not be using). It does not
- * persist the session token. It does not fetch SEP-38 quotes: a quote id can be passed in when the
- * caller has one, but getting it is the caller's job. It does not deposit, only withdraw, because
- * the direction this product needs first is dollars out to local currency.
+ * WHAT THIS FILE DOES NOT DO. It never collects or forwards identity documents: on SEP-24 the
+ * anchor's own hosted screen does its own know-your-customer step, and on SEP-6 an anchor that
+ * demands documents is one this product should not be using. The one SEP-12 call here
+ * (`setBankAccount`) sends a payout destination the person typed, nothing about who they are; see
+ * its comment for where that line sits. It does not persist the session token. It does not
+ * deposit, only withdraw, because the direction this product needs first is dollars out to local
+ * currency. SEP-38 is limited to `requestQuote`: a firm quote for the figure shown before the
+ * person approves, never an indicative one dressed up as a promise.
  *
  * HONESTY. Whether any given anchor actually settles in a particular currency is the anchor's
  * claim, not ours. `readAnchorInfo` reports what the anchor publishes and nothing more.
@@ -80,6 +82,12 @@ export interface AnchorInfo {
   currencies: string[];
   /** SEP-38, when the anchor quotes a cross-currency rate. Absent for a same-asset withdrawal. */
   quoteServer: string | null;
+  /**
+   * SEP-12, when the anchor takes customer fields over an API. On the SEP-6 door this is the only
+   * way to tell the anchor where the fiat should land. Absent means the anchor either asks on its
+   * own hosted screen (SEP-24) or pays to whatever it has on file.
+   */
+  kycServer: string | null;
 }
 
 /** A withdrawal, as far as this client is concerned. */
@@ -180,6 +188,7 @@ export async function readAnchorInfo(homeDomain: string): Promise<AnchorInfo> {
     networkPassphrase: scalar("NETWORK_PASSPHRASE"),
     currencies,
     quoteServer: scalar("ANCHOR_QUOTE_SERVER")?.replace(/\/+$/, "") ?? null,
+    kycServer: scalar("KYC_SERVER")?.replace(/\/+$/, "") ?? null,
   };
 }
 
@@ -400,4 +409,103 @@ export async function readWithdrawal(
       // anything an anchor invents. All of them mean "not yet", never "finished".
       return { status: "waiting" };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* SEP-38: what the person will actually receive                       */
+/* ------------------------------------------------------------------ */
+
+export interface AnchorQuote {
+  /** The anchor's own id for this quote, passed back when the withdrawal is opened. */
+  id: string;
+  /** Dollars leaving. */
+  sellAmount: string;
+  /** Local currency arriving. */
+  buyAmount: string;
+  /**
+   * SEP-38 defines price as sell-asset units per ONE unit of the buy asset, so for a dollar-to-lira
+   * quote this is dollars per lira (about 0.02), not lira per dollar. Verified against the live
+   * sandbox: `sell 5 -> buy 240.94, price 0.0206`. Show `buyAmount`; do not multiply by this.
+   */
+  price: string;
+  /** When the quote stops being honoured. */
+  expiresAt: string;
+}
+
+/**
+ * Ask what a given number of dollars turns into, and hold that answer.
+ *
+ * A firm quote, not an indicative one: the person is about to be shown a figure and then asked to
+ * approve a transfer against it, so the rate has to be the one that will be used. An indicative
+ * price shown as a promise is the kind of small dishonesty that this product does not do.
+ *
+ * The quote expires. The caller is expected to show that, and to refuse to send against a stale
+ * one rather than send and hope.
+ */
+export async function requestQuote(
+  info: AnchorInfo,
+  token: string,
+  params: { sellAssetCode: string; sellAssetIssuer: string; buyAsset: string; sellAmount: string },
+): Promise<AnchorQuote> {
+  if (!info.quoteServer) throw new Error("that anchor does not quote a rate");
+  const res = (await getJson(`${info.quoteServer}/quote`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      sell_asset: `stellar:${params.sellAssetCode}:${params.sellAssetIssuer}`,
+      buy_asset: params.buyAsset,
+      sell_amount: params.sellAmount,
+      // How the money leaves the anchor at the far end. Named explicitly because an anchor may
+      // price a bank transfer and a cash pickup differently.
+      buy_delivery_method: "bank_account",
+    }),
+  })) as { id?: string; sell_amount?: string; buy_amount?: string; price?: string; expires_at?: string } | null;
+
+  if (!res?.id || !res.buy_amount) throw new Error("that anchor did not return a usable quote");
+  return {
+    id: res.id,
+    sellAmount: res.sell_amount ?? params.sellAmount,
+    buyAmount: res.buy_amount,
+    price: res.price ?? "",
+    expiresAt: res.expires_at ?? "",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* SEP-12: where the local currency lands                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Tell the anchor which bank account the person wants their money in.
+ *
+ * THE LINE THIS DOES AND DOES NOT CROSS, because it is worth being explicit. This product does not
+ * collect, hold or forward identity documents, and that is deliberate: the anchor performs its own
+ * checks, under its own licence, and we never see a passport or a national id number. That stays
+ * true here.
+ *
+ * What this sends is a destination the person typed, for their own withdrawal. It is the same
+ * category of thing as the exchange deposit address the cash-out screen has always accepted: an
+ * answer to "where should this money go", not an answer to "who are you". Without it the anchor
+ * pays whatever account it happens to have on file, which for a sandbox is a default that belongs
+ * to nobody, and a screen that asks for a bank account and then ignores it would be a prop.
+ *
+ * Send this field and nothing else. If an anchor demands documents, that is the point to stop and
+ * hand the person to the anchor's own hosted screen instead.
+ */
+export async function setBankAccount(
+  info: AnchorInfo,
+  token: string,
+  params: { account: string; bankAccountNumber: string; bankName?: string },
+): Promise<void> {
+  if (!info.kycServer) throw new Error("that anchor does not accept a payout destination");
+  await getJson(`${info.kycServer}/customer`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      account: params.account,
+      type: "sep6-withdraw",
+      bank_account_number: params.bankAccountNumber,
+      ...(params.bankName ? { bank_name: params.bankName } : {}),
+    }),
+  });
 }

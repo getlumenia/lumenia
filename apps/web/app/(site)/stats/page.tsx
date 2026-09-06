@@ -145,8 +145,10 @@ export default async function StatsPage() {
                 counts every account the system has funded, including our own
                 testing, and{" "}<strong>not</strong>{" "}unique people. We don&apos;t track who you are,
                 so we can&apos;t claim a user count we&apos;d be unable to prove, and we won&apos;t.
-                Most of the practice number is us. What we can prove is that the money moves, and
-                that every number here is on the record.
+                Most of the practice number is us. These are counts, not value: every real transfer
+                is capped at five dollars and most so far have been cents, so a link count says
+                nothing about how much money has moved. What we can prove is that the money moves,
+                and that every number here is on the record.
               </p>
 
               <p className="stat-meta">

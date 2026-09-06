@@ -84,6 +84,12 @@ export interface AnchorHost {
   fiatAsset?: string;
   /** SEP-6 only. Where the fiat lands, when the anchor asks for it. An IBAN, typically. */
   fiatDestination?: string;
+  /**
+   * SEP-6 only. A SEP-38 quote the person has already been shown, so the anchor is held to that
+   * rate rather than repricing at execution. Without it the anchor prices live, and the figure on
+   * the review screen was an estimate dressed up as a promise.
+   */
+  quoteId?: string;
   /** Show the anchor's own hosted screen. The host decides popup versus redirect. */
   openInteractive(url: string): void | Promise<void>;
   /**
@@ -165,6 +171,7 @@ export function createAnchorAdapter(
               // Carried here too, or the cross-currency call below refuses: the issuer is half of
               // the asset's identity, not decoration.
               assetIssuer: host.assetIssuer,
+              quoteId: host.quoteId,
             }
           : {}),
       });

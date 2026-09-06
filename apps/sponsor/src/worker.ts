@@ -32,6 +32,7 @@ import { requestOtp, verifyOtp, idForEmail } from "./lib/recovery-otp.js";
 import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState, verifyApprovalToken } from "./lib/pilot.js";
 import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected, notifyPilotInterest } from "./lib/pilot-request.js";
 import { isPublicRefusal, PublicRefusal, checkOnboardingBudget, onboardingBudgetFromEnv } from "./lib/caps.js";
+import { isSubmitUnconfirmed } from "./lib/stellar.js";
 import {
   resolveProof,
   checkIdentity,
@@ -856,6 +857,16 @@ export default {
       // A refusal the caller is entitled to understand — a cap or a floor — keeps its text on
       // every network. Only the reasons that would help someone map the validator get hidden.
       if (isPublicRefusal(e)) return json(400, { error: message });
+      /* A submission Horizon never ruled on is not a failure and must not be reported as one, on
+       * any network. The mainnet redaction below used to turn it into a bare "request failed",
+       * which the client could only read as "nothing moved" — and on /payout a retry on that
+       * reading is a second payment to an exchange. 202 says what is true: accepted, undecided,
+       * here is the hash to settle it against the ledger. The web client already treats 202 and
+       * the words "submit unconfirmed" as exactly that. */
+      if (isSubmitUnconfirmed(e)) {
+        const hash = (e as { hash?: string }).hash;
+        return json(202, { error: "submit unconfirmed", ...(hash ? { hash } : {}) });
+      }
       if (process.env.STELLAR_NETWORK === "mainnet") {
         const ref = crypto.randomUUID().slice(0, 8);
         console.error(`[error ${ref}] ${new URL(request.url).pathname}: ${message}`);

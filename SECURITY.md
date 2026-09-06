@@ -12,8 +12,8 @@ finding.
 
 | Deployment | Money | Who can use it |
 |---|---|---|
-| **Testnet** — `lumenia-sponsor.avakit.workers.dev` + the escrow at `CDVZN53V…ST6S` | Free-minted test USDC, no value | Anyone. This is where you should reproduce things. |
-| **Mainnet pilot** — `lumenia-sponsor-mainnet.avakit.workers.dev` + the escrow at `CAC5JYQ2…WGR4` | **Real Circle USDC** | An **owner-approved allowlist only**. Every wallet is admitted by hand; $5 per transfer, $50 per day, a per-wallet budget of 5 value operations, caps fail **closed**. As of 2026-08-28: 74 approved wallets, 69 accounts opened, 53 of them funded, 109 real-money transfers. |
+| **Testnet** — `lumenia-sponsor.avakit.workers.dev` + the escrow at `CAMCI5VP…3HP3` (repointed to Circle testnet USDC on 2026-09-06; `CDVZN53V…ST6S` is exit-only) | Free-minted test USDC, no value | Anyone. This is where you should reproduce things. |
+| **Mainnet pilot** — `lumenia-sponsor-mainnet.avakit.workers.dev` + the escrow at `CAC5JYQ2…WGR4` | **Real Circle USDC** | An **owner-approved allowlist only**. Every wallet is admitted by hand; $5 per transfer, $50 per day, a per-wallet budget of 5 value operations, caps fail **closed**. As of 2026-08-28: 74 approved wallets, 69 accounts opened, 53 of them funded, 109 real-money transfers. Re-counted from Horizon on 2026-09-06: 76 accounts opened by the sponsor (72 still open, 51 holding real USDC today), 92 USDC-moving operations attributable to the sponsor between 2026-08-24 and 2026-08-30, about **$4.4 moved in total**, of which $2.76 was 69 person-to-person payments with a **median of $0.002** and a maximum of $1.00; 65 of those 69 landed on 2026-08-24 in a scripted coverage run. The counts are real and small: this is a mechanism proven with real money, not volume. |
 | **Open public mainnet** | — | **Not open.** Raising the caps or dropping the allowlist is gated on a professional audit and the key-custody work listed under *Current security posture*. |
 
 ## Reporting a vulnerability

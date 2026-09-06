@@ -25,8 +25,17 @@
  * RUN: pnpm --filter @lumenia/web test:anchor   (offline, no keys)
  */
 import { Keypair, Networks, WebAuth } from "@stellar/stellar-sdk";
-import { authenticate, readAnchorInfo, readWithdrawal, startWithdrawal, type AnchorInfo } from "./anchor";
+import {
+  authenticate,
+  readAnchorInfo,
+  readWithdrawal,
+  requestQuote,
+  setBankAccount,
+  startWithdrawal,
+  type AnchorInfo,
+} from "./anchor";
 import { localSignerFromSeed } from "./signer";
+import { formatIban, isValidIban, normalizeIban } from "./iban";
 import { createAnchorAdapter } from "./offramp";
 import type { NetworkConfig } from "./network";
 
@@ -76,6 +85,7 @@ const INFO: AnchorInfo = {
   networkPassphrase: PASSPHRASE,
   currencies: ["USDC"],
   quoteServer: null,
+  kycServer: null,
 };
 
 /**
@@ -461,6 +471,131 @@ code = "try"
     } finally {
       restore();
     }
+  }
+
+  console.log("\n[sep-1] the optional servers are read when published and null when not");
+  {
+    const base =
+      `WEB_AUTH_ENDPOINT = "https://${HOME}/auth"\n` +
+      `SIGNING_KEY = "${anchorKp.publicKey()}"\n` +
+      `TRANSFER_SERVER = "https://${HOME}/sep6"\n`;
+    let restore = stubFetch(() => ({ body: `${base}KYC_SERVER = "https://${HOME}/sep12/"\n` }));
+    try {
+      const info = await readAnchorInfo(HOME);
+      ok("KYC_SERVER is parsed, trailing slash dropped", info.kycServer === `https://${HOME}/sep12`, String(info.kycServer));
+    } finally {
+      restore();
+    }
+    restore = stubFetch(() => ({ body: base }));
+    try {
+      const info = await readAnchorInfo(HOME);
+      ok("no KYC_SERVER means null, not a guess", info.kycServer === null && info.quoteServer === null);
+    } finally {
+      restore();
+    }
+  }
+
+  console.log("\n[sep-38] a firm quote, or a refusal");
+  {
+    const quoting: AnchorInfo = { ...INFO, quoteServer: `https://${HOME}/sep38` };
+    const params = { sellAssetCode: "USDC", sellAssetIssuer: ISSUER, buyAsset: "iso4217:TRY", sellAmount: "5" };
+
+    await throws("an anchor with no quote server is refused", () => requestQuote(INFO, "jwt", params), "quote");
+
+    let seen: { url: string; init?: RequestInit } | null = null;
+    let restore = stubFetch((url, init) => {
+      seen = { url, init };
+      return {
+        status: 201,
+        body: { id: "qt_1", sell_amount: "5", buy_amount: "240.94", price: "48.19", expires_at: "2026-09-06T17:13:30Z" },
+      };
+    });
+    try {
+      const q = await requestQuote(quoting, "jwt", params);
+      const s = seen as { url: string; init?: RequestInit } | null;
+      const body = JSON.parse(String(s?.init?.body ?? "{}")) as Record<string, string>;
+      const headers = (s?.init?.headers ?? {}) as Record<string, string>;
+      ok("the quote is POSTed to <quoteServer>/quote", s?.url === `https://${HOME}/sep38/quote` && s?.init?.method === "POST", s?.url);
+      ok("...with the session token", headers.authorization === "Bearer jwt");
+      ok(
+        "...selling the pinned asset by code AND issuer, buying the fiat named",
+        body.sell_asset === `stellar:USDC:${ISSUER}` && body.buy_asset === "iso4217:TRY" && body.sell_amount === "5",
+        JSON.stringify(body),
+      );
+      ok("the anchor's id, figure and expiry come back as given", q.id === "qt_1" && q.buyAmount === "240.94" && q.expiresAt === "2026-09-06T17:13:30Z");
+    } finally {
+      restore();
+    }
+
+    restore = stubFetch(() => ({ status: 201, body: { price: "48.19" } }));
+    try {
+      await throws("an answer without an id or a figure is not a quote", () => requestQuote(quoting, "jwt", params), "usable");
+    } finally {
+      restore();
+    }
+  }
+
+  console.log("\n[sep-12] a payout destination and nothing else");
+  {
+    const kyc: AnchorInfo = { ...INFO, kycServer: `https://${HOME}/sep12` };
+    const params = { account: USER, bankAccountNumber: "TR330006100519786457841326" };
+
+    await throws("an anchor with no SEP-12 server is refused", () => setBankAccount(INFO, "jwt", params), "destination");
+
+    let seen: { url: string; init?: RequestInit } | null = null;
+    // The real anchor answers 202 with a tiny body; an empty body must not be an error either.
+    let restore = stubFetch((url, init) => {
+      seen = { url, init };
+      return { status: 202, body: "" };
+    });
+    try {
+      await setBankAccount(kyc, "jwt", params);
+      const s = seen as { url: string; init?: RequestInit } | null;
+      const body = JSON.parse(String(s?.init?.body ?? "{}")) as Record<string, string>;
+      const headers = (s?.init?.headers ?? {}) as Record<string, string>;
+      ok("the destination is PUT to <kycServer>/customer", s?.url === `https://${HOME}/sep12/customer` && s?.init?.method === "PUT", s?.url);
+      ok("...with the session token", headers.authorization === "Bearer jwt");
+      ok(
+        "...carrying exactly account, type and the bank account number",
+        Object.keys(body).sort().join(",") === "account,bank_account_number,type" && body.bank_account_number === params.bankAccountNumber,
+        Object.keys(body).join(","),
+      );
+      ok("...and no name, email, id number or document field, ever", !/name|email|id_number|tax|birth|photo|document/i.test(Object.keys(body).join(",")));
+      ok("a 202 with an empty body is success", true);
+    } finally {
+      restore();
+    }
+
+    restore = stubFetch((url, init) => {
+      seen = { url, init };
+      return { status: 202, body: { id: "cus_1" } };
+    });
+    try {
+      await setBankAccount(kyc, "jwt", { ...params, bankName: "Example Bank" });
+      const s = seen as { url: string; init?: RequestInit } | null;
+      const body = JSON.parse(String(s?.init?.body ?? "{}")) as Record<string, string>;
+      ok("a bank name travels only when given", body.bank_name === "Example Bank" && Object.keys(body).length === 4, Object.keys(body).join(","));
+    } finally {
+      restore();
+    }
+
+    restore = stubFetch(() => ({ status: 400, body: { error: "invalid_iban" } }));
+    try {
+      await throws("the anchor's rejection surfaces with its reason", () => setBankAccount(kyc, "jwt", params), "invalid_iban");
+    } finally {
+      restore();
+    }
+  }
+
+  console.log("\n[iban] a typo is caught on this device, before any rail sees it");
+  {
+    ok("the ISO example Turkish IBAN passes", isValidIban("TR33 0006 1005 1978 6457 8413 26"));
+    ok("one wrong digit fails", !isValidIban("TR33 0006 1005 1978 6457 8413 27"));
+    ok("a Turkish IBAN of the wrong length fails", !isValidIban("TR330006100519786457841"));
+    ok("a German example IBAN passes", isValidIban("DE89 3704 0044 0532 0130 00"));
+    ok("lower case and spaces are normalised", normalizeIban("tr33 0006 1005 1978 6457 8413 26") === "TR330006100519786457841326");
+    ok("formatting groups by four", formatIban("TR330006100519786457841326") === "TR33 0006 1005 1978 6457 8413 26");
+    ok("an empty string is not an IBAN", !isValidIban(""));
   }
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} ANCHOR SELF-TEST ${passed}/${passed + failed}`);

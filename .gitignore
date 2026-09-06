@@ -159,3 +159,5 @@ sow1-demo*.srt
 # Traffic screenshots feed the local customer-development docs, not the public
 # evidence package, and they go stale by the week.
 evidence/vercel-analytics-*.png
+OWNER_MULTISIG_RUNBOOK.md
+SOW2_REPLAN.md

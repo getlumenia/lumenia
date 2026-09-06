@@ -47,6 +47,11 @@ MAX_DROP_USDC = "100"
 MAX_DAY_USDC = "1000"
 # Watchdog: alert when the sponsor's float drops under this many XLM (see lib/watchdog.ts).
 SPONSOR_MIN_XLM = "50"
+# Watchdog: page when fewer than this many recipients can still be onboarded (1.5 XLM each: two
+# base reserves for the 0-XLM account plus one for its USDC trustline), and when the escrow
+# contract's instance or code is fewer than this many days from Soroban state archival.
+SPONSOR_MIN_RECIPIENTS = "25"
+SPONSOR_MIN_TTL_DAYS = "21"
 # The wasm the escrow is EXPECTED to run. An upgrade emits no event, so a mismatch here is the
 # only signal that the deployed bytecode changed. Update this whenever you intentionally upgrade.
 #
@@ -114,6 +119,10 @@ MAX_DAY_ACCOUNTS = "40"
 MAX_DAY_ACCOUNTS_PER_SOURCE = "20"
 # The float is meant to be tiny; alert well before it runs out.
 SPONSOR_MIN_XLM = "3"
+# Same two watchdog floors as testnet. Measured 2026-09-06 on the live account: 33.18 XLM
+# spendable at 1.50004 XLM per onboarding = 22 recipients left, so this fires until the top-up.
+SPONSOR_MIN_RECIPIENTS = "25"
+SPONSOR_MIN_TTL_DAYS = "21"
 # Pilot mode ON for mainnet: only owner-approved wallets may move value here.
 PILOT_MODE = "1"
 
