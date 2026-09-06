@@ -36,10 +36,24 @@ jobs:
         # Scout's detectors are source-level, so the analysis is unaffected.
         env:
           CARGO_BUILD_TARGET: x86_64-unknown-linux-gnu
+        # Scout builds its detector library from a pinned nightly, and that build has failed
+        # upstream since 2026-07-27 ("Failed to build detector library ... nightly/2025-08-07").
+        # Nothing here can fix somebody else's build. What was wrong was the response: a bare
+        # gating invocation failed the whole workflow every week, and because nothing notifies,
+        # the failure went unnoticed for ten weeks while SECURITY.md told reporters the pass had
+        # been completed. So: run it, record the outcome in the job summary where a human will
+        # see it, and let the OTHER jobs be the gate. A tool that cannot run is not a finding of
+        # zero, and this must never be reported as one.
         run: |
           cargo scout-audit -o sarif --output-path scout.sarif || true
           cargo scout-audit -o md --output-path scout.md || true
-          cargo scout-audit
+          if cargo scout-audit; then
+            echo "SCOUT_STATUS=ran" >> "$GITHUB_ENV"
+            echo "Scout completed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "SCOUT_STATUS=could-not-run" >> "$GITHUB_ENV"
+            echo "Scout COULD NOT RUN (upstream detector build). No findings were produced, which is not the same as no findings existing." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -47,6 +61,15 @@ jobs:
           path: |
             contracts/lumen-drop/scout.sarif
             contracts/lumen-drop/scout.md
+      # The header comment has claimed since this file was written that Scout's SARIF feeds the
+      # Security tab. It never did: nothing uploaded it, so code scanning reported "no analysis
+      # found". Guarded on the file existing, because a Scout that could not run produces none.
+      - name: Upload Scout SARIF to the Security tab
+        if: always() && hashFiles('contracts/lumen-drop/scout.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: contracts/lumen-drop/scout.sarif
+          category: scout
 
   soroban-scanner:
     name: OpenZeppelin soroban-scanner
@@ -85,7 +108,12 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: Fuzz escrow solvency (10 minutes)
-        run: cargo fuzz run escrow_solvency -- -max_total_time=600
+        # `--target` is load-bearing, not decoration. install-action ships a MUSL-built cargo-fuzz,
+        # cargo-fuzz defaults to its own host triple, and rustc refuses `-Zsanitizer=address`
+        # against a statically linked libc: "sanitizer is incompatible with statically linked
+        # libc". That one line is why this job failed every week from 2026-07-27 and why the fuzz
+        # target had never executed anywhere, macOS being blocked for a different reason.
+        run: cargo fuzz run escrow_solvency --target x86_64-unknown-linux-gnu -- -max_total_time=600
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -114,3 +142,51 @@ jobs:
         with:
           name: mutants-report
           path: contracts/lumen-drop/mutants.out
+
+  # WHY THIS JOB EXISTS. Every scheduled run from 2026-07-27 onward concluded failure, and nobody
+  # knew, because a cron-only workflow with no notification is a workflow nobody reads. Meanwhile
+  # the public security policy told reporters the pass had been completed. A monitor that fails
+  # silently is worse than no monitor: it produces the belief that something is being checked.
+  #
+  # This opens ONE issue and keeps updating it, rather than filing a new one every Monday, so a
+  # long-running breakage stays one conversation instead of ten duplicates.
+  notify:
+    name: Report a failed deep pass
+    needs: [scout, soroban-scanner, fuzz, mutants]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const title = "Deep contract-security pass is failing";
+            const body = [
+              `The weekly deep pass failed on ${new Date().toISOString().slice(0, 10)}.`,
+              "",
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              "",
+              "Job results:",
+              `- Scout: ${{ needs.scout.result }}`,
+              `- soroban-scanner: ${{ needs.soroban-scanner.result }}`,
+              `- fuzz: ${{ needs.fuzz.result }}`,
+              `- mutants: ${{ needs.mutants.result }}`,
+              "",
+              "While this is red, the project may not describe the static-analysis and fuzz pass as completed.",
+            ].join("\n");
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "contract-security",
+            });
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ["contract-security"],
+              });
+            }

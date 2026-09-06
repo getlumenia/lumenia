@@ -17,11 +17,66 @@ export interface MintedLink {
 }
 
 /**
- * Mint a fresh real testnet claim link by driving the existing `makelink` CLI
- * (apps/sponsor/src/cli/link.ts). Needs USDC_ISSUER_SECRET in the environment.
- * Returns the claim URL (with the #fragment bearer key) so a browser can claim it.
+ * Mint a fresh real testnet claim link.
+ *
+ * Two ways, and the default changed on 2026-09-06.
+ *
+ * PREFERRED: ask the sponsor's own `/demo-link` endpoint, which is what a visitor to /try gets.
+ * It needs no secret at all, which is the point: this suite could never run in continuous
+ * integration because it demanded an issuer key, so the only regression test on the live claim
+ * path was one a person had to remember to run. It also stopped being correct when testnet moved
+ * onto Circle's USDC, because the key it wanted mints an asset the app no longer accepts.
+ *
+ * FALLBACK: drive the `makelink` CLI, which still needs USDC_ISSUER_SECRET and only works for an
+ * asset this project can issue. Kept for local runs against a self-issued asset; set
+ * MINT_VIA=cli to choose it.
+ *
+ * Testing the path a real visitor takes is also simply a better test than testing a path only an
+ * operator can take.
  */
 export async function mintClaimLink(opts: {
+  sponsor: string;
+  web: string;
+  amount?: string;
+  from?: string;
+}): Promise<MintedLink> {
+  if (process.env.MINT_VIA === "cli") return mintViaCli(opts);
+  return mintViaDemoLink(opts);
+}
+
+/** The visitor's path: the sponsor mints and hands back a claim link. No key required. */
+async function mintViaDemoLink(opts: { sponsor: string; web: string }): Promise<MintedLink> {
+  const res = await fetch(`${opts.sponsor.replace(/\/$/, "")}/demo-link`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    balanceId?: string;
+    bearerSecret?: string;
+    amount?: string;
+    from?: string;
+    error?: string;
+  };
+  if (!res.ok || !body.balanceId || !body.bearerSecret) {
+    throw new Error(`/demo-link did not return a claim link (HTTP ${res.status}): ${body.error ?? "no body"}`);
+  }
+
+  // Same shape the product builds: the bearer key lives in the fragment and is never sent anywhere.
+  const web = opts.web.replace(/\/$/, "");
+  const amount = body.amount ?? "0.5";
+  const from = body.from ?? "Lumenia";
+  const q = new URLSearchParams({ a: amount, s: from, b: body.balanceId });
+  return {
+    url: `${web}/c/${body.balanceId.slice(-8)}?${q.toString()}#${body.bearerSecret}`,
+    amount,
+    from,
+    balanceId: body.balanceId,
+  };
+}
+
+/** The operator's path: drive the makelink CLI. Needs an issuer key we control. */
+async function mintViaCli(opts: {
   sponsor: string;
   web: string;
   amount?: string;
@@ -30,7 +85,7 @@ export async function mintClaimLink(opts: {
   const amount = opts.amount ?? "20";
   const from = opts.from ?? "Alvin";
   if (!process.env.USDC_ISSUER_SECRET) {
-    throw new Error("USDC_ISSUER_SECRET is required to mint a claim link (see HANDOFF §3)");
+    throw new Error("MINT_VIA=cli needs USDC_ISSUER_SECRET, and an asset this project can issue");
   }
   const { stdout } = await execFileAsync(
     "pnpm",

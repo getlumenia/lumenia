@@ -72,11 +72,20 @@ these levels describe **real dollars**, bounded by the caps above.
 
 ## Current security posture (stated honestly)
 
-- **No professional audit has been performed yet.** We have completed a static-analysis, fuzz
-  and property-test pass with free tooling (Scout, clippy strict, cargo-audit, cargo-deny,
-  proptest invariants, mutation testing) — that is self-assessment, not an audit. A
-  professional audit is planned via the Stellar/Soroban security audit support program. The
-  mainnet pilot runs **ahead** of that audit, which is why it is allowlisted and capped.
+- **No professional audit has been performed yet.** What we run ourselves, and what that is
+  worth, stated exactly: strict clippy, `cargo-audit`, `cargo-deny`, an OpenZeppelin
+  soroban-scanner pass, 29 unit and property tests including the fund-conservation invariant, and
+  mutation testing. All of it is self-assessment, not an audit.
+- **Two of those tools are not currently running, and we would rather say so than let this page
+  imply otherwise.** Scout's detector build has failed upstream since 2026-07-27, and our fuzz
+  target had never executed in CI because it was being built against a target the sanitizer
+  cannot use. The fuzz target is fixed as of 2026-09-06; Scout is an upstream breakage we cannot
+  fix, so the weekly job now records plainly when it could not run. A tool that fails to start
+  reports no findings, which is not the same as finding none. The same solvency invariant the
+  fuzzer targets also runs as a property test in `cargo test`, which does pass on every push.
+- A professional audit is planned via the Stellar/Soroban security audit support program, which
+  requires an SCF award first. The mainnet pilot runs **ahead** of that audit, which is why it is
+  allowlisted and capped.
 - The escrow contract is currently **upgradeable behind an owner** (upgrade + pause-new-escrow
   only; no owner path can move escrowed funds) and is intended to become **immutable after the
   audit** by shipping a final wasm with the upgrade entrypoint removed. The honest residual: an

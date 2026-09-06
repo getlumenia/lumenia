@@ -24,7 +24,11 @@ test("fresh makelink → claim in a real browser → USDC lands (tx hash)", asyn
   // 1. value-first: the money is painted before any action, no crypto words.
   await page.goto(link.url, { waitUntil: "domcontentloaded" });
   await expect(page.getByText(/sent you money/i)).toBeVisible();
-  await expect(page.getByText("$20.00")).toBeVisible();
+  // Assert the amount the minter actually produced, not a number typed here. The demo link's
+  // size is a configuration value and it changed once already; a hardcoded "$20.00" turns that
+  // into a red test that looks like a product failure.
+  const shown = `$${Number(link.amount).toFixed(2)}`;
+  await expect(page.getByText(shown)).toBeVisible();
 
   // 2. wait for hydration BEFORE clicking (avoids a click-before-hydration race on a
   //    cold first load). ClaimButton strips the #fragment on mount (C3), so an empty
