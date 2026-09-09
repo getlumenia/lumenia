@@ -88,6 +88,8 @@ export default function BankCashOutPage() {
   const domain = anchorHomeDomain();
 
   const [balance, setBalance] = useState<string | null>(null);
+  /** Old-issuer practice dollars this account still holds; shown as such, never as spendable. */
+  const [legacy, setLegacy] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState<Step>("form");
   const [busy, setBusy] = useState(false);
@@ -109,7 +111,11 @@ export default function BankCashOutPage() {
   const resumed = useRef(false);
 
   useEffect(() => {
-    if (account) void loadBalance(account.address).then((b) => setBalance(b?.usd ?? "0"));
+    if (account)
+      void loadBalance(account.address).then((b) => {
+        setBalance(b?.usd ?? "0");
+        setLegacy(b?.legacyUsd ?? null);
+      });
   }, [account]);
 
   useEffect(() => {
@@ -302,6 +308,10 @@ export default function BankCashOutPage() {
       }
       setStep("review");
       const msg = e instanceof Error ? e.message : "";
+      if (/underfunded/i.test(msg)) {
+        setError("This account doesn't hold enough of these dollars, so nothing moved. Old practice dollars from before 6 September don't count; get fresh ones from Add money.");
+        return;
+      }
       setError(msg && !msg.startsWith("/payout") ? `${msg}. Your money hasn't moved.` : copy.errors.moneySafe);
     } finally {
       setBusy(false);
@@ -482,6 +492,16 @@ export default function BankCashOutPage() {
           .
         </p>
         {balance !== null && <p className="mt-2 text-sm text-ink-soft">You have {formatUsd(balance)} to cash out.</p>}
+        {legacy && (
+          <p className="mt-2 text-sm text-ink-soft">
+            This account also holds {formatUsd(legacy)} of old practice dollars from before 6 September.
+            Those can&apos;t be sent any more; get fresh practice dollars from{" "}
+            <Link href="/add-money" className="text-money underline-offset-2 hover:underline">
+              Add money
+            </Link>
+            .
+          </p>
+        )}
       </header>
 
       <label className="text-sm text-ink-soft">

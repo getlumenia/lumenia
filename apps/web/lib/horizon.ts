@@ -5,13 +5,20 @@
  * account that doesn't exist yet returns an honest null / empty list.
  */
 import { Horizon } from "@stellar/stellar-sdk";
-import { activeNetwork } from "./network";
+import { activeNetwork, LEGACY_TESTNET_USDC_ISSUER, USDC_ISSUER } from "./network";
 
 export interface Balance {
-  /** USDC balance the recipient holds, as a decimal string. */
+  /** USDC balance the recipient holds, as a decimal string. Only the pinned issuer's dollars count. */
   usd: string;
   /** The trustline's issuer — lets other reads pin the exact asset, not just the code. */
   issuer?: string;
+  /**
+   * Dollars of the RETIRED testnet issuer, when the account still holds any. Practice accounts
+   * opened before 2026-09-06 carry the product's old self-issued USDC; the product now moves
+   * Circle's testnet USDC only, so those old units cannot be sent anywhere. Reported separately
+   * so a screen can say so, instead of showing them as spendable and failing at the ledger.
+   */
+  legacyUsd?: string;
 }
 
 export interface IncomingClaim {
@@ -76,10 +83,23 @@ export async function loadTotalUsd(
 export async function loadBalance(address: string): Promise<Balance | null> {
   try {
     const acc = await server().loadAccount(address);
-    const usdc = acc.balances.find(
-      (b) => "asset_code" in b && b.asset_code === "USDC",
-    ) as { balance: string; asset_issuer?: string } | undefined;
-    return { usd: usdc?.balance ?? "0", issuer: usdc?.asset_issuer };
+    /* Pinned by issuer, not by code. Picking "the first USDC" showed a practice account's old
+     * self-issued dollars as its balance after the 2026-09-06 repoint to Circle's testnet issuer,
+     * and the cash-out screen then let the person try to send dollars they did not hold. The
+     * balance shown is the balance the product can move; anything else is named as what it is. */
+    const net = activeNetwork();
+    const pinned = USDC_ISSUER[net.id];
+    const lines = acc.balances.filter((b) => "asset_code" in b && b.asset_code === "USDC") as {
+      balance: string;
+      asset_issuer?: string;
+    }[];
+    const usdc = lines.find((b) => b.asset_issuer === pinned);
+    const legacy = net.id === "testnet" ? lines.find((b) => b.asset_issuer === LEGACY_TESTNET_USDC_ISSUER) : undefined;
+    return {
+      usd: usdc?.balance ?? "0",
+      issuer: usdc?.asset_issuer,
+      ...(legacy && Number.parseFloat(legacy.balance) > 0 ? { legacyUsd: legacy.balance } : {}),
+    };
   } catch (e) {
     if ((e as { response?: { status?: number } })?.response?.status === 404) return null;
     throw e;

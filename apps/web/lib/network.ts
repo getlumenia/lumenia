@@ -83,6 +83,14 @@ export const USDC_ISSUER: Record<NetworkId, string> = {
 };
 
 /**
+ * The project's own practice issuer, retired on 2026-09-06. Practice accounts opened before that
+ * day still hold its units. The product never moves them again; readers name them so a screen
+ * can say "old practice dollars" instead of showing them as money. Same constant as the sponsor's
+ * `LEGACY_TESTNET_USDC_ISSUER` in apps/sponsor/src/lib/config.ts.
+ */
+export const LEGACY_TESTNET_USDC_ISSUER = "GDO7HI2WKTMDLDG54XKAVE6BTJ5BYXE7PAYQNM5535J2SJNXR334ECYC";
+
+/**
  * Resolve a link's network. Anything other than an explicit, fully-configured `public` falls back
  * to testnet — a misconfigured mainnet must never degrade into "quietly use the wrong chain".
  */

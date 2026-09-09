@@ -99,6 +99,8 @@ export default function SendOutPage() {
   const router = useRouter();
 
   const [balance, setBalance] = useState<string | null>(null);
+  /** Old-issuer practice dollars this account still holds; shown as such, never as spendable. */
+  const [legacy, setLegacy] = useState<string | null>(null);
   const [raw, setRaw] = useState("");
   const [memo, setMemo] = useState("");
   const [memoKind, setMemoKind] = useState<MemoKind>("text");
@@ -120,7 +122,11 @@ export default function SendOutPage() {
   const [saved, setSaved] = useState<SavedDestination | null>(null);
 
   useEffect(() => {
-    if (account) void loadBalance(account.address).then((b) => setBalance(b?.usd ?? "0"));
+    if (account)
+      void loadBalance(account.address).then((b) => {
+        setBalance(b?.usd ?? "0");
+        setLegacy(b?.legacyUsd ?? null);
+      });
   }, [account]);
 
   // Restore a draft after the unlock detour. Retyping a deposit address is exactly where
@@ -753,6 +759,16 @@ export default function SendOutPage() {
         </p>
         {balance !== null && (
           <p className="mt-2 text-sm text-ink-soft">You have {formatUsd(balance)} to send.</p>
+        )}
+        {legacy && (
+          <p className="mt-2 text-sm text-ink-soft">
+            This account also holds {formatUsd(legacy)} of old practice dollars from before 6 September.
+            Those can&apos;t be sent any more; get fresh practice dollars from{" "}
+            <Link href="/add-money" className="text-money underline-offset-2 hover:underline">
+              Add money
+            </Link>
+            .
+          </p>
         )}
       </header>
 
