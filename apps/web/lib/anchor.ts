@@ -198,6 +198,38 @@ export async function readAnchorInfo(homeDomain: string): Promise<AnchorInfo> {
   };
 }
 
+/** What an anchor publishes about one direction of one asset in its transfer `/info`. */
+export interface TransferLimits {
+  /** Smallest amount the anchor says it takes, as published. Null when it does not say. */
+  min: string | null;
+  max: string | null;
+  /** Its stated fee, in percent of the amount. Null when it does not say. */
+  feePercent: string | null;
+}
+
+/**
+ * SEP-6 / SEP-24 `/info`: the limits the anchor publishes for a withdrawal of `assetCode`.
+ *
+ * Read so a screen can say "at least X" before asking, instead of learning it from a refusal.
+ * These are the anchor's published figures and nothing more: the sandbox anchor published a
+ * 0.5 minimum on 2026-09-10 while refusing anything under 1.0, so a refusal still has to be
+ * shown in the anchor's own words even when the amount passed this check. No sign-in needed.
+ */
+export async function readWithdrawLimits(info: AnchorInfo, assetCode: string): Promise<TransferLimits> {
+  const none: TransferLimits = { min: null, max: null, feePercent: null };
+  let body: unknown;
+  try {
+    body = await getJson(`${info.transferServer}/info`);
+  } catch {
+    return none;
+  }
+  const withdraw = (body as { withdraw?: Record<string, unknown> } | null)?.withdraw;
+  const entry = withdraw?.[assetCode] as { min_amount?: unknown; max_amount?: unknown; fee_percent?: unknown } | undefined;
+  if (!entry) return none;
+  const num = (v: unknown) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? String(v) : null);
+  return { min: num(entry.min_amount), max: num(entry.max_amount), feePercent: num(entry.fee_percent) };
+}
+
 /**
  * SEP-10. Exchange a signature for a session token.
  *

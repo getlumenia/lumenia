@@ -35,8 +35,10 @@ import {
   authenticate,
   readAnchorInfo,
   readWithdrawal,
+  readWithdrawLimits,
   startWithdrawal,
   type AnchorInfo,
+  type TransferLimits,
   type OpenedWithdrawal,
 } from "../../../../lib/anchor";
 import { sendOut, PayoutUncertainError } from "../../../../lib/payout";
@@ -98,6 +100,8 @@ export default function BankCashOutPage() {
   const [understood, setUnderstood] = useState(false);
   const [opened, setOpened] = useState<Ready | null>(null);
   const [rail, setRail] = useState<AnchorInfo | null>(null);
+  /** The rail's published limits, read without signing in, so the form can say "at least" first. */
+  const [limits, setLimits] = useState<TransferLimits | null>(null);
   const [progress, setProgress] = useState("");
   const [hash, setHash] = useState("");
   /** Money left but the rail never confirmed inside the wait. Not an error: a receipt with a note. */
@@ -117,6 +121,14 @@ export default function BankCashOutPage() {
         setLegacy(b?.legacyUsd ?? null);
       });
   }, [account]);
+
+  useEffect(() => {
+    if (!domain) return;
+    void readAnchorInfo(domain)
+      .then((info) => readWithdrawLimits(info, "USDC"))
+      .then(setLimits)
+      .catch(() => setLimits(null));
+  }, [domain]);
 
   useEffect(() => {
     try {
@@ -161,6 +173,8 @@ export default function BankCashOutPage() {
   }
 
   const amt = Math.round(Number.parseFloat(amount || "0") * 100) / 100;
+  const belowMin = limits?.min != null && amt > 0 && amt < Number.parseFloat(limits.min);
+  const aboveMax = limits?.max != null && amt > Number.parseFloat(limits.max);
   const note = readNote(opened?.note ?? null);
   const expired = note.until ? Date.now() >= note.until.getTime() : false;
   const estimate = note.rate ? (amt * Number.parseFloat(note.rate)).toFixed(2) : null;
@@ -183,6 +197,8 @@ export default function BankCashOutPage() {
     if (!domain) return;
     if (!Number.isFinite(amt) || amt < 0.01) return setError("Enter an amount to cash out.");
     if (balance !== null && amt > Number.parseFloat(balance)) return setError("That's more than you have.");
+    if (belowMin) return setError(`The rail lists ${formatUsd(limits!.min!)} as its minimum.`);
+    if (aboveMax) return setError(`The rail lists ${formatUsd(limits!.max!)} as its maximum per cash-out.`);
 
     setBusy(true);
     try {
@@ -527,6 +543,16 @@ export default function BankCashOutPage() {
         </div>
       </label>
 
+      {limits && (limits.min || limits.max) && (
+        <p className="-mt-3 text-xs text-ink-soft">
+          The rail lists {limits.min ? `a minimum of ${formatUsd(limits.min)}` : ""}
+          {limits.min && limits.max ? " and " : ""}
+          {limits.max ? `a maximum of ${formatUsd(limits.max)}` : ""} per cash-out
+          {limits.feePercent ? `, and a fee of ${limits.feePercent}%` : ""}. Its own answer when
+          you ask is what counts.
+        </p>
+      )}
+
       <p className="text-xs text-ink-soft">
         The rail is {domain}. We send it the amount and nothing about who you are; it pays the bank
         account it already holds for this wallet.
@@ -534,7 +560,7 @@ export default function BankCashOutPage() {
 
       {errorBlock}
 
-      <PrimaryButton loading={busy} loadingLabel="Asking the rail…" disabled={!(amt > 0)} onClick={() => void open()}>
+      <PrimaryButton loading={busy} loadingLabel="Asking the rail…" disabled={!(amt > 0) || belowMin || aboveMax} onClick={() => void open()}>
         See what the rail says
       </PrimaryButton>
     </div>

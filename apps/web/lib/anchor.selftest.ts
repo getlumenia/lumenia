@@ -29,6 +29,7 @@ import {
   authenticate,
   readAnchorInfo,
   readWithdrawal,
+  readWithdrawLimits,
   requestQuote,
   setBankAccount,
   startWithdrawal,
@@ -503,6 +504,32 @@ code = "try"
       await throws("a refusal that is not about the asset is NOT retried", () => startWithdrawal(info6, "jwt", { assetCode: "USDC", assetIssuer: ISSUER, account: USER, amount: "0.1", destinationAsset: "iso4217:TRY" }), "Minimum");
     } finally {
       restore2();
+    }
+  }
+
+  console.log("\n[sep-6] the anchor's published limits are read as its claim, or as nothing");
+  {
+    const info6: AnchorInfo = { ...INFO, door: "sep6", transferServer: `https://${HOME}/sep6` };
+    let restore = stubFetch(() => ({ body: { withdraw: { USDC: { min_amount: 0.5, max_amount: 300, fee_percent: 0.5 } } } }));
+    try {
+      const l = await readWithdrawLimits(info6, "USDC");
+      ok("min, max and fee come through as strings", l.min === "0.5" && l.max === "300" && l.feePercent === "0.5", JSON.stringify(l));
+    } finally {
+      restore();
+    }
+    restore = stubFetch(() => ({ body: { withdraw: {} } }));
+    try {
+      const l = await readWithdrawLimits(info6, "USDC");
+      ok("an asset the anchor does not list yields nulls, not guesses", l.min === null && l.max === null);
+    } finally {
+      restore();
+    }
+    restore = stubFetch(() => ({ status: 500, body: "" }));
+    try {
+      const l = await readWithdrawLimits(info6, "USDC");
+      ok("an /info that fails is 'no information', never an error on a money screen", l.min === null);
+    } finally {
+      restore();
     }
   }
 
