@@ -41,6 +41,12 @@
  * currency. SEP-38 is limited to `requestQuote`: a firm quote for the figure shown before the
  * person approves, never an indicative one dressed up as a promise.
  *
+ * DECISION 2026-09-09 (owner, on the organiser's guidance): for the hackathon period the product
+ * uses SEP-6 ONLY, plus the SEP-1 discovery and SEP-10 sign-in that SEP-6 cannot work without.
+ * `requestQuote` (SEP-38) and `setBankAccount` (SEP-12) stay here, tested, and are called by no
+ * product surface. The bank screen opens a plain `/withdraw` and shows the anchor's own sentence
+ * about the rate and the payout account instead of a quote of ours.
+ *
  * HONESTY. Whether any given anchor actually settles in a particular currency is the anchor's
  * claim, not ours. `readAnchorInfo` reports what the anchor publishes and nothing more.
  */
@@ -250,6 +256,12 @@ export type OpenedWithdrawal =
       destination: string;
       memo: string | null;
       memoType: "text" | "id" | "hash" | null;
+      /**
+       * Whatever the anchor said in `extra_info.message`, verbatim. On a plain SEP-6 withdrawal
+       * this is where an anchor states the rate it locked and where the fiat will land; it is
+       * the anchor's sentence, shown as such, never parsed into a promise of ours.
+       */
+      note: string | null;
     };
 
 /**
@@ -332,13 +344,27 @@ export async function startWithdrawal(
   if (params.lang) q.set("lang", params.lang);
 
   const path = exchange ? "withdraw-exchange" : "withdraw";
-  const res = (await getJson(`${info.transferServer}/${path}?${q.toString()}`, { headers: auth })) as
-    | { id?: string; account_id?: string; memo?: string; memo_type?: string }
-    | null;
+  type Opened = { id?: string; account_id?: string; memo?: string; memo_type?: string; extra_info?: { message?: string } } | null;
+  let res: Opened;
+  try {
+    res = (await getJson(`${info.transferServer}/${path}?${q.toString()}`, { headers: auth })) as Opened;
+  } catch (e) {
+    /* The spec form first, the anchor's dialect second. SEP-6 defines `source_asset` as a SEP-38
+     * asset id (`stellar:CODE:ISSUER`), and on 2026-09-06 the sandbox anchor refused anything
+     * else. On 2026-09-09 the same anchor refused exactly that form ("unsupported source_asset
+     * ... this anchor ramps USDC") and accepted the bare code. Anchors under active development
+     * move; a client that dies on the first dialect it did not expect is a demo that fails on
+     * stage. So: if the refusal names `source_asset`, retry once with the bare code. Nothing has
+     * been paid at this point, so the retry costs a request and nothing else. */
+    const msg = e instanceof Error ? e.message : "";
+    if (!exchange || !/source_asset/i.test(msg)) throw e;
+    q.set("source_asset", params.assetCode);
+    res = (await getJson(`${info.transferServer}/${path}?${q.toString()}`, { headers: auth })) as Opened;
+  }
 
   const id = res?.id;
   const destination = res?.account_id;
-  if (!id) throw new Error("that anchor could not start the withdrawal");
+  if (!res || !id) throw new Error("that anchor could not start the withdrawal");
   // An anchor that opens a withdrawal without naming where to pay has told us nothing usable.
   // Refuse rather than carry a half-answer into the money path.
   if (!destination) throw new Error("that anchor did not say where to send the money");
@@ -349,6 +375,7 @@ export async function startWithdrawal(
     destination,
     memo: res.memo ? String(res.memo) : null,
     memoType: normaliseMemoType(res.memo_type),
+    note: res.extra_info?.message ? String(res.extra_info.message) : null,
   };
 }
 

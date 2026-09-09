@@ -1,24 +1,24 @@
 "use client";
 
 /**
- * /send-out/bank — cash out to a bank account in local currency, through an anchor.
+ * /send-out/bank — cash out to a bank account in local currency, through an anchor, SEP-6 only.
  *
  * The other cash-out screen (/send-out) pays an exchange deposit address the person fetched by
- * hand. This one talks to a Stellar anchor over the standard protocols (SEP-1, SEP-10, SEP-12,
- * SEP-38, SEP-6 in lib/anchor.ts) so the person types an IBAN and an amount, sees a firm lira
- * figure, and approves once. The money still leaves on the SAME payout path as /send-out
- * (lib/payout.ts, fee-bumped under the sponsor's PAYOUT policy, signed by the person's own key):
- * the anchor names an account and a memo, and that is all it gets to do.
+ * hand. This one talks to a Stellar anchor over the standard door: SEP-1 discovery, SEP-10
+ * sign-in, SEP-6 withdrawal (lib/anchor.ts). The money still leaves on the SAME payout path as
+ * /send-out (lib/payout.ts, fee-bumped under the sponsor's PAYOUT policy, signed by the person's
+ * own key): the anchor names an account and a memo, and that is all it gets to do.
  *
- * WHAT THIS SCREEN SENDS TO THE ANCHOR, AND WHAT IT NEVER WILL. The bank account number the
- * person typed, for their own withdrawal, plus an optional bank name. That is a destination, the
- * same category as the exchange address on the other screen. No name, no email, no identity
- * number, no document: the anchor's own checks are its business under its own licence, and if
- * a rail demands documents this screen is not the place to give them.
+ * SEP-6 ONLY, BY DECISION (owner, 2026-09-09, on the organisers' guidance for the hackathon). No
+ * SEP-12 (so this screen sends nothing about the person, not even a bank account number) and no
+ * SEP-38 (so it quotes no figure of its own). What it shows before the person approves is the
+ * anchor's own sentence about the withdrawal, verbatim: the rate it locked, until when, and the
+ * bank account it will pay. That account is whatever the anchor holds for this wallet; on the
+ * sandbox anchor it is one the anchor derives itself. The screen says so rather than pretending
+ * an IBAN field it cannot honour.
  *
- * The rate is a SEP-38 quote with an expiry. It is shown as what the person will get, and the
- * withdrawal is opened against that quote id, so the anchor is held to it. An expired quote is
- * refused, not silently repriced.
+ * What the person is agreeing to is therefore exactly what the anchor said, nothing more. If an
+ * anchor says nothing, the screen shows the destination and memo and calls the rest unknown.
  *
  * One held payment guards both cash-out screens: this page writes the same pending record as
  * /send-out before the payment leaves the device, and defers to /send-out to settle it against
@@ -34,17 +34,15 @@ import {
   anchorHomeDomain,
   authenticate,
   readAnchorInfo,
-  requestQuote,
-  setBankAccount,
+  readWithdrawal,
+  startWithdrawal,
   type AnchorInfo,
-  type AnchorQuote,
+  type OpenedWithdrawal,
 } from "../../../../lib/anchor";
-import { createAnchorAdapter, type OffRampStatus } from "../../../../lib/offramp";
 import { sendOut, PayoutUncertainError } from "../../../../lib/payout";
 import { isNeedsPassword } from "../../../../lib/signer-error";
-import { pinnedUsdcIssuer } from "../../../../lib/tx-guard";
 import { formatUsd, sanitizeAmountInput } from "../../../../lib/money";
-import { formatIban, isValidIban, normalizeIban } from "../../../../lib/iban";
+import { formatIban } from "../../../../lib/iban";
 import { sendEvent } from "../../../../lib/events";
 import { activeNetwork, explorerTx } from "../../../../lib/network";
 import { netKey } from "../../../../lib/scoped-store";
@@ -53,32 +51,36 @@ import { MoneyCard } from "../../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../../components/brand/PrimaryButton";
 import type { Signer } from "../../../../lib/signer";
 
-/** Draft of the form, this tab only, so the unlock detour does not wipe an IBAN. */
+/** Draft of the form, this tab only, so the unlock detour does not wipe the amount. */
 const DRAFT_KEY = () => netKey("lumenia.sendout.bank.draft");
 /** THE SAME KEY as /send-out: one held payment, one guard, on both cash-out screens. */
 const PENDING_KEY = () => netKey("lumenia.sendout.pending");
-/** The last IBAN a payout was opened against. Local only, never sent anywhere but the anchor. */
-const IBAN_KEY = () => netKey("lumenia.sendout.iban");
 
 type Step = "form" | "review" | "sending" | "done";
+type Ready = Extract<OpenedWithdrawal, { kind: "ready-to-pay" }>;
 
 interface Draft {
   amount?: string;
-  iban?: string;
-  bankName?: string;
   resumeAt?: number;
 }
 
-const STATUS_LINE: Record<OffRampStatus, string> = {
-  idle: "",
-  pending: "Talking to the bank rail…",
-  "needs-the-person": "The bank rail needs you on its own screen.",
-  sending: "Sending your dollars…",
-  attestation: "Waiting for the network…",
-  settling: "Paid. Waiting for the bank rail to confirm the payout…",
-  done: "Done.",
-  failed: "That did not finish.",
-};
+/** How long to wait for the anchor to confirm after we have paid, before calling it late. */
+const SETTLE_TIMEOUT_MS = 3 * 60_000;
+const POLL_MS = 3_000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Pull the three things a person wants out of the anchor's sentence, when they are there. This
+ * is display only: the sentence itself is always shown, and nothing here changes what is sent.
+ */
+function readNote(note: string | null): { rate: string | null; until: Date | null; iban: string | null } {
+  if (!note) return { rate: null, until: null, iban: null };
+  const rate = note.match(/Rate\s+([\d.]+)\s*TRY\/USDC/i)?.[1] ?? null;
+  const untilRaw = note.match(/until\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/i)?.[1];
+  const until = untilRaw ? new Date(untilRaw) : null;
+  const iban = note.match(/\b([A-Z]{2}\d{2}[A-Z0-9]{11,30})\b/)?.[1] ?? null;
+  return { rate, until: until && !Number.isNaN(until.getTime()) ? until : null, iban };
+}
 
 export default function BankCashOutPage() {
   const { status, account, getSigner, unlocked } = useWallet();
@@ -87,22 +89,19 @@ export default function BankCashOutPage() {
 
   const [balance, setBalance] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
-  const [iban, setIban] = useState("");
-  const [bankName, setBankName] = useState("");
   const [step, setStep] = useState<Step>("form");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [needsPassword, setNeedsPassword] = useState(false);
   const [understood, setUnderstood] = useState(false);
-  const [quote, setQuote] = useState<AnchorQuote | null>(null);
+  const [opened, setOpened] = useState<Ready | null>(null);
   const [rail, setRail] = useState<AnchorInfo | null>(null);
-  const [progress, setProgress] = useState<OffRampStatus>("idle");
+  const [progress, setProgress] = useState("");
   const [hash, setHash] = useState("");
   /** Money left but the rail never confirmed inside the wait. Not an error: a receipt with a note. */
   const [lateNote, setLateNote] = useState("");
   /** A payment on either cash-out screen is still waiting for an answer. Nothing sends until it is settled. */
   const [held, setHeld] = useState(false);
-  const [savedIban, setSavedIban] = useState("");
 
   // The SEP-10 session token lives here, in memory, for this mount only. Never persisted.
   const session = useRef<{ info: AnchorInfo; token: string; signer: Signer } | null>(null);
@@ -116,23 +115,19 @@ export default function BankCashOutPage() {
   useEffect(() => {
     try {
       if (localStorage.getItem(PENDING_KEY())) setHeld(true);
-      const last = localStorage.getItem(IBAN_KEY());
-      if (last) setSavedIban(last);
     } catch {
       /* storage blocked */
     }
     try {
       const d = JSON.parse(sessionStorage.getItem(DRAFT_KEY()) ?? "null") as Draft | null;
       if (d?.amount) setAmount(d.amount);
-      if (d?.iban) setIban(d.iban);
-      if (d?.bankName) setBankName(d.bankName);
     } catch {
       /* the form just starts empty */
     }
   }, []);
 
-  /* After the unlock detour, fetch the rate again on the person's behalf. A quote moves no money,
-     so this is safe to resume; the SEND is never resumed, it always waits for a tap. */
+  /* After the unlock detour, open the withdrawal again on the person's behalf. Opening moves no
+     money, so this is safe to resume; the SEND is never resumed, it always waits for a tap. */
   useEffect(() => {
     if (status !== "ready" || !unlocked || busy || resumed.current || held) return;
     let d: Draft | null = null;
@@ -142,16 +137,16 @@ export default function BankCashOutPage() {
       return;
     }
     if (!d?.resumeAt || Date.now() - d.resumeAt > 120_000) return;
-    if (!amount || !iban) return;
+    if (!amount) return;
     resumed.current = true;
     try {
       sessionStorage.setItem(DRAFT_KEY(), JSON.stringify({ ...d, resumeAt: undefined }));
     } catch {
       /* the one-shot ref still holds */
     }
-    void seeRate();
+    void open();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, unlocked, busy, amount, iban, held]);
+  }, [status, unlocked, busy, amount, held]);
 
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
   if (!account) {
@@ -159,10 +154,10 @@ export default function BankCashOutPage() {
     return null;
   }
 
-  const cleanIban = normalizeIban(iban);
-  const ibanOk = cleanIban !== "" && isValidIban(cleanIban);
   const amt = Math.round(Number.parseFloat(amount || "0") * 100) / 100;
-  const quoteExpired = quote?.expiresAt ? Date.now() >= new Date(quote.expiresAt).getTime() : false;
+  const note = readNote(opened?.note ?? null);
+  const expired = note.until ? Date.now() >= note.until.getTime() : false;
+  const estimate = note.rate ? (amt * Number.parseFloat(note.rate)).toFixed(2) : null;
 
   const errorBlock = error ? (
     <div className="text-sm text-danger">
@@ -175,14 +170,13 @@ export default function BankCashOutPage() {
     </div>
   ) : null;
 
-  /** Sign in to the rail, tell it where the lira should land, and get a firm figure. No money moves. */
-  async function seeRate() {
+  /** Sign in to the rail and open the withdrawal. No money moves; the rail names where to pay and what it locked. */
+  async function open() {
     setError("");
     setNeedsPassword(false);
     if (!domain) return;
     if (!Number.isFinite(amt) || amt < 0.01) return setError("Enter an amount to cash out.");
     if (balance !== null && amt > Number.parseFloat(balance)) return setError("That's more than you have.");
-    if (!ibanOk) return setError("That IBAN doesn't check out. Copy it again from your bank app; a single wrong digit is caught here.");
 
     setBusy(true);
     try {
@@ -196,7 +190,7 @@ export default function BankCashOutPage() {
           return;
         }
         try {
-          sessionStorage.setItem(DRAFT_KEY(), JSON.stringify({ amount, iban, bankName, resumeAt: Date.now() } satisfies Draft));
+          sessionStorage.setItem(DRAFT_KEY(), JSON.stringify({ amount, resumeAt: Date.now() } satisfies Draft));
         } catch {
           /* the form is lost, no money moved */
         }
@@ -208,101 +202,90 @@ export default function BankCashOutPage() {
       if (info.door !== "sep6") {
         return setError("This bank rail asks you to finish on its own screen, which this page doesn't do yet.");
       }
-      if (!info.kycServer) return setError("This bank rail can't take a bank account number, so it can't pay you out.");
-      if (!info.quoteServer) return setError("This bank rail doesn't quote a rate up front, so we can't tell you what you'd get.");
-
       const token = await authenticate(info, signer);
-      await setBankAccount(info, token, {
-        account: account!.address,
-        bankAccountNumber: cleanIban,
-        ...(bankName.trim() ? { bankName: bankName.trim() } : {}),
-      });
-      const q = await requestQuote(info, token, {
-        sellAssetCode: "USDC",
-        sellAssetIssuer: pinnedUsdcIssuer(activeNetwork().id),
-        buyAsset: "iso4217:TRY",
-        sellAmount: amt.toFixed(2),
-      });
+      // Plain SEP-6 /withdraw: no quote id, no destination asset, no customer fields. The anchor
+      // prices it at its own locked rate and pays to whatever account it holds for this wallet.
+      const w = await startWithdrawal(info, token, { assetCode: "USDC", account: account!.address, amount: amt.toFixed(2) });
+      if (w.kind !== "ready-to-pay") return setError("This bank rail did not name where to pay.");
       session.current = { info, token, signer };
       setRail(info);
-      setQuote(q);
+      setOpened(w);
       setUnderstood(false);
       setStep("review");
     } catch (e) {
-      console.error("[send-out/bank] rate", e);
+      console.error("[send-out/bank] open", e);
       // Nothing has moved at this point, so the anchor's own words are safe to show.
-      setError(e instanceof Error && e.message ? `Couldn't get a rate: ${e.message}` : "Couldn't reach the bank rail just now. Try again in a moment.");
+      setError(e instanceof Error && e.message ? `The bank rail said: ${e.message}` : "Couldn't reach the bank rail just now. Try again in a moment.");
     } finally {
       setBusy(false);
     }
   }
 
-  /** Open the withdrawal against the quote and pay the account the rail names, once. */
+  /** Pay the account the rail named, once, then wait for the rail to confirm. */
   async function confirm() {
-    if (!session.current || !quote) return;
+    if (!session.current || !opened) return;
     setError("");
-    if (quoteExpired) {
+    if (expired) {
       setStep("form");
-      setQuote(null);
-      return setError("That rate expired. Get a fresh one before sending.");
+      setOpened(null);
+      return setError("The rail's rate expired. Open it again before sending.");
     }
-    const { info, signer } = session.current;
-    const adapter = createAnchorAdapter(
-      {
-        signer,
-        account: account!.address,
-        assetCode: "USDC",
-        assetIssuer: pinnedUsdcIssuer(activeNetwork().id),
-        fiatAsset: "iso4217:TRY",
-        fiatDestination: cleanIban,
-        quoteId: quote.id,
-        openInteractive: (url) => {
-          window.open(url, "_blank", "noopener");
-        },
-        pay: async (r) => {
-          if (r.memoType === "hash") throw new Error("this bank rail asked for a kind of reference we can't attach");
-          const res = await sendOut({
-            sponsorUrl: activeNetwork().sponsorUrl,
-            signer,
-            amount: (Math.round(Number.parseFloat(r.amount) * 100) / 100).toFixed(2),
-            destination: r.destination,
-            memo: r.memo ?? undefined,
-            memoKind: r.memoType === "id" ? "id" : r.memoType === "text" ? "text" : "none",
-            /* THE LATCH, shared with /send-out: written before the payment leaves this device. */
-            onHandedOver: ({ hash: h, retrySafeAfter }) => {
-              try {
-                localStorage.setItem(
-                  PENDING_KEY(),
-                  JSON.stringify({ amount: r.amount, at: new Date().toISOString(), hash: h, retrySafeAfter }),
-                );
-              } catch {
-                /* the adapter's own in-memory latch still holds */
-              }
-            },
-          });
-          paidHash.current = res.hash;
-          setHash(res.hash);
-          try {
-            localStorage.removeItem(PENDING_KEY());
-          } catch {
-            /* nothing was written */
-          }
-        },
-      },
-      info.homeDomain,
-    );
-    if (!adapter) return;
+    if (opened.memoType === "hash") return setError("This bank rail asked for a kind of reference we can't attach. Your money hasn't moved.");
+    const { info, token, signer } = session.current;
 
     setBusy(true);
     setStep("sending");
+    setProgress("Sending your dollars…");
     try {
-      await adapter.start(amt.toFixed(2), setProgress);
+      const res = await sendOut({
+        sponsorUrl: activeNetwork().sponsorUrl,
+        signer,
+        amount: amt.toFixed(2),
+        destination: opened.destination,
+        memo: opened.memo ?? undefined,
+        memoKind: opened.memoType === "id" ? "id" : opened.memoType === "text" ? "text" : "none",
+        /* THE LATCH, shared with /send-out: written before the payment leaves this device. */
+        onHandedOver: ({ hash: h, retrySafeAfter }) => {
+          try {
+            localStorage.setItem(PENDING_KEY(), JSON.stringify({ amount: amt.toFixed(2), at: new Date().toISOString(), hash: h, retrySafeAfter }));
+          } catch {
+            /* the in-memory state below still holds for this mount */
+          }
+        },
+      });
+      paidHash.current = res.hash;
+      setHash(res.hash);
+      try {
+        localStorage.removeItem(PENDING_KEY());
+      } catch {
+        /* nothing was written */
+      }
       void sendEvent("cashout_sent", account!.address, account!.address);
       try {
-        localStorage.setItem(IBAN_KEY(), cleanIban);
         sessionStorage.removeItem(DRAFT_KEY());
       } catch {
-        /* conveniences only */
+        /* convenience only */
+      }
+
+      // Paid exactly once, above. From here we only READ the rail; nothing in this loop sends.
+      setProgress("Paid. Waiting for the bank rail to confirm the payout…");
+      const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+      for (;;) {
+        if (Date.now() > deadline) {
+          setLateNote("The bank rail hasn't confirmed the payout yet. Your dollars are on the public record below; the rail's side runs on its clock.");
+          break;
+        }
+        await sleep(POLL_MS);
+        const state = await readWithdrawal(info, token, opened.id);
+        if (state.status === "settled") break;
+        if (state.status === "refunded") {
+          setLateNote("The bank rail says it sent the money back. Check your balance and the record below.");
+          break;
+        }
+        if (state.status === "failed") {
+          setLateNote(`The bank rail reported a problem after the payment: ${state.reason}. Your dollars are on the public record below.`);
+          break;
+        }
       }
       setStep("done");
     } catch (e) {
@@ -313,20 +296,11 @@ export default function BankCashOutPage() {
         return;
       }
       if (paidHash.current) {
-        /* The dollars left and are on the record; only the rail's confirmation is missing. That
-           is a receipt with a note, never "your money hasn't moved". */
-        setLateNote(
-          e instanceof Error && e.message
-            ? `The bank rail hasn't confirmed the payout yet (${e.message}). Your dollars are on the public record below; the rail's side runs on its clock.`
-            : "The bank rail hasn't confirmed the payout yet. Your dollars are on the public record below.",
-        );
+        setLateNote("The bank rail could not be reached after the payment. Your dollars are on the public record below.");
         setStep("done");
         return;
       }
       setStep("review");
-      /* Nothing was paid (the latch above would have set paidHash), so the rail's own words are
-         safe and useful: "Minimum off-ramp is 1 USDC" tells the person exactly what to change.
-         The sponsor's wire errors are not for people; those get the plain sentence. */
       const msg = e instanceof Error ? e.message : "";
       setError(msg && !msg.startsWith("/payout") ? `${msg}. Your money hasn't moved.` : copy.errors.moneySafe);
     } finally {
@@ -367,10 +341,10 @@ export default function BankCashOutPage() {
   if (step === "done") {
     return (
       <div className="flex flex-col gap-4 py-6">
-        <h1 className="text-xl font-bold text-ink">{lateNote ? "Sent, awaiting the bank rail" : "On its way to your bank"}</h1>
+        <h1 className="text-xl font-bold text-ink">{lateNote ? "Sent, awaiting the bank rail" : "On its way to the bank"}</h1>
         <p className="text-ink-soft">
           {formatUsd(amt.toFixed(2))} left your account.
-          {quote ? ` The rail quoted ${quote.buyAmount} TRY for it, paid to ${formatIban(cleanIban)}.` : ""}
+          {note.iban ? ` The rail said it pays to ${formatIban(note.iban)}.` : ""}
         </p>
         {lateNote && <p className="text-sm text-ink-soft">{lateNote}</p>}
         <MoneyCard className="p-4">
@@ -401,14 +375,13 @@ export default function BankCashOutPage() {
     return (
       <div className="flex flex-col gap-4 py-6">
         <h1 className="text-xl font-bold text-ink">Sending</h1>
-        <p className="text-sm text-ink-soft">{STATUS_LINE[progress] || "Working…"}</p>
+        <p className="text-sm text-ink-soft">{progress || "Working…"}</p>
         <p className="text-xs text-ink-soft">Keep this screen open. Nothing here sends twice.</p>
       </div>
     );
   }
 
-  if (step === "review" && quote) {
-    const expiresAt = quote.expiresAt ? new Date(quote.expiresAt) : null;
+  if (step === "review" && opened) {
     return (
       <div className="flex flex-col gap-5 py-4">
         <button onClick={() => setStep("form")} className="flex items-center gap-1 self-start text-sm text-ink-soft">
@@ -423,24 +396,39 @@ export default function BankCashOutPage() {
           <dl className="flex flex-col divide-y divide-line">
             <div className="flex items-baseline justify-between gap-3 pb-3">
               <dt className="text-sm text-ink-soft">You send</dt>
-              <dd className="text-lg font-bold tabular-nums text-ink">{formatUsd(quote.sellAmount)}</dd>
+              <dd className="text-lg font-bold tabular-nums text-ink">{formatUsd(amt.toFixed(2))}</dd>
             </div>
-            <div className="flex items-baseline justify-between gap-3 py-3">
-              <dt className="text-sm text-ink-soft">You get</dt>
-              <dd className="text-lg font-bold tabular-nums text-ink">{quote.buyAmount} TRY</dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-3 py-3">
-              <dt className="text-sm text-ink-soft">To</dt>
-              <dd className="text-right font-mono text-xs text-ink">{formatIban(cleanIban)}</dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-3 pt-3">
-              <dt className="text-sm text-ink-soft">Rate held until</dt>
-              <dd className={`text-sm ${quoteExpired ? "text-danger" : "text-ink"}`}>
-                {expiresAt ? expiresAt.toLocaleTimeString() : "the rail did not say"}
-                {quoteExpired ? " (expired)" : ""}
-              </dd>
-            </div>
+            {estimate && (
+              <div className="flex items-baseline justify-between gap-3 py-3">
+                <dt className="text-sm text-ink-soft">About</dt>
+                <dd className="text-lg font-bold tabular-nums text-ink">{estimate} TRY</dd>
+              </div>
+            )}
+            {note.iban && (
+              <div className="flex items-baseline justify-between gap-3 py-3">
+                <dt className="text-sm text-ink-soft">To</dt>
+                <dd className="text-right font-mono text-xs text-ink">{formatIban(note.iban)}</dd>
+              </div>
+            )}
+            {note.until && (
+              <div className="flex items-baseline justify-between gap-3 pt-3">
+                <dt className="text-sm text-ink-soft">Rate held until</dt>
+                <dd className={`text-sm ${expired ? "text-danger" : "text-ink"}`}>
+                  {note.until.toLocaleTimeString()}
+                  {expired ? " (expired)" : ""}
+                </dd>
+              </div>
+            )}
           </dl>
+        </MoneyCard>
+
+        {/* The anchor's own words, whole. The figures above are read out of this sentence for
+            convenience; the sentence is the source and it is shown so nothing is lost in reading. */}
+        <MoneyCard className="p-4">
+          <p className="text-sm font-semibold text-ink">What the rail said</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            {opened.note ?? `Pay ${opened.destination} with reference ${opened.memo ?? "(none)"}. The rail gave no further detail.`}
+          </p>
         </MoneyCard>
 
         <MoneyCard className="border-danger/40 p-5">
@@ -450,35 +438,31 @@ export default function BankCashOutPage() {
           </p>
           <ul className="mt-2 flex list-disc flex-col gap-2 pl-5 text-sm text-ink-soft">
             <li>
-              <strong className="text-ink">The lira figure is the rail&apos;s promise, not ours.</strong>{" "}
-              {rail?.homeDomain} quoted it and is held to it until the time above. The bank
-              transfer is theirs to make, on their timing and under their rules.
+              <strong className="text-ink">The lira figure is the rail&apos;s statement, not ours.</strong>{" "}
+              {rail?.homeDomain} locked that rate and pays the bank transfer on its own timing and
+              under its own rules.
             </li>
             <li>
-              <strong className="text-ink">The IBAN is yours to check.</strong>{" "}We checked that it is
-              a well-formed account number; only you can check that it is your account.
-            </li>
-            <li>
-              <strong className="text-ink">We sent the rail your IBAN and nothing else.</strong>{" "}No
-              name, no identity number, no document. If the rail ever asks for those, it asks you
-              directly, not through us.
+              <strong className="text-ink">The bank account is the one the rail holds for this wallet.</strong>{" "}
+              We did not send it an account number, and we sent nothing about who you are. If that
+              account is not yours, do not send; the rail is where to change it.
             </li>
           </ul>
         </MoneyCard>
 
         <label className="flex items-start gap-3 text-sm text-ink">
           <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} className="mt-1 size-4 accent-[var(--color-money,currentColor)]" />
-          <span>That is my IBAN, and I understand the lira arrives on the rail&apos;s timing.</span>
+          <span>I read what the rail said, and I understand the lira arrives on the rail&apos;s timing.</span>
         </label>
 
         {errorBlock}
 
-        <PrimaryButton loading={busy} loadingLabel="Sending…" disabled={!understood || quoteExpired} onClick={confirm}>
-          Send {formatUsd(quote.sellAmount)}
+        <PrimaryButton loading={busy} loadingLabel="Sending…" disabled={!understood || expired} onClick={confirm}>
+          Send {formatUsd(amt.toFixed(2))}
         </PrimaryButton>
-        {quoteExpired && (
-          <button type="button" onClick={() => void seeRate()} className="self-start text-sm font-semibold text-money underline-offset-2 hover:underline">
-            Get a fresh rate
+        {expired && (
+          <button type="button" onClick={() => void open()} className="self-start text-sm font-semibold text-money underline-offset-2 hover:underline">
+            Open it again
           </button>
         )}
       </div>
@@ -490,8 +474,8 @@ export default function BankCashOutPage() {
       <header>
         <h1 className="text-xl font-bold text-ink">Cash out to your bank</h1>
         <p className="mt-1 text-sm text-ink-soft">
-          Type the IBAN and the amount. You&apos;ll see the lira figure before anything is sent, and
-          you approve once. Prefer an exchange?{" "}
+          Type the amount. The bank rail will tell you the rate it locks and the account it pays,
+          and you approve once. Prefer an exchange?{" "}
           <Link href="/send-out" className="text-money underline-offset-2 hover:underline">
             Send to an exchange instead
           </Link>
@@ -499,41 +483,6 @@ export default function BankCashOutPage() {
         </p>
         {balance !== null && <p className="mt-2 text-sm text-ink-soft">You have {formatUsd(balance)} to cash out.</p>}
       </header>
-
-      {savedIban && iban.trim() === "" && (
-        <MoneyCard className="p-4">
-          <p className="text-sm font-semibold text-ink">Same account as last time</p>
-          <p className="mt-1 font-mono text-xs text-ink-soft">{formatIban(savedIban)}</p>
-          <button onClick={() => setIban(savedIban)} className="mt-3 flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money">
-            Use this again
-          </button>
-        </MoneyCard>
-      )}
-
-      <label className="text-sm text-ink-soft">
-        Your IBAN
-        <input
-          value={iban}
-          onChange={(e) => setIban(e.target.value)}
-          spellCheck={false}
-          autoCapitalize="characters"
-          placeholder="TR00 0000 0000 0000 0000 0000 00"
-          className="mt-1 w-full rounded-[14px] border border-line bg-surface px-3 py-3 font-mono text-sm text-ink outline-none"
-        />
-      </label>
-      {iban.trim() !== "" && !ibanOk && (
-        <p className="-mt-3 text-sm text-danger">That IBAN doesn&apos;t check out yet. A Turkish IBAN is 26 characters starting with TR.</p>
-      )}
-
-      <label className="text-sm text-ink-soft">
-        Bank name (optional)
-        <input
-          value={bankName}
-          onChange={(e) => setBankName(e.target.value)}
-          placeholder="e.g. Ziraat"
-          className="mt-1 w-full rounded-[14px] border border-line bg-surface px-3 py-3 text-sm text-ink outline-none"
-        />
-      </label>
 
       <label className="text-sm text-ink-soft">
         Amount
@@ -559,13 +508,14 @@ export default function BankCashOutPage() {
       </label>
 
       <p className="text-xs text-ink-soft">
-        The rail is {domain}. We send it your IBAN and the amount, nothing about who you are.
+        The rail is {domain}. We send it the amount and nothing about who you are; it pays the bank
+        account it already holds for this wallet.
       </p>
 
       {errorBlock}
 
-      <PrimaryButton loading={busy} loadingLabel="Getting the rate…" disabled={!ibanOk || !(amt > 0)} onClick={() => void seeRate()}>
-        See what you&apos;d get
+      <PrimaryButton loading={busy} loadingLabel="Asking the rail…" disabled={!(amt > 0)} onClick={() => void open()}>
+        See what the rail says
       </PrimaryButton>
     </div>
   );

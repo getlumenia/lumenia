@@ -762,7 +762,7 @@ export default function SendOutPage() {
         <MoneyCard className="p-4">
           <p className="text-sm font-semibold text-ink">Cash out straight to a bank account</p>
           <p className="mt-1 text-sm text-ink-soft">
-            Type an IBAN, see the lira figure first, approve once. No exchange account needed.
+            The rail tells you its rate and the account it pays, you approve once. No exchange account needed.
           </p>
           <Link
             href="/send-out/bank"

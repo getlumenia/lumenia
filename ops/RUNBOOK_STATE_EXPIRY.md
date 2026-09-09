@@ -12,8 +12,8 @@ to restore the entries. Nothing in the product extends these two entries on its 
 | Network | Contract | Entry | liveUntilLedgerSeq at the check | State |
 |---|---|---|---|---|
 | testnet | `CAMCI5VPRLQUL6H4QKLZ6X7ASLVCEYBYWS7N3QG7JVOA25HCY2TN3HP3` | instance + code | 4,645,547 / 4,645,546 (about 6 days) | **extended the same day to 7,539,961 / 7,539,962** |
-| mainnet | `CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4` | instance | 65,729,667 | not extended; archives about 2026-11-28 (5s ledgers) to 2026-12-14 (6s) |
-| mainnet | same | code `38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a` | 65,729,642 | same window |
+| mainnet | `CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4` | instance | 65,729,667 | **extended 2026-09-09 to 67,352,276** (tx `58960839…`, ~174 days at 5s, about 2027-03-02) |
+| mainnet | same | code `38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a` | 65,729,642 | **extended 2026-09-09 to 66,952,291** (tx `e10204e9…`, 2,600,000 ledgers, ~150 days at 5s, about 2027-02-06). The watchdog will page again around mid-January 2027; a short top-up then costs a few XLM |
 | testnet | the three legacy ids in `LUMENDROP_LEGACY_CONTRACTS` | instance + code | 0 | **already archived**; an exit through one auto-restores at the sponsor's cost (about 1.1 to 1.5 XLM each) |
 
 Both mainnet values are exactly the deploy-time minimum: no extension has ever been submitted by
@@ -54,7 +54,8 @@ For mainnet the CLI needs an RPC configured once:
 | Network | Instance | Code | How measured |
 |---|---|---|---|
 | testnet, 3,000,000 ledgers | 0.068 XLM | 28.98 XLM | paid on 2026-09-06, txs `0ebc57a4…` and `e619650b…` |
-| mainnet, 3,000,000 ledgers | 0.044 XLM | 19.58 XLM | `simulateTransaction` of the extend op on 2026-09-06 (not paid) |
+| mainnet, 3,000,000 ledgers (simulated 09-06) | 0.044 XLM | 19.58 XLM | `simulateTransaction`, not paid |
+| mainnet, paid 2026-09-09 | 0.0015 XLM (3,000,000 ledgers) | 21.19 XLM (2,600,000 ledgers) | the 3,000,000-ledger code extension simulated at 28.12 XLM that day, so rent pricing moves: re-simulate before budgeting |
 
 The code fee is proportional to the ledgers actually added, so extending mainnet earlier costs
 roughly the same as extending it late; there is no saving in waiting.

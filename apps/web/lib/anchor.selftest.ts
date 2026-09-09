@@ -473,6 +473,39 @@ code = "try"
     }
   }
 
+  console.log("\n[sep-6] an anchor that speaks a different source_asset dialect gets one retry");
+  {
+    const info6: AnchorInfo = { ...INFO, door: "sep6", transferServer: `https://${HOME}/sep6` };
+    const urls: string[] = [];
+    const restore = stubFetch((url) => {
+      urls.push(url);
+      if (url.includes("source_asset=stellar%3A")) return { status: 400, body: { error: "unsupported source_asset 'stellar:USDC:G...'; this anchor ramps USDC" } };
+      return { body: { id: "w-2", account_id: "GTREASURY", memo: "1", memo_type: "id" } };
+    });
+    try {
+      const opened = await startWithdrawal(info6, "jwt", { assetCode: "USDC", assetIssuer: ISSUER, account: USER, amount: "1", destinationAsset: "iso4217:TRY", dest: "TR330006100519786457841326" });
+      ok("the spec form (stellar:CODE:ISSUER) is tried first", urls[0]?.includes(`source_asset=stellar%3AUSDC%3A${ISSUER}`));
+      ok("...and the bare code is tried once when the anchor refuses it by name", urls.length === 2 && urls[1]?.includes("source_asset=USDC&"), urls[1]?.slice(0, 120));
+      ok("...and the withdrawal opens", opened.kind === "ready-to-pay" && opened.destination === "GTREASURY");
+      ok("...with no anchor note when none was given", opened.kind === "ready-to-pay" && opened.note === null);
+    } finally {
+      restore();
+    }
+    const restore3 = stubFetch(() => ({ body: { id: "w-3", account_id: "GTREASURY", memo: "2", memo_type: "id", extra_info: { message: "Rate 48.23 TRY/USDC locked until 2026-09-09T21:13:10Z. TRY is paid to TR97..." } } }));
+    try {
+      const plain = await startWithdrawal(info6, "jwt", { assetCode: "USDC", account: USER, amount: "1" });
+      ok("a plain SEP-6 withdrawal carries the anchor's own sentence through, verbatim", plain.kind === "ready-to-pay" && plain.note?.startsWith("Rate 48.23") === true);
+    } finally {
+      restore3();
+    }
+    const restore2 = stubFetch(() => ({ status: 400, body: { error: "Minimum off-ramp is 1.0000000 USDC" } }));
+    try {
+      await throws("a refusal that is not about the asset is NOT retried", () => startWithdrawal(info6, "jwt", { assetCode: "USDC", assetIssuer: ISSUER, account: USER, amount: "0.1", destinationAsset: "iso4217:TRY" }), "Minimum");
+    } finally {
+      restore2();
+    }
+  }
+
   console.log("\n[sep-1] the optional servers are read when published and null when not");
   {
     const base =
