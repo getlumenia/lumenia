@@ -27,7 +27,9 @@ import { AlertTriangle, Copy, Check, QrCode } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { activeNetwork } from "../../../lib/network";
-import { loadTotalUsd } from "../../../lib/horizon";
+import { loadBalance, loadTotalUsd } from "../../../lib/horizon";
+import { prepareAccount } from "../../../lib/sponsor";
+import { isNeedsPassword } from "../../../lib/signer-error";
 import { markPublished } from "../../../lib/keystore";
 import { buildReceiveUri, moneyOrigin, NETWORK_LABEL, getTestMoney } from "../../../lib/receive";
 import { usePolling, agoLabel } from "../../../lib/poll";
@@ -48,7 +50,7 @@ function sponsorUrl(): string {
 }
 
 export default function AddMoneyPage() {
-  const { status, account, accounts } = useWallet();
+  const { status, account, accounts, getSigner } = useWallet();
   const router = useRouter();
   const [health, setHealth] = useState<{ usdcCode: string; usdcIssuer: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -125,6 +127,23 @@ export default function AddMoneyPage() {
     setFaucetBusy(true);
     setError("");
     try {
+      /* Practice accounts opened before 2026-09-06 trust the retired issuer only. The faucet pays
+         Circle's testnet USDC and refuses an account with no trustline for it, so the button
+         used to fail with a sentence about trustlines on exactly the accounts it was meant for.
+         Open the missing trustline first, on the sponsor's reserve, the same way a first-time
+         account gets one; it needs the person's key, so a locked account takes the unlock detour. */
+      const bal = await loadBalance(account!.address);
+      if (bal && !bal.issuer) {
+        let signer;
+        try {
+          signer = await getSigner();
+        } catch (e) {
+          if (isNeedsPassword(e)) throw e;
+          router.push(`/unlock?next=${encodeURIComponent("/add-money")}`);
+          return;
+        }
+        await prepareAccount({ sponsorUrl: sponsorUrl(), signer });
+      }
       await getTestMoney(sponsorUrl(), account!.address);
       poll.refreshNow();
     } catch (e) {
