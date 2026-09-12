@@ -298,14 +298,7 @@ async function checkGovernance(config: SponsorConfig, alerts: Alert[]): Promise<
   // retains a recent window anyway, so an unbounded backfill is not possible).
   const cursorKey = `watchdog:ledger:${config.lumendropContract}`;
   const saved = await kvGet(cursorKey);
-  const latestRes = (await (
-    await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestLedger" }),
-    })
-  ).json()) as { result?: { sequence?: number } };
-  const latest = latestRes.result?.sequence;
+  const latest = (await rpcCall<{ sequence?: number }>(rpcUrl, "getLatestLedger")).sequence;
   if (!latest) return;
   // On a cold start (no cursor) look back a bounded window — ~1h at 5s ledgers by default,
   // tunable so a first run after an incident can sweep further. With a cursor we resume from
@@ -315,30 +308,20 @@ async function checkGovernance(config: SponsorConfig, alerts: Alert[]): Promise<
     ? Math.max(Number.parseInt(saved, 10), latest - 17_280)
     : Math.max(latest - lookback, 1);
 
-  const eventsRes = (await (
-    await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getEvents",
-        params: {
-          startLedger,
-          filters: [{ type: "contract", contractIds: [config.lumendropContract] }],
-          pagination: { limit: 200 },
-        },
-      }),
-    })
-  ).json()) as {
-    result?: { events?: Array<{ topic?: string[]; ledger?: number; txHash?: string }> };
-    error?: { message?: string };
-  };
-  // An out-of-range startLedger (the RPC only retains a rolling window) is a real condition,
-  // not something to swallow: it means the watchdog has a blind spot.
-  if (eventsRes.error) throw new Error(`getEvents: ${eventsRes.error.message}`);
+  // An out-of-range startLedger (the RPC only retains a rolling window) comes back as a
+  // JSON-RPC error, and `rpcCall` throws it rather than swallowing it: it means the watchdog
+  // has a blind spot, which is a real condition.
+  const events = await rpcCall<{ events?: Array<{ topic?: string[]; ledger?: number; txHash?: string }> }>(
+    rpcUrl,
+    "getEvents",
+    {
+      startLedger,
+      filters: [{ type: "contract", contractIds: [config.lumendropContract] }],
+      pagination: { limit: 200 },
+    },
+  );
 
-  for (const ev of eventsRes.result?.events ?? []) {
+  for (const ev of events.events ?? []) {
     const names = (ev.topic ?? []).map(decodeTopic);
     const hit = names.find((n) => GOVERNANCE_EVENTS.has(n));
     if (hit) {
@@ -380,29 +363,94 @@ function instanceKey(contractId: string): xdr.LedgerKey {
   );
 }
 
+/**
+ * How many times one JSON-RPC call is attempted before the check that made it gives up.
+ *
+ * Both public endpoints sit behind Cloudflare, and a throttled request answers with the
+ * PLAIN-TEXT body `error code: 1015`, not JSON. A blind `.json()` turned that transient
+ * throttle into `Unexpected token 'e', "error code: 1015" is not valid JSON`, paged the owner,
+ * and named neither the status nor the cause. Two things follow: read the body as text and
+ * report the status, and retry the transient failures, because a 15-minute cron that pages on
+ * the first throttled request teaches its reader to ignore pages.
+ */
+const RPC_ATTEMPTS = 3;
+
+/** The first bytes of a body that was not JSON, flattened, so the alert names what came back. */
+function bodyExcerpt(body: string): string {
+  const flat = body.replace(/\s+/g, " ").trim();
+  if (!flat) return "(empty body)";
+  return flat.length > 120 ? `${flat.slice(0, 120)}...` : flat;
+}
+
+/**
+ * One JSON-RPC call. Retries a body that is not JSON, an unreachable host and an answer with
+ * neither result nor error; a JSON-RPC `error` object is a considered answer (a bad key, a
+ * startLedger outside the retained window) so it throws on the spot, unretried.
+ */
+async function rpcCall<T>(url: string, method: string, params?: unknown): Promise<T> {
+  let last = `${method}: the RPC was never reached`;
+  for (let attempt = 1; attempt <= RPC_ATTEMPTS; attempt += 1) {
+    if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt - 1)));
+    let status = 0;
+    let body: string;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
+      });
+      status = res.status;
+      body = await res.text();
+    } catch (e) {
+      last = `${method}: the RPC could not be reached (${(e as Error).message})`;
+      continue;
+    }
+    let parsed: { result?: T; error?: { message?: string } };
+    try {
+      parsed = JSON.parse(body) as { result?: T; error?: { message?: string } };
+    } catch {
+      // Cloudflare's throttle and every gateway error page answer in text or HTML, not JSON.
+      last = `${method}: HTTP ${status}, and the body was not JSON: ${bodyExcerpt(body)}`;
+      continue;
+    }
+    if (parsed.error) {
+      throw new Error(`${method}: ${parsed.error.message ?? `the RPC returned an error (HTTP ${status})`}`);
+    }
+    if (parsed.result === undefined) {
+      last = `${method}: HTTP ${status}, with neither a result nor an error`;
+      continue;
+    }
+    return parsed.result;
+  }
+  throw new Error(`${last} [${RPC_ATTEMPTS} attempts]`);
+}
+
 /** `getLedgerEntries`, with the RPC's own latest ledger and each entry's expiry kept. */
 async function readLedgerEntries(config: SponsorConfig, keys: xdr.LedgerKey[]): Promise<LedgerEntryRead> {
-  const res = (await (
-    await fetch(config.sorobanRpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getLedgerEntries",
-        params: { keys: keys.map((k) => k.toXDR("base64")) },
-      }),
-    })
-  ).json()) as {
-    result?: { latestLedger?: number; entries?: Array<{ xdr?: string; liveUntilLedgerSeq?: number }> };
-    error?: { message?: string };
-  };
-  if (res.error) throw new Error(`getLedgerEntries: ${res.error.message}`);
+  const result = await rpcCall<{
+    latestLedger?: number;
+    entries?: Array<{ xdr?: string; liveUntilLedgerSeq?: number }>;
+  }>(config.sorobanRpcUrl, "getLedgerEntries", { keys: keys.map((k) => k.toXDR("base64")) });
   return {
-    latestLedger: res.result?.latestLedger ?? 0,
-    entries: (res.result?.entries ?? []).flatMap((e) =>
+    latestLedger: result.latestLedger ?? 0,
+    entries: (result.entries ?? []).flatMap((e) =>
       e.xdr ? [{ xdr: e.xdr, liveUntilLedgerSeq: e.liveUntilLedgerSeq }] : [],
     ),
+  };
+}
+
+/**
+ * The instance entry is read by BOTH the wasm check and the expiry check. Reading it twice a
+ * run doubles this worker's share of a public RPC's rate limit for no new information, and
+ * being throttled is precisely how both checks fail at once, so they share one read. A failed
+ * read stays failed for the run on purpose: re-asking a throttle inside the same second is
+ * what it is telling us not to do.
+ */
+function instanceReader(config: SponsorConfig, contractId: string): () => Promise<LedgerEntryRead> {
+  let pending: Promise<LedgerEntryRead> | undefined;
+  return () => {
+    if (!pending) pending = readLedgerEntries(config, [instanceKey(contractId)]);
+    return pending;
   };
 }
 
@@ -419,9 +467,13 @@ function wasmHashOf(entryXdr: string): Buffer | null {
  * inside the floor. The alert carries the exact commands, because the moment it fires is not
  * the moment to research them; any funded key may run them, no owner or sponsor key is needed.
  */
-async function checkStateExpiry(config: SponsorConfig, alerts: Alert[]): Promise<void> {
+async function checkStateExpiry(
+  config: SponsorConfig,
+  alerts: Alert[],
+  readInstance: () => Promise<LedgerEntryRead>,
+): Promise<void> {
   if (!config.lumendropContract) return;
-  const inst = await readLedgerEntries(config, [instanceKey(config.lumendropContract)]);
+  const inst = await readInstance();
   const instance = inst.entries[0];
   // A missing instance is already a page from checkWasmHash; this check has nothing to add.
   if (!instance) return;
@@ -467,9 +519,13 @@ async function checkStateExpiry(config: SponsorConfig, alerts: Alert[]): Promise
   });
 }
 
-async function checkWasmHash(config: SponsorConfig, alerts: Alert[]): Promise<void> {
+async function checkWasmHash(
+  config: SponsorConfig,
+  alerts: Alert[],
+  readInstance: () => Promise<LedgerEntryRead>,
+): Promise<void> {
   if (!config.lumendropContract) return;
-  const entryXdr = (await readLedgerEntries(config, [instanceKey(config.lumendropContract)])).entries[0]?.xdr;
+  const entryXdr = (await readInstance()).entries[0]?.xdr;
   if (!entryXdr) {
     alerts.push({
       severity: "page",
@@ -563,7 +619,7 @@ export function alertingStatus(): AlertingStatus {
   return { configured: missing.length === 0, missing };
 }
 
-async function emailAlerts(alerts: Alert[]): Promise<void> {
+async function emailAlerts(alerts: Alert[], network: string): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.ALERT_NOTIFY_TO ?? process.env.FEEDBACK_NOTIFY_TO;
   if (!key || !to || alerts.length === 0) return;
@@ -575,7 +631,9 @@ async function emailAlerts(alerts: Alert[]): Promise<void> {
       body: JSON.stringify({
         from: process.env.RESEND_FROM ?? "Lumenia Watchdog <onboarding@resend.dev>",
         to: [to],
-        subject: `Lumenia alert: ${alerts[0]!.title}${alerts.length > 1 ? ` (+${alerts.length - 1} more)` : ""}`,
+        subject:
+          `Lumenia ${network} alert: ${alerts[0]!.title}` +
+          (alerts.length > 1 ? ` (+${alerts.length - 1} more)` : ""),
         text: body,
       }),
     });
@@ -594,6 +652,8 @@ async function emailAlerts(alerts: Alert[]): Promise<void> {
 export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: string): Promise<WatchdogReport> {
   const alerts: Alert[] = [];
   const checked: string[] = [];
+  const network = config.networkPassphrase.includes("Public") ? "mainnet" : "testnet";
+  const readInstance = instanceReader(config, config.lumendropContract ?? "");
 
   try {
     await checkSponsorAccount(config, sponsorPublicKey, alerts);
@@ -618,7 +678,7 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
   }
 
   try {
-    await checkWasmHash(config, alerts);
+    await checkWasmHash(config, alerts, readInstance);
     checked.push("escrow-wasm");
   } catch (e) {
     alerts.push({
@@ -629,7 +689,7 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
   }
 
   try {
-    await checkStateExpiry(config, alerts);
+    await checkStateExpiry(config, alerts, readInstance);
     checked.push("escrow-ttl");
   } catch (e) {
     alerts.push({
@@ -660,7 +720,7 @@ export async function runWatchdog(config: SponsorConfig, sponsorPublicKey: strin
    * stamp every live condition as "already sent" — buying hours of silence on the first run
    * after someone finally sets the keys. */
   if (alerting.configured) {
-    await emailAlerts(await withoutRepeats(alerts.filter((a) => a.severity === "page")));
+    await emailAlerts(await withoutRepeats(alerts.filter((a) => a.severity === "page")), network);
   }
 
   return { checked, alerts, alerting };
