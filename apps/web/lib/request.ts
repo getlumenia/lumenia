@@ -7,10 +7,14 @@
  * metadata only, nothing to steal, nothing to lose. Who the money ends up with is
  * decided by what the ASKER already has:
  *
- *  - FIRST-TIME asker (no local account): the payer pays through the existing
- *    `createSendLink()` — a bearer claim link — and sends it back into the same
- *    chat thread the request arrived from. The thread is the return channel.
- *    Value-first holds: the asker sets up nothing until money exists.
+ *  - FIRST-TIME asker (no local account): the payer pays through a v2 link
+ *    (`createV2Link()`, the Soroban LumenDrop escrow: the payout is chosen at claim
+ *    time, so an asker with no account yet can still be paid) and sends it back
+ *    into the same chat thread the request arrived from. The thread is the return
+ *    channel. Value-first holds: the asker sets up nothing until money exists.
+ *    (Rule 3a, CLAUDE.md: a LINK is v2; a KNOWN ADDRESS is v1. The v1 bearer link
+ *    `createSendLink()` this comment used to name is dead code and no longer the
+ *    path; it was replaced when /send moved to v2.)
  *  - RETURNING asker (`useWallet()` has an address): the link also carries
  *    `to=<G...>`, and the payer's send creates the Claimable Balance with the
  *    ASKER'S ADDRESS as the unconditional claimant (payer keeps the reclaim-7d

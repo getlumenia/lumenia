@@ -44,6 +44,9 @@ ehthumbs.db
 # external reference repos (each has its own .git — not embedded in the Lumenia repo)
 stellar-ai-guide/
 stellar-build/
+stellar-hackathon-turkiye/
+tr-mock-anchor/
+stellar-layerzero-demos/
 
 # tool working state / caches — local only (design-sync cache holds sample names + grades)
 .stellar-build/
@@ -163,3 +166,22 @@ OWNER_MULTISIG_RUNBOOK.md
 SOW2_REPLAN.md
 tasks-september.md
 HACKATHON_ANCHOR_WORKSHOP_2026-09-08.md
+PRO_HACKATHON_2026.md
+PRO_HACKATHON_SCALE.md
+PRO_HACKATHON_ANCHOR.md
+MOCK_ANCHOR_PRO_HACKATHON.md
+PRO_HACKATHON_FINTECH.md
+LAYERZERO_PRO_HACKATHON.md
+HACKATHON_DECISIONS.md
+HANDOFF_PRE_HACKATHON.md
+HACKATHON_AFTER.md
+HACKATHON_DURING.md
+HACKATHON_BEFORE.md
+# Pre-hackathon working documents (2026-09-18): local, persona names inside, merged by hand on Day 2
+HACKATHON_PITCH.md
+HACKATHON_DECK.md
+HACKATHON_QA_BANK.md
+HACKATHON_CD_KIT.md
+HACKATHON_MAINNET_EVENT_CONFIG.md
+README_HACKATHON_DRAFT.md
+docs/events-snapshot-*.json
