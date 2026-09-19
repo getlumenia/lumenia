@@ -110,10 +110,10 @@ LUMENDROP_LEGACY_CONTRACTS = ""
 LUMENDROP_WASM_HASH = "38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a"
 # Same as the testnet block: the team's hashed account ids to keep out of the event counters.
 # Set the team wallet(s) here before the event so seeded sends never read as organic ones.
-EVENTS_EXCLUDE_AIDS = ""
+EVENTS_EXCLUDE_AIDS = "b8336d21766a3493"
 # Canary caps — real money. Raise only after an audit and a soak period.
 MAX_DROP_USDC = "5"
-MAX_DAY_USDC = "50"
+MAX_DAY_USDC = "400"
 CAPS_FAIL_CLOSED = "1"
 # Onboarding reserve budget (lib/caps.ts). /create-account moves no dollars, so the caps above
 # cannot see it, yet every account it hands out permanently locks ~1 XLM of sponsor reserve. The
@@ -123,16 +123,22 @@ CAPS_FAIL_CLOSED = "1"
 # spend more than one) — a recipient refused here is holding real money they cannot reach.
 # The share bounds ONE connection (IPv6 /64, IPv4 as-is), so a caller that exhausts its own cannot
 # refuse everybody else's claim until UTC midnight.
-MAX_DAY_ACCOUNTS = "40"
-MAX_DAY_ACCOUNTS_PER_SOURCE = "20"
+MAX_DAY_ACCOUNTS = "200"
+MAX_DAY_ACCOUNTS_PER_SOURCE = "200"
 # The float is meant to be tiny; alert well before it runs out.
 SPONSOR_MIN_XLM = "3"
 # Same two watchdog floors as testnet. Measured 2026-09-06 on the live account: 33.18 XLM
 # spendable at 1.50004 XLM per onboarding = 22 recipients left, so this fires until the top-up.
-SPONSOR_MIN_RECIPIENTS = "25"
+SPONSOR_MIN_RECIPIENTS = "40"
 SPONSOR_MIN_TTL_DAYS = "21"
 # Pilot mode ON for mainnet: only owner-approved wallets may move value here.
 PILOT_MODE = "1"
+# EVENT STEP 19-20 Sept 2026, revert at 21:00 Istanbul on 20 Sept per docs/HACKATHON_MAINNET_EVENT_CONFIG.md 1.4
+# (MAX_DAY_USDC 50 -> 400, MAX_DAY_ACCOUNTS 40 -> 200, MAX_DAY_ACCOUNTS_PER_SOURCE 20 -> 200,
+# SPONSOR_MIN_RECIPIENTS 25 -> 40; the three lines below are new and are deleted on revert).
+RATE_CAP = "300"
+PILOT_MAX_TX = "50"
+ALERT_COOLDOWN_MINUTES = "60"
 
 [env.mainnet.triggers]
 crons = ["*/15 * * * *"]
