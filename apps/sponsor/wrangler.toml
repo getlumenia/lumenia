@@ -61,6 +61,11 @@ SPONSOR_MIN_TTL_DAYS = "21"
 # knowing before anyone tries to source-verify the mainnet bytecode: it will need the toolchain that
 # produced it, not simply the same commit.
 LUMENDROP_WASM_HASH = "4b5780ebf4848913c4f1557df1468391e3c26f4106ef0ff23ec1e3caf79cb68b"
+# Event beacon: hashed account ids (`aid`, 16 hex) whose events are dropped before any counter is
+# touched, so the team's own demo accounts never read as strangers. Comma-separated; compute one
+# with `pnpm --filter @lumenia/sponsor aid G...` (SHA-256 of the address, first 8 bytes). Empty =
+# exclude nobody. The summary reports only how many are configured, never which.
+EVENTS_EXCLUDE_AIDS = ""
 
 # The watchdog (lib/watchdog.ts) — sponsor float + "sponsor sourced value" + escrow governance
 # calls. Alerts appear in `wrangler tail`; set RESEND_API_KEY + ALERT_NOTIFY_TO (secrets) to
@@ -103,6 +108,9 @@ LUMENDROP_CONTRACT = "CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4"
 LUMENDROP_LEGACY_CONTRACTS = ""
 # The wasm the escrow is expected to run; the watchdog pages if the deployed bytecode differs.
 LUMENDROP_WASM_HASH = "38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a"
+# Same as the testnet block: the team's hashed account ids to keep out of the event counters.
+# Set the team wallet(s) here before the event so seeded sends never read as organic ones.
+EVENTS_EXCLUDE_AIDS = ""
 # Canary caps — real money. Raise only after an audit and a soak period.
 MAX_DROP_USDC = "5"
 MAX_DAY_USDC = "50"

@@ -29,7 +29,7 @@ import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../../lib/claim-error";
 import { copy } from "../../../../lib/copy";
 import { savePhase1 } from "../../../../lib/keystore";
-import { sendEvent } from "../../../../lib/events";
+import { isSeededLink, sendEvent } from "../../../../lib/events";
 import { resolveNetwork, setActiveNetwork, type NetworkConfig } from "../../../../lib/network";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
@@ -112,6 +112,11 @@ export default function V2ClaimButton({
   // The link carries its own network (`?n=public`). The product is testnet; a handful of mainnet
   // links exist as real-money evidence, and this is what keeps one deployment able to serve both.
   const [net, setNet] = useState<NetworkConfig | null>(null);
+  /* Beacon context, read once from the URL on mount (the fragment is stripped right after, and
+     the query stays): the link's network (the only authority for where a claim beacon goes, since
+     this phone has no prior state), whether the team funded this link for the event, and when the
+     claim was opened, so the success beacon can carry a duration bucket. */
+  const beacon = useRef<{ net?: NetworkConfig; seeded: boolean; openedAt: number }>({ seeded: false, openedAt: 0 });
   const secretRef = useRef("");
   const seedRef = useRef<Uint8Array | null>(null);
   /* Set the instant a tap is accepted, not on the re-render that follows it. A second tap lands
@@ -122,10 +127,14 @@ export default function V2ClaimButton({
 
   useEffect(() => {
     try {
-      setNet(resolveNetwork(new URLSearchParams(window.location.search).get("n")));
+      const resolved = resolveNetwork(new URLSearchParams(window.location.search).get("n"));
+      setNet(resolved);
+      beacon.current.net = resolved;
     } catch {
       setUnreachableNetwork(true);
     }
+    beacon.current.seeded = isSeededLink(window.location.search);
+    beacon.current.openedAt = Date.now();
     const frag = window.location.hash.slice(1);
     if (frag) {
       const parsed = parseLinkFragment(frag);
@@ -141,8 +150,10 @@ export default function V2ClaimButton({
       /* The TOP of the funnel: somebody arrived holding a real key. Fired only when a key is
          actually present, so a crawler or a link preview opening this URL is not counted as a
          person about to claim — the completion rate is only honest if the denominator is. There is
-         no account yet, so this one carries the link id alone. */
-      void sendEvent("claim_opened", linkHex);
+         no account yet, so this one carries the link id alone. It goes to the LINK's network: this
+         phone's own flag is unset for a first-time recipient, and routing by it sent every mainnet
+         claim to the testnet counters (the reason the mainnet summary read zero). */
+      void sendEvent("claim_opened", linkHex, undefined, { net: beacon.current.net, seeded: beacon.current.seeded });
     } else if (!secretRef.current && !seedRef.current) {
       setNoKey(true);
     }
@@ -209,7 +220,12 @@ export default function V2ClaimButton({
          people claimed" was being answered from the v1 route almost nobody arrives on any more.
          The account goes with it: it is the id that joins a claim to whatever that person does
          next, and this is the moment it comes into existence. */
-      void sendEvent("claim_succeeded", linkHex, claimedAccount.current ?? undefined);
+      void sendEvent("claim_succeeded", linkHex, claimedAccount.current ?? undefined, {
+        net,
+        seeded: beacon.current.seeded,
+        // Open-to-balance on THIS device, in whole seconds; the sponsor keeps only a bucket count.
+        durationS: beacon.current.openedAt ? Math.round((Date.now() - beacon.current.openedAt) / 1000) : undefined,
+      });
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
     } catch (e) {
       const info = classifyClaimError(e);
@@ -226,7 +242,7 @@ export default function V2ClaimButton({
       }
       setFailure(info);
       setState("error");
-      void sendEvent("claim_failed", linkHex, claimedAccount.current ?? undefined);
+      void sendEvent("claim_failed", linkHex, claimedAccount.current ?? undefined, { net: beacon.current.net, seeded: beacon.current.seeded });
     }
   }
 

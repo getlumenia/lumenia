@@ -14,7 +14,7 @@
  *
  * RUN: pnpm --filter @lumenia/sponsor test:events
  */
-import { handleEvent, recordEvent, eventsSummary } from "./lib/events.js";
+import { handleEvent, recordEvent, eventsSummary, DURATION_BUCKETS } from "./lib/events.js";
 
 let pass = 0,
   fail = 0;
@@ -135,6 +135,99 @@ await recordEvent({ event: "claim_succeeded", cid: "x", aid: "GA-NOT-A-HASH" });
 s = (await eventsSummary())!;
 check("no third account appeared in the funnel", s.funnel.claimed === 2, `got ${s.funnel.claimed}`);
 check("the event itself was still counted", s.totals.claim_succeeded === 3);
+
+console.log("\n[9] REFERRAL on its own: became-a-sender is not the same as cashed-out");
+// Account 2 only cashed out (section 6). Account 1 created a link. Both "acted"; only 1 referred.
+s = (await eventsSummary())!;
+check("acted still counts both", s.funnel.acted === 2 && s.funnel.both === 2, `acted ${s.funnel.acted} both ${s.funnel.both}`);
+check("referral counts only the account that created a link", s.funnel.referral === 1, `got ${s.funnel.referral}`);
+check("referral rate is referral/claimed", s.funnel.referralRate === 0.5, `got ${s.funnel.referralRate}`);
+
+console.log("\n[10] the bank rail leg has its own number, and it counts as acting");
+await recordEvent({ event: "claim_succeeded", cid: "dddd4444", aid: "3333333333333333" });
+await recordEvent({ event: "cashout_bank_sent", cid: "3333333333333333", aid: "3333333333333333" });
+s = (await eventsSummary())!;
+check("cashout_bank_sent is counted apart from cashout_sent", s.totals.cashout_bank_sent === 1 && s.totals.cashout_sent === 1);
+check("the bank cash-out account is in the acted set", s.funnel.acted === 3 && s.funnel.both === 3, `acted ${s.funnel.acted}`);
+check("...but not in the referral set", s.funnel.referral === 1);
+
+console.log("\n[11] claim duration is counted into buckets, never stored per person");
+await recordEvent({ event: "claim_succeeded", cid: "eeee5555", aid: "4444444444444444", dur: 12 });
+await recordEvent({ event: "claim_succeeded", cid: "ffff6666", aid: "5555555555555555", dur: "45" });
+await recordEvent({ event: "claim_succeeded", cid: "0000aaaa", aid: "6666666666666666", dur: 130 });
+await recordEvent({ event: "claim_succeeded", cid: "0000bbbb", aid: "7777777777777777", dur: -3 });
+await recordEvent({ event: "claim_succeeded", cid: "0000cccc", aid: "8888888888888888", dur: "soon" });
+await recordEvent({ event: "claim_opened", cid: "0000dddd", dur: 5 });
+s = (await eventsSummary())!;
+check("12 s lands in 0-15", s.durations["0-15"] === 1, JSON.stringify(s.durations));
+check("a string 45 lands in 30-60", s.durations["30-60"] === 1);
+check("130 s lands in 120+", s.durations["120+"] === 1);
+check("a negative or non-numeric duration is ignored", s.durations["15-30"] === 0 && s.durations["60-120"] === 0);
+check("a duration on any event but claim_succeeded is ignored", Object.values(s.durations).reduce((a, b) => a + b, 0) === 3);
+check(
+  "the only timing keys are the five buckets; nothing per claim",
+  [...kv.nums.keys()].filter((k) => k.includes(":dur:")).every((k) => DURATION_BUCKETS.some((b) => k.endsWith(`:dur:${b}`))),
+);
+
+console.log("\n[12] REPEATS: a second value event by the same account is one person in the repeat set");
+s = (await eventsSummary())!;
+// Account 1 created four links (sections 4 and 5): it is already a repeater.
+check("the four-link sender is one repeater", s.funnel.repeat === 1, `got ${s.funnel.repeat}`);
+await recordEvent({ event: "cashout_bank_sent", cid: "2222222222222222", aid: "2222222222222222" });
+s = (await eventsSummary())!;
+check("cash-out then bank cash-out by the same account is a second repeater", s.funnel.repeat === 2);
+await recordEvent({ event: "deposit_completed", cid: "4444444444444444", aid: "4444444444444444" });
+s = (await eventsSummary())!;
+check("one funding event alone is not a repeat", s.funnel.repeat === 2);
+await recordEvent({ event: "wallet_funded", cid: "4444444444444444", aid: "4444444444444444" });
+s = (await eventsSummary())!;
+check("a funding event after another value event is", s.funnel.repeat === 3);
+check("repeat is people, not events: three more sends by account 1 change nothing", (await (async () => { for (let i = 0; i < 3; i++) await recordEvent({ event: "send_link_created", cid: "1111111111111111", aid: "1111111111111111" }); return (await eventsSummary())!.funnel.repeat; })()) === 3);
+
+console.log("\n[13] the SEEDED cohort is counted apart, and organic is the subtraction");
+const beforeSeeded = (await eventsSummary())!;
+await recordEvent({ event: "claim_opened", cid: "seed0001", seeded: 1 });
+await recordEvent({ event: "claim_succeeded", cid: "seed0001", aid: "9999999999999999", seeded: "1", dur: 20 });
+await recordEvent({ event: "send_link_created", cid: "9999999999999999", aid: "9999999999999999" });
+s = (await eventsSummary())!;
+check("a seeded claim is in the overall totals", s.totals.claim_succeeded === beforeSeeded.totals.claim_succeeded + 1);
+check("...and in the seeded totals", s.seeded.totals.claim_succeeded === 1 && s.seeded.totals.claim_opened === 1, JSON.stringify(s.seeded.totals));
+check("the seeded account is in the seeded claimed set", s.seeded.claimed === 1);
+check("its onward link is a SEEDED referral, not an organic one", s.seeded.referral === 1);
+check("organic referral excludes it", s.organic.referral === s.funnel.referral - 1, `funnel ${s.funnel.referral} organic ${s.organic.referral}`);
+check("organic claimed = claimed - seeded", s.organic.claimed === s.funnel.claimed - 1);
+check("a seeded flag that is not 1/true is not seeded", (await (async () => { await recordEvent({ event: "claim_succeeded", cid: "seed0002", aid: "aaaaaaaaaaaaaaaa", seeded: "yes" }); return (await eventsSummary())!.seeded.claimed; })()) === 1);
+check("the duration of a seeded claim still counts", s.durations["15-30"] === 1);
+
+console.log("\n[14] TEAM accounts are dropped before any counter is touched");
+process.env.EVENTS_EXCLUDE_AIDS = "bbbbbbbbbbbbbbbb, GNOTAHASH ,cccccccccccccccc";
+const beforeTeam = (await eventsSummary())!;
+const keysBefore = kv.nums.size;
+await recordEvent({ event: "claim_succeeded", cid: "team0001", aid: "bbbbbbbbbbbbbbbb", seeded: 1, dur: 9 });
+await recordEvent({ event: "send_link_created", cid: "bbbbbbbbbbbbbbbb", aid: "bbbbbbbbbbbbbbbb" });
+await recordEvent({ event: "cashout_bank_sent", cid: "cccccccccccccccc", aid: "cccccccccccccccc" });
+s = (await eventsSummary())!;
+check("no total moved", JSON.stringify(s.totals) === JSON.stringify(beforeTeam.totals));
+check("no funnel figure moved", JSON.stringify(s.funnel) === JSON.stringify(beforeTeam.funnel));
+check("no seeded or duration figure moved", JSON.stringify(s.seeded) === JSON.stringify(beforeTeam.seeded) && JSON.stringify(s.durations) === JSON.stringify(beforeTeam.durations));
+check("no key was created", kv.nums.size === keysBefore);
+check("the summary says how many are excluded, not who", s.excludedAccounts === 2);
+delete process.env.EVENTS_EXCLUDE_AIDS;
+await recordEvent({ event: "send_link_created", cid: "bbbbbbbbbbbbbbbb", aid: "bbbbbbbbbbbbbbbb" });
+check("with the list cleared the same account counts again", (await eventsSummary())!.totals.send_link_created === beforeTeam.totals.send_link_created + 1);
+
+console.log("\n[15] the hackathon events exist on the allowlist");
+for (const e of ["link_shared", "cashout_bank_sent", "deposit_started", "deposit_completed", "cctp_funded", "wallet_funded"]) {
+  check(`accepts ${e}`, accepts(e));
+}
+const beforeNew = (await eventsSummary())!;
+await recordEvent({ event: "link_shared", cid: "1111111111111111", aid: "1111111111111111" });
+await recordEvent({ event: "deposit_started", cid: "1111111111111111", aid: "1111111111111111" });
+await recordEvent({ event: "cctp_funded", cid: "1111111111111111", aid: "1111111111111111" });
+s = (await eventsSummary())!;
+check("they are counted", s.totals.link_shared === 1 && s.totals.deposit_started === 1 && s.totals.cctp_funded === 1);
+check("link_shared and deposit_started do not move the acted or referral sets", s.funnel.acted === beforeNew.funnel.acted && s.funnel.referral === beforeNew.funnel.referral, `acted ${beforeNew.funnel.acted} -> ${s.funnel.acted}`);
+check("every allowlisted event appears in totals, zero or not", Object.keys(s.totals).length === Object.keys(s.seeded.totals).length && "wallet_funded" in s.totals);
 
 console.log("\n[8] the store being absent is survivable");
 delete process.env.KV_REST_API_URL;

@@ -537,7 +537,9 @@ export default {
       }
 
       if (method === "POST" && url === "/events") {
-        const rl = await enforceRateLimit(clientIp(request));
+        // Its OWN limiter bucket ("ev:"), like /feedback. Beacons used to share the per-IP bucket
+        // with claims, so on one venue Wi-Fi the room's analytics could 429 the room's claims.
+        const rl = await enforceRateLimit(`ev:${clientIp(request)}`);
         if (rl.limited) return json(429, { error: rl.reason });
         try {
           const input = (await readJson(request)) as { event?: string; cid?: string; aid?: string };
