@@ -24,7 +24,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { isNeedsPassword } from "../../../lib/signer-error";
-import { loadTotalUsd } from "../../../lib/horizon";
+import { loadBalance, loadTotalUsd } from "../../../lib/horizon";
+import { connectExternalWallet, disconnectExternalWallet, externalWalletSigner, walletsKitEnabled } from "../../../lib/wallets-kit";
+import type { Signer } from "../../../lib/signer";
 import { payToAddress } from "../../../lib/send";
 import { createV2Link, DepositUncertainError, v2DepositLanded } from "../../../lib/lumendrop";
 import { claimPasswordProblem } from "../../../lib/claim-password";
@@ -116,7 +118,7 @@ interface RequestCtx {
 }
 
 type Ready =
-  | { kind: "link"; link: string; balanceId: string; locked: boolean }
+  | { kind: "link"; link: string; balanceId: string; locked: boolean; seeded: boolean }
   | { kind: "direct"; balanceId: string; toName: string };
 
 function saveSent(id: string, rec: SentRecord) {
@@ -170,6 +172,44 @@ export default function SendPage() {
      land there — and with nothing to show for one, the screen is identical before and after. */
   const [notYet, setNotYet] = useState("");
   const [ready, setReady] = useState<Ready | null>(null);
+  /**
+   * The team's event tool: `/send?seeded=1` marks the link it makes as team-funded ("try it with
+   * $2 from us"). The marker is public in the link's query, the claim beacons carry it, and the
+   * sponsor counts that cohort apart so it never reads as sender adoption. No other behaviour
+   * changes; anyone can set the flag, and all it does is count them as seeded rather than organic.
+   */
+  const [seeded, setSeeded] = useState(false);
+  /**
+   * An external Stellar wallet (Freighter, xBull, LOBSTR, Hot Wallet) chosen to FUND this link
+   * instead of the Lumenia account: the second partner on the money-in path (Stellar Wallets Kit,
+   * decision D7; lib/wallets-kit.ts). It signs the same sender-sourced deposit and the sponsor
+   * still fee-bumps it; only who pays for the link changes. Links only: a direct pay to an asker's
+   * account stays on the Lumenia key.
+   */
+  const [external, setExternal] = useState<{ address: string; usd: string | null } | null>(null);
+  const [connecting, setConnecting] = useState(false);
+
+  async function connectWallet() {
+    setError("");
+    setConnecting(true);
+    try {
+      const { address } = await connectExternalWallet(activeNetwork());
+      // Its balance is shown as a courtesy and used for the "more than you have" guard; a failed
+      // read leaves it unknown rather than blocking, since the ledger decides anyway.
+      const bal = await loadBalance(address).catch(() => null);
+      setExternal({ address, usd: bal?.usd ?? null });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      setError(msg && !/^\/|xdr|undefined/i.test(msg) ? `Couldn't connect that wallet: ${msg}` : "Couldn't connect that wallet.");
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function switchToLumeniaAccount() {
+    setExternal(null);
+    await disconnectExternalWallet();
+  }
 
   /* Sum EVERY stored account, the way /home and /account do. Reading only the home account meant a
      claim that had just landed in a fresh sponsored account — which is how every v2 claim arrives —
@@ -194,6 +234,7 @@ export default function SendPage() {
     const a = q.get("a");
     const askedAmount = a && /^\d+(\.\d{1,2})?$/.test(a) ? Number.parseFloat(a).toFixed(2) : undefined;
     if (askedAmount) setAmount(askedAmount);
+    setSeeded(q.get("seeded") === "1");
     const nonce = q.get("req");
     const name = q.get("reqName")?.trim().slice(0, 40);
     const rawTo = q.get("to");
@@ -375,25 +416,33 @@ export default function SendPage() {
          - the balance is unknown → read it now,
          - practice money is short → get some, once.
        Real money is untouched: nothing can conjure that, and short means short. */
-    let known = balance;
-    if (topUp.current) {
-      known = (await topUp.current) ?? known;
-      topUp.current = null;
-    } else if (known === null) {
-      known = await loadTotalUsd(accounts.map((a) => a.address))
-        .then((t) => t.usd)
-        .catch(() => null);
+    if (external) {
+      /* FUNDING FROM AN EXTERNAL WALLET: the Lumenia balance and the practice top-up are beside
+         the point, the money leaves the wallet the person connected. Only a link can be paid for
+         that way; a direct pay to an asker's account stays on the Lumenia key. */
+      if (request?.to) return setError("Paying a request straight to an account uses your Lumenia account. Switch back to it for this one.");
+      if (external.usd !== null && amt > Number.parseFloat(external.usd)) return setError("That wallet holds less than that.");
+    } else {
+      let known = balance;
+      if (topUp.current) {
+        known = (await topUp.current) ?? known;
+        topUp.current = null;
+      } else if (known === null) {
+        known = await loadTotalUsd(accounts.map((a) => a.address))
+          .then((t) => t.usd)
+          .catch(() => null);
+      }
+      if (
+        !activeNetwork().isMainnet &&
+        !toppedUp.current &&
+        known !== null &&
+        amt > Number.parseFloat(known)
+      ) {
+        toppedUp.current = true;
+        known = await getTestMoney();
+      }
+      if (known !== null && amt > Number.parseFloat(known)) return setError("That's more than you have.");
     }
-    if (
-      !activeNetwork().isMainnet &&
-      !toppedUp.current &&
-      known !== null &&
-      amt > Number.parseFloat(known)
-    ) {
-      toppedUp.current = true;
-      known = await getTestMoney();
-    }
-    if (known !== null && amt > Number.parseFloat(known)) return setError("That's more than you have.");
     // The pilot cap is enforced by the sponsor, but only AFTER the transaction is signed — and on
     // mainnet the reason is masked, so an over-cap send asked for the password, then failed with a
     // generic "try again" that no amount of retrying could fix. Check it here, before we ask the
@@ -415,8 +464,11 @@ export default function SendPage() {
 
     setBusy(true);
     try {
-      let signer;
-      try {
+      let signer: Signer;
+      if (external) {
+        // The connected wallet signs; nothing on this device holds its key.
+        signer = externalWalletSigner(external.address, activeNetwork());
+      } else try {
         signer = await getSigner();
       } catch (e) {
         /* Two different errands arrive as the same refusal, and only one of them is "locked".
@@ -442,7 +494,9 @@ export default function SendPage() {
         router.push(`/unlock?next=${encodeURIComponent(back)}`);
         return;
       }
-      void sendEvent("send_started", account!.address, account!.address);
+      // The funnel's sender id: the wallet that actually pays for the link.
+      const senderAid = external?.address ?? account!.address;
+      void sendEvent("send_started", senderAid, senderAid);
 
       if (directTo) {
         const result = await payToAddress({
@@ -475,6 +529,7 @@ export default function SendPage() {
         from: senderName,
         webOrigin: window.location.origin,
         password: lockWith || undefined,
+        seeded,
       });
       const sentId = result.linkHex.slice(-8);
       // The link is kept encrypted, separately from this record — see lib/sent-links.ts.
@@ -489,10 +544,12 @@ export default function SendPage() {
       // The sponsor has always allowed this one; nothing ever fired it. Paired with send_started it
       // is the only way to see the send flow's own drop-off — how many people who begin a send end
       // up with a link they can share.
-      void sendEvent("send_link_created", account!.address, account!.address);
+      void sendEvent("send_link_created", senderAid, senderAid);
+      // A link paid for by an external wallet: the partner leg, counted on its own.
+      if (external) void sendEvent("wallet_funded", result.linkHex, external.address);
       if (request?.nonce) void sendEvent("request_paid", request.nonce);
       setPassword(""); // it lives in the link's derivation now; keep it out of memory
-      setReady({ kind: "link", link: result.link, balanceId: result.linkHex, locked: Boolean(lockWith) });
+      setReady({ kind: "link", link: result.link, balanceId: result.linkHex, locked: Boolean(lockWith), seeded });
     } catch (e) {
       // Technical reasons (status codes, ledger result codes) must never reach a money surface
       // (vocabulary law); a rejected inner tx means nothing moved.
@@ -555,6 +612,7 @@ export default function SendPage() {
             link: uncertain!.link,
             balanceId: uncertain!.linkHex,
             locked: uncertain!.locked,
+            seeded,
           });
           setUncertain(null);
         } else if (landed === false && Date.now() >= uncertain!.safeAt) {
@@ -631,12 +689,15 @@ export default function SendPage() {
           from={from.trim()}
           requestName={request?.name}
           locked={ready.locked}
+          account={account?.address}
+          seeded={ready.seeded}
         />
       </div>
     );
   }
 
-  const zeroBalance = balance !== null && Number.parseFloat(balance) <= 0;
+  // With an external wallet funding the link, the Lumenia balance is beside the point.
+  const zeroBalance = external === null && balance !== null && Number.parseFloat(balance) <= 0;
   const paying = request !== null;
 
   // Paying your own request is a guaranteed on-chain rejection (a Claimable
@@ -733,6 +794,51 @@ export default function SendPage() {
               />
             </div>
           </label>
+          {/* THE SECOND WAY IN (Stellar Wallets Kit, D7): a link paid for by a wallet the person
+              already has. Behind NEXT_PUBLIC_WALLETS_KIT so a deployment advertises it only once
+              it has been walked through a real wallet on a real device. Links only. */}
+          {!request?.to && walletsKitEnabled() && (
+            <div className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface p-4 text-sm">
+              {external ? (
+                <>
+                  <p className="text-ink">
+                    Funding from your wallet{" "}
+                    <span className="font-mono text-xs">
+                      {external.address.slice(0, 4)}…{external.address.slice(-4)}
+                    </span>
+                    {external.usd !== null ? ` (${formatUsd(external.usd)} available)` : ""}.
+                  </p>
+                  <p className="text-xs text-ink-soft">
+                    Your wallet signs the deposit; the recipient still needs no wallet and pays no gas.
+                    {activeNetwork().isMainnet ? " On real money the wallet must be on the pilot allowlist." : ""}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void switchToLumeniaAccount()}
+                    className="self-start text-sm font-semibold text-money underline-offset-2 hover:underline"
+                  >
+                    Use my Lumenia account instead
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void connectWallet()}
+                    disabled={connecting || busy}
+                    className="flex h-11 w-full items-center justify-center rounded-full border border-line font-medium text-ink disabled:opacity-50"
+                  >
+                    {connecting ? "Opening your wallet…" : "Fund from another Stellar wallet"}
+                  </button>
+                  <p className="text-xs text-ink-soft">
+                    Freighter, xBull, LOBSTR or Hot Wallet, on{" "}
+                    {activeNetwork().isMainnet ? "the public network" : "the test network"}. The link works the
+                    same; only who pays for it changes.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
           {/* Paying straight to a returning asker's account needs no sender name —
               nothing ever displays it. The bearer-link path still does (the claim
               page says "<from> sent you money"). */}

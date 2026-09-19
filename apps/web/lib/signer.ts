@@ -26,8 +26,12 @@ export interface Signer {
    * assume it.
    */
   signMessage?(message: Uint8Array): Promise<Uint8Array>;
-  /** Which concrete backend — for diagnostics only, never for control flow. */
-  readonly kind: "local-ed25519" | "kms" | "passkey-smart-account";
+  /**
+   * Which concrete backend — for diagnostics only, never for control flow. "external-wallet" is a
+   * wallet the person already has (Freighter, xBull, LOBSTR) signing through Stellar Wallets Kit;
+   * it signs a COPY (XDR in, XDR out), so callers must use the transaction `sign` returns.
+   */
+  readonly kind: "local-ed25519" | "kms" | "passkey-smart-account" | "external-wallet";
 }
 
 /**

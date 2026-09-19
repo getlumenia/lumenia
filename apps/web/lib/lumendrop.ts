@@ -103,6 +103,12 @@ export async function createV2Link(opts: {
   expiry?: number;
   /** optional claim password — the recipient must know it before the money will move */
   password?: string;
+  /**
+   * The team funded this link for the event ("try it with $2 from us"). Adds a public `seeded=1`
+   * marker to the link's query (never the fragment) so the claim beacons are counted apart and
+   * never as sender adoption. Public on purpose: the marker is honest, not hidden.
+   */
+  seeded?: boolean;
 }): Promise<V2Link> {
   // Resolved ONCE and reused for the transaction and the link's `n` label. Deriving it twice is
   // how the tx and the label could disagree, which would mint a link pointing at an escrow that
@@ -133,8 +139,10 @@ export async function createV2Link(opts: {
 
   const sim = await server.simulateTransaction(tx);
   if (rpc.Api.isSimulationError(sim)) throw new Error(`deposit simulation failed: ${sim.error}`);
-  const prepared = rpc.assembleTransaction(tx, sim).build();
-  await opts.signer.sign(prepared); // sender authorizes (source-account auth covers the SAC transfer)
+  // Sender authorizes (source-account auth covers the SAC transfer). The transaction the signer
+  // RETURNS is the one that goes on the wire: a local key signs in place, but an external wallet
+  // (lib/wallets-kit.ts) signs a copy it received as XDR, and the copy is where the signature is.
+  const prepared = await opts.signer.sign(rpc.assembleTransaction(tx, sim).build());
 
   /* The instant this signed transaction stops being includable, and therefore the instant an empty
      escrow starts meaning anything. The sponsor gives up watching after ~60s while the tx keeps its
@@ -146,7 +154,8 @@ export async function createV2Link(opts: {
   /* Assembled BEFORE the deposit is submitted. The link is a pure function of the key we just
      generated, so having it early costs nothing — and it means an unconfirmed deposit can still be
      handed to the user if the ledger later shows it landed. */
-  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}${net.isMainnet ? "&n=public" : ""}`;
+  // `s=` is the sender's display name, so the seeded marker is spelled out as `seeded=1`.
+  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}${net.isMainnet ? "&n=public" : ""}${opts.seeded ? "&seeded=1" : ""}`;
   const fragment = seed ? passwordFragment(seed) : link.secret();
   const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
 
