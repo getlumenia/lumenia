@@ -2,7 +2,7 @@
   "name": "@lumenia/sponsor",
   "version": "0.0.0",
   "private": true,
-  "description": "Lumenia sponsor service \u2014 sponsored create + fee-bump (HOT key, KMS)",
+  "description": "Lumenia sponsor service — sponsored create + fee-bump (HOT key, KMS)",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
@@ -17,6 +17,7 @@
     "spike4": "tsx src/spike4-cctp-bridge.ts",
     "spike5": "tsx src/spike5-sponsored-send.ts",
     "spike6": "tsx src/spike6-request-pay.ts",
+    "spike7": "tsx src/spike7-cctp-inbound.ts",
     "spike8": "tsx src/spike8-channel-accounts.ts",
     "spike9": "tsx src/spike9-gasless-reclaim.ts",
     "spike10": "tsx src/spike10-v2-reclaim.ts",
@@ -41,17 +42,19 @@
     "test:identity": "tsx src/test-identity.ts",
     "test:identity-routes": "tsx src/test-identity-routes.ts",
     "test:integration": "tsx src/test-integration.ts",
-    "test:events": "tsx src/test-events.ts"
+    "test:events": "tsx src/test-events.ts",
+    "aid": "tsx src/aid.ts"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "16.1.0",
+    "@stellar/stellar-sdk": "16.3.0",
     "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "viem": "2.56.8"
   },
   "type": "module"
 }
