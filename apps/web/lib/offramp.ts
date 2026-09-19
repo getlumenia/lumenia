@@ -23,8 +23,8 @@
  * NOTE (code review): the CCTP amount decimal scale (USDC 6 vs Stellar SAC 7) is
  * UNVERIFIED until a funded burn — confirm before any real value moves.
  */
-import { anchorHomeDomain, authenticate, readAnchorInfo, readWithdrawal, startWithdrawal } from "./anchor";
-import type { AnchorInfo } from "./anchor";
+import { anchorHomeDomain, authenticate, readAnchorInfo, readWithdrawal, startWithdrawal, withSession } from "./anchor";
+import type { AnchorInfo, AnchorSession, AnchorWithdrawalState } from "./anchor";
 import type { Signer } from "./signer";
 
 export type OffRampKind = "card" | "exchange" | "cctp-bridge" | "anchor";
@@ -72,14 +72,20 @@ export interface AnchorHost {
   /** Asset code the anchor knows, normally USDC. */
   assetCode: string;
   /**
-   * Issuer of `assetCode`. Required for a cross-currency exit, because a SEP-38 asset identifier
-   * is `stellar:CODE:ISSUER` and a bare `stellar:USDC` names no particular dollar. It must be the
-   * issuer the ANCHOR knows, which is not automatically the one this product escrows.
+   * The four fields below select and configure the SEP-6 `-exchange` path. They are UNUSED under
+   * decision D2 (SEP-6 only, plain `/withdraw`, no SEP-38 quote, no SEP-12 destination): no product
+   * surface sets them today. They stay on the interface, tested, for a rail that requires them.
+   */
+  /**
+   * Issuer of `assetCode`. Only needed for the one-shot dialect retry: SEP-6 specifies the bare
+   * code for `source_asset`, and the SEP-38 form `stellar:CODE:ISSUER` is what an anchor that
+   * refuses the bare code by name gets on the second try. It must be the issuer the ANCHOR knows,
+   * which is not automatically the one this product escrows.
    */
   assetIssuer?: string;
   /**
    * SEP-6 only. What the person actually receives, in SEP-38 notation, e.g. "iso4217:TRY".
-   * Naming it is what turns a transfer into an exit into local currency.
+   * Naming it is what selects the `-exchange` path.
    */
   fiatAsset?: string;
   /** SEP-6 only. Where the fiat lands, when the anchor asks for it. An IBAN, typically. */
@@ -103,6 +109,13 @@ export interface AnchorHost {
 /** How long to wait for the person to finish on the anchor's screen before giving up. */
 const INTERACTIVE_TIMEOUT_MS = 15 * 60_000;
 const POLL_INTERVAL_MS = 3_000;
+/**
+ * How many CONSECUTIVE failed status reads end the wait. One failed read used to end it, which on
+ * a venue network turns a single dropped request into "the rail could not be reached" on a screen
+ * where the money has already left. The organiser's reference wallet keeps polling through such
+ * errors; so does this now, up to this many in a row (the deadline above still bounds the total).
+ */
+const MAX_POLL_MISSES = 8;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -154,27 +167,27 @@ export function createAnchorAdapter(
       const anchor = await info();
 
       // Session token is held here, in memory, for the life of this call only. It is a bearer
-      // credential for this account at this anchor and is never written anywhere.
-      const token = await authenticate(anchor, host.signer);
+      // credential for this account at this anchor and is never written anywhere. `withSession`
+      // renews it once if the anchor answers 401/403 (expired after 24 h, or an anchor restart).
+      const session: AnchorSession = { info: anchor, token: await authenticate(anchor, host.signer), signer: host.signer };
 
-      const opened = await startWithdrawal(anchor, token, {
-        assetCode: host.assetCode,
-        account: host.account,
-        amount: usdAmount,
-        // SEP-6 only, and ignored by a SEP-24 anchor. The cross-currency variant is what makes
-        // this a lira exit rather than a same-asset transfer, and it is why the anchor is worth
-        // integrating at all.
-        ...(anchor.door === "sep6"
-          ? {
-              destinationAsset: host.fiatAsset,
-              dest: host.fiatDestination,
-              // Carried here too, or the cross-currency call below refuses: the issuer is half of
-              // the asset's identity, not decoration.
-              assetIssuer: host.assetIssuer,
-              quoteId: host.quoteId,
-            }
-          : {}),
-      });
+      const opened = await withSession(session, (token) =>
+        startWithdrawal(anchor, token, {
+          assetCode: host.assetCode,
+          account: host.account,
+          amount: usdAmount,
+          // SEP-6 only, and ignored by a SEP-24 anchor. With none of the host's fiat fields set
+          // (D2) this is a plain /withdraw; naming `fiatAsset` would select the -exchange path.
+          ...(anchor.door === "sep6"
+            ? {
+                destinationAsset: host.fiatAsset,
+                dest: host.fiatDestination,
+                assetIssuer: host.assetIssuer,
+                quoteId: host.quoteId,
+              }
+            : {}),
+        }),
+      );
       const id = opened.id;
 
       /**
@@ -211,6 +224,7 @@ export function createAnchorAdapter(
       }
 
       const deadline = Date.now() + timeoutMs;
+      let misses = 0;
       for (;;) {
         if (Date.now() > deadline) {
           onStatus("failed");
@@ -218,7 +232,17 @@ export function createAnchorAdapter(
         }
         await sleep(pollMs);
 
-        const state = await readWithdrawal(anchor, token, id);
+        let state: AnchorWithdrawalState;
+        try {
+          state = await withSession(session, (token) => readWithdrawal(anchor, token, id));
+          misses = 0;
+        } catch (e) {
+          // A failed READ is not a failed withdrawal. Nothing in this branch pays, so retrying is
+          // free; giving up is not, because the person is told the rail is unreachable while their
+          // money is already on the ledger. Only a run of failures ends the wait.
+          if (++misses >= MAX_POLL_MISSES) throw e;
+          continue;
+        }
 
         if (state.status === "ready-to-pay") {
           // Already handed over. The anchor has simply not noticed yet. Wait, do not pay again.

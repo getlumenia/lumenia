@@ -17,6 +17,11 @@
  *      status reader, and it is not repeated here.
  *   5. Discovery refuses an anchor that does not publish what the flow needs, instead of carrying
  *      a half-configured anchor into the money path.
+ *   6. A memo the anchor names without a usable type is REFUSED before anything is paid; the
+ *      `-exchange` asset form is the bare code SEP-6 specifies; `pending_customer_info_update`
+ *      is terminal (D4, 2026-09-18).
+ *   7. A 401/403 on a protected route renews the session exactly once and retries; a 403 on the
+ *      sign-in itself is a refusal; a run of transient read errors does not end a wait.
  *
  * The network is stubbed with a fake fetch, so this runs with no anchor, no keys and no internet.
  * The challenge transactions are built with the real SDK, so the verification being tested is the
@@ -33,7 +38,9 @@ import {
   requestQuote,
   setBankAccount,
   startWithdrawal,
+  withSession,
   type AnchorInfo,
+  type AnchorSession,
 } from "./anchor";
 import { localSignerFromSeed } from "./signer";
 import { formatIban, isValidIban, normalizeIban } from "./iban";
@@ -291,26 +298,30 @@ code = "try"
     ok("...and names what the person receives", seen[0]?.includes("destination_asset=iso4217%3ATRY"));
     ok("...and carries the account", seen[0]?.includes(`account=${USER}`));
 
-    // Both of these were wrong in the first draft and were caught by probing the live Turkish
-    // sandbox anchor, which answered 400 to each. Pinned here so they cannot come back.
+    // `asset_code` was missing in the first draft and the sandbox anchor answered 400. Pinned.
     ok(
       "...and still sends asset_code, which -exchange requires as well, not instead",
       seen[0]?.includes("asset_code=USDC"),
       seen[0]?.slice(0, 120),
     );
+    // SEP-6 (sep-0006.md line 1022): `source_asset` on withdraw-exchange is the bare CODE of the
+    // on-chain asset; the SEP-38 `stellar:CODE:ISSUER` form belongs to the off-chain side. The
+    // first draft had it backwards, so every first request to the sandbox anchor failed and only
+    // the retry succeeded. Pinned the right way round (D4, 2026-09-18).
     ok(
-      "...and names the issuer in source_asset, because a bare stellar:USDC is not an asset",
-      seen[0]?.includes(`source_asset=stellar%3AUSDC%3A${ISSUER}`),
+      "...and sends source_asset as the bare code, as SEP-6 specifies",
+      seen[0]?.includes("source_asset=USDC&") === true && !seen[0]?.includes("stellar%3A"),
       seen[0]?.slice(0, 160),
     );
-    await throws(
-      "a cross-currency exit with no issuer is refused before it can be rejected by the anchor",
-      () =>
-        openWith(
-          { id: "tx-x", account_id: "GTREASURY" },
-          { assetCode: "USDC", account: USER, destinationAsset: "iso4217:TRY" },
-        ),
-      "issuer",
+    seen.length = 0;
+    const noIssuer = await openWith(
+      { id: "tx-x", account_id: "GTREASURY" },
+      { assetCode: "USDC", account: USER, destinationAsset: "iso4217:TRY" },
+    );
+    ok(
+      "a cross-currency exit needs no issuer for the first request, since the bare code is the spec form",
+      noIssuer.kind === "ready-to-pay" && seen.length === 1 && seen[0]?.includes("source_asset=USDC&") === true,
+      `${seen.length} request(s)`,
     );
 
     seen.length = 0;
@@ -337,13 +348,23 @@ code = "try"
       "a withdrawal with no id at all is refused",
       () => openWith({ account_id: "GTREASURY" }, { assetCode: "USDC", account: USER }),
     );
-    const oddMemo = await openWith(
-      { id: "tx-5", account_id: "GTREASURY", memo: "x", memo_type: "invented" },
-      { assetCode: "USDC", account: USER },
+    // A memo the anchor names is the ONLY thing that ties a payment to this withdrawal on a
+    // pooled treasury, and the sandbox anchor never refunds an unmatched payment. This used to
+    // drop an unrecognised type and pay without the reference. Refused now, before any payment.
+    await throws(
+      "a memo with an unrecognised type is REFUSED, not dropped",
+      () => openWith({ id: "tx-5", account_id: "GTREASURY", memo: "x", memo_type: "invented" }, { assetCode: "USDC", account: USER }),
+      "reference",
     );
+    await throws(
+      "a memo with NO type at all is refused too (no defaulting to text)",
+      () => openWith({ id: "tx-6", account_id: "GTREASURY", memo: "556677" }, { assetCode: "USDC", account: USER }),
+      "reference",
+    );
+    const noMemo = await openWith({ id: "tx-7", account_id: "GTREASURY" }, { assetCode: "USDC", account: USER });
     ok(
-      "an unrecognised memo type is dropped rather than passed on",
-      oddMemo.kind === "ready-to-pay" && oddMemo.memoType === null,
+      "no memo and no type is simply a withdrawal without a reference",
+      noMemo.kind === "ready-to-pay" && noMemo.memo === null && noMemo.memoType === null,
     );
   }
 
@@ -387,8 +408,16 @@ code = "try"
       withdraw_memo_type: "nonsense",
     });
     ok(
-      "an unrecognised memo type is dropped rather than passed on as if understood",
-      badMemoType.status === "ready-to-pay" && badMemoType.memoType === null,
+      "a hand-over whose memo has an unrecognised type is terminal, never 'ready to pay'",
+      badMemoType.status === "failed" && /reference/.test(badMemoType.reason),
+      badMemoType.status,
+    );
+
+    const wantsIdentity = await state({ status: "pending_customer_info_update" });
+    ok(
+      "pending_customer_info_update is terminal: that rail wants identity, which we do not collect",
+      wantsIdentity.status === "failed" && /identity/.test(wantsIdentity.reason),
+      wantsIdentity.status,
     );
 
     const missing = await state({});
@@ -424,9 +453,12 @@ code = "try"
       }
       if (url.includes("/transaction")) {
         txPolls++;
-        // The real anchor sits here for about ten seconds while it watches the ledger. Answer
-        // "ready to pay" three times, exactly as it does, then settle.
-        const status = txPolls >= 4 ? "completed" : "pending_user_transfer_start";
+        // The first two reads fail the way a venue network fails (a 501, then a 502). The
+        // organiser's reference wallet keeps polling through those; this adapter used to end the
+        // wait on the first one. Then the real anchor sits for about ten seconds while it watches
+        // the ledger: answer "ready to pay" three times, exactly as it does, then settle.
+        if (txPolls <= 2) return { status: 500 + txPolls, body: { error: "upstream hiccup" } };
+        const status = txPolls >= 6 ? "completed" : "pending_user_transfer_start";
         return {
           body: { transaction: { status, withdraw_anchor_account: "GTREASURY", withdraw_memo: "556677", withdraw_memo_type: "id" } },
         };
@@ -458,12 +490,13 @@ code = "try"
       await adapter?.start("10", (s) => statuses.push(s));
 
       ok(
-        "the withdrawal reached the anchor with the issuer in source_asset",
-        withdrawUrls[0]?.includes(`source_asset=stellar%3AUSDC%3A${ISSUER}`),
+        "the withdrawal reached the anchor with the bare code in source_asset",
+        withdrawUrls[0]?.includes("source_asset=USDC&"),
         withdrawUrls[0]?.slice(0, 130),
       );
       ok("...and with asset_code alongside it", withdrawUrls[0]?.includes("asset_code=USDC"));
       ok("...and the person's IBAN as the destination", withdrawUrls[0]?.includes("dest=TR330006100519786457841326"));
+      ok("two failed status reads did not end the wait", txPolls >= 6, `${txPolls} polls`);
 
       // The one that matters. Before the latch this was 4 real payments to a pooled treasury.
       ok(`the treasury is paid EXACTLY once, not once per poll`, paid.length === 1, `paid ${paid.length}x`);
@@ -478,19 +511,36 @@ code = "try"
   {
     const info6: AnchorInfo = { ...INFO, door: "sep6", transferServer: `https://${HOME}/sep6` };
     const urls: string[] = [];
+    // This anchor speaks the sandbox's 2026-09-06 dialect: it wants the SEP-38 id and refuses
+    // the bare code by name. The spec form goes first, the dialect second, and only once.
     const restore = stubFetch((url) => {
       urls.push(url);
-      if (url.includes("source_asset=stellar%3A")) return { status: 400, body: { error: "unsupported source_asset 'stellar:USDC:G...'; this anchor ramps USDC" } };
+      if (url.includes("source_asset=USDC&")) return { status: 400, body: { error: "unsupported source_asset 'USDC'; expected stellar:USDC:<issuer>" } };
       return { body: { id: "w-2", account_id: "GTREASURY", memo: "1", memo_type: "id" } };
     });
     try {
       const opened = await startWithdrawal(info6, "jwt", { assetCode: "USDC", assetIssuer: ISSUER, account: USER, amount: "1", destinationAsset: "iso4217:TRY", dest: "TR330006100519786457841326" });
-      ok("the spec form (stellar:CODE:ISSUER) is tried first", urls[0]?.includes(`source_asset=stellar%3AUSDC%3A${ISSUER}`));
-      ok("...and the bare code is tried once when the anchor refuses it by name", urls.length === 2 && urls[1]?.includes("source_asset=USDC&"), urls[1]?.slice(0, 120));
+      ok("the spec form (bare code) is tried first", urls[0]?.includes("source_asset=USDC&") === true, urls[0]?.slice(0, 120));
+      ok("...and the SEP-38 form is tried once when the anchor refuses the bare code by name", urls.length === 2 && urls[1]?.includes(`source_asset=stellar%3AUSDC%3A${ISSUER}`) === true, urls[1]?.slice(0, 140));
       ok("...and the withdrawal opens", opened.kind === "ready-to-pay" && opened.destination === "GTREASURY");
       ok("...with no anchor note when none was given", opened.kind === "ready-to-pay" && opened.note === null);
     } finally {
       restore();
+    }
+    urls.length = 0;
+    const restoreNoIssuer = stubFetch((url) => {
+      urls.push(url);
+      return { status: 400, body: { error: "unsupported source_asset 'USDC'; expected stellar:USDC:<issuer>" } };
+    });
+    try {
+      await throws(
+        "without an issuer there is nothing to retry with, so the refusal surfaces after ONE request",
+        () => startWithdrawal(info6, "jwt", { assetCode: "USDC", account: USER, amount: "1", destinationAsset: "iso4217:TRY" }),
+        "source_asset",
+      );
+      ok("...and exactly one request was made", urls.length === 1, `${urls.length}`);
+    } finally {
+      restoreNoIssuer();
     }
     const restore3 = stubFetch(() => ({ body: { id: "w-3", account_id: "GTREASURY", memo: "2", memo_type: "id", extra_info: { message: "Rate 48.23 TRY/USDC locked until 2026-09-09T21:13:10Z. TRY is paid to TR97..." } } }));
     try {
@@ -504,6 +554,63 @@ code = "try"
       await throws("a refusal that is not about the asset is NOT retried", () => startWithdrawal(info6, "jwt", { assetCode: "USDC", assetIssuer: ISSUER, account: USER, amount: "0.1", destinationAsset: "iso4217:TRY" }), "Minimum");
     } finally {
       restore2();
+    }
+  }
+
+  console.log("\n[sep-10] a 401/403 on a protected route is a stale session: sign in again ONCE, then retry");
+  {
+    const info6: AnchorInfo = { ...INFO, door: "sep6", transferServer: `https://${HOME}/sep6` };
+    let signCalls = 0;
+    const counting = { ...signer, sign: async (tx: Parameters<typeof signer.sign>[0]) => (signCalls++, signer.sign(tx)) };
+    const session: AnchorSession = { info: info6, token: "stale", signer: counting, net: NET };
+    const tokensSeen: string[] = [];
+    let restore = stubFetch((url, init) => {
+      if (url.includes("/auth")) return { body: { transaction: challenge(anchorKp), network_passphrase: PASSPHRASE, token: "fresh" } };
+      const bearer = String((init?.headers as Record<string, string> | undefined)?.authorization ?? "");
+      tokensSeen.push(bearer);
+      // The sandbox anchor's exact refusal: 403 with a type, not the 401 the SEP-10 text suggests.
+      if (bearer !== "Bearer fresh") return { status: 403, body: { type: "authentication_required" } };
+      return { body: { transaction: { status: "completed" } } };
+    });
+    try {
+      const state = await withSession(session, (t) => readWithdrawal(info6, t, "w-9"));
+      ok("the call succeeds after one renewal", state.status === "settled", state.status);
+      ok("...the stale token was tried first, the fresh one second", tokensSeen.join(",") === "Bearer stale,Bearer fresh", tokensSeen.join(","));
+      ok("...the signer signed exactly one new challenge", signCalls === 1, `${signCalls}x`);
+      ok("...and the session now holds the fresh token", session.token === "fresh");
+    } finally {
+      restore();
+    }
+
+    signCalls = 0;
+    restore = stubFetch((url) => {
+      if (url.includes("/auth")) return { body: { transaction: challenge(anchorKp), network_passphrase: PASSPHRASE, token: "fresh2" } };
+      return { status: 403, body: { type: "authentication_required" } };
+    });
+    try {
+      await throws("a second refusal after a fresh token is NOT retried again", () => withSession(session, (t) => readWithdrawal(info6, t, "w-9")), "sign-in");
+      ok("...so the signer was asked exactly once, not in a loop", signCalls === 1, `${signCalls}x`);
+    } finally {
+      restore();
+    }
+
+    signCalls = 0;
+    restore = stubFetch(() => ({ status: 500, body: { error: "boom" } }));
+    try {
+      await throws("a 500 is not a stale session", () => withSession(session, (t) => readWithdrawal(info6, t, "w-9")), "boom");
+      ok("...and no sign-in was attempted for it", signCalls === 0, `${signCalls}x`);
+    } finally {
+      restore();
+    }
+
+    restore = stubFetch((url, init) => {
+      if (init?.method === "POST") return { status: 403, body: { type: "authentication_required" } };
+      return { body: { transaction: challenge(anchorKp), network_passphrase: PASSPHRASE } };
+    });
+    try {
+      await throws("a 403 on the sign-in POST itself is a refusal, not a renewable session", () => authenticate(info6, signer, NET), "refused");
+    } finally {
+      restore();
     }
   }
 
@@ -582,6 +689,7 @@ code = "try"
         body.sell_asset === `stellar:USDC:${ISSUER}` && body.buy_asset === "iso4217:TRY" && body.sell_amount === "5",
         JSON.stringify(body),
       );
+      ok("...and names its context, which SEP-38 requires on POST /quote", body.context === "sep6", String(body.context));
       ok("the anchor's id, figure and expiry come back as given", q.id === "qt_1" && q.buyAmount === "240.94" && q.expiresAt === "2026-09-06T17:13:30Z");
     } finally {
       restore();

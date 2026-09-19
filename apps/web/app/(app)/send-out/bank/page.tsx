@@ -23,6 +23,12 @@
  * One held payment guards both cash-out screens: this page writes the same pending record as
  * /send-out before the payment leaves the device, and defers to /send-out to settle it against
  * the ledger, so a reload mid-flight can never turn into a second payment.
+ *
+ * HARDENING 2026-09-18 (decision register D4): the session is renewed once if the rail answers
+ * 401/403 while we wait (`withSession`; the sandbox forgets tokens after 24 h and on restart), a
+ * dropped status read no longer ends the wait (only a run of them does), and a memo the rail names
+ * without a usable type is refused by lib/anchor.ts before this page can pay, so the memo mapping
+ * below never has to guess.
  */
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -37,7 +43,10 @@ import {
   readWithdrawal,
   readWithdrawLimits,
   startWithdrawal,
+  withSession,
   type AnchorInfo,
+  type AnchorSession,
+  type AnchorWithdrawalState,
   type TransferLimits,
   type OpenedWithdrawal,
 } from "../../../../lib/anchor";
@@ -69,6 +78,12 @@ interface Draft {
 /** How long to wait for the anchor to confirm after we have paid, before calling it late. */
 const SETTLE_TIMEOUT_MS = 3 * 60_000;
 const POLL_MS = 3_000;
+/**
+ * How many CONSECUTIVE failed status reads end the wait. One used to, which on a venue network
+ * turned a single dropped request into "the rail could not be reached" on a receipt whose money
+ * had already left. Nothing in the wait loop pays, so reading again is free.
+ */
+const MAX_POLL_MISSES = 8;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -110,7 +125,8 @@ export default function BankCashOutPage() {
   const [held, setHeld] = useState(false);
 
   // The SEP-10 session token lives here, in memory, for this mount only. Never persisted.
-  const session = useRef<{ info: AnchorInfo; token: string; signer: Signer } | null>(null);
+  // `withSession` writes a renewed token back into this same object.
+  const session = useRef<AnchorSession | null>(null);
   const paidHash = useRef("");
   const resumed = useRef(false);
 
@@ -253,7 +269,7 @@ export default function BankCashOutPage() {
       return setError("The rail's rate expired. Open it again before sending.");
     }
     if (opened.memoType === "hash") return setError("This bank rail asked for a kind of reference we can't attach. Your money hasn't moved.");
-    const { info, token, signer } = session.current;
+    const live = session.current;
 
     setBusy(true);
     setStep("sending");
@@ -261,10 +277,12 @@ export default function BankCashOutPage() {
     try {
       const res = await sendOut({
         sponsorUrl: activeNetwork().sponsorUrl,
-        signer,
+        signer: live.signer,
         amount: amt.toFixed(2),
         destination: opened.destination,
         memo: opened.memo ?? undefined,
+        // "none" is reached only when the rail named NO memo: lib/anchor.ts refuses a memo whose
+        // type is missing or unknown before this screen can open, and "hash" is refused above.
         memoKind: opened.memoType === "id" ? "id" : opened.memoType === "text" ? "text" : "none",
         /* THE LATCH, shared with /send-out: written before the payment leaves this device. */
         onHandedOver: ({ hash: h, retrySafeAfter }) => {
@@ -282,7 +300,8 @@ export default function BankCashOutPage() {
       } catch {
         /* nothing was written */
       }
-      void sendEvent("cashout_sent", account!.address, account!.address);
+      // The bank-rail leg has its own event: /send-out (an exchange address) keeps cashout_sent.
+      void sendEvent("cashout_bank_sent", account!.address, account!.address);
       try {
         sessionStorage.removeItem(DRAFT_KEY());
       } catch {
@@ -292,13 +311,23 @@ export default function BankCashOutPage() {
       // Paid exactly once, above. From here we only READ the rail; nothing in this loop sends.
       setProgress("Paid. Waiting for the bank rail to confirm the payout…");
       const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+      let misses = 0;
       for (;;) {
         if (Date.now() > deadline) {
           setLateNote("The bank rail hasn't confirmed the payout yet. Your dollars are on the public record below; the rail's side runs on its clock.");
           break;
         }
         await sleep(POLL_MS);
-        const state = await readWithdrawal(info, token, opened.id);
+        let state: AnchorWithdrawalState;
+        try {
+          state = await withSession(live, (token) => readWithdrawal(live.info, token, opened.id));
+          misses = 0;
+        } catch (e) {
+          // A dropped read is not a dropped payout. Keep reading; only a run of failures gives up,
+          // and even then the receipt below still shows the ledger record.
+          if (++misses >= MAX_POLL_MISSES) throw e;
+          continue;
+        }
         if (state.status === "settled") break;
         if (state.status === "refunded") {
           setLateNote("The bank rail says it sent the money back. Check your balance and the record below.");

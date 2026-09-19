@@ -47,6 +47,21 @@
  * product surface. The bank screen opens a plain `/withdraw` and shows the anchor's own sentence
  * about the rate and the payout account instead of a quote of ours.
  *
+ * HARDENING 2026-09-18 (pre-hackathon, decision register D4), five things a live probe of the
+ * sandbox anchor and a read of its source turned up:
+ *   1. A memo whose type is missing or unknown is REFUSED before anything is paid (it used to be
+ *      dropped, which would have paid a pooled treasury without its reference).
+ *   2. On the `-exchange` paths the on-chain asset is sent as the bare code first, which is what
+ *      SEP-6 specifies (`source_asset`: "Code of the on-chain asset", sep-0006.md line 1022); the
+ *      SEP-38 `stellar:CODE:ISSUER` form is the one-shot retry, not the first attempt.
+ *   3. A 401 or 403 from a protected route is an expired or forgotten session, not a failure:
+ *      `withSession` re-runs SEP-10 once with the held signer and retries the call.
+ *   4. Polling tolerates transient errors (done by the callers, see /send-out/bank and offramp.ts).
+ *   5. `pending_customer_info_update` is terminal: that rail wants identity, which this product
+ *      does not collect, so waiting on it would wait forever.
+ * Under D2 the `-exchange` paths, `requestQuote` and `setBankAccount` are called by no product
+ * surface. They stay here, correct and tested, for a rail that requires them.
+ *
  * HONESTY. Whether any given anchor actually settles in a particular currency is the anchor's
  * claim, not ours. `readAnchorInfo` reports what the anchor publishes and nothing more.
  */
@@ -117,6 +132,20 @@ export type AnchorWithdrawalState =
 
 const TIMEOUT_MS = 15_000;
 
+/**
+ * The anchor stopped accepting the session token: it expired (24 hours on the sandbox anchor) or
+ * the anchor was restarted and forgot it. The sandbox answers 403 `{"type":"authentication_required"}`
+ * rather than the 401 the SEP-10 text suggests, so both codes mean the same thing here. The caller
+ * still holds the signer, so the right response is one fresh SEP-10 round and a retry
+ * (`withSession`), never a failed cash-out.
+ */
+export class AnchorAuthError extends Error {
+  constructor(public readonly status: number) {
+    super("that anchor no longer accepts the sign-in");
+    this.name = "AnchorAuthError";
+  }
+}
+
 async function getJson(url: string, init?: RequestInit): Promise<unknown> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
@@ -129,6 +158,7 @@ async function getJson(url: string, init?: RequestInit): Promise<unknown> {
     } catch {
       body = null;
     }
+    if (res.status === 401 || res.status === 403) throw new AnchorAuthError(res.status);
     if (!res.ok) {
       const detail =
         body && typeof body === "object" && "error" in body
@@ -269,14 +299,51 @@ export async function authenticate(
   }
 
   const signed = await signer.sign(tx as Transaction);
-  const token = (await getJson(info.webAuthEndpoint, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ transaction: signed.toXDR() }),
-  })) as { token?: string } | null;
+  let token: { token?: string } | null;
+  try {
+    token = (await getJson(info.webAuthEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ transaction: signed.toXDR() }),
+    })) as { token?: string } | null;
+  } catch (e) {
+    // A 401/403 HERE is the anchor refusing the signature itself, not a stale session: there is
+    // nothing to renew, so it must not look like one to `withSession`.
+    if (e instanceof AnchorAuthError) throw new Error("that anchor refused the sign-in");
+    throw e;
+  }
 
   if (!token?.token) throw new Error("that anchor refused the sign-in");
   return token.token;
+}
+
+/**
+ * A signed-in session at one anchor: everything needed to renew the token without asking the
+ * person for anything. Held in memory by the caller for one flow; never persisted.
+ */
+export interface AnchorSession {
+  info: AnchorInfo;
+  token: string;
+  signer: Signer;
+  net?: NetworkConfig;
+}
+
+/**
+ * Run one authenticated call, and if the anchor answers 401/403, sign in again ONCE and retry it.
+ *
+ * Why once: a second refusal after a fresh token is not a stale session, it is the anchor saying
+ * no, and looping on it would hide that. Why here and not inside each call: the library functions
+ * take a plain token so they stay testable in isolation; the renewal policy lives in one place.
+ * The renewed token is written back into `session`, so the next call starts from the good one.
+ */
+export async function withSession<T>(session: AnchorSession, call: (token: string) => Promise<T>): Promise<T> {
+  try {
+    return await call(session.token);
+  } catch (e) {
+    if (!(e instanceof AnchorAuthError)) throw e;
+    session.token = await authenticate(session.info, session.signer, session.net);
+    return await call(session.token);
+  }
 }
 
 /** What opening a withdrawal gave us: either a screen to finish on, or a destination to pay. */
@@ -319,16 +386,26 @@ export async function startWithdrawal(
     lang?: string;
     /** SEP-6 only. The anchor's own name for how the money leaves, e.g. "bank_account". */
     type?: string;
-    /** SEP-6 only. Where the fiat lands, when the anchor asks for it. */
+    /**
+     * SEP-6 only. Where the fiat lands, when the anchor asks for it. UNUSED under D2: the sandbox
+     * anchor ignores it (the payout account is whatever it holds for the wallet) and no product
+     * surface passes it.
+     */
     dest?: string;
     /**
-     * SEP-6 -exchange only. The issuer of the asset LEAVING. Required, because a SEP-38 asset
-     * identifier is `stellar:CODE:ISSUER`: a bare `stellar:USDC` names no particular dollar.
+     * SEP-6 -exchange only, and only for the dialect retry. SEP-6 specifies the bare code for
+     * `source_asset` on `withdraw-exchange` (sep-0006.md line 1022), so the issuer is not needed
+     * for the first request; it is used once, when an anchor refuses the bare code by name and
+     * wants the SEP-38 form `stellar:CODE:ISSUER` instead. UNUSED under D2.
      */
     assetIssuer?: string;
-    /** SEP-6 -exchange only. What the person receives, e.g. "iso4217:TRY". */
+    /**
+     * SEP-6 -exchange only. What the person receives, in SEP-38 notation, e.g. "iso4217:TRY".
+     * Naming it selects the `-exchange` path. UNUSED under D2: the product opens a plain
+     * `/withdraw` and shows the anchor's own sentence about the rate.
+     */
     destinationAsset?: string;
-    /** SEP-6 -exchange only. A SEP-38 quote id, so the rate is locked. */
+    /** SEP-6 -exchange only. A SEP-38 quote id, so the rate is locked. UNUSED under D2. */
     quoteId?: string;
   },
 ): Promise<OpenedWithdrawal> {
@@ -350,22 +427,23 @@ export async function startWithdrawal(
     return { kind: "interactive", id: res.id, url: res.url };
   }
 
-  // SEP-6. Cross-currency goes through -exchange; a same-asset withdrawal uses plain /withdraw.
+  // SEP-6. Cross-currency goes through -exchange (UNUSED under D2, kept correct); a same-asset
+  // withdrawal uses plain /withdraw, which is what the product does.
   //
-  // Two things here were wrong in the first draft and were caught by probing the live Turkish
-  // sandbox anchor rather than by reading the spec, so they are pinned by the self-test now:
+  // Two things about the -exchange form were learned by probing the live Turkish sandbox anchor
+  // and then checked against the spec, and both are pinned by the self-test:
   //   1. `asset_code` is required on BOTH paths. The -exchange variant does not replace it with
   //      `source_asset`, it adds to it. Omitting it answers 400 "'asset_code' is required".
-  //   2. A SEP-38 asset identifier carries the issuer: `stellar:USDC:GBBD…FLA5`. Sending a bare
-  //      `stellar:USDC` names no particular dollar, and the anchor rejects it.
+  //   2. `source_asset` on `withdraw-exchange` is the BARE CODE of the on-chain asset (SEP-6,
+  //      sep-0006.md line 1022: "Code of the on-chain asset the user wants to withdraw"). The
+  //      SEP-38 form `stellar:CODE:ISSUER` belongs to the OFF-chain side (`destination_asset`,
+  //      e.g. `iso4217:TRY`). The first draft had this backwards, so every first request to the
+  //      sandbox anchor failed and only the retry succeeded.
   const exchange = Boolean(params.destinationAsset);
   const q = new URLSearchParams();
   q.set("asset_code", params.assetCode);
   if (exchange) {
-    if (!params.assetIssuer) {
-      throw new Error("a cross-currency withdrawal needs the issuer of the asset being sent");
-    }
-    q.set("source_asset", `stellar:${params.assetCode}:${params.assetIssuer}`);
+    q.set("source_asset", params.assetCode);
     q.set("destination_asset", params.destinationAsset as string);
   }
   q.set("account", params.account);
@@ -381,16 +459,17 @@ export async function startWithdrawal(
   try {
     res = (await getJson(`${info.transferServer}/${path}?${q.toString()}`, { headers: auth })) as Opened;
   } catch (e) {
-    /* The spec form first, the anchor's dialect second. SEP-6 defines `source_asset` as a SEP-38
-     * asset id (`stellar:CODE:ISSUER`), and on 2026-09-06 the sandbox anchor refused anything
-     * else. On 2026-09-09 the same anchor refused exactly that form ("unsupported source_asset
-     * ... this anchor ramps USDC") and accepted the bare code. Anchors under active development
-     * move; a client that dies on the first dialect it did not expect is a demo that fails on
-     * stage. So: if the refusal names `source_asset`, retry once with the bare code. Nothing has
-     * been paid at this point, so the retry costs a request and nothing else. */
+    /* The spec form first, the anchor's dialect second. The sandbox anchor itself flipped between
+     * the two forms during September 2026 (it accepted only `stellar:USDC:G...` on 09-06 and only
+     * the bare code from 09-09). Anchors under active development move; a client that dies on the
+     * first dialect it did not expect is a demo that fails on stage. So: if the refusal names
+     * `source_asset` and the issuer is known, retry once with the SEP-38 form. Nothing has been
+     * paid at this point, so the retry costs a request and nothing else. A 401/403 is an
+     * AnchorAuthError whose message never mentions the field, so it passes straight through to
+     * `withSession`. */
     const msg = e instanceof Error ? e.message : "";
-    if (!exchange || !/source_asset/i.test(msg)) throw e;
-    q.set("source_asset", params.assetCode);
+    if (!exchange || !params.assetIssuer || !/source_asset/i.test(msg)) throw e;
+    q.set("source_asset", `stellar:${params.assetCode}:${params.assetIssuer}`);
     res = (await getJson(`${info.transferServer}/${path}?${q.toString()}`, { headers: auth })) as Opened;
   }
 
@@ -401,17 +480,35 @@ export async function startWithdrawal(
   // Refuse rather than carry a half-answer into the money path.
   if (!destination) throw new Error("that anchor did not say where to send the money");
 
+  const memo = res.memo != null && String(res.memo) !== "" ? String(res.memo) : null;
+  const memoType = normaliseMemoType(res.memo_type);
+  if (memo !== null && memoType === null) throw new Error(MEMO_REFUSAL);
+
   return {
     kind: "ready-to-pay",
     id,
     destination,
-    memo: res.memo ? String(res.memo) : null,
-    memoType: normaliseMemoType(res.memo_type),
+    memo,
+    memoType,
     note: res.extra_info?.message ? String(res.extra_info.message) : null,
   };
 }
 
-/** SEP-6 and SEP-24 both use this vocabulary. Anything else is dropped, never guessed. */
+/**
+ * Why a memo of unknown type is REFUSED rather than defaulted.
+ *
+ * SEP-6 lets a client default a missing `memo_type` to text. This client does not, on purpose:
+ * an anchor's withdrawal account is a pooled treasury, and the memo is the only thing that ties
+ * a payment to the person's withdrawal. The sandbox anchor matches withdrawals by `Memo.id` alone
+ * and never refunds an unmatched payment (a text memo, even all digits, is "unmatched"), so a
+ * guessed type is money that arrives and belongs to nobody. Refusing costs one screen of copy;
+ * guessing wrong costs the whole amount. The old behaviour, dropping the memo and paying without
+ * it, was the worst of the three.
+ */
+const MEMO_REFUSAL =
+  "that anchor asked for a kind of payment reference this product cannot attach, so nothing was sent";
+
+/** SEP-6 and SEP-24 both use this vocabulary. Anything else is null, and a null next to a memo is refused. */
 function normaliseMemoType(raw: unknown): "text" | "id" | "hash" | null {
   const s = String(raw ?? "");
   return s === "text" || s === "id" || s === "hash" ? s : null;
@@ -444,11 +541,15 @@ export async function readWithdrawal(
     case "pending_user_transfer_start": {
       const destination = String(t.withdraw_anchor_account ?? "");
       if (!destination) return { status: "waiting" };
+      const memo = t.withdraw_memo != null && String(t.withdraw_memo) !== "" ? String(t.withdraw_memo) : null;
+      // Same rule as at open time (see MEMO_REFUSAL): a memo without a usable type is not a
+      // payment instruction, it is a way to lose the money. Terminal, and nothing has been paid.
+      if (memo !== null && memoType === null) return { status: "failed", id, reason: MEMO_REFUSAL };
       return {
         status: "ready-to-pay",
         id,
         destination,
-        memo: t.withdraw_memo ? String(t.withdraw_memo) : null,
+        memo,
         memoType,
         amountIn: t.amount_in ? String(t.amount_in) : null,
         amountOut: t.amount_out ? String(t.amount_out) : null,
@@ -463,6 +564,15 @@ export async function readWithdrawal(
       return { status: "failed", id, reason: String(t.message ?? "the anchor reported a problem") };
     case "incomplete":
       return t.url ? { status: "interactive", url: String(t.url), id } : { status: "waiting" };
+    case "pending_customer_info_update":
+      // The rail wants identity information (SEP-12) before it goes on. This product does not
+      // collect it, by decision, so this state would never resolve: report it as terminal now
+      // rather than polling until the deadline and calling it "late".
+      return {
+        status: "failed",
+        id,
+        reason: "this rail wants identity information before it pays out, which this product does not collect",
+      };
     default:
       // pending_anchor, pending_stellar, pending_external, pending_user_transfer_complete and
       // anything an anchor invents. All of them mean "not yet", never "finished".
@@ -517,6 +627,9 @@ export async function requestQuote(
       // How the money leaves the anchor at the far end. Named explicitly because an anchor may
       // price a bank transfer and a cash pickup differently.
       buy_delivery_method: "bank_account",
+      // Required by SEP-38 on POST /quote (sep-0038.md line 579: one of sep6, sep24, sep31). The
+      // sandbox anchor does not enforce it; a stricter anchor refuses the quote without it.
+      context: "sep6",
     }),
   })) as { id?: string; sell_amount?: string; buy_amount?: string; price?: string; expires_at?: string } | null;
 
