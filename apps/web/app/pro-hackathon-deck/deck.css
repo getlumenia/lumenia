@@ -1,0 +1,514 @@
+/*
+ * Deck styling. The palette is the Periwinkle DARK set (brand.md 4.2) written out literally rather
+ * than read from --pw-*: those tokens flip with the viewer's theme, and a deck on a projector must
+ * look the same whatever the laptop reports. Type is the brand's own Sentient and Switzer, already
+ * self-hosted for the site.
+ *
+ * Sizes are clamped against the viewport so one layout serves a projector, a laptop and the phone a
+ * judge reads it on. Nothing here fetches anything at runtime.
+ */
+
+.dk {
+  --paper: #15121c;
+  --surface: #1d1926;
+  --ink: #edeaf3;
+  --muted: #a59db2;
+  --line: #2c2536;
+  --accent: #b7ace8;
+  --warm: #e3897e;
+
+  position: fixed;
+  inset: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Switzer", ui-sans-serif, system-ui, sans-serif;
+  overflow: hidden;
+  /* A very slow wash behind everything, so a dark slide is not a flat black rectangle. */
+  background-image: radial-gradient(60% 50% at 18% 12%, rgba(183, 172, 232, 0.1), transparent 70%),
+    radial-gradient(45% 40% at 88% 85%, rgba(183, 172, 232, 0.06), transparent 70%);
+}
+
+/* ---------- chrome ---------- */
+
+.dk-progress {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--line);
+  z-index: 3;
+}
+.dk-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.dk-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14vw;
+  max-width: 180px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  z-index: 2;
+}
+.dk-zone:disabled {
+  cursor: default;
+}
+.dk-zone-prev {
+  left: 0;
+}
+.dk-zone-next {
+  right: 0;
+}
+.dk-zone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+
+/* The Stellar mark sits opposite the dots, quiet enough to be a credit rather than a sponsor bar,
+   and it stays put while the slides change. */
+.dk-stellar {
+  position: absolute;
+  left: clamp(16px, 3vw, 48px);
+  bottom: clamp(16px, 3vh, 40px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 3;
+  opacity: 0.62;
+}
+.dk-stellar span {
+  font-size: clamp(9px, 0.85vw, 12px);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.dk-stellar img {
+  width: clamp(76px, 8vw, 118px);
+  height: auto;
+  display: block;
+}
+
+.dk-dots {
+  position: absolute;
+  right: clamp(16px, 3vw, 48px);
+  bottom: clamp(16px, 3vh, 40px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 3;
+}
+.dk-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--line);
+  cursor: pointer;
+  transition: background 0.25s ease, transform 0.25s ease;
+}
+.dk-dot:hover {
+  background: var(--muted);
+}
+.dk-dot-on {
+  background: var(--accent);
+  transform: scale(1.4);
+}
+.dk-count {
+  margin-left: 10px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- stage ---------- */
+
+.dk-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: clamp(24px, 5vw, 96px) clamp(20px, 7vw, 140px) clamp(56px, 8vh, 110px);
+}
+
+.dk-slide {
+  width: min(1200px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2.2vh, 30px);
+}
+
+/* The entrance: the slide lifts in as one piece, then its own children follow in order. The
+   remount in Deck.tsx is what replays this on every move. */
+@keyframes dk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.dk-slide > * {
+  animation: dk-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.dk-slide > *:nth-child(1) { animation-delay: 0.02s; }
+.dk-slide > *:nth-child(2) { animation-delay: 0.08s; }
+.dk-slide > *:nth-child(3) { animation-delay: 0.14s; }
+.dk-slide > *:nth-child(4) { animation-delay: 0.2s; }
+.dk-slide > *:nth-child(5) { animation-delay: 0.26s; }
+.dk-slide > *:nth-child(6) { animation-delay: 0.32s; }
+.dk-slide > *:nth-child(7) { animation-delay: 0.38s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dk-slide > * {
+    animation: none;
+  }
+  .dk-progress span {
+    transition: none;
+  }
+}
+
+/* ---------- type ---------- */
+
+.dk-eyebrow {
+  font-size: clamp(11px, 1.05vw, 14px);
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.dk-h2 {
+  font-family: "Sentient", Georgia, serif;
+  font-weight: 500;
+  font-size: clamp(30px, 4.6vw, 62px);
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+}
+.dk-h2-tight {
+  font-size: clamp(26px, 3.7vw, 50px);
+}
+
+.dk-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: clamp(20px, 3.1vw, 44px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.dk-sub {
+  font-size: clamp(15px, 1.6vw, 25px);
+  line-height: 1.4;
+  color: var(--muted);
+}
+.dk-sub-wide {
+  max-width: 62ch;
+}
+.dk-sub b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.dk-lead {
+  font-size: clamp(17px, 2.1vw, 32px);
+  line-height: 1.35;
+  max-width: 22ch;
+}
+.dk-lead b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.dk-pain {
+  font-size: clamp(14px, 1.5vw, 23px);
+  line-height: 1.35;
+  color: var(--warm);
+  max-width: 58ch;
+}
+
+.dk-kicker {
+  font-size: clamp(17px, 1.9vw, 29px);
+  font-weight: 600;
+  color: var(--accent);
+}
+.dk-kicker-serif {
+  font-family: "Sentient", Georgia, serif;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.dk-foot {
+  font-size: clamp(11px, 1.05vw, 15px);
+  color: var(--muted);
+  line-height: 1.4;
+}
+.dk-mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  letter-spacing: -0.01em;
+}
+.dk-dim {
+  color: var(--muted);
+}
+.dk-accent {
+  color: var(--accent);
+}
+
+/* ---------- rows ---------- */
+
+.dk-rows {
+  display: flex;
+  flex-direction: column;
+}
+.dk-row {
+  display: flex;
+  gap: clamp(12px, 2.4vw, 40px);
+  padding: clamp(8px, 1.3vh, 18px) 0;
+  border-top: 1px solid var(--line);
+}
+.dk-rows-sm .dk-row {
+  border-top: 0;
+  padding: 4px 0;
+}
+.dk-row:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.dk-rows-sm .dk-row:last-child {
+  border-bottom: 0;
+}
+.dk-row-k {
+  flex: 0 0 clamp(120px, 20%, 260px);
+  font-size: clamp(14px, 1.4vw, 21px);
+  font-weight: 600;
+}
+.dk-row-v {
+  flex: 1;
+  font-size: clamp(13px, 1.35vw, 21px);
+  line-height: 1.35;
+  color: var(--muted);
+}
+.dk-row-v b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---------- cards ---------- */
+
+.dk-cards {
+  display: grid;
+  gap: clamp(10px, 1.4vw, 24px);
+}
+.dk-cards-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.dk-cards-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+.dk-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: clamp(12px, 1.1vw, 20px);
+  padding: clamp(14px, 1.7vw, 30px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dk-card h3 {
+  font-size: clamp(14px, 1.45vw, 23px);
+  font-weight: 600;
+  color: var(--accent);
+}
+.dk-card p {
+  font-size: clamp(12px, 1.25vw, 19px);
+  line-height: 1.4;
+  color: var(--muted);
+}
+.dk-card-lg p {
+  color: var(--ink);
+}
+.dk-card-lg p.dk-dim {
+  color: var(--muted);
+}
+.dk-card-lg p b {
+  font-weight: 600;
+}
+.dk-num {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: rgba(183, 172, 232, 0.12);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---------- table ---------- */
+
+.dk-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: clamp(10px, 1vw, 16px);
+  overflow: hidden;
+}
+.dk-tr {
+  display: grid;
+  grid-template-columns: 1.1fr 1.5fr 1.8fr;
+  gap: clamp(8px, 1.4vw, 22px);
+  padding: clamp(8px, 1.15vh, 15px) clamp(10px, 1.2vw, 20px);
+  font-size: clamp(11px, 1.15vw, 17px);
+  line-height: 1.35;
+  border-top: 1px solid var(--line);
+}
+.dk-tr:first-child {
+  border-top: 0;
+}
+.dk-th {
+  background: rgba(183, 172, 232, 0.1);
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- cover and team ---------- */
+
+.dk-cover {
+  display: grid;
+  grid-template-columns: 1.35fr 0.65fr;
+  align-items: center;
+  gap: clamp(16px, 3vw, 56px);
+}
+.dk-cover-main {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2.4vh, 32px);
+}
+.dk-wordmark {
+  width: min(560px, 58vw);
+  height: auto;
+  display: block;
+}
+.dk-mascot {
+  width: min(360px, 30vw);
+  height: auto;
+  justify-self: end;
+  filter: drop-shadow(0 24px 60px rgba(0, 0, 0, 0.45));
+}
+.dk-mascot-sm {
+  position: absolute;
+  right: clamp(16px, 5vw, 90px);
+  bottom: clamp(50px, 9vh, 110px);
+  width: min(190px, 16vw);
+  pointer-events: none;
+}
+
+.dk-team {
+  display: grid;
+  grid-template-columns: 1.25fr 0.75fr;
+  gap: clamp(16px, 3vw, 56px);
+  align-items: start;
+}
+.dk-team-main {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(8px, 1.4vh, 18px);
+}
+.dk-name {
+  font-size: clamp(22px, 2.6vw, 40px);
+  font-weight: 600;
+}
+.dk-ask h3 {
+  color: var(--accent);
+}
+
+/* The cover and the team slide both pin something, so they need a positioning context. */
+.dk-slide-cover,
+.dk-slide-team {
+  position: relative;
+}
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 860px) {
+  .dk-cards-3,
+  .dk-cards-2 {
+    grid-template-columns: 1fr;
+  }
+  .dk-cover,
+  .dk-team {
+    grid-template-columns: 1fr;
+  }
+  .dk-mascot {
+    display: none;
+  }
+  .dk-row {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .dk-tr {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .dk-th {
+    display: none;
+  }
+  .dk-zone {
+    width: 22vw;
+  }
+}
+
+/* ---------- print: the whole deck, one slide per page ---------- */
+
+.dk-print {
+  display: none;
+}
+
+@media print {
+  .dk {
+    position: static;
+    overflow: visible;
+    background: #15121c;
+  }
+  .dk-stage,
+  .dk-dots,
+  .dk-zone,
+  .dk-progress {
+    display: none !important;
+  }
+  /* Fixed elements repeat on every printed page, which is exactly what a credit line wants. */
+  .dk-stellar {
+    position: fixed;
+    left: 12mm;
+    bottom: 8mm;
+  }
+  .dk-print {
+    display: block;
+  }
+  .dk-print .dk-slide {
+    width: 100%;
+    max-height: none;
+    padding: 12mm;
+    page-break-after: always;
+    break-after: page;
+    animation: none;
+  }
+  .dk-print .dk-slide > * {
+    animation: none;
+  }
+  .dk-mascot-sm {
+    position: static;
+  }
+}
