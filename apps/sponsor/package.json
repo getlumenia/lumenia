@@ -43,6 +43,7 @@
     "test:identity-routes": "tsx src/test-identity-routes.ts",
     "test:integration": "tsx src/test-integration.ts",
     "test:events": "tsx src/test-events.ts",
+    "test:cctp": "tsx src/test-cctp-relay.ts",
     "aid": "tsx src/aid.ts"
   },
   "dependencies": {

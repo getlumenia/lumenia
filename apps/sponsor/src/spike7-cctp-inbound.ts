@@ -25,6 +25,10 @@
  *  RUN:  pnpm --filter @lumenia/sponsor spike7                 # full run
  *        DRY_RUN=1 pnpm --filter @lumenia/sponsor spike7       # prep + encoding only, no burn
  *        AMOUNT=2 FINALITY=1000 pnpm --filter @lumenia/sponsor spike7   # 2 USDC, Fast finality
+ *        RELAY=module ...   # the mint goes through lib/cctp-relay.ts (the /cctp-relay route's own
+ *                           # code: Iris read by the module, header checks, simulate, fee cap),
+ *                           # signed by the throwaway relayer instead of the sponsor
+ *        RELAY=https://lumenia-sponsor.avakit.workers.dev ...   # the LIVE testnet sponsor relays it
  *  NEEDS: Base Sepolia USDC + a little Base Sepolia ETH on the sender; internet. No sponsor key.
  * ============================================================================
  */
@@ -34,6 +38,9 @@ import { Asset, BASE_FEE, Contract, Horizon, Keypair, Networks, Operation, StrKe
 import { createPublicClient, createWalletClient, formatUnits, http, parseUnits, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
+import { CCTP_TESTNET_FORWARDER, relayCctpHandler } from "./lib/cctp-relay.js";
+import { makeConfig } from "./lib/config.js";
+import { signerFromSecret } from "./lib/signer.js";
 
 /* ---------- constants (skills/cross-chain/cctp.md + docs/PRO_HACKATHON_2026.md 2.1) ---------- */
 const STELLAR_DOMAIN = 27;
@@ -52,6 +59,8 @@ const AMOUNT_USDC = process.env.AMOUNT ?? "2";
 /** 1000 = Fast (minutes, fee), 2000 = Standard (source-chain finality, fee 0 on the sandbox today). */
 const FINALITY = Number(process.env.FINALITY ?? "2000");
 const DRY_RUN = process.env.DRY_RUN === "1";
+/** Unset: the script mints itself (the 2026-09-19 proof runs). "module": through lib/cctp-relay.ts. A URL: through that sponsor's /cctp-relay. */
+const RELAY = process.env.RELAY ?? "";
 
 const ERC20_ABI = [
   { name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "a", type: "address" }], outputs: [{ type: "uint256" }] },
@@ -151,7 +160,16 @@ async function pollIris(burnTx: string, maxMs: number): Promise<{ msg: IrisMessa
   let lastStatus = "";
   for (;;) {
     polls++;
-    const r = await fetch(url);
+    let r: Response;
+    try {
+      r = await fetch(url);
+    } catch (e) {
+      // A dropped request is not a missing attestation. The first Standard run on 2026-09-19 died
+      // here on one "fetch failed" after the burn had already landed.
+      step(`Iris: request failed (${(e as Error).message}), retrying`);
+      await sleep(10_000);
+      continue;
+    }
     if (r.status === 404) {
       if (lastStatus !== "404") step("Iris: not indexed yet (404)");
       lastStatus = "404";
@@ -247,6 +265,15 @@ async function main() {
     } else {
       step("allowance already sufficient");
     }
+    // The public RPC is load-balanced: a receipt from one node does not mean the next eth_call
+    // hits a node that has that block. Read the allowance back until it is there (first run of
+    // 2026-09-19 simulated one block early and got "transfer amount exceeds allowance").
+    for (let i = 0; i < 30; i++) {
+      const a = await pub.readContract({ address: BASE_USDC, abi: ERC20_ABI, functionName: "allowance", args: [evm.address, BASE_TOKEN_MESSENGER_V2] });
+      if (a >= amount) break;
+      if (i === 29) throw new Error("allowance never became visible on the RPC");
+      await sleep(2000);
+    }
 
     // Simulate first: a revert here costs nothing and names the reason.
     const { request } = await pub.simulateContract({
@@ -268,36 +295,68 @@ async function main() {
     step(`resuming burn ${burn.txHash} from ${burn.at} (${burn.amount} USDC, finality ${burn.finality}, recipient ${burn.recipient})`);
   }
 
-  /* 4. Attestation. */
+  /* 4-5. Attestation and the Stellar mint. With RELAY set, the product path does both. */
   const burnAt = Date.parse(burn.at);
-  const { msg, latencyMs, polls } = await pollIris(burn.txHash, 60 * 60_000);
-  step(`attestation complete: ${polls} polls, ${(latencyMs / 1000).toFixed(0)} s since polling began, ${((Date.now() - burnAt) / 1000).toFixed(0)} s since the burn`);
-  const message = Buffer.from(msg.message!.slice(2), "hex");
-  const attestation = Buffer.from(msg.attestation!.slice(2), "hex");
-  step(`message ${message.length} bytes, attestation ${attestation.length} bytes, nonce ${msg.eventNonce ?? "?"}`);
+  let mintHash: string;
+  let latencyMs: number;
+  if (RELAY) {
+    const pollStart = Date.now();
+    let result: { status: string; hash?: string; detail?: string; nonce?: string } | null = null;
+    for (let i = 0; i < 1200; i++) {
+      if (RELAY === "module") {
+        const config = makeConfig({ network: "testnet", sponsorSecret: relayer.secret(), usdcIssuer: STELLAR_USDC_ISSUER });
+        result = await relayCctpHandler(config, signerFromSecret(relayer.secret()), { burnTxHash: burn.txHash }, { forwarder: CCTP_TESTNET_FORWARDER });
+      } else {
+        const r = await fetch(`${RELAY.replace(/\/$/, "")}/cctp-relay`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "https://getlumenia.com" },
+          body: JSON.stringify({ burnTxHash: burn.txHash }),
+        });
+        const body = (await r.json().catch(() => ({}))) as { status?: string; hash?: string; detail?: string; error?: string };
+        if (r.status !== 200 && r.status !== 202) throw new Error(`sponsor /cctp-relay ${r.status}: ${body.error ?? JSON.stringify(body)}`);
+        result = { status: body.status ?? "?", hash: body.hash, detail: body.detail };
+      }
+      if (result.status === "minted") break;
+      if (i === 0 || i % 10 === 0) step(`relay (${RELAY === "module" ? "lib/cctp-relay.ts" : RELAY}): ${result.detail ?? result.status}`);
+      await sleep(3000);
+    }
+    if (!result || result.status !== "minted" || !result.hash) throw new Error("the relay never minted inside the wait");
+    mintHash = result.hash;
+    latencyMs = Date.now() - pollStart;
+    step(`minted through ${RELAY === "module" ? "lib/cctp-relay.ts" : `${RELAY}/cctp-relay`}: ${mintHash} (nonce ${result.nonce ?? "?"})`);
+  } else {
+    const polled = await pollIris(burn.txHash, 60 * 60_000);
+    const msg = polled.msg;
+    latencyMs = polled.latencyMs;
+    step(`attestation complete: ${polled.polls} polls, ${(latencyMs / 1000).toFixed(0)} s since polling began, ${((Date.now() - burnAt) / 1000).toFixed(0)} s since the burn`);
+    const message = Buffer.from(msg.message!.slice(2), "hex");
+    const attestation = Buffer.from(msg.attestation!.slice(2), "hex");
+    step(`message ${message.length} bytes, attestation ${attestation.length} bytes, nonce ${msg.eventNonce ?? "?"}`);
 
-  /* 5. Stellar mint + forward, paid by the relayer. */
-  const relayerAcc = await soroban.getAccount(relayer.publicKey());
-  const tx = new TransactionBuilder(relayerAcc, { fee: "2000000", networkPassphrase: Networks.TESTNET })
-    .addOperation(new Contract(STELLAR_FORWARDER).call("mint_and_forward", xdr.ScVal.scvBytes(message), xdr.ScVal.scvBytes(attestation)))
-    .setTimeout(120)
-    .build();
-  const sim = await soroban.simulateTransaction(tx);
-  if (rpc.Api.isSimulationError(sim)) throw new Error(`mint_and_forward simulation failed: ${sim.error}`);
-  const prepared = rpc.assembleTransaction(tx, sim).build();
-  step(`mint_and_forward simulated: resource fee ${sim.minResourceFee} stroops, ${sim.result?.auth?.length ?? 0} auth entries`);
-  prepared.sign(relayer);
-  const sent = await soroban.sendTransaction(prepared);
-  if (sent.status !== "PENDING") throw new Error(`sendTransaction ${sent.status}: ${sent.errorResult?.toXDR("base64") ?? ""}`);
-  step(`mint_and_forward submitted ${sent.hash}`);
-  let got = await soroban.getTransaction(sent.hash);
-  for (let i = 0; i < 40 && got.status === "NOT_FOUND"; i++) {
-    await sleep(1500);
-    got = await soroban.getTransaction(sent.hash);
+    /* Stellar mint + forward, paid by the relayer. */
+    const relayerAcc = await soroban.getAccount(relayer.publicKey());
+    const tx = new TransactionBuilder(relayerAcc, { fee: "2000000", networkPassphrase: Networks.TESTNET })
+      .addOperation(new Contract(STELLAR_FORWARDER).call("mint_and_forward", xdr.ScVal.scvBytes(message), xdr.ScVal.scvBytes(attestation)))
+      .setTimeout(120)
+      .build();
+    const sim = await soroban.simulateTransaction(tx);
+    if (rpc.Api.isSimulationError(sim)) throw new Error(`mint_and_forward simulation failed: ${sim.error}`);
+    const prepared = rpc.assembleTransaction(tx, sim).build();
+    step(`mint_and_forward simulated: resource fee ${sim.minResourceFee} stroops, ${sim.result?.auth?.length ?? 0} auth entries`);
+    prepared.sign(relayer);
+    const sent = await soroban.sendTransaction(prepared);
+    if (sent.status !== "PENDING") throw new Error(`sendTransaction ${sent.status}: ${sent.errorResult?.toXDR("base64") ?? ""}`);
+    step(`mint_and_forward submitted ${sent.hash}`);
+    let got = await soroban.getTransaction(sent.hash);
+    for (let i = 0; i < 40 && got.status === "NOT_FOUND"; i++) {
+      await sleep(1500);
+      got = await soroban.getTransaction(sent.hash);
+    }
+    if (got.status !== "SUCCESS") throw new Error(`mint_and_forward ${got.status}`);
+    step(`mint_and_forward SUCCESS in ledger ${got.ledger}`);
+    mintHash = sent.hash;
   }
-  if (got.status !== "SUCCESS") throw new Error(`mint_and_forward ${got.status}`);
-  step(`mint_and_forward SUCCESS in ledger ${got.ledger}`);
-  state.burn = { ...burn, minted: sent.hash };
+  state.burn = { ...burn, minted: mintHash };
   saveState(state);
 
   /* 6. Verify. */
@@ -311,11 +370,11 @@ async function main() {
   console.log(`  sender (EVM)       ${evm.address}`);
   console.log(`  burn tx            ${burn.txHash}`);
   console.log(`  attestation        ${(latencyMs / 1000).toFixed(0)} s of polling, ${((Date.now() - burnAt) / 1000).toFixed(0)} s burn-to-mint total`);
-  console.log(`  relayer (Stellar)  ${relayer.publicKey()}`);
-  console.log(`  mint_and_forward   ${sent.hash}`);
+  console.log(`  relayed by         ${RELAY ? (RELAY === "module" ? `lib/cctp-relay.ts, signed by ${relayer.publicKey()}` : `${RELAY}/cctp-relay (the sponsor)`) : relayer.publicKey()}`);
+  console.log(`  mint_and_forward   ${mintHash}`);
   console.log(`  recipient          ${recipient.publicKey()}`);
   console.log(`  received           ${delta} USDC (Circle testnet issuer)`);
-  console.log(`  explorer           https://stellar.expert/explorer/testnet/tx/${sent.hash}`);
+  console.log(`  explorer           https://stellar.expert/explorer/testnet/tx/${mintHash}`);
   console.log(`  basescan           https://sepolia.basescan.org/tx/${burn.txHash}`);
   console.log(`\nCCTP INBOUND SPIKE PASS (${at()})`);
 }

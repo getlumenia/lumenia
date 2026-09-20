@@ -21,6 +21,7 @@ import { sendLinkHandler } from "./lib/send.js";
 import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
 import { relayClaimHandler, relayDepositHandler, relayReclaimHandler } from "./lib/soroban-relay.js";
+import { relayCctpHandler } from "./lib/cctp-relay.js";
 import { faucetHandler } from "./lib/faucet.js";
 import { demoLinkHandler } from "./lib/demo-link.js";
 import { takeDemoLink, refillDemoPool } from "./lib/demo-pool.js";
@@ -188,6 +189,7 @@ const VALUE_ROUTES = new Set([
   "/v2-reclaim",
   "/faucet",
   "/demo-link",
+  "/cctp-relay",
 ]);
 
 /**
@@ -333,6 +335,27 @@ export default {
           balanceId: body.balanceId,
           amount: body.amount,
         }));
+      }
+
+      /* Circle CCTP inbound (hackathon build, 2026-09-19): the sponsor pays the Soroban fee to mint
+       * an attested Base burn into the Lumenia account the burn named (lib/cctp-relay.ts). The body
+       * is a burn hash only; the sponsor fetches the message and attestation from Circle itself.
+       * 202 while Circle has not attested yet: the caller polls, no Worker waits for minutes. */
+      if (method === "POST" && url === "/cctp-relay") {
+        if (config.network !== "testnet") return json(403, { error: "the CCTP relay is testnet-only" });
+        if (!process.env.CCTP_FORWARDER) return json(503, { error: "cctp relay not configured" });
+        const body = (await readJson(request)) as { burnTxHash?: string; sourceDomain?: number };
+        if (!body.burnTxHash || !/^0x[0-9a-fA-F]{64}$/.test(body.burnTxHash)) {
+          return json(400, { error: "burnTxHash (0x + 64 hex) is required" });
+        }
+        const rl = await enforceRateLimit(clientIp(request));
+        if (rl.limited) return json(429, { error: rl.reason });
+        const r = await relayCctpHandler(config, signer, { burnTxHash: body.burnTxHash, sourceDomain: body.sourceDomain }, {
+          forwarder: process.env.CCTP_FORWARDER,
+          irisUrl: process.env.CCTP_IRIS_URL,
+          channels,
+        });
+        return json(r.status === "pending" ? 202 : 200, r);
       }
 
       if (method === "POST" && url === "/v2-claim") {

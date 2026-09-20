@@ -27,6 +27,7 @@ import { AlertTriangle, Copy, Check, QrCode } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { activeNetwork } from "../../../lib/network";
+import { anchorHomeDomain } from "../../../lib/anchor";
 import { loadBalance, loadTotalUsd } from "../../../lib/horizon";
 import { prepareAccount } from "../../../lib/sponsor";
 import { isNeedsPassword } from "../../../lib/signer-error";
@@ -194,6 +195,43 @@ export default function AddMoneyPage() {
             </PrimaryButton>
           </div>
           {error && <p className="mt-2 text-sm text-danger">{error}</p>}
+        </MoneyCard>
+      )}
+
+      {/* Lira in through the bank rail, when one is connected and this device is on the test
+          network (the rail is a sandbox anchor). Shown only then, so nobody is offered a door
+          that opens onto nothing. */}
+      {anchorHomeDomain() && !activeNetwork().isMainnet && (
+        <MoneyCard className="p-4">
+          <p className="text-sm font-semibold text-ink">Add lira by bank transfer</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            Send lira from your bank with a reference; the rail pays the dollars into this account.
+            Test network, sandbox bank.
+          </p>
+          <Link
+            href="/add-money/bank"
+            className="mt-3 inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+          >
+            Add lira
+          </Link>
+        </MoneyCard>
+      )}
+
+      {/* USDC from Base through Circle CCTP (test network): burned on Base, minted here, the
+          Stellar side paid by the sponsor. Testnet only, like the relay route behind it. */}
+      {!activeNetwork().isMainnet && (
+        <MoneyCard className="p-4">
+          <p className="text-sm font-semibold text-ink">Bring USDC from Base</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            Have USDC on Base? Circle&apos;s bridge moves it here, about 20 seconds in our tests, and
+            you pay nothing on this side. Test network (Base Sepolia).
+          </p>
+          <Link
+            href="/add-money/base"
+            className="mt-3 inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+          >
+            Bring from Base
+          </Link>
         </MoneyCard>
       )}
 

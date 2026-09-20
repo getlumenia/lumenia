@@ -66,6 +66,11 @@ LUMENDROP_WASM_HASH = "4b5780ebf4848913c4f1557df1468391e3c26f4106ef0ff23ec1e3caf
 # with `pnpm --filter @lumenia/sponsor aid G...` (SHA-256 of the address, first 8 bytes). Empty =
 # exclude nobody. The summary reports only how many are configured, never which.
 EVENTS_EXCLUDE_AIDS = ""
+# Circle CCTP inbound relay (/cctp-relay, lib/cctp-relay.ts; hackathon build 2026-09-19). TESTNET
+# ONLY: Circle's testnet CctpForwarder, and the module refuses any other id and any mainnet config.
+# Deliberately absent from [env.mainnet.vars] (vars do not inherit), so the mainnet route stays 403.
+CCTP_FORWARDER = "CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ"
+CCTP_IRIS_URL = "https://iris-api-sandbox.circle.com"
 
 # The watchdog (lib/watchdog.ts) — sponsor float + "sponsor sourced value" + escrow governance
 # calls. Alerts appear in `wrangler tail`; set RESEND_API_KEY + ALERT_NOTIFY_TO (secrets) to

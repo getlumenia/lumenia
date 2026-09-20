@@ -55,6 +55,7 @@ jobs:
           pnpm --filter @lumenia/sponsor test:caps
           pnpm --filter @lumenia/sponsor test:channels
           pnpm --filter @lumenia/sponsor test:events
+          pnpm --filter @lumenia/sponsor test:cctp
           pnpm --filter @lumenia/sponsor test:pilot
           pnpm --filter @lumenia/sponsor test:recovery-store
           pnpm --filter @lumenia/sponsor test:identity
@@ -70,6 +71,7 @@ jobs:
           pnpm --filter @lumenia/web test:txguard
           pnpm --filter @lumenia/web test:money
           pnpm --filter @lumenia/web test:anchor
+          pnpm --filter @lumenia/web test:cctp-web
 
   build:
     name: Build web
