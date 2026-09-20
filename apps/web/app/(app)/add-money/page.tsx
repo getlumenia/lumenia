@@ -28,7 +28,8 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { activeNetwork } from "../../../lib/network";
 import { anchorHomeDomain } from "../../../lib/anchor";
-import { loadBalance, loadTotalUsd } from "../../../lib/horizon";
+import { loadBalance, loadTotalUsd, loadXlmBalance } from "../../../lib/horizon";
+import { formatXlm, shouldOfferConversion, spendableXlm } from "../../../lib/swap";
 import { prepareAccount } from "../../../lib/sponsor";
 import { isNeedsPassword } from "../../../lib/signer-error";
 import { markPublished } from "../../../lib/keystore";
@@ -61,6 +62,8 @@ export default function AddMoneyPage() {
   const [arrived, setArrived] = useState<string | null>(null);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [error, setError] = useState("");
+  /** Spendable XLM, when there is enough of it to be worth a transaction. See the card below. */
+  const [convertible, setConvertible] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -89,6 +92,26 @@ export default function AddMoneyPage() {
     },
     { enabled: addresses.length > 0 },
   );
+
+  /* XLM that lands in a Lumenia account is money no rail here can take: the link send, the
+     cash-out and the lira rail all settle in dollars. Read it once, so the conversion card below
+     appears only when there is something above the ledger's own reserve to convert AND this
+     account can already hold the dollars it would become. A failed read shows no card at all
+     rather than an invitation that would fail. */
+  useEffect(() => {
+    if (!account) return;
+    let live = true;
+    void Promise.all([loadBalance(account.address), loadXlmBalance(account.address)])
+      .then(([dollars, lumens]) => {
+        if (!live || !lumens || !dollars?.issuer) return;
+        const spendable = spendableXlm(lumens);
+        if (shouldOfferConversion(spendable)) setConvertible(spendable);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [account]);
 
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
   if (!account) {
@@ -134,7 +157,7 @@ export default function AddMoneyPage() {
          Open the missing trustline first, on the sponsor's reserve, the same way a first-time
          account gets one; it needs the person's key, so a locked account takes the unlock detour. */
       const bal = await loadBalance(account!.address);
-      if (bal && !bal.issuer) {
+      if (!bal || !bal.issuer) {
         let signer;
         try {
           signer = await getSigner();
@@ -231,6 +254,25 @@ export default function AddMoneyPage() {
             className="mt-3 inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
           >
             Bring from Base
+          </Link>
+        </MoneyCard>
+      )}
+
+      {/* XLM already in this account, which no rail here can take until it is dollars. The figure
+          is what the ledger says is spendable after its own reserves, read live; when there is
+          none, there is no card. */}
+      {!activeNetwork().isMainnet && convertible && (
+        <MoneyCard className="p-4">
+          <p className="text-sm font-semibold text-ink">You have XLM sitting here</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            {formatXlm(convertible)} XLM in this account. Lumenia moves dollars and the lira rail settles in dollars
+            only, so XLM cannot go out as it is. One transaction turns it into dollars in this same account.
+          </p>
+          <Link
+            href="/add-money/convert"
+            className="mt-3 inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+          >
+            Turn XLM into dollars
           </Link>
         </MoneyCard>
       )}

@@ -794,6 +794,14 @@ export default function SendPage() {
               />
             </div>
           </label>
+          {/* The same escrow in its other shape: one link holding a pot of equal shares (/group).
+              A line, not a mode, paying a room and paying a person are different errands, and this
+              screen is the one that carries the live money loop. */}
+          {!paying && (
+            <Link href="/group" className="text-sm text-ink-soft underline-offset-2 hover:text-ink hover:underline">
+              Paying for a group? One link, many people.
+            </Link>
+          )}
           {/* THE SECOND WAY IN (Stellar Wallets Kit, D7): a link paid for by a wallet the person
               already has. Behind NEXT_PUBLIC_WALLETS_KIT so a deployment advertises it only once
               it has been walked through a real wallet on a real device. Links only. */}

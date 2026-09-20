@@ -17,6 +17,7 @@ import { collectIncoming } from "../../../lib/claim";
 import { reclaimV2 } from "../../../lib/lumendrop";
 import { isNeedsPassword } from "../../../lib/signer-error";
 import { formatUsd } from "../../../lib/money";
+import { netKey } from "../../../lib/scoped-store";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
@@ -30,6 +31,60 @@ import { FeedbackDialog } from "../../../components/FeedbackDialog";
  */
 function sponsorUrl(): string {
   return activeNetwork().sponsorUrl;
+}
+
+/**
+ * Which of this device's own links are POOLS, by drop id.
+ *
+ * A notice is derived from the ledger and carries no such flag, and the escrow answers "a pool" or
+ * "a drop" only when it is asked the right question. The share count exists in exactly one place
+ * that is free to read: the record the sender wrote when they made the link. It is used for WORDS
+ * and to save the take-back one simulation, `reclaimV2` still asks the escrow when it is not told,
+ * and the contract refuses a take-back on a link it holds nothing for, so a wrong guess here can
+ * never move money the wrong way.
+ */
+function poolLinks(): Set<string> {
+  try {
+    const all = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as Record<
+      string,
+      { balanceId?: string; slots?: number }
+    >;
+    return new Set(
+      Object.values(all)
+        .filter((r) => typeof r.slots === "number" && typeof r.balanceId === "string")
+        .map((r) => r.balanceId as string),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Remember, on this phone, that the leftover came back here.
+ *
+ * A closed pool reads with every slot marked claimed whether the shares went to people or the
+ * leftover went home, `reclaim_pool` sets remaining to zero and claimed to slots together, so the
+ * ledger cannot tell /sent which of the two happened. The device that did it can.
+ */
+function markTakenBack(linkHex: string, usd: string): void {
+  try {
+    const key = netKey("lumenia.sent");
+    const all = JSON.parse(localStorage.getItem(key) ?? "{}") as Record<
+      string,
+      { balanceId?: string; tookBackUsd?: string }
+    >;
+    let touched = false;
+    for (const rec of Object.values(all)) {
+      if (rec.balanceId === linkHex) {
+        rec.tookBackUsd = usd;
+        touched = true;
+      }
+    }
+    if (touched) localStorage.setItem(key, JSON.stringify(all));
+  } catch {
+    /* storage blocked, the take-back still happened on chain, and /sent falls back to the
+       honest words a closed pool licenses on its own */
+  }
 }
 
 function whenText(iso: string): string {
@@ -52,11 +107,16 @@ export default function NotificationsPage() {
   const [error, setError] = useState("");
   /** The account has no password yet — a different errand from a locked one, and /unlock can't do it. */
   const [needsPassword, setNeedsPassword] = useState(false);
+  /** This device's own group links, so a pool's row can say what a pool's row should say. */
+  const [pools, setPools] = useState<Set<string>>(new Set());
+  /** What just came back from a group link, kept after the row itself has gone. */
+  const [tookBack, setTookBack] = useState("");
 
   const reload = useCallback(async () => {
     if (!account) return;
     const list = await loadNotices(account.address);
     setNotices(list);
+    setPools(poolLinks());
     markAllSeen(list.map((n) => n.id)); // opening the page clears the unread dot
   }, [account]);
 
@@ -115,7 +175,15 @@ export default function NotificationsPage() {
       // A v2 drop comes back via the contract reclaim (/v2-reclaim); a classic CB (waiting or
       // a classic reclaimable send) via the /feebump claim — collectIncoming handles both.
       if (n.kind === "reclaimable" && n.via === "v2") {
-        await reclaimV2({ signer, linkHex: n.balanceId, sponsorUrl: sponsorUrl() });
+        /* A pool's take-back is `reclaim_pool`, not `reclaim`. Told when this device knows, asked
+           of the escrow when it does not, never guessed, because the wrong entrypoint reverts
+           with nothing moved and no sentence this screen could offer to explain it. */
+        const pool = pools.has(n.balanceId);
+        await reclaimV2({ signer, linkHex: n.balanceId, sponsorUrl: sponsorUrl(), group: pool || undefined });
+        if (pool) {
+          markTakenBack(n.balanceId, n.usd);
+          setTookBack(n.usd);
+        }
       } else {
         await collectIncoming({ sponsorUrl: sponsorUrl(), signer, balanceId: n.balanceId });
       }
@@ -153,6 +221,15 @@ export default function NotificationsPage() {
         <p className="mt-1 text-sm text-ink-soft">Money in, waiting, and coming back to you, all from the public record.</p>
       </header>
 
+      {/* Said once, after the take-back landed, and with no count beside it: a closed pool reads
+          with every slot claimed, so "6 of 6 taken" next to this would be the ledger's numbers
+          telling a story that never happened. */}
+      {tookBack && (
+        <p className="text-sm font-medium text-ink">
+          You took back {formatUsd(tookBack)}. The link is closed.
+        </p>
+      )}
+
       {loading && notices.length === 0 ? (
         <p className="py-6 text-center text-sm text-ink-soft">Loading…</p>
       ) : notices.length === 0 ? (
@@ -161,18 +238,27 @@ export default function NotificationsPage() {
         </p>
       ) : (
         <div className="flex flex-col gap-3">
-          {notices.map((n) => (
+          {notices.map((n) => {
+            /* A group link is not "money nobody claimed": people may well have taken their shares,
+               and what is left over is a different sentence. Only this device's own record knows
+               which links are pools, and it only changes the WORDS. */
+            const pool = n.kind === "reclaimable" && n.via === "v2" && !!n.balanceId && pools.has(n.balanceId);
+            return (
             <MoneyCard key={n.id} className="flex items-center gap-3 p-4">
               <div className="flex-1">
                 <p className="font-semibold text-ink">
                   {n.kind === "waiting"
                     ? copy.waiting.row(formatUsd(n.usd))
                     : n.kind === "reclaimable"
-                      ? copy.recover.row(formatUsd(n.usd))
+                      ? pool
+                        ? `${formatUsd(n.usd)} is still on your group link`
+                        : copy.recover.row(formatUsd(n.usd))
                       : `You received ${formatUsd(n.usd)}`}
                 </p>
                 {n.kind === "reclaimable" ? (
-                  <p className="text-xs text-ink-soft">{copy.recover.hint}</p>
+                  <p className="text-xs text-ink-soft">
+                    {pool ? "The link has closed. Whatever nobody took is yours again." : copy.recover.hint}
+                  </p>
                 ) : n.at ? (
                   <p className="text-xs text-ink-soft">{whenText(n.at)}</p>
                 ) : null}
@@ -190,7 +276,8 @@ export default function NotificationsPage() {
                 </div>
               )}
             </MoneyCard>
-          ))}
+            );
+          })}
         </div>
       )}
       {error && (

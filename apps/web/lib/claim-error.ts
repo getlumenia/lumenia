@@ -10,6 +10,11 @@
  * So: classify, then say the true thing. The kinds below are the ones a recipient can distinguish
  * by their next action — claim again, wait, or stop.
  *
+ * Group links raised the stakes on the "stop" half. A pool is claimed by a room of people at once,
+ * each tap mints a sponsored account before the escrow is asked, and the escrow's refusals are all
+ * final - so a group claim that came back FAILED is terminal here, always, and the relayer's tokens
+ * are mapped one by one so the screen can name the actual answer instead of inviting a retry.
+ *
  * Robustness rule for this file: it runs inside the claim's catch block, so it must never throw.
  * Every reader is defensive and the fallback is the old retryable message, which is safe advice
  * when we genuinely do not know.
@@ -18,6 +23,25 @@
 export type ClaimErrorKind =
   /** The balance is already claimed — usually by this same person, on an earlier tap. */
   | "already-claimed"
+  /* GROUP LINKS. The escrow's revert reaches us as a token from the relayer, and every one of them
+     is the pool's settled answer about this claim: asking again cannot change it, and each retry
+     would mint another sponsored account (about 1.5 XLM) for the same refusal. */
+  /** This exact payout already holds a share - only this device has that address, so it is theirs. */
+  | "already-yours"
+  /** Every share has been taken. */
+  | "pool-empty"
+  /** The link closed. Claims are refused from the deadline on; only the sender can act now. */
+  | "expired"
+  /** The link and the money it points at do not match - the signature was not accepted. */
+  | "link-mismatch"
+  /** A group claim that reached the escrow and was refused for a reason we cannot name. */
+  | "group-failed"
+  /**
+   * The relayer stopped watching before the ledger answered. The claim may still be landing, so
+   * this is the one failure that must not offer a button: reopening the link looks at the account
+   * and the link and then says what actually happened.
+   */
+  | "uncertain"
   /** Rate limited. Real, temporary, and retrying in a moment works. */
   | "busy"
   /** The service is deliberately paused. Whether a retry is worth offering depends on how long. */
@@ -133,6 +157,47 @@ export function classifyClaimError(err: unknown): ClaimErrorInfo {
    * The one phrase both refusals end on is the marker; keep it in step with lib/tx-guard.ts. */
   if (/nothing was signed/i.test(blob)) {
     return { kind: "refused", detail: "the server's answer did not match what this app asked for", retryable: false };
+  }
+
+  /* A GROUP claim the escrow refused (the relayer's tokens - apps/sponsor/src/lib/soroban-relay.ts).
+   *
+   * The blanket rule first, because it is the part that matters: a group claim that reached the
+   * escrow and came back FAILED is TERMINAL. Before this, every one of these landed in the fallback
+   * as `unknown`, retryable TRUE - which on a pool is not a wasted tap but a queue of students each
+   * burning a fresh sponsored account to be told the same thing, while the person on stage taps
+   * again. The sub-tokens then say WHICH answer it was, because "every share has been taken" and
+   * "your share is already in your account" send someone to completely different next steps.
+   *
+   * Matched by token, not by prefix: the relayer may send a bare token or a `group-claim-failed:`
+   * one, and a token missed here would fall through to a retry loop. */
+  if (/group-claim-failed|already-claimed-this|drop-empty|bad-link-key/i.test(blob)) {
+    if (/already-claimed-this/i.test(blob)) {
+      return { kind: "already-yours", detail: "your share is already in your account on this phone", retryable: false };
+    }
+    if (/drop-empty/i.test(blob)) {
+      return { kind: "pool-empty", detail: "every share on this link has been taken", retryable: false };
+    }
+    if (/\bexpired\b/i.test(blob)) {
+      return { kind: "expired", detail: "this link closed, so it can't pay out any more", retryable: false };
+    }
+    if (/bad-link-key/i.test(blob)) {
+      return { kind: "link-mismatch", detail: "this link doesn't match the money it points at", retryable: false };
+    }
+    return { kind: "group-failed", detail: "the link refused this claim", retryable: false };
+  }
+
+  /* The relayer polls for about a minute; a transaction that is still in the queue after that comes
+   * back NOT_FOUND. It is NOT a refusal and it is NOT a success - the claim may be landing right
+   * now. "Try again" is the wrong advice for it: on a pool the same tap used to present a brand new
+   * payout address, which the contract's per-payout dedupe cannot recognise, and the pool paid one
+   * person twice. Reopening the link is the honest next step, because that path reads the account
+   * and the escrow before it says anything (lib/lumendrop.ts::readClaimProgress). */
+  if (/v2-claim tx NOT_FOUND/i.test(blob)) {
+    return {
+      kind: "uncertain",
+      detail: "the network hasn't confirmed this yet - open the link again in a moment to check",
+      retryable: false,
+    };
   }
 
   /* Already claimed, seen from either end of runClaim:

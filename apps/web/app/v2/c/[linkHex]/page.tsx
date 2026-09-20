@@ -8,6 +8,7 @@
  */
 import type { Metadata, Viewport } from "next";
 import { formatUsd } from "../../../../lib/money";
+import { parseSlots } from "../../../../lib/lumendrop";
 import V2ClaimButton from "./V2ClaimButton";
 
 
@@ -73,6 +74,12 @@ export default async function V2ClaimPage({
   // `p=1` marks a password-locked link, so the page can say so up front instead of
   // letting someone tap a button that then asks for something they weren't expecting.
   const locked = sp.p === "1";
+  /* `g` says this link holds a POT of shares rather than one payment. Sanitised the same way `a`
+     and `s` are, and by the same reader the escrow's bounds come from: anything that is not a whole
+     number inside those bounds is IGNORED rather than clamped, because a clamped count would print
+     a number the escrow never agreed to. It only decides what this page says while it waits, the
+     live count under the amount comes from the escrow, and so does everything that gets signed. */
+  const slots = parseSlots(sp.g);
   // `n=public` means this link carries REAL money. The honesty note below was unconditional, so a
   // friend opening a real transfer was told by the app itself that the money isn't real — on the
   // one screen a non-user ever sees, about the one thing they care about.
@@ -91,20 +98,24 @@ export default async function V2ClaimPage({
         >
           {real ? "Real money" : "Practice money"}
         </span>
-        <p className="text-ink-soft">{sender} sent you money</p>
+        <p className="text-ink-soft">{slots ? `${sender} sent money to a group` : `${sender} sent you money`}</p>
         {amount ? (
           <p className="text-6xl font-bold tabular-nums text-money">{formatUsd(amount)}</p>
         ) : (
           <p className="text-2xl font-semibold text-ink">You have money to claim</p>
         )}
+        {/* On a pot, the 60px figure is ONE share, never the pot, which nobody here receives. */}
+        {slots && amount ? <p className="text-sm text-ink-soft">That&apos;s one share of this link.</p> : null}
         <p className="mt-1 text-sm font-medium text-ink">No app. No wallet. You pay nothing.</p>
         {locked && (
           <p className="mt-2 text-sm text-ink-soft">
-            This one is locked. You&apos;ll need the password {sender} gave you.
+            {slots
+              ? `This one is locked. You'll need the word ${sender} gave the group.`
+              : `This one is locked. You'll need the password ${sender} gave you.`}
           </p>
         )}
       </div>
-      <V2ClaimButton linkHex={linkHex} amount={amount} sender={sender} />
+      <V2ClaimButton linkHex={linkHex} amount={amount} sender={sender} slots={slots} />
       {real ? (
         <p className="text-xs text-ink-soft">Real money, on the public Stellar record.</p>
       ) : (

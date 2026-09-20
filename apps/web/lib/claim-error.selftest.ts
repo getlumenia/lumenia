@@ -17,6 +17,10 @@
  *   - an already-claimed balance is recognised from BOTH ends of runClaim, and is never retryable
  *   - a rate limit and an outage are retryable; a pause and a broken link are not
  *   - a tx-guard refusal is terminal — a retry gets refused identically, forever
+ *   - EVERY group-claim refusal is terminal, and each token gets its own answer (a retry on any of
+ *     them mints another sponsored account for a reply that cannot change)
+ *   - a claim the relayer stopped watching is uncertain, not a failure and not a success: no button,
+ *     and no sentence about where the money is
  *   - an unrecognised error falls back to retryable (safe advice when we do not know)
  *   - the classifier never throws, whatever it is handed
  *   - the detail string never leaks a bearer key
@@ -163,6 +167,68 @@ function main() {
   const noTrust = classifyClaimError(horizonError(["op_no_trust"]));
   ok("op_no_trust is NOT reported as already-claimed", noTrust.kind !== "already-claimed");
   ok("  …and IS retryable — the retry re-opens the missing trustline", noTrust.retryable === true);
+
+  // --- a group claim the escrow refused ----------------------------------------------------------
+  // The relayer reads the contract error out of the result meta and sends a stable token. Before
+  // that existed every one of these arrived as the literal string "v2-claim tx FAILED", landed in
+  // the fallback as unknown/retryable, and handed a room full of students a retry button that mints
+  // a fresh sponsored account per tap for an answer that cannot change.
+  const shareTaken = classifyClaimError(
+    sponsorError("/v2-claim", 400, '{"error":"group-claim-failed: already-claimed-this"}'),
+  );
+  ok("a payout that already holds a share reads as already-yours", shareTaken.kind === "already-yours");
+  ok("  ...and is NOT offered a retry", shareTaken.retryable === false);
+
+  const empty = classifyClaimError(sponsorError("/v2-claim", 400, '{"error":"group-claim-failed: drop-empty"}'));
+  ok("an exhausted pool reads as pool-empty", empty.kind === "pool-empty");
+  ok("  ...and is NOT offered a retry", empty.retryable === false);
+  ok("  ...and is not misread as the single-link already-claimed", empty.kind !== "already-claimed");
+
+  const closed = classifyClaimError(sponsorError("/v2-claim", 400, '{"error":"group-claim-failed: expired"}'));
+  ok("a closed link reads as expired", closed.kind === "expired");
+  ok("  ...and is NOT offered a retry", closed.retryable === false);
+
+  const mismatch = classifyClaimError(sponsorError("/v2-claim", 400, '{"error":"group-claim-failed: bad-link-key"}'));
+  ok("a signature the escrow would not accept reads as link-mismatch", mismatch.kind === "link-mismatch");
+  ok("  ...and is NOT offered a retry", mismatch.retryable === false);
+
+  // The token the relayer falls back to when it cannot read the contract code out of the XDR. It
+  // still reached the escrow and was still refused, so it is still final.
+  const unnamed = classifyClaimError(sponsorError("/v2-claim", 400, '{"error":"group-claim-failed: unknown"}'));
+  ok("a refusal we cannot name still reads as a group failure", unnamed.kind === "group-failed");
+  ok("  ...and is STILL terminal - the blanket rule", unnamed.retryable === false);
+
+  // Matched by token, not by the prefix: the relayer may send either shape and a missed token is a
+  // retry loop.
+  const bare = classifyClaimError(sponsorError("/v2-claim", 400, '{"error":"already-claimed-this"}'));
+  ok("a bare token, with no prefix, classifies the same", bare.kind === "already-yours");
+
+  // The one rule the demo depends on: not one of them may be retryable.
+  const everyGroupToken = [
+    "group-claim-failed: drop-empty",
+    "group-claim-failed: already-claimed-this",
+    "group-claim-failed: expired",
+    "group-claim-failed: bad-link-key",
+    "group-claim-failed: unknown",
+  ].map((t) => classifyClaimError(sponsorError("/v2-claim", 400, `{"error":"${t}"}`)));
+  ok("NO group-claim refusal is retryable", everyGroupToken.every((i) => i.retryable === false));
+  ok("  ...and each one gets its own answer", new Set(everyGroupToken.map((i) => i.kind)).size === 5);
+  ok("  ...and each one has words to show", everyGroupToken.every((i) => i.detail.length > 0));
+
+  // A single-link failure must not be swept into the group rule - the single path's unknown errors
+  // stay retryable, because there nothing was created before the escrow was asked.
+  const singleUnknown = classifyClaimError(sponsorError("/v2-claim", 400, "v2-claim tx FAILED"));
+  ok("a single-link failure is not classified as a group refusal", singleUnknown.retryable === true);
+
+  // --- the claim nobody can answer yet -------------------------------------------------------
+  // The relayer gives up watching after about a minute while the transaction keeps its full validity
+  // window. That is neither a refusal nor a success, and the tap it used to invite presented a fresh
+  // payout address the contract's per-payout dedupe could not recognise.
+  const unconfirmed = classifyClaimError(sponsorError("/v2-claim", 500, "v2-claim tx NOT_FOUND"));
+  ok("a claim the relayer stopped watching reads as uncertain", unconfirmed.kind === "uncertain");
+  ok("  ...and is NOT offered a retry", unconfirmed.retryable === false);
+  ok("  ...and never says the money arrived", unconfirmed.kind !== "already-claimed" && unconfirmed.kind !== "already-yours");
+  ok("  ...and tells the person what to do instead", /open the link again/i.test(unconfirmed.detail));
 
   // --- the fallback --------------------------------------------------------------------------
   const weird = classifyClaimError(new Error("something nobody has seen before"));

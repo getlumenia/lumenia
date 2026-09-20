@@ -22,6 +22,10 @@
  *      is terminal (D4, 2026-09-18).
  *   7. A 401/403 on a protected route renews the session exactly once and retries; a 403 on the
  *      sign-in itself is a refusal; a run of transient read errors does not end a wait.
+ *   8. The rail's own `features` block is read as three-valued (an absent claim is not `false`),
+ *      the published limits never touch the path that opens a transfer, and a deposit the anchor
+ *      settled into a claimable balance is reported as that and not as dollars in the balance
+ *      (2026-09-20).
  *
  * The network is stubbed with a fake fetch, so this runs with no anchor, no keys and no internet.
  * The challenge transactions are built with the real SDK, so the verification being tested is the
@@ -35,6 +39,7 @@ import {
   readAnchorInfo,
   readDeposit,
   readDepositLimits,
+  readTransferInfo,
   readWithdrawal,
   readWithdrawLimits,
   simulateBankTransfer,
@@ -856,6 +861,95 @@ code = "try"
     const wl = await readWithdrawLimits(info6, "USDC").finally(restore);
     ok("deposit limits come from the deposit side of /info", dl.min === "0.5" && dl.max === "300" && dl.feePercent === "0.5");
     ok("withdraw limits still come from the withdraw side", wl.min === "1" && wl.max === "50");
+  }
+
+  console.log("\n[sep-6] what the rail publishes about itself, and the claimable-balance safety net");
+  {
+    const info6: AnchorInfo = { ...INFO, door: "sep6", transferServer: `https://${HOME}/sep6` };
+    // The `features` block the live sandbox ramp published on 2026-09-20, with the per-asset
+    // figures it publishes beside it (no deposit min_amount, which is why nothing may gate on it).
+    const live = {
+      deposit: { USDC: { enabled: true, fee_percent: 0.5, max_amount: 100000 } },
+      withdraw: { USDC: { enabled: true, fee_percent: 0.5, max_amount: 100000 } },
+      fee: { enabled: false },
+      features: { account_creation: false, claimable_balances: true },
+    };
+    const urls: string[] = [];
+    let restore = stubFetch((url) => (urls.push(url), { body: live }));
+    const ti = await readTransferInfo(info6, "USDC").finally(restore);
+    ok("the features block is read from the transfer /info", ti.features.accountCreation === false && ti.features.claimableBalances === true, JSON.stringify(ti.features));
+    ok("...in ONE request, not one per direction", urls.length === 1, `${urls.length} request(s)`);
+    ok("...and both directions come back with it", ti.deposit.feePercent === "0.5" && ti.withdraw.feePercent === "0.5");
+    ok("...including a published maximum the anchor states in DOLLARS", ti.deposit.max === "100000", String(ti.deposit.max));
+    ok("...and a minimum the anchor does not publish stays null, not zero", ti.deposit.min === null, String(ti.deposit.min));
+
+    restore = stubFetch(() => ({ body: { deposit: { USDC: {} } } }));
+    const silent = await readTransferInfo(info6, "USDC").finally(restore);
+    ok("an anchor that claims no features says nothing, rather than 'false'", silent.features.accountCreation === null && silent.features.claimableBalances === null);
+
+    restore = stubFetch(() => ({ body: { features: { account_creation: "false", claimable_balances: 1 } } }));
+    const notBooleans = await readTransferInfo(info6, "USDC").finally(restore);
+    ok("a features value that is not a boolean is 'did not say', never put in the rail's mouth", notBooleans.features.accountCreation === null && notBooleans.features.claimableBalances === null);
+
+    restore = stubFetch(() => ({ status: 500, body: "" }));
+    const down = await readTransferInfo(info6, "USDC").finally(restore);
+    ok("an /info that fails is 'no information', never an error on a money screen", down.features.accountCreation === null && down.deposit.feePercent === null);
+
+    // SEP-6 sep-0006.md line 508: the client declares it can be paid with a CreateClaimableBalance
+    // when its account cannot hold the asset. Without it an anchor's only other move is
+    // pending_trust, which is terminal here and holds a slot in the rail's settlement queue.
+    const seen: { url: string }[] = [];
+    restore = stubFetch((url) => (seen.push({ url }), { body: { id: "sep_dep2" } }));
+    await startDeposit(info6, "jwt", { assetCode: "USDC", account: USER, amount: "100.00" }).finally(restore);
+    const q = new URL(seen[0].url).searchParams;
+    ok("the deposit declares claimable-balance support", q.get("claimable_balance_supported") === "true", String(q.get("claimable_balance_supported")));
+    // The spec types the parameter as a string, and an anchor comparing it to "true" counts
+    // nothing else, so the exact spelling is the assertion.
+    ok("...spelled exactly 'true', which is the only spelling an anchor counts", seen[0].url.includes("claimable_balance_supported=true"), seen[0].url.slice(-60));
+    ok(
+      "opening a deposit never reads /info, so no published figure can gate it",
+      seen.length === 1 && !seen[0].url.includes("/info"),
+      `${seen.length} request(s)`,
+    );
+
+    const walk = async (tx: Record<string, unknown>) => {
+      const r = stubFetch(() => ({ body: { transaction: tx } }));
+      return readDeposit(info6, "jwt", "sep_dep2").finally(r);
+    };
+    const asCb = await walk({ status: "completed", claimable_balance_id: "00000000929b20b72e5890ab51c24f1cc46fa01c4f318d8d33367d24dd614cfdf5491072", amount_out: "8.15" });
+    ok(
+      "a deposit the rail set aside as a claimable balance carries its id",
+      asCb.status === "settled" && asCb.claimableBalanceId?.startsWith("000000009") === true,
+      asCb.status,
+    );
+    const paidIn = await walk({ status: "completed", stellar_transaction_id: "8c2c5d76", amount_out: "8.15" });
+    ok(
+      "...and the ordinary case, paid straight into the account, carries none",
+      paidIn.status === "settled" && paidIn.claimableBalanceId === null,
+      String(paidIn.status === "settled" ? paidIn.claimableBalanceId : ""),
+    );
+
+    // The rest of the SEP-6 status walk, read as terminal-or-retryable rather than as one long
+    // "not yet". The two below are the states SEP-6 defines as blocked on the PERSON, and the
+    // default bucket used to report them as "the rail is sending the dollars".
+    const needsFields = await walk({ status: "pending_transaction_info_update", required_info_message: "the reference was missing from the transfer" });
+    ok(
+      "pending_transaction_info_update is terminal, in the anchor's own words",
+      needsFields.status === "failed" && needsFields.reason === "the reference was missing from the transfer",
+      needsFields.status,
+    );
+    const needsPerson = await walk({ status: "pending_user" });
+    ok("pending_user is terminal too, with a plain sentence when the anchor gives none", needsPerson.status === "failed", needsPerson.status);
+    const onHold = await walk({ status: "on_hold" });
+    ok(
+      "on_hold is NOT terminal: the rail clears its own review, so this one is worth waiting out",
+      onHold.status === "waiting" && onHold.stage === "processing",
+      onHold.status,
+    );
+    const tooSmall = await walk({ status: "too_small", message: "minimum deposit is 50 TRY" });
+    ok("a refused amount is reported in the anchor's own words, not ours", tooSmall.status === "failed" && tooSmall.reason === "minimum deposit is 50 TRY", tooSmall.status === "failed" ? tooSmall.reason : "");
+    const tooLarge = await walk({ status: "too_large" });
+    ok("...and falls back to naming the status when the anchor says nothing", tooLarge.status === "failed" && /too large/.test(tooLarge.reason), tooLarge.status === "failed" ? tooLarge.reason : "");
   }
 
   console.log("\n[iban] a typo is caught on this device, before any rail sees it");

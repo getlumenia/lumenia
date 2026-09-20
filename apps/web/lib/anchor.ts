@@ -68,6 +68,15 @@
  * Under D2 the `-exchange` paths, `requestQuote` and `setBankAccount` are called by no product
  * surface. They stay here, correct and tested, for a rail that requires them.
  *
+ * WHAT THE RAIL PUBLISHES ABOUT ITSELF (2026-09-20). The transfer `/info` carries a `features`
+ * block next to the per-asset numbers, and on this rail it reads
+ * `{"account_creation": false, "claimable_balances": true}`. That is the anchor stating, in
+ * machine-readable form, the exact gap this product fills: it will not open a Stellar account for
+ * anybody, so a recipient who has never touched Stellar cannot be paid by it at all. Every account
+ * here is opened and trustlined by the sponsor before the lira is sent, which is why the dollars
+ * land instead of sitting in the rail's queue as `pending_trust`. `readTransferInfo` reads that
+ * block so a screen can quote it; it is display only and gates nothing (see `readTransferInfo`).
+ *
  * HONESTY. Whether any given anchor actually settles in a particular currency is the anchor's
  * claim, not ours. `readAnchorInfo` reports what the anchor publishes and nothing more.
  */
@@ -268,19 +277,74 @@ export async function readDepositLimits(info: AnchorInfo, assetCode: string): Pr
   return readLimits(info, assetCode, "deposit");
 }
 
+/**
+ * The `features` block of a transfer `/info`, three-valued: `null` is "the anchor did not say",
+ * which is not the same as `false`.
+ */
+export interface AnchorFeatures {
+  /** Whether the anchor will open a Stellar account for a recipient who has none. */
+  accountCreation: boolean | null;
+  /** Whether it can set the asset aside as a claimable balance when an account cannot hold it. */
+  claimableBalances: boolean | null;
+}
+
+/** One read of the transfer `/info`: what the anchor says about itself, and about one asset. */
+export interface TransferInfo {
+  features: AnchorFeatures;
+  deposit: TransferLimits;
+  withdraw: TransferLimits;
+}
+
+/**
+ * Read the whole transfer `/info` once: the `features` block plus both directions for one asset.
+ *
+ * DISPLAY ONLY, AND THIS IS LOAD-BEARING. Nothing here may gate a form. The deposit figures the
+ * sandbox rail publishes are in DOLLARS while the amount the person types is LIRA (see
+ * `readDepositLimits`), and on 2026-09-20 it publishes no deposit `min_amount` at all while
+ * refusing anything under 50 TRY. A screen that turned these into validation would refuse amounts
+ * the rail accepts and accept amounts it refuses. Quote them as the anchor's own figures, and let
+ * the anchor's own refusal text be the answer when it says no.
+ *
+ * `readWithdrawLimits` and `readDepositLimits` stay as they were: one request each, same shape,
+ * same callers. This is the one that also carries `features`.
+ */
+export async function readTransferInfo(info: AnchorInfo, assetCode: string): Promise<TransferInfo> {
+  const body = await fetchTransferInfo(info);
+  return {
+    features: featuresFrom(body),
+    deposit: limitsFrom(body, assetCode, "deposit"),
+    withdraw: limitsFrom(body, assetCode, "withdraw"),
+  };
+}
+
 async function readLimits(info: AnchorInfo, assetCode: string, direction: "deposit" | "withdraw"): Promise<TransferLimits> {
-  const none: TransferLimits = { min: null, max: null, feePercent: null };
-  let body: unknown;
+  return limitsFrom(await fetchTransferInfo(info), assetCode, direction);
+}
+
+/** An `/info` that does not answer is "no information", never an error on a money screen. */
+async function fetchTransferInfo(info: AnchorInfo): Promise<Record<string, unknown> | null> {
   try {
-    body = await getJson(`${info.transferServer}/info`);
+    return ((await getJson(`${info.transferServer}/info`)) as Record<string, unknown> | null) ?? null;
   } catch {
-    return none;
+    return null;
   }
-  const side = (body as Record<string, unknown> | null)?.[direction] as Record<string, unknown> | undefined;
+}
+
+function limitsFrom(body: Record<string, unknown> | null, assetCode: string, direction: "deposit" | "withdraw"): TransferLimits {
+  const none: TransferLimits = { min: null, max: null, feePercent: null };
+  const side = body?.[direction] as Record<string, unknown> | undefined;
   const entry = side?.[assetCode] as { min_amount?: unknown; max_amount?: unknown; fee_percent?: unknown } | undefined;
   if (!entry) return none;
   const num = (v: unknown) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? String(v) : null);
   return { min: num(entry.min_amount), max: num(entry.max_amount), feePercent: num(entry.fee_percent) };
+}
+
+function featuresFrom(body: Record<string, unknown> | null): AnchorFeatures {
+  const f = body?.features as Record<string, unknown> | undefined;
+  // Only a real boolean counts. A string "false", or a key the anchor left out, is "did not say":
+  // reporting an absent claim as `false` would put words in the rail's mouth on screen.
+  const flag = (v: unknown) => (typeof v === "boolean" ? v : null);
+  return { accountCreation: flag(f?.account_creation), claimableBalances: flag(f?.claimable_balances) };
 }
 
 /**
@@ -639,6 +703,13 @@ export type AnchorDepositState =
       id: string;
       /** The Stellar payment that brought the dollars in. */
       stellarTransactionId: string | null;
+      /**
+       * Set only when the anchor could not pay the account directly and set the asset aside as a
+       * claimable balance instead (SEP-6 `claimable_balance_id`). When this is present the dollars
+       * are NOT spendable yet: they wait on the ledger until the account claims them. A receipt
+       * must say which of the two happened, because "arrived" means different things.
+       */
+      claimableBalanceId: string | null;
       amountIn: string | null;
       amountOut: string | null;
       amountFee: string | null;
@@ -655,6 +726,15 @@ export type AnchorDepositState =
  * and `type` the older one the sandbox anchor still lists as required in `/info`; both are sent
  * with the same value so either reading of the spec is satisfied. The account must already hold
  * the trustline: every account the sponsor creates does, so `pending_trust` should never appear.
+ *
+ * `claimable_balance_supported=true` is the safety net under that last sentence. SEP-6 (sep-0006.md
+ * line 508) has the client declare it can be paid with a `CreateClaimableBalance` when its account
+ * cannot hold the asset, and this rail publishes `features.claimable_balances: true`. Without the
+ * parameter an anchor's only other move is to park the transfer at `pending_trust`, which is
+ * terminal here and occupies a slot in the rail's shared settlement queue. It is sent as the exact
+ * string "true": the spec types this parameter as a string, and an anchor comparing it to "true"
+ * counts nothing else. The branch should never fire for an account this product opened; if it
+ * does, `readDeposit` reports the balance id rather than calling the dollars spendable.
  */
 export async function startDeposit(
   info: AnchorInfo,
@@ -669,6 +749,7 @@ export async function startDeposit(
   q.set("amount", params.amount);
   q.set("funding_method", method);
   q.set("type", method);
+  q.set("claimable_balance_supported", "true");
   if (params.lang) q.set("lang", params.lang);
 
   const res = (await getJson(`${info.transferServer}/deposit?${q.toString()}`, {
@@ -726,6 +807,9 @@ export async function readDeposit(info: AnchorInfo, token: string, id: string): 
         status: "settled",
         id,
         stellarTransactionId: str(t.stellar_transaction_id),
+        // Present only when the anchor took the claimable-balance route (SEP-6 sets the status to
+        // completed either way, so the id is the only thing that tells the two apart).
+        claimableBalanceId: str(t.claimable_balance_id),
         amountIn: str(t.amount_in),
         amountOut: str(t.amount_out),
         amountFee: str(t.amount_fee),
@@ -738,7 +822,9 @@ export async function readDeposit(info: AnchorInfo, token: string, id: string): 
       return { status: "failed", id, reason: "the anchor let this deposit expire before the bank transfer arrived" };
     case "too_small":
     case "too_large":
-      return { status: "failed", id, reason: `the anchor refused the amount (${status.replace("_", " ")})` };
+      // The anchor's own sentence first: its figures are the ones that decided this, and on this
+      // rail the published range is in dollars while the amount asked for was in lira.
+      return { status: "failed", id, reason: str(t.message) ?? `the anchor refused the amount (${status.replace("_", " ")})` };
     case "no_market":
       return { status: "failed", id, reason: "the anchor has no market for this conversion right now" };
     case "pending_trust":
@@ -747,12 +833,26 @@ export async function readDeposit(info: AnchorInfo, token: string, id: string): 
       return { status: "failed", id, reason: "this account cannot hold these dollars yet (no trustline)" };
     case "pending_customer_info_update":
       return { status: "failed", id, reason: "this rail wants identity information, which this product does not collect" };
+    case "pending_transaction_info_update":
+    case "pending_user":
+      // The other two states SEP-6 defines as blocked on the PERSON, and the two the default
+      // bucket used to swallow. Both wait for something this screen has no way to send (a PATCH
+      // of the transaction's fields, or an action on the rail's own side), so polling them reads
+      // as "the rail is working on it" while nothing is moving at all. Terminal, with whatever the
+      // anchor said about what it wants, so the person hears it from the rail rather than waiting
+      // out the clock. Nothing has been paid from the account on this path either way.
+      return {
+        status: "failed",
+        id,
+        reason: str(t.required_info_message) ?? str(t.message) ?? "this rail is waiting on something it has not asked for in a way this screen can answer",
+      };
     case "incomplete":
     case "pending_user_transfer_start":
       return { status: "waiting", stage: "awaiting-transfer", raw: status };
     default:
-      // pending_user_transfer_complete, pending_external, pending_anchor, pending_stellar and
-      // anything an anchor invents: the transfer is in, the dollars are not here yet.
+      // pending_user_transfer_complete, pending_external, pending_anchor, pending_stellar,
+      // on_hold (a review the rail clears by itself) and anything an anchor invents: the transfer
+      // is in, the dollars are not here yet.
       return { status: "waiting", stage: "processing", raw: status };
   }
 }

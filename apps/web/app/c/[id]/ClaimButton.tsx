@@ -259,7 +259,9 @@ export default function ClaimButton({
         )
       )}
       {state === "error" && (
-        <div className="flex flex-col items-center gap-1 text-center">
+        /* role="alert" so the one message a stuck recipient needs is read out, not just drawn.
+           Attribute only: the text, the classes and the retry button are untouched. */
+        <div className="flex flex-col items-center gap-1 text-center" role="alert">
           <p className="text-sm text-danger">{failureBody}</p>
           {/* Small, muted, and deliberately present: it is what turns "it didn't work" into a
               report we can act on. */}

@@ -23,7 +23,14 @@ import Link from "next/link";
 import {
   claimV2ToSponsoredAccount,
   isTerminalClaimOutcome,
+  loadPool,
+  readClaimLatch,
+  readClaimProgress,
+  splitGroupHint,
+  type PoolState,
+  type ResumeDecision,
   type V2ClaimOutcome,
+  type V2LinkKind,
 } from "../../../../lib/lumendrop";
 import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../../lib/claim-error";
@@ -42,9 +49,33 @@ type State = "idle" | "unlocking" | "claiming" | "done" | "settled" | "error";
 /** A settled drop is not a failed claim, so it gets its own words and no way to try again. */
 type SettledKind = Exclude<V2ClaimOutcome["kind"], "claimed">;
 
-function settledCopy(kind: SettledKind, sender: string): { title: string; body: string; home: boolean } {
+function settledCopy(
+  kind: SettledKind,
+  sender: string,
+  /** Which escrow answered. A pool and a one-to-one link settle for different reasons. */
+  link: V2LinkKind,
+): { title: string; body: string; home: boolean } {
   switch (kind) {
+    case "already-yours":
+      /* The ONE settled answer that may say where the money is. The escrow keyed a share to this
+         device's own payout address, and no other device has it, so this is not the convenient
+         guess, it is the contract's own record of an earlier attempt whose answer was lost. */
+      return {
+        title: "You already took your share",
+        body: "It's in your account on this phone.",
+        home: true,
+      };
     case "already-claimed":
+      if (link === "group") {
+        /* A pool, not a used link: nobody "used" it, the shares ran out. The one-to-one wording
+           below ("this link has already been used") would tell a whole queue of people that they
+           are looking at their own earlier claim. */
+        return {
+          title: "Every share has been taken",
+          body: `All the shares on this link are gone. Ask ${sender} to open another one.`,
+          home: false,
+        };
+      }
       /* Deliberately not "it's in your account". The escrow keeps ONE flag and both exits set it:
          a recipient's `claim` and the sender's post-expiry `reclaim` leave a drop in the identical
          state, and `get_drop` returns no payout address to separate them. The only thing that
@@ -57,6 +88,16 @@ function settledCopy(kind: SettledKind, sender: string): { title: string; body: 
         home: true,
       };
     case "expired":
+      if (link === "group") {
+        /* The closing time is the gate that keeps a take-back and a claim from both being paid out
+           of the same escrow balance, so it is refused from the second it passes, seats left or
+           not. The money is not lost: it is the sender's to take back, and only theirs. */
+        return {
+          title: "This link has closed",
+          body: `Shares stopped at the closing time, and whatever was left goes back to ${sender}. Ask them to open another one.`,
+          home: false,
+        };
+      }
       /* The group-drop answer: a share stops being claimable at expiry. A one-to-one drop has no
          such gate — it stays claimable until the sender takes it back — so it never lands here. */
       return {
@@ -89,10 +130,17 @@ export default function V2ClaimButton({
   linkHex,
   amount,
   sender,
+  slots,
 }: {
   linkHex: string;
   amount: string;
   sender: string;
+  /**
+   * What the LINK says it holds: a pot of this many shares, or null for a one-to-one link. A hint
+   * and nothing more, it decides which escrow view is asked first and what this screen renders
+   * while it waits. The escrow's own answer decides what gets signed.
+   */
+  slots: number | null;
 }) {
   const [state, setState] = useState<State>("idle");
   /* The account this claim creates, captured the instant the relayer reports it. A ref, not state:
@@ -100,8 +148,22 @@ export default function V2ClaimButton({
   const claimedAccount = useRef<string | null>(null);
   const [hash, setHash] = useState("");
   const [noKey, setNoKey] = useState(false);
-  /** The escrow's settled answer about this drop. Null until it gives one. */
-  const [settled, setSettled] = useState<SettledKind | null>(null);
+  /** The escrow's settled answer about this drop, and which escrow gave it. Null until one does. */
+  const [settled, setSettled] = useState<{ kind: SettledKind; link: V2LinkKind } | null>(null);
+  /**
+   * Whether this link is a POT, decided before anything is spent: the `g` hint from the query, the
+   * copy of it that rides in the fragment (chat apps trim queries and keep fragments), or this
+   * device's own latch from an earlier attempt, which recorded which escrow answered.
+   */
+  const isGroup = useRef(false);
+  /** The pool as the escrow has it right now. Null while unread, a count is never guessed. */
+  const [pool, setPool] = useState<PoolState | null>(null);
+  /**
+   * What this phone already asked for on this link, resolved against the ledger. Only ever set from
+   * `readClaimProgress`, which looks at the payout account and the escrow BEFORE it answers, so
+   * "you already took your share" can never be printed off a request whose reply was lost.
+   */
+  const [resume, setResume] = useState<ResumeDecision | null>(null);
   /** Why the last attempt failed, when it failed for a reason that isn't the drop itself. */
   const [failure, setFailure] = useState<ClaimErrorInfo | null>(null);
   /** This deployment cannot serve the network this link names — no tap will change that. */
@@ -128,8 +190,9 @@ export default function V2ClaimButton({
   const inFlight = useRef(false);
 
   useEffect(() => {
+    let resolved: NetworkConfig | null = null;
     try {
-      const resolved = resolveNetwork(new URLSearchParams(window.location.search).get("n"));
+      resolved = resolveNetwork(new URLSearchParams(window.location.search).get("n"));
       setNet(resolved);
       beacon.current.net = resolved;
     } catch {
@@ -138,8 +201,16 @@ export default function V2ClaimButton({
     beacon.current.seeded = isSeededLink(window.location.search);
     beacon.current.openedAt = Date.now();
     const frag = window.location.hash.slice(1);
+    /* The `g` copy in the fragment comes off BEFORE the key parser sees it. That parser treats the
+       whole fragment as the key, so an unsplit `S...&g=6` is simply a bad secret and every group link
+       whose query a chat app trimmed would fail to open at all. */
+    const carried = splitGroupHint(frag);
+    const hinted = carried.slots ?? slots;
+    /* A latch written by an earlier attempt records which escrow answered, so a link that arrived
+       with no hint at all is still known to be a pool on the phone that already asked about it. */
+    isGroup.current = hinted !== null || readClaimLatch(linkHex)?.link === "group";
     if (frag) {
-      const parsed = parseLinkFragment(frag);
+      const parsed = parseLinkFragment(carried.fragment);
       if (parsed?.kind === "password") {
         seedRef.current = parsed.seed;
         setLocked(true);
@@ -159,11 +230,34 @@ export default function V2ClaimButton({
     } else if (!secretRef.current && !seedRef.current) {
       setNoKey(true);
     }
+    /* THE TWO READS A POT NEEDS, and only a pot: how many shares are left, and what this phone
+       already asked for. Both are read-only simulations against the escrow and Horizon, nothing
+       is created, no sponsor request is made, and neither runs on a one-to-one link, which keeps
+       the live money loop's claim screen exactly as it was. */
+    if (isGroup.current && resolved) {
+      void refreshPool(resolved);
+      void readClaimProgress(linkHex, { net: resolved, group: true })
+        .then(({ decision }) => setResume(decision))
+        .catch(() => {
+          /* We could not look. Saying nothing is the honest outcome: the claim itself presents the
+             same payout this device already asked for, so opening it again cannot pay twice. */
+        });
+    }
     // Deliberately mount-only: it reads the URL fragment, which is stripped on the first pass, so a
     // re-run would find nothing and fire nothing. `linkHex` comes from the route and cannot change
     // without a remount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** The live share count, straight from the escrow. A read we could not finish shows no count. */
+  async function refreshPool(on: NetworkConfig) {
+    try {
+      const p = await loadPool(linkHex, { net: on });
+      if (p) setPool(p);
+    } catch {
+      /* the escrow is the authority on this number, and a stale one is worse than none */
+    }
+  }
 
   async function claimWith(secret: string) {
     setState("claiming");
@@ -174,6 +268,10 @@ export default function V2ClaimButton({
         linkSecret: secret,
         sponsorUrl: net.isMainnet ? net.sponsorUrl : SPONSOR_URL,
         net,
+        /* A probe hint, not an instruction: it says which escrow view to ask FIRST. What the escrow
+           answers is what decides the tag this claim signs, a wrong guess here would sign bytes a
+           pool rejects, after a sponsored account had already been paid for. */
+        group: isGroup.current,
         /* Save the key the MOMENT the account exists, before the money is sent to it. If the claim
            then fails or the connection drops, the worst case is an empty account on this phone —
            not money sitting somewhere whose only key we threw away. */
@@ -203,7 +301,7 @@ export default function V2ClaimButton({
            minted for it. No `claim_failed` beacon: this is a settled drop, not a claim that failed,
            and counting a second look at money already taken as a failure would understate the very
            funnel this route was instrumented to measure. */
-        setSettled(outcome.kind);
+        setSettled({ kind: outcome.kind, link: outcome.link });
         setState("settled");
         return;
       }
@@ -222,12 +320,17 @@ export default function V2ClaimButton({
          people claimed" was being answered from the v1 route almost nobody arrives on any more.
          The account goes with it: it is the id that joins a claim to whatever that person does
          next, and this is the moment it comes into existence. */
-      void sendEvent("claim_succeeded", linkHex, claimedAccount.current ?? undefined, {
+      /* `outcome.publicKey` first, because a RESUMED claim reuses the payout this device already
+         made and therefore never calls `onAccountReady`, reading the ref alone would drop the
+         account id off exactly the claims a lost response produced. */
+      void sendEvent("claim_succeeded", linkHex, outcome.publicKey || claimedAccount.current || undefined, {
         net,
         seeded: beacon.current.seeded,
         // Open-to-balance on THIS device, in whole seconds; the sponsor keeps only a bucket count.
         durationS: beacon.current.openedAt ? Math.round((Date.now() - beacon.current.openedAt) / 1000) : undefined,
       });
+      // The shares the others still have, re-read from the escrow rather than counted down here.
+      if (isGroup.current) void refreshPool(net);
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
     } catch (e) {
       const info = classifyClaimError(e);
@@ -238,7 +341,7 @@ export default function V2ClaimButton({
         /* The escrow answered "claimable" and the relayer then found it gone — another device won
            the race between the two. Same settled answer, so it gets the settled screen rather than
            a failure the recipient is invited to retry. */
-        setSettled("already-claimed");
+        setSettled({ kind: "already-claimed", link: isGroup.current ? "group" : "single" });
         setState("settled");
         return;
       }
@@ -302,6 +405,21 @@ export default function V2ClaimButton({
     }
   }
 
+  /**
+   * How many shares the escrow says are left, or nothing at all.
+   *
+   * Only rendered from a live read, and only while the pool is open: "0 shares left" over a link
+   * the sender took the leftover back from would be the ledger's numbers telling a story that never
+   * happened (`reclaim_pool` marks every slot claimed as it closes). Between two reads it can be
+   * one behind, which is why the escrow is asked again before anything is spent.
+   */
+  const sharesLeft =
+    pool && pool.status === "open" ? (
+      <p className="text-sm font-medium text-ink">
+        {pool.sharesLeft} {pool.sharesLeft === 1 ? "share" : "shares"} left
+      </p>
+    ) : null;
+
   if (state === "unlocking") {
     return <p className="py-4 text-money">Checking…</p>;
   }
@@ -330,6 +448,8 @@ export default function V2ClaimButton({
         >
           See the public record ↗
         </a>
+        {/* What is left for the people still in the queue, read from the escrow after the claim. */}
+        {sharesLeft}
         <Link
           href="/home"
           prefetch={false}
@@ -342,7 +462,7 @@ export default function V2ClaimButton({
   }
 
   if (state === "settled" && settled) {
-    const said = settledCopy(settled, sender);
+    const said = settledCopy(settled.kind, sender, settled.link);
     return (
       <div className="flex w-full flex-col items-center gap-4">
         <div className="flex flex-col items-center gap-1 text-center">
@@ -363,10 +483,80 @@ export default function V2ClaimButton({
     );
   }
 
+  /* WHAT THIS PHONE ALREADY ASKED FOR, and only what somebody went and looked at.
+   *
+   * The latch that produced this was written BEFORE the relay call, because the response is the
+   * thing that gets lost, but it asserts nothing about where the money is. `readClaimProgress`
+   * turns it into an answer by reading the payout account's balance on the LINK's network and then
+   * the escrow, so "it's in your account on this phone" is a balance somebody read. A read that did
+   * not finish answers "unsure", which offers the claim and promises nothing. */
+  if (state === "idle" && resume?.say === "taken") {
+    return (
+      <div className="flex w-full flex-col items-center gap-4">
+        <div className="flex flex-col items-center gap-1 text-center">
+          <p className="text-lg font-semibold text-money">You already took your share</p>
+          <p className="text-ink-soft">
+            {formatUsd(resume.usd)} is in the account this phone made for it.
+          </p>
+        </div>
+        <Link
+          href="/home"
+          prefetch={false}
+          className="flex h-12 w-full items-center justify-center rounded-full bg-money text-sm font-semibold text-primary-foreground"
+        >
+          See my money
+        </Link>
+      </div>
+    );
+  }
+
+  if (state === "idle" && resume?.say === "missed") {
+    return (
+      <div className="flex w-full flex-col items-center gap-3 text-center">
+        <p className="text-lg font-semibold text-money">Your share didn&apos;t land</p>
+        <p className="text-ink-soft">
+          Nothing arrived in the account this phone made, and the link can&apos;t pay out any more.
+          Ask {sender} for another one.
+        </p>
+      </div>
+    );
+  }
+
   /* A failure that cannot succeed on retry gets no button. Offering one is an invitation to fail
      again, and here it is worse than cosmetic: each tap that reaches the relayer mints another
      sponsored account and trustline at the sponsor's expense. */
   const canRetry = state !== "error" || failure?.retryable !== false;
+
+  /**
+   * What the one button says.
+   *
+   * A pot names the share ("Take my share") rather than the figure: the amount on screen is one
+   * share, and "Take $15.00" next to a $90 pot invites the reading that the pot is what moves. The
+   * one-to-one label is untouched, it is the live money loop's, and the claim end-to-end test
+   * matches on it.
+   */
+  const claimLabel =
+    state === "error"
+      ? copy.claim.retry
+      : resume?.say === "resume"
+        ? "Finish taking my share"
+        : slots !== null || isGroup.current
+          ? "Take my share"
+          : amount
+            ? `Take ${formatUsd(amount)}`
+            : "Claim my money";
+
+  /** A resume is one tap that presents the SAME payout, so it cannot pay this person twice. */
+  const resumeNote =
+    // Without a key there is no button under it, and a sentence about tapping again would be about
+    // an action this screen is not offering.
+    state !== "idle" || noKey || unreachableNetwork
+      ? null
+      : resume?.say === "resume"
+        ? "You opened this before and we never saw the answer. Taking it again asks for the same account, so it can't pay you twice."
+        : resume?.say === "unsure"
+          ? "We couldn't check what happened here just now. Taking it again asks for the same account, so it can't pay you twice."
+          : null;
 
   const failureBody = (() => {
     switch (failure?.kind) {
@@ -378,6 +568,24 @@ export default function V2ClaimButton({
         return copy.claim.errOfflineBody;
       case "link-invalid":
         return copy.claim.errLinkBody;
+      /* THE POOL'S OWN REFUSALS (the relayer's tokens, classified in lib/claim-error.ts). Every one
+         of them is the escrow's settled answer about this claim, so none offers a retry, and on a
+         pool a retry is not a wasted tap, it is another sponsored account bought to be told the
+         same thing. The words differ because the next step does. */
+      case "pool-empty":
+        return `Someone took the last share while you were opening this one. Ask ${sender} for another link.`;
+      case "already-yours":
+        return "Your share is already in the account this phone made for it. Open your money to see it.";
+      case "expired":
+        return `This link closed, so it can't pay out any more. Whatever was left goes back to ${sender}.`;
+      case "link-mismatch":
+        return `This link doesn't match the money it points at. Ask ${sender} for a new one.`;
+      case "group-failed":
+        return `The link refused this claim, and asking again can't change that. Ask ${sender} for a new one.`;
+      case "uncertain":
+        // The relayer stopped watching; the claim may still be landing. Reopening the link reads the
+        // account and the escrow before it says anything, which is the only honest next step.
+        return "The network hasn't confirmed this yet. Open the link again in a moment and this screen will check before it says anything.";
       case "refused":
         // We stopped before putting a signature on anything, so "try again" would be false advice:
         // the same answer refuses the same way. Nothing about the money changed.
@@ -391,6 +599,10 @@ export default function V2ClaimButton({
 
   return (
     <div className="flex w-full flex-col items-center gap-3">
+      {/* The live count sits above the action, where the decision is made. Absent until a real read
+          lands, and absent again once the pool is no longer open. */}
+      {sharesLeft}
+      {resumeNote && <p className="text-sm text-ink-soft">{resumeNote}</p>}
       {unreachableNetwork ? (
         <p className="text-sm text-ink-soft">
           This link is for a network this site cannot reach right now.
@@ -399,14 +611,23 @@ export default function V2ClaimButton({
         <p className="text-sm text-ink-soft">Open your original link to claim this money.</p>
       ) : !canRetry ? null : locked ? (
         <>
-          <p className="text-sm text-ink-soft">
-            {/* Explicit {" "}: the text block below contains an entity (&apos;), which splits it
-                into fragments and drops the leading space — this shipped as "Mericput a password"
-                and was caught by watching the demo film rather than by reading the code. */}
-            {sender}
-            {" "}put a password on this one. Ask them for it if you don&apos;t have it. They sent it
-            separately, not in this link.
-          </p>
+          {slots !== null || isGroup.current ? (
+            /* A pot's secret is one word the whole group was told out loud, not a password for one
+               person. Built as a single string so the spacing cannot break the way the one below
+               once did. */
+            <p className="text-sm text-ink-soft">
+              {`${sender} put a word on this one. Ask anyone in the group if you don't have it - it was said separately, not in this link.`}
+            </p>
+          ) : (
+            <p className="text-sm text-ink-soft">
+              {/* Explicit {" "}: the text block below contains an entity (&apos;), which splits it
+                  into fragments and drops the leading space, this shipped as "Mericput a password"
+                  and was caught by watching the demo film rather than by reading the code. */}
+              {sender}
+              {" "}put a password on this one. Ask them for it if you don&apos;t have it. They sent it
+              separately, not in this link.
+            </p>
+          )}
           <input
             type="password"
             value={password}
@@ -438,7 +659,8 @@ export default function V2ClaimButton({
             data-link={linkHex}
             className="h-14 w-full rounded-full bg-money px-8 text-base font-semibold text-primary-foreground transition-colors hover:bg-money/90 active:bg-money-pressed disabled:opacity-50"
           >
-            Claim my money
+            {/* The locked one-to-one label is left exactly as it was; only a pot renames it. */}
+            {slots !== null || isGroup.current ? "Take my share" : "Claim my money"}
           </button>
         </>
       ) : (
@@ -447,7 +669,7 @@ export default function V2ClaimButton({
           data-link={linkHex}
           className="h-14 w-full rounded-full bg-money px-8 text-base font-semibold text-primary-foreground transition-colors hover:bg-money/90 active:bg-money-pressed"
         >
-          {state === "error" ? copy.claim.retry : amount ? `Take ${formatUsd(amount)}` : "Claim my money"}
+          {claimLabel}
         </button>
       )}
       {state === "error" && failure && (

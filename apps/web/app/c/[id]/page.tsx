@@ -1,10 +1,14 @@
 /**
  * Claim page — THE HERO, value-first (UX/product review + WhatsApp-webview research).
  *
- * The money is shown IMMEDIATELY — "Alvin sent you money · $20.00" — with NO
- * credential, wallet, or crypto term in sight (vocabulary law §8). The public claim
- * metadata (amount, sender, balanceId) rides in the URL query so the server renders
- * it value-first; the bearer key rides in the #fragment and is read only client-side
+ * The money is shown IMMEDIATELY — "Alvin sent you money · $20.00" — with no credential to make
+ * and nothing to install (vocabulary law §8; the only two nouns the page names, it names to say
+ * the person needs neither). It also carries the same network badge and the same two event lines
+ * as the v2 claim page, because a queue at a hackathon table meets whichever of the two it is
+ * handed and must not be told two different stories.
+ *
+ * The public claim metadata (amount, sender, balanceId) rides in the URL query so the server
+ * renders it value-first; the bearer key rides in the #fragment and is read only client-side
  * (ClaimButton). Periwinkle (via the `.claim-pw` scope in globals.css), light-only, CSS-only — still
  * no Motion or webfont on this route; only the colours match the rest of the site, the mechanics are
  * byte-identical (re-proven by the live-claim regression after every deploy).
@@ -73,6 +77,13 @@ export default async function ClaimPage({
   return (
     <main className="claim-pw flex min-h-dvh flex-col items-center justify-center bg-paper px-6 py-10 text-ink">
       <div className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
+        {/* Which money this is, before anything else: real dollars and practice dollars must
+            never look alike on the one screen a stranger ever sees. The v2 claim page reads the
+            network off the link; this route cannot, and does not need to: ClaimButton pins it to
+            the test network and its receipt links to the test record, so the label is fixed. */}
+        <span className="rounded-full border border-line px-3 py-0.5 text-xs font-semibold text-ink-soft">
+          Practice money
+        </span>
         <PersonChip name={claim.senderName} size="lg" nameless joyRing />
         <p className="text-xl text-ink-soft">{copy.claim.youReceived(claim.senderName)}</p>
 
@@ -83,12 +94,16 @@ export default async function ClaimPage({
         <p className="text-sm text-ink-soft">
           ≈ {usdToTryIndicative(claim.usd, rate)} <span className="opacity-70">indicative</span>
         </p>
+        {/* The v2 claim page's line, word for word. It replaces "No app, no sign-up - just tap.",
+            which said the same thing minus the part that matters most to the person reading it:
+            the network cost is the sponsor's, not theirs. */}
+        <p className="mt-1 text-sm font-medium text-ink">No app. No wallet. You pay nothing.</p>
 
         <div className="mt-4 w-full">
           <ClaimButton claimId={id} balanceId={claim.balanceId} sender={claim.senderName} />
         </div>
 
-        <p className="mt-1 text-sm text-ink-soft">{copy.claim.safetyLine}</p>
+        <p className="mt-1 text-xs text-ink-soft">Test network. This money isn&apos;t real.</p>
       </div>
     </main>
   );

@@ -45,6 +45,18 @@ LUMENDROP_LEGACY_CONTRACTS = "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCH
 # (see ops/RUNBOOK_MAINNET_DEMO.md for the pilot sequence and caps).
 MAX_DROP_USDC = "100"
 MAX_DAY_USDC = "1000"
+# How many shares one GROUP link may hold (lib/soroban-relay.ts). The caps above bind the pot; this
+# binds how many ways it is cut, which is what the sponsor actually pays for: every share claimed
+# opens a fresh account at ~1.5 XLM of reserve. Deliberately absent from [env.mainnet.vars] below,
+# because group links are refused there outright on config.network, not on a variable.
+MAX_POOL_SLOTS = "30"
+# Onboarding reserve budget (lib/caps.ts), set explicitly for the event instead of left on the
+# 500/day fallback: a group claim is one sponsored account per person, so a full room moves the day
+# total. The share stays a fifth of the day rather than being raised toward it - the venue is one
+# NAT address, and a per-source bound close to the global one would let a single caller behind it
+# spend most of the room's day and lock everyone else out until UTC midnight.
+MAX_DAY_ACCOUNTS = "600"
+MAX_DAY_ACCOUNTS_PER_SOURCE = "120"
 # Watchdog: alert when the sponsor's float drops under this many XLM (see lib/watchdog.ts).
 SPONSOR_MIN_XLM = "50"
 # Watchdog: page when fewer than this many recipients can still be onboarded (1.5 XLM each: two
@@ -128,6 +140,12 @@ EVENTS_EXCLUDE_AIDS = "b8336d21766a3493"
 MAX_DROP_USDC = "5"
 MAX_DAY_USDC = "400"
 CAPS_FAIL_CLOSED = "1"
+# Group links are OPEN on mainnet (owner decision, 2026-09-20) and this is the bound that makes it
+# safe: the $5 per-transfer cap above already binds the whole POT, and this binds how many ways it
+# is cut, which is what the sponsor actually pays for at ~1.5 XLM of reserve per share claimed. Six
+# seats is about 9 XLM, a tenth of the float. The code refuses to read anything above 8 here, and
+# treats this variable's ABSENCE as 6 rather than as the testnet default.
+MAX_POOL_SLOTS = "6"
 # Onboarding reserve budget (lib/caps.ts). /create-account moves no dollars, so the caps above
 # cannot see it, yet every account it hands out permanently locks ~1 XLM of sponsor reserve. The
 # route is open by design — a recipient is not a pilot wallet — so these two are its only ceilings,

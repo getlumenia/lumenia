@@ -44,7 +44,13 @@ type Eip1193 = { request(args: { method: string; params?: unknown[] }): Promise<
 
 type Stage = "idle" | "approving" | "burning" | "attesting" | "stalled" | "done";
 
-const RELAY_POLL_MS = 4_000;
+/* Circle's attestation takes tens of seconds, so asking every 4 s only spent the sponsor's per-IP
+   allowance faster than the answer could change. At 8 s a whole 15-minute wait costs about 112
+   asks, which leaves room for the rest of the room on the same venue Wi-Fi. */
+const RELAY_POLL_MS = 8_000;
+/** How long to stand down when the sponsor rate-limits us. Its window is a minute; waiting out half
+ *  of it gets back in without abandoning a burn that has already happened on Base. */
+const RELAY_THROTTLE_MS = 30_000;
 const RELAY_WAIT_MS = 15 * 60_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -113,16 +119,32 @@ export default function BringFromBasePage() {
     setDetail("Circle is attesting the transfer…");
     const started = Date.now();
     const deadline = started + RELAY_WAIT_MS;
+    /* askRelay turns every refusal into a message and loses the status, but the sponsor's 429 is
+       not a refusal of the mint: the burn is done on Base and Circle will still attest. Read the
+       status off the response through askRelay's own fetch seam, so a rate limit is waited out
+       rather than shown to the person as a stall over money that is already in flight. */
+    let lastStatus = 0;
+    const observed: typeof fetch = async (input, init) => {
+      const res = await fetch(input, init);
+      lastStatus = res.status;
+      return res;
+    };
     try {
       for (;;) {
         if (Date.now() > deadline) throw new Error("Circle has not attested yet. The USDC is safe; try the relay again in a minute.");
         let r;
+        lastStatus = 0;
         try {
-          r = await askRelay(net.sponsorUrl, burn);
+          r = await askRelay(net.sponsorUrl, burn, observed);
         } catch (e) {
           // A dropped request is not a refusal: ask again. A refusal from the relay is final.
           if (e instanceof TypeError) {
             await sleep(RELAY_POLL_MS);
+            continue;
+          }
+          if (lastStatus === 429) {
+            setDetail("The relay is busy right now. Waiting, then asking again…");
+            await sleep(RELAY_THROTTLE_MS);
             continue;
           }
           throw e;
@@ -156,9 +178,11 @@ export default function BringFromBasePage() {
     }
     try {
       // The mint goes to this account on its Circle USDC trustline. Every account the sponsor opens
-      // has it; an older practice account gets it here first, on the sponsor's reserve.
+      // has it; an older practice account gets it here first, on the sponsor's reserve. loadBalance
+      // answers null for an address Horizon 404s, which is an account that does not exist at all
+      // and so cannot hold the mint either; that case needs the repair most, not least.
       const bal = await loadBalance(account!.address);
-      if (bal && !bal.issuer) {
+      if (!bal || !bal.issuer) {
         let signer;
         try {
           signer = await getSigner();

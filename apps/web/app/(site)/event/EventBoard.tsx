@@ -10,6 +10,8 @@
  *     beacons on 19 Sept 2026 (the claim beacon used to route by the device's network flag, which a
  *     first-time recipient does not have), so the mainnet numbers are "since 19 Sept" by
  *     construction. Counts only: the counters never see an amount; every transfer is on the ledger.
+ *     The board says that out loud under the real-money tiles, with the pre-measurement pilot's own
+ *     figure AND its dollar value, so a zero there reads as a scope rather than as an absence.
  *  2. LIRA RAIL: the last deposit and cash-out completed ON THIS DEVICE (lib/rail-record.ts). The
  *     anchor lists a person's transfers only to that person's own session and we keep no server
  *     record of anyone's bank activity, so another device honestly shows "no run here yet".
@@ -17,7 +19,10 @@
  *     Stellar testnet through the CctpForwarder) plus the live `cctp_funded` count; Stellar Wallets
  *     Kit only when its flag is on in this build.
  *  4. SCAN: a fresh practice link minted by the testnet sponsor's demo pool (`POST /demo-link`,
- *     testnet-only in the Worker), marked seeded=1 so it is counted as team-funded.
+ *     testnet-only in the Worker), marked seeded=1 so it is counted as team-funded. The same link
+ *     is printed under the code as text, because a judge reading this on a laptop cannot scan their
+ *     own screen; its middle is hidden, because the link is a bearer key and a board on a projector
+ *     is a photograph waiting to happen.
  *
  * Polls every 30 s: the testnet Worker's summary shares the per-IP bucket (30/min) with claims from
  * the same venue network, so the board must never be the reason a guest's claim is rate limited.
@@ -75,6 +80,18 @@ function under30(d: Record<string, number>): string | null {
   if (total === 0) return null;
   const fast = (d["0-15"] ?? 0) + (d["15-30"] ?? 0);
   return `${Math.round((fast / total) * 100)}% of ${total}`;
+}
+
+/**
+ * The claim link, printed for anyone who cannot scan it. Everything from the `?` onward is
+ * replaced by an ellipsis: that is where the balance id sits, and the bearer key sits after it in
+ * the fragment, and this board goes on a projector in front of a room holding phones. What is left
+ * is enough to recognise the link; the href stays whole, so opening it still claims.
+ */
+function shortLink(url: string): string {
+  if (url.length <= 54) return url;
+  const query = url.indexOf("?");
+  return `${query > 0 ? url.slice(0, query) : url.slice(0, 38)}...${url.slice(-8)}`;
 }
 
 function PeopleTiles({ load, real }: { load: Load; real: boolean }) {
@@ -202,7 +219,7 @@ export function EventBoard() {
   const wdCount = practice.state === "ok" ? (practice.data.totals.cashout_bank_sent ?? 0) : null;
 
   return (
-    <section className="stat-body">
+    <section className="stat-body" aria-label="Live event board: people, the lira rail and the partner runs">
       <div className="stat-inner">
         <div className="ev-head">
           <h2 className="stat-section-h">People, real money</h2>
@@ -213,6 +230,18 @@ export function EventBoard() {
           Counts only: our counters never see amounts, and every transfer is on the public record.
         </p>
         <PeopleTiles load={real} real />
+        {/* These tiles can legitimately read zero, and a bare zero on a judge's screen reads as
+            "nothing ever happened here". It is a scope, so the scope is stated, together with the
+            figure the pilot did move AND what that figure is worth, which is the only honest way to
+            quote a transfer count this small. The per-day cap is deliberately NOT quoted here: it
+            is raised for the event and reverted the same night, and a board cannot follow that. */}
+        <p className="stat-note">
+          <strong>A zero here is a scope, not an absence.</strong> These counters started on 19 Sept
+          2026, so a zero means nobody has claimed a real-money link since then. The hand-approved
+          pilot that ran before them moved 109 transfers, about $4.4 in total, median $0.002 and
+          largest $1.00, re-counted from the public record on 6 Sept 2026. No single transfer may
+          exceed $5: the numbers are meant to be checkable, not impressive.
+        </p>
 
         <div className="ev-head">
           <h2 className="stat-section-h">People, practice money</h2>
@@ -269,14 +298,33 @@ export function EventBoard() {
               open it gets the money. Test network.
             </span>
             {link ? (
-              <div className="ev-qr">
-                <QRCode value={link} size={200} bgColor="#FFFFFF" fgColor="#000000" level="M" />
-              </div>
+              <>
+                <div
+                  className="ev-qr"
+                  role="img"
+                  aria-label="QR code holding a practice-dollar claim link. The same link is written out just below as a link you can open directly."
+                >
+                  <QRCode value={link} size={200} bgColor="#FFFFFF" fgColor="#000000" level="M" />
+                </div>
+                <a className="ev-hash" href={link} target="_blank" rel="noreferrer">
+                  {shortLink(link)}
+                </a>
+                <span className="ev-muted">
+                  Open it on this machine, or scan it with a phone. The middle is hidden on purpose:
+                  this link is the money, so whoever holds it whole can claim it.
+                </span>
+              </>
             ) : null}
             <button className="ev-btn" onClick={() => void mint()} disabled={minting}>
               {minting ? "Making a link…" : link ? "Make another link" : "Make a link"}
             </button>
-            {mintError && <span className="ev-muted">{mintError}</span>}
+            {/* A mint failure used to render in the same 12.5px muted grey as the explanation
+                beside it, on the one card a guest is standing in front of. */}
+            {mintError && (
+              <span className="ev-error" role="alert">
+                {mintError}
+              </span>
+            )}
             {walletsKitEnabled() && (
               <span className="ev-muted">Also live: fund a link from Freighter, LOBSTR or xBull (Stellar Wallets Kit).</span>
             )}

@@ -107,6 +107,44 @@ export async function loadBalance(address: string): Promise<Balance | null> {
 }
 
 /**
+ * The account's XLM and the reserve facts that say how much of it is actually spendable.
+ *
+ * A SIBLING of loadBalance, never a change to it: that reader's issuer-pinned USDC-only filter is
+ * the product's single-number invariant (one balance, the dollars this build can move), and the
+ * 2026-09-06 repoint incident its comment records is what happens when it widens. XLM is not that
+ * number and never appears as it. It is read here only so lib/swap.ts can answer one question --
+ * is there XLM sitting in this account that cannot reach any rail as it is?
+ *
+ * The three reserve fields come straight from Horizon's account record; the arithmetic that turns
+ * them into a spendable figure lives in lib/swap.ts::spendableXlm, because it is a product rule
+ * (how much headroom to keep) rather than a ledger fact.
+ */
+export interface XlmBalance {
+  /** Native balance, decimal string, exactly as Horizon renders it. */
+  xlm: string;
+  subentryCount: number;
+  numSponsoring: number;
+  numSponsored: number;
+}
+
+/** The account's XLM, or null if the account isn't on the ledger yet. */
+export async function loadXlmBalance(address: string): Promise<XlmBalance | null> {
+  try {
+    const acc = await server().loadAccount(address);
+    const native = acc.balances.find((b) => b.asset_type === "native");
+    return {
+      xlm: native?.balance ?? "0",
+      subentryCount: acc.subentry_count,
+      numSponsoring: acc.num_sponsoring,
+      numSponsored: acc.num_sponsored,
+    };
+  } catch (e) {
+    if ((e as { response?: { status?: number } })?.response?.status === 404) return null;
+    throw e;
+  }
+}
+
+/**
  * Money waiting to be collected: open Claimable Balances where THIS account is an
  * UNCONDITIONAL claimant (a paid request, or any transfer straight to the address).
  * The account's own outgoing sends never match — there it is the reclaim claimant,

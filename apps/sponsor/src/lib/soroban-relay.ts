@@ -10,7 +10,7 @@
  * can never lose value — it holds no USDC in this path.
  */
 import { rpc, Address, Contract, TransactionBuilder, scValToNative, xdr, type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
-import { capsFromEnv, checkCaps, PublicRefusal } from "./caps.js";
+import { capsFromEnv, checkCaps, PublicRefusal, stroopsToUsdc } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { CHANNEL_LEASE_TTL_SECONDS, type ChannelManager } from "./channels.js";
@@ -30,6 +30,54 @@ const ALLOWED_METHODS = new Set<string>(["claim", "claim_share"]);
 export const ALLOWED_DEPOSIT_METHODS = new Set<string>(["deposit", "create_drop"]);
 /** Argument count per method: deposit(from,link,amount,expiry) / create_drop(+slots). */
 const DEPOSIT_ARITY: Record<string, number> = { deposit: 4, create_drop: 5 };
+
+/**
+ * How many shares one group link may hold. Nothing else bounds this: the contract asks only that
+ * `amount >= slots`, and the canary caps bind the POT, not the number of ways it is cut. Slots is
+ * the multiplier on sponsored onboarding (every share claimed opens a fresh account at ~1.5 XLM of
+ * sponsor reserve that nobody ever gives back), so it is the sponsor's own spend and the sponsor is
+ * the one who has to bound it. Two is the smallest thing that is a group at all.
+ *
+ * MAINNET (owner decision, 2026-09-20): group links are open there, and the bound is what makes
+ * that safe rather than a blanket refusal. Three things hold it: the $5 per-transfer cap binds the
+ * whole POT, the per-share floor keeps a cent from buying thirty accounts, and this ceiling bounds
+ * the reserve a single link can mortgage. At six seats a mainnet pool costs about 9 XLM of
+ * sponsored reserve against a float that onboards roughly 88 people, so one pool is a tenth of the
+ * day rather than half of it.
+ *
+ * The mainnet numbers do NOT come from configuration alone. `[env.mainnet.vars]` redeclares the
+ * variable block rather than inheriting it, so a variable left out there is simply undefined, and
+ * the old code read that as "use the testnet default", which is the opposite of safe. So on mainnet
+ * an absent variable gives the tight default and no variable can raise the ceiling: configuration
+ * may only ever make it smaller.
+ */
+const MIN_POOL_SLOTS = 2;
+const DEFAULT_MAX_POOL_SLOTS = 30;
+const MAINNET_DEFAULT_POOL_SLOTS = 6;
+const MAINNET_POOL_SLOTS_CEILING = 8;
+
+/** Read at call time, not at module load: the Worker hydrates process.env per request. */
+function maxPoolSlots(network: SponsorConfig["network"]): number {
+  const raw = process.env.MAX_POOL_SLOTS;
+  const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  const configured = Number.isInteger(n) && n >= MIN_POOL_SLOTS ? n : null;
+  if (network === "mainnet") {
+    return Math.min(configured ?? MAINNET_DEFAULT_POOL_SLOTS, MAINNET_POOL_SLOTS_CEILING);
+  }
+  return configured ?? DEFAULT_MAX_POOL_SLOTS;
+}
+
+/**
+ * The LumenDrop error discriminants a GROUP claim can revert with, as stable tokens the claim
+ * screen can classify (contracts/lumen-drop/src/lib.rs: DropEmpty 7, AlreadyClaimedThis 8,
+ * Expired 9). Every one of them is terminal: the same link and the same payout address will get
+ * the same answer for ever, and each retry the browser offers opens ANOTHER sponsored account.
+ */
+const GROUP_CLAIM_ERROR_TOKENS: Record<number, string> = {
+  7: "drop-empty",
+  8: "already-claimed-this",
+  9: "expired",
+};
 
 /** The two reclaim methods a sender may relay to recover their OWN unclaimed drop after expiry. */
 const ALLOWED_RECLAIM_METHODS = new Set<string>(["reclaim", "reclaim_pool"]);
@@ -99,6 +147,51 @@ export interface RelayClaimResult {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** First ScError anywhere in an ScVal (a host error event nests its own inside a vec). */
+function findScError(v: xdr.ScVal): xdr.ScError | null {
+  if (v.switch().name === "scvError") return v.error();
+  if (v.switch().name === "scvVec") {
+    for (const item of v.vec() ?? []) {
+      const found = findScError(item);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * Name WHY a relayed group claim reverted, from the diagnostic events the RPC returns with a
+ * FAILED transaction.
+ *
+ * Until now every revert reached the browser as the literal string "v2-claim tx FAILED", which the
+ * claim screen could only file under "unknown" and therefore offered a RETRY button for. On stage
+ * that is a loop: the retry mints a fresh payout address, opens another sponsored account against
+ * it, and asks the contract a question whose answer cannot change. So the reason has to survive the
+ * trip as something the client can key on.
+ *
+ * The contract code is not in the transaction result (a reverting invoke records only
+ * INVOKE_HOST_FUNCTION_TRAPPED there), it is in the diagnostic events, where the host writes the
+ * failing ScVal into the event's topics and data. A bad link signature is the one case with no
+ * contract code at all: `ed25519_verify` traps in the host, so it surfaces as a CRYPTO ScError.
+ * Anything we cannot name returns "unknown", which the claim screen treats as terminal too.
+ */
+export function groupClaimFailureToken(events: readonly xdr.DiagnosticEvent[] | undefined): string {
+  for (const ev of events ?? []) {
+    const body = ev.event().body();
+    if (body.switch() !== 0) continue; // only the v0 arm carries topics + data
+    const v0 = body.v0();
+    for (const sc of [...v0.topics(), v0.data()]) {
+      const err = findScError(sc);
+      if (!err) continue;
+      if (err.switch().name === "sceCrypto") return "bad-link-key";
+      if (err.switch().name !== "sceContract") continue;
+      const token = GROUP_CLAIM_ERROR_TOKENS[err.contractCode()];
+      if (token) return token;
+    }
+  }
+  return "unknown";
+}
 
 export async function relayClaimHandler(
   config: SponsorConfig,
@@ -180,6 +273,12 @@ export async function relayClaimHandler(
       await sleep(V2_CLAIM_POLL_MS);
       got = await server.getTransaction(sent.hash);
     }
+    /* A group claim the ledger definitively REFUSED comes back as a named reason, not as a status
+     * string. NOT_FOUND is deliberately left alone below: that transaction may still land, and
+     * calling it a failure is the one thing this relay must never guess. */
+    if (got.status === rpc.Api.GetTransactionStatus.FAILED && input.method === "claim_share") {
+      throw new PublicRefusal(`group-claim-failed: ${groupClaimFailureToken(got.diagnosticEventsXdr)}`);
+    }
     if (got.status !== "SUCCESS") throw new Error(`v2-claim tx ${got.status}`);
     return { hash: sent.hash };
   } finally {
@@ -239,7 +338,36 @@ export async function relayDepositHandler(
   const arity = DEPOSIT_ARITY[calledFn]!;
   if (args.length !== arity) throw new Error(`${calledFn} expects ${arity} args, got ${args.length}`);
   const amountStroops = BigInt(scValToNative(args[2]!) as bigint | number | string);
-  const cap = await checkCaps(amountStroops, capsFromEnv());
+  const caps = capsFromEnv();
+
+  /* A POOL has a second number, and it is the one that spends the SPONSOR rather than the sender.
+   * Both bounds below are read from the same XDR as the amount, for the same reason. */
+  if (calledFn === "create_drop") {
+    const slots = scValToNative(args[3]!) as unknown;
+    /* Check the TYPE before comparing anything. `slots` arriving as an i128 or a string comes back
+     * from scValToNative as a bigint or a string, and every `<` and `>` against a number is then
+     * false or NaN: the bound would still be written here and would not be a bound. */
+    if (typeof slots !== "number" || !Number.isInteger(slots)) {
+      throw new PublicRefusal("a group link's share count must be a whole number");
+    }
+    const maxSlots = maxPoolSlots(config.network);
+    if (slots < MIN_POOL_SLOTS || slots > maxSlots) {
+      throw new PublicRefusal(`a group link holds between ${MIN_POOL_SLOTS} and ${maxSlots} shares`);
+    }
+    /* And the minimum is PER SHARE, not per pot. `checkCaps` applies MIN_DROP_USDC to args[2],
+     * which for a pool is the whole thing, so create_drop(amount = 0.01 USDC, slots = 30) clears
+     * the contract (it asks only for amount >= slots) and clears the caps, while buying thirty
+     * sponsored accounts, about 45 XLM of reserve, for one cent. The floor exists because the
+     * reserve per account does not scale with the amount; it has to be applied where the accounts
+     * are counted. */
+    if (amountStroops / BigInt(slots) < caps.minDropStroops) {
+      throw new PublicRefusal(
+        `each share is below the minimum we will sponsor (${stroopsToUsdc(caps.minDropStroops)} USDC)`,
+      );
+    }
+  }
+
+  const cap = await checkCaps(amountStroops, caps);
   if (!cap.ok) throw new PublicRefusal(`canary cap: ${cap.reason}`);
 
   /* The day's budget goes back at most ONCE, and never once the transaction is on the network.
