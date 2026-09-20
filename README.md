@@ -1,319 +1,324 @@
 # Lumenia
 
-[![CI](https://github.com/getlumenia/lumenia/actions/workflows/ci.yml/badge.svg)](https://github.com/getlumenia/lumenia/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-6E5FCE.svg)](LICENSE)
-![Network: Stellar testnet + capped mainnet pilot](https://img.shields.io/badge/network-testnet%20%2B%20capped%20mainnet%20pilot-6E5FCE.svg)
+**Send dollars by link; the recipient needs no wallet, no app and no XLM, and unclaimed money comes back.**
 
-> **Send and request money by link — the recipient claims it walletless, seedless, and the recipient pays no gas, in a target ~30 seconds.**
-> On Stellar, with native USDC. Every claim creates a new funded Stellar account.
+Built during the Rise In x Stellar Pro Hackathon (Scale Track, Istanbul, 19-20 Sept 2026): commits `af0aa8b..005f5c7` (19-20 Sept 2026; everything up to and including `abf1c3e` was written before the event and pushed during it). See [What was built here](#what-was-built-here-19-20-sept-2026).
 
-Lumenia — from Stellar's lumens: light (value) that travels by link. It is a consumer payments app that lets **an ordinary person use Stellar's invisible infrastructure (anchors, USDC, sponsorship) just by tapping a WhatsApp link.** No one needs to know anything about crypto.
+Status: testnet complete; mainnet is a capped pilot, not a launch. Not audited.
 
-**Context:** Built as an **Instawards** project (Stellar ambassador, 30-day MVP). It is **not** funded or backed by the [Stellar Community Fund](https://stellar.gitbook.io/scf-handbook) — an SCF Build submission is a next step, not a current status.
+Who this is for: someone in Turkey with nothing installed, receiving dollars from family or a client in Europe, and the sender who today has to talk them through installing a wallet, writing down twelve words and buying XLM before the first dollar can arrive. The recipient never pays; the sender is the leg we would eventually charge, below the channel they use now.
 
-## Quickstart
+## Demo
 
-Everything below runs on the Stellar **testnet** — no real money. The product runs on three
-different footings, and the difference matters:
+- Demo video: https://youtu.be/eGqJDv0C0mk
+- Live app: https://getlumenia.com (testnet by default; mainnet only for hand-approved pilot wallets)
+- Mainnet pilot evidence (capped, hand-approved): the pilot line under [Honest limits](#honest-limits) and the mainnet pilot row in [SECURITY.md](SECURITY.md); testnet sprint proof in [EVIDENCE.md](EVIDENCE.md)
 
-| Footing | What it is |
-|---|---|
-| **Testnet** | The open product and the grant deliverable. Free-minted USDC, no value, anyone can use it. |
-| **Mainnet pilot** | **Live, with real Circle USDC**, since 2026-07-26. An owner-approved allowlist: every wallet admitted by hand, $5 per transfer, $50 per day, caps that fail closed. As of 2026-08-28: 74 approved wallets, 69 accounts opened, 53 funded, 109 real-money transfers. Re-counted from Horizon on 2026-09-06: 76 accounts opened by the sponsor (72 still open, 51 holding real USDC today), 92 USDC-moving operations attributable to the sponsor between 2026-08-24 and 2026-08-30, about **$4.4 moved in total**, of which $2.76 was 69 person-to-person payments with a **median of $0.002** and a maximum of $1.00; 65 of those 69 landed on 2026-08-24 in a scripted coverage run. The counts are real and small: this is a mechanism proven with real money, not volume. |
-| **Open public mainnet** | **Not open.** Dropping the allowlist or raising the caps is gated on a professional audit and the key-custody work described under [§9 Known risks](#9-known-risks). |
+Three steps on testnet, two phones, no keys to install:
 
-```bash
-pnpm install
-pnpm test:antidrain   # anti-drain validator (60/60, offline)
-pnpm spike1           # sponsored 0-XLM claim economics (testnet)
+1. Open https://getlumenia.com on a phone (testnet is the default). Go to Add money and tap "Get test money": the testnet faucet sends 1 practice dollar (Circle testnet USDC) into an account the sponsor opens for you with 0 XLM.
+2. Tap Send, enter an amount, create the link. The link card has a QR; show it to the second phone, or share the link.
+3. On the second phone open the link and tap the claim button. The dollar lands in an account that did not exist a moment ago and paid no gas. Then Cash out and choose the lira rail: the sandbox anchor shows its own rate, deadline and payout account, and pays TRY to a sandbox IBAN.
+
+## What was built here (19-20 Sept 2026)
+
+The core of the judged pipe was built at the event. Each line names the commits and the on-chain proof.
+
+- [x] **SEP-6 deposit, lira in, against the TR sandbox anchor.** `startDeposit` and `readDeposit` in `apps/web/lib/anchor.ts` (plain `GET /sep6/deposit`, bare asset code, `funding_method=bank_account`, no SEP-12, no SEP-38) and the Add money screen at `apps/web/app/(app)/add-money/bank`: the anchor's IBAN, beneficiary and reference shown exactly as the anchor returns them, a testnet-only "Simulate bank transfer" button, polling to `completed`, the Stellar payment linked on stellar.expert. Events `deposit_started` and `deposit_completed`. Commit `c56195f`. Proof, through the product client: 100.00 TRY paid 2.0396090 USDC in 27.4 s, Stellar payment `aa2b7fbcd241835f05ac682ae9d4845c9069c70a24fa5cc2f95b450e9b6b4841`.
+- [x] **Event mode, the judge board and the five-screen flow.** `NEXT_PUBLIC_EVENT_MODE=1`; `/event` shows three tiles from live data only (people who claimed on mainnet today with seeded and organic separated, the lira rail's last round trip with times and tx links, the partner line); the event-user flow is claim, home, send, ask someone to send you dollars, cash out, one confirmation per action. Commit `771515e`. The board reads the sponsor's `/events/summary` on both networks and renders an honest empty when a counter has nothing in it.
+- [x] **Circle CCTP inbound, the primary partner.** A sender holding USDC on Base burns it with a hook; Circle attests; our sponsor Worker relays `mint_and_forward(message, attestation)` on the Stellar CctpForwarder (Circle's own forwarding service does not serve Stellar as a destination); the USDC lands in the sender's Lumenia account and leaves as a link. Sponsor route `/cctp-relay` (its own tight policy: only the forwarder contract, only `mint_and_forward`, a fee ceiling, caps and rate limits, its own anti-drain tests; no existing allowlist widened) and the web page `apps/web/app/(app)/add-money/base` (connect an injected Base wallet, approve once, burn, watch the attestation, see the mint). Event `cctp_funded`. Commit `005f5c7`. Proof, through the relay module: burn `0x908916fbb97e9a99fea6b48b7295a3593f19d7bcdb6e4b362b5b26ee6630c98d`, mint `f8c20fe05cc01e8f9e051298acb88fef9e7e86a17b728cb52926c7f3b4f75a9d`, 16 s burn to mint. Through the product path, the browser client calling a sponsor Worker: burn `0x91b700cf475f3b6b6b190c28437c201515c1d6423d025a2aaaa161998c3a70e1`, mint `799da9e6d8362e8f8d86b0c4d9dbbcd9e48ca560a62e5d2486a0469e2c1760f1`, 0.9998700 USDC received, 26 s burn to mint. Replaying a spent burn is refused at simulation, at no cost.
+- [ ] **Real users at the event.** Measured live, not asserted here: the funnel is public on the judge board at [`/event`](https://getlumenia.com/event) and in the sponsor's `/events/summary` on both networks, with seeded and organic separated, open-to-claim duration buckets, and team accounts excluded by hashed id. The submitted numbers are the delta between the snapshot taken before the first tester and the one taken at submission time. Seeded links ($2 from the team, marked `seeded=1` in the link query) are reported on their own line and never count as sender adoption. Every count carries its dollar value, never a count on its own. The pass marks were pre-registered before the first tester, so they cannot move afterwards: sender adoption passes at 10 or more non-team senders and at least half of qualified testers; the recipient leg passes at a median under 60 s with 90% or better claim success; the onward leg passes if at least one in five recipients moves money on within 26 hours.
+
+## Prepared before the event (18 Sept 2026)
+
+Groundwork so the 26 event hours went to the core. Ticked items are in the repo with the offline gate green; where a live proof exists it is named on the item. Status as of 18 Sept 22:00.
+
+- [x] **Anchor client fixes** (`apps/web/lib/anchor.ts`, `lib/offramp.ts`, `/send-out/bank`): a memo of unknown type is refused before paying (never pay without the reference); the bare asset code is sent first as SEP-6 specifies; a 401 or 403 renews SEP-10 once and retries; polling tolerates dropped reads; `pending_customer_info_update` is terminal. `test:anchor` 92 to 108. Deployed to production on 20 Sept 2026 in `005f5c7`. Live round trip of the exact `/send-out/bank` sequence on testnet in 23 s: payment `e6398c5d61f8c2d4918e9edec03be9db4a4ab4c3c2211ffa5e0145cba523eecf`, anchor withdrawal `sep_gk64i30lc72jlkn2frzx` completed at 48.509814 TRY/USDC.
+- [x] **SEP-6 deposit, lira in, proven against the sandbox anchor** with the raw SEP-6 endpoints (`pnpm --filter @lumenia/web test:anchor-deposit-live`): account `GD4LIAGTXGK3K3RQAHILP5EXZWFVR5H7NN3EUPERH7FJHWCVYYT7MFV7`, deposit `sep_4boq2k2n0ndzcnqj7m0k`, 100.00 TRY to 2.0407002 USDC, status walk `pending_anchor` to `completed` with no `pending_trust` because the trustline was already open, payment `9998a0f36184e92887697dd8147c62470c9fdf09e0dcfe6e13580ebcf094e96d`, 22.6 s. The product screen is event work.
+- [x] **Measurement** (`apps/sponsor/src/lib/events.ts`, `apps/web/lib/events.ts`, `test:events` 22 to 62): a referral set (claimed and then created a link, the figure that means a recipient became a sender), a repeat set (a second value event by the same hashed account), open-to-claim duration buckets 0-15, 15-30, 30-60, 60-120 and 120+ seconds, a seeded cohort with organic = total minus seeded, team accounts excluded by hashed id, new events `link_shared`, `cashout_bank_sent`, `deposit_started`, `deposit_completed`, `cctp_funded`, `wallet_funded`. Counters and sets keyed by a truncated, unsalted SHA-256 of the account (it confirms a guessed address but names nobody); no raw addresses, links, fragments or emails are stored. Claim beacons are routed by the link's network, so a first-time recipient on mainnet is counted on mainnet (fixed in code; the first mainnet beacon was confirmed on 19 Sept 2026).
+- [x] **Seeded-link tooling:** the team wallet opens `/send?seeded=1`; the link card shows a QR by default. Deployed to production on 20 Sept 2026 in `005f5c7`.
+- [x] **CCTP de-risk script** `apps/sponsor/src/spike7-cctp-inbound.ts` (`pnpm --filter @lumenia/sponsor spike7`): approve + `depositForBurnWithHook` on Base Sepolia with `mintRecipient` and `destinationCaller` both set to the forwarder, the hook layout for the Stellar recipient, attestation polling, `mint_and_forward` from a relayer key. Proven end to end on Base Sepolia -> Stellar testnet on 19 Sept, before the event build: Standard finality, burn `0xf79328e104e030833a598dfb4954b252885d32b9f58c919cca89e09f2d05aa00`, mint `a5c4eae02c67b1ed6a8b6cfc9c2617cefa502e74f7414ff46c8208239412aa4d` (2.0000000 USDC received, no fee); Fast finality (`FINALITY=1000`), burn `0xddf8f16a31f3893577460ec5041204db66b8f6f009bbafc1614b49e7be6208fc`, attestation in 11 s, mint `617908c7864927191fcdddd202ba279bf8269f371ca06fd8e89bde5f0efe1261` (1.9997400 USDC received, 0.00026 fee), 18 s burn-to-mint.
+- [x] **Stellar Wallets Kit, fund a link from Freighter, LOBSTR, xBull or Hot Wallet:** shipped in code on 18 Sept behind `NEXT_PUBLIC_WALLETS_KIT=1` (`apps/web/lib/wallets-kit.ts`; the external wallet signs the same escrow deposit and the sponsor fee-bumps it; event `wallet_funded`; adapter self-test 16/16). The flag is off in production for the event, because the real-wallet walk-through has not been done: it is a roadmap line here, not a claim.
+- [ ] **Passkey smart account: proven on testnet, opt-in vault next.** On 18 Sept a smart account was created on testnet with a WebAuthn passkey through `smart-account-kit` while a relayer paid, and 1 USDC moved G to C and back with a passkey signature (smart account `CCXRXHGZL7IE3KZ47TEWQU5IRLB2LOY7TRGOROJ3UMHW7JDHVUYXKJIC`, deploy `bd01f59f2d741c5100e98ab5c6244faef01769343ef036b440cd39b0b3e52aed`, passkey-signed transfer `d0e0f265b6760aced3d02e1810c9ee3628f4698d051e1e5d266b494481de7926`). The spike script is not in this repo; the on-chain ids above are the proof. The opt-in vault (a sidecar next to the classic account, never the claim path, never the anchor account) is not built; it is a roadmap line.
+- [x] **Agent as sender:** an MCP server (`apps/web/lib/agent-mcp.ts`, tools `create_payment_link`, `list_reclaimable`, `reclaim_link`, `agent_status`) for an agent holding its own key and USDC; the sponsor fee-bumps; the link goes to a human with no wallet; unclaimed money is reclaimed by the agent's principal, not automatically. Shipped 18 Sept on testnet: self-test 26/26, live link `709cb27e00dd34142b62d80877a10c197dd59855d643d1488c4cb854c5aac741` funded by deposit `e7d311a2456913c1d37d1e95627a0d76c2023056ddbecff46cd028dc30007261`. Q&A material, not part of the demo. Commit `7ed1ee4`.
+
+## Problem
+
+To receive dollars in crypto a person first installs a wallet, writes down twelve words and buys a coin to pay a fee. Say "I will send you two hundred dollars" and the other side is looking at half an hour of setup. Stablecoins are cheap and fast, and they still cannot reach the hands of someone who knows nothing about them. The pain is not sending. It is the recipient receiving without having to learn anything first. In Turkey and its diaspora people want to hold dollars, send money home and share a bill, and most tools ask for crypto literacy or paperwork before the first dollar arrives.
+
+## Solution
+
+Lumenia is a link. The sender locks USDC in an on-ledger escrow (LumenDrop, a Soroban contract) and shares a link over WhatsApp or as a QR. The recipient taps it, sees the amount, taps once, and the dollars sit in a Stellar account that did not exist a moment ago. The sponsor Worker opened that account and its USDC trustline with sponsored reserves and paid every fee, so the recipient pays no gas and holds zero XLM. Target ~30 s from tap to balance; the app measures it on the device and reports buckets, not a promise.
+
+The anchor integration is the core feature: the recipient turns the link into lira without leaving the app, over SEP-1, SEP-10 and SEP-6 against the organisers' TR sandbox anchor. SEP-12 and SEP-38 clients exist in the code, tested and uncalled. The organisers' anchor walkthrough on 8 Sept 2026 showed a transfer pausing at `pending_trust` because the wallet had no trustline; the advice was to add the trustline in the background. That is what the sponsor already does, for someone holding zero XLM, so the anchor always meets a ready account.
+
+Ways in and out:
+
+- Lira in through the sandbox anchor (SEP-6 deposit) into the user's trustlined account.
+- USDC from another chain through Circle CCTP, arriving in the sender's account and leaving as a link.
+- USDC from any Stellar wallet through Stellar Wallets Kit (Freighter, LOBSTR, xBull, Hot Wallet): shipped in code behind `NEXT_PUBLIC_WALLETS_KIT=1`, off in production for the event (no real-wallet walk-through yet), so it is a roadmap line.
+- Out: lira through the same anchor (SEP-6 withdraw), onward by link, or a Claimable Balance to a known address.
+- Ask someone to send you dollars (request money, including splitting a bill): a request link carries the amount and a note; the payer pushes. Nobody can pull money from anyone.
+
+Unclaimed money is not lost: the sender can take it back after seven days; reclaim is not automatic. Every claim opens a new funded Stellar account; the number we count is how many of those act again.
+
+## How a claim works
+
+The money path. Every edge names the SEP or the operation, and who signs. The CCTP block is built at the event; the lira leg runs on testnet against the sandbox anchor.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Base Sepolia sender (EVM wallet)
+    participant F as CctpForwarder (Stellar testnet)
+    participant S as Sender (G account, 0 XLM)
+    participant W as Sponsor Worker (anti-drain gate)
+    participant D as LumenDrop escrow (Soroban)
+    participant R as Recipient (has only the link)
+    participant A as TR sandbox anchor (SEP-1, SEP-10, SEP-6)
+
+    opt Money in from another chain, Circle CCTP V2 (built at the event)
+        B->>B: approve + depositForBurnWithHook, destination domain 27, mintRecipient and destinationCaller = the forwarder, hookData = the sender G
+        B-->>W: Circle attestation (iris-api-sandbox), polled by the Worker
+        W->>F: mint_and_forward(message, attestation), fee paid by the sponsor
+        F->>S: USDC (Circle SAC) lands in the sender G account
+    end
+
+    S->>W: POST /v2-deposit with LumenDrop deposit(from, link, amount, expiry), signed by the sender
+    W->>W: anti-drain gate, caps, pilot allowlist on mainnet
+    W->>D: fee-bump signed by the sponsor, submitted over RPC
+    D-->>S: DepositEvent, USDC held by the contract, the link secret only in the URL fragment
+    S->>R: claim link over WhatsApp or as a QR
+
+    alt The recipient opens the link (target ~30 s)
+        R->>W: POST /create-account
+        W->>R: CAP-33 sponsored reserves, createAccount(0 XLM) + changeTrust(USDC), the sponsor sources only begin and createAccount, the recipient co-signs changeTrust and end
+        R->>W: POST /v2-claim {link, payout = the new G account, sig}: the link key signs (contract, network, link, payout) on the device
+        W->>D: the Worker builds the claim invoke, sourced by a channel account it controls and fee-bumped by the sponsor. The payout is bound by the link signature, so the source cannot redirect it
+        D->>R: ed25519_verify(link, message, sig), then USDC transfer to payout
+        Note over R: USDC in the recipient G account. No app, no wallet, no XLM. The recipient paid no gas.
+        opt Cash out to lira (testnet, sandbox anchor)
+            R->>A: SEP-1 stellar.toml, then SEP-10 challenge verified against SIGNING_KEY before the user key signs
+            R->>A: SEP-6 GET /withdraw, asset_code USDC, no SEP-12, no SEP-38
+            A-->>R: anchor account, memo id, extra_info.message (rate, lock deadline, payout account)
+            R->>W: POST /payout with payment(USDC, the anchor memo), signed by the recipient
+            W->>A: fee-bump signed by the sponsor, the payment lands on the anchor account
+            A-->>R: TRY paid to the sandbox IBAN, transaction completed
+        end
+    else Nobody claims within 7 days (reclaim is not automatic)
+        S->>W: POST /v2-reclaim with reclaim(link), signed by the sender
+        W->>D: fee-bump signed by the sponsor
+        D->>S: USDC back to the sender
+    end
 ```
 
-Full setup and environment variables are in [§7 Getting started](#7-getting-started).
-New here? See [CONTRIBUTING.md](CONTRIBUTING.md).
+## Components and the trust boundary
 
----
+Signers are written on the edges. Every relay route is fail-closed, each by the policy that fits it, and the sponsor box is the trust boundary. The sponsor pays fees and reserves, never sources a classic value operation and is never a signer on a user account. The contract calls it sources, claim today and the CCTP mint at the event, can only deliver what the link key or Circle's attestation already fixed: the relay can submit, never redirect.
 
-## Table of contents
-1. [Problem](#1-problem)
-2. [Solution](#2-solution)
-3. [How it works](#3-how-it-works)
-4. [Architectural decisions and why](#4-architectural-decisions-and-why)
-5. [Tech stack](#5-tech-stack)
-6. [Project structure](#6-project-structure)
-7. [Getting started](#7-getting-started)
-8. [Day-1 spikes](#8-day-1-spikes)
-9. [Known risks](#9-known-risks)
-10. [Roadmap](#10-roadmap)
-11. [Why Stellar](#11-why-stellar)
-12. [Competitors](#12-competitors)
+```mermaid
+flowchart LR
+    PWA["Lumenia PWA, Next.js 16, getlumenia.com. The user key (Ed25519) lives on the device"]
+    G["User G account on Stellar (0 XLM, USDC trustline). Sender and recipient are both this"]
+    LDT["LumenDrop testnet CAMCI5VP...TN3HP3"]
+    LDM["LumenDrop mainnet CAC5JYQ2...EIWGR4"]
+    USDC["Circle USDC (Stellar Asset Contract), the one token pinned at deploy"]
+    NET["Horizon + Soroban RPC (testnet and mainnet)"]
+    ANCHOR["TR sandbox anchor tr-mock-anchor.fly.dev, SEP-1 SEP-10 SEP-6"]
+    CCTP["CctpForwarder testnet CA66Q2WF...4T4VSZ, mint_and_forward"]
+    BASE["Base Sepolia, USDC + TokenMessengerV2 (EVM sender)"]
 
----
+    subgraph SPONSOR["sponsor: pays fees and reserves, never sources a classic value operation and is never a signer on a user account. The contract calls it sources, claim today and the CCTP mint at the event, can only deliver what the link key or Circle's attestation already fixed: the relay can submit, never redirect"]
+        direction TB
+        GATE{"per-route fail-closed policies: anti-drain.ts on the classic routes (/feebump, /send-link, /payout) checking op type, op source and parameters; soroban-relay.ts method allowlists and fee ceilings on the LumenDrop invokes; cctp-relay.ts pinning the forwarder, the method and the message header on the mint; plus caps, rate limit and kill switch"}
+        WT["Sponsor Worker testnet (Cloudflare)"]
+        WM["Sponsor Worker mainnet (PILOT_MODE=1, caps fail closed)"]
+        KV["Upstash KV: rate limits, caps, event counters, recovery ciphertext"]
+        GATE --> WT
+        GATE --> WM
+        WT -.-> KV
+        WM -.-> KV
+    end
 
-## 1. Problem
-
-In crypto, **even to receive money** you first have to set up a wallet, save a seed phrase, and hold a token for the transaction fee (gas). For a normal person this is an absurd wall. Telling someone "I'll send you 20 dollars" means putting the other party through a half-hour crypto setup ordeal.
-
-The result: stablecoins (USDC) are cheap and fast but **can't reach ordinary people's hands.** The pain isn't in "sending money," it's in **"the recipient being able to receive the money without knowing anything."**
-
-Especially in emerging markets (Turkey and the Turkish diaspora), people want to hold dollars, send money home, and split group expenses — but all the tools require either crypto literacy or banking friction.
-
----
-
-## 2. Solution
-
-Lumenia offers two core flows:
-
-- **Send by link (hero flow):** You send someone a link → the recipient taps, confirms with their face (biometric) → USDC is in their pocket in a target ~30 seconds. They don't set up a wallet, never see a seed phrase, and **the recipient pays no gas.**
-- **Request money (differentiation + retention layer):** You request money from someone → a link goes to the other party → they tap it and pay → and now **they too have a wallet + a balance.**
-
-At no point does the user feel a "crypto" step. They think in lira; behind the scenes it settles in USDC.
-
-**What it is NOT:** Not a savings/interest product (no yield), not a bank, not an exchange. Just **person-to-person money movement.**
-
----
-
-## 3. How it works
-
-### 3.1 Claim flow (sending by link)
-
-```
-Sender                           Stellar Ledger                 Recipient (walletless)
-   │                                   │                              │
-   │ 1. Creates a Claimable Balance    │                              │
-   │    with USDC (dual predicate:     │                              │
-   │    recipient + reclaim-after-      │                              │
-   │    7-days)                         │                              │
-   ├──────────────────────────────────▶│                              │
-   │                                   │                              │
-   │ 2. Link (bearer claim-key inside) │  ── WhatsApp ──▶             │
-   │                                   │                              │
-   │                                   │   3. Link opens, biometric   │
-   │                                   │      confirm, keypair on     │
-   │                                   │      device                  │
-   │                                   │◀─────────────────────────────┤
-   │                                   │                              │
-   │            4. SPONSOR SERVICE atomic sandwich (fee-bump):        │
-   │            beginSponsoring → createAccount(0 XLM) →              │
-   │            changeTrust(USDC) → claimClaimableBalance →           │
-   │            endSponsoring                                         │
-   │                                   │─────────────────────────────▶│
-   │                                   │        USDC in pocket, 0 XLM │
+    PWA -->|"deposit and reclaim: tx built and signed on the device. claim: only the link signature travels, the Worker builds the invoke"| GATE
+    WT -->|"fee-bump signed by the sponsor: deposit, claim, reclaim"| LDT
+    WM -->|"fee-bump signed by the sponsor: deposit, claim, reclaim"| LDM
+    WT -->|"CAP-33 sponsored reserves: createAccount(0 XLM) + changeTrust(USDC), the sponsor sources only begin and createAccount, the recipient co-signs changeTrust and end"| G
+    LDT -->|"USDC to the signed payout, or back to the sender after expiry"| G
+    LDM -->|"USDC to the signed payout, or back to the sender after expiry"| G
+    LDT --- USDC
+    LDM --- USDC
+    G -->|"SEP-10 auth, SEP-6 withdraw, payment with id memo signed by the user, fee-bumped by the sponsor"| ANCHOR
+    ANCHOR -->|"SEP-6 deposit, lira in, the anchor pays USDC to the trustlined G account"| G
+    BASE -->|"depositForBurnWithHook signed by the EVM sender, domain 27, hookData = the user G"| CCTP
+    WT -->|"mint_and_forward(message, attestation) relayed, sponsor pays the fee"| CCTP
+    CCTP -->|"USDC minted to the user G account"| G
+    WT --> NET
+    WM --> NET
+    PWA -->|"reads balances and history"| NET
 ```
 
-**Important:** The money never sits on our server. **The Stellar ledger escrows it** (Claimable Balance). The sponsor service only pays for account creation + the transaction fee; it can never touch the user's money.
+### Why these integrations are load-bearing
 
-### 3.2 Request money flow
+Both partner legs rest on the same primitive, and neither is decoration. Our sponsor opens every account with `createAccount(0 XLM)` and `changeTrust(USDC)` inside one CAP-33 sponsored-reserves sandwich, so the anchor always meets a trustlined account: the organisers' own anchor walkthrough on 8 Sept showed a SEP-6 transfer pausing at `pending_trust` for exactly the wallet we never create, and our run walked `pending_anchor` to `completed` with no such pause. Dollars only matter to a recipient in Turkey if they can become lira, so the SEP-6 rail is the exit of the product rather than a page beside it; today it runs against the organisers' sandbox anchor on testnet, and switching to a licensed Turkish anchor is a change of home domain, nothing more. On the way in, Circle CCTP moves native USDC by burn and mint, with no wrapped token, no pool and no slippage, and Circle's forwarding service does not reach Stellar, so a Stellar recipient can only be paid through the CctpForwarder with `mintRecipient` and `destinationCaller` both set to it; our sponsor relays `mint_and_forward` and pays that fee, which is the only reason someone holding zero XLM can receive the mint at all. Take either leg out and the loop stops being a rail and goes back to being a demo.
 
-On Stellar there is **no pull/debit (automatic collection).** "Request money" = a **push-only request**: the asker generates a request link carrying the amount, their name, and a nonce (no custody, no credential); the payer opens it, sees the amount, and **pushes** the money back — a first-time asker gets a normal bearer claim link in return, while a returning asker's link also carries her address so the payer's Claimable Balance names her as the claimant. No one can pull money from anyone without their knowledge — this isn't a constraint, it's a **trust feature** ("you won't get a surprise charge").
+## Who can do what
 
-> **Not SEP-7 (yet):** the shipped v1 deliberately does **not** use a SEP-7 `web+stellar:pay` URI — a first-time asker has no destination account to express, and a SEP-7 URI would drop the sender's reclaim predicate. "Pay from any wallet" via SEP-7 is a later, additive SCF-Integration milestone (v1.5).
+We hold no one's keys. We do hold real power, and we name it.
 
-### 3.3 Recovery (device change / loss)
-
-> **Scope note (updated 2026-07-22 — recovery is now built on testnet):** a **classic Ed25519 key** is
-> generated on-device (IndexedDB keystore, optionally locked with an **Argon2id password**). On top of
-> that, a **portable, server-storable zero-knowledge "recovery box"** wraps the seed with that password
-> (floor) and/or a **WebAuthn-PRF passkey** (the Face ID upgrade) into AES-256-GCM ciphertext — the
-> server holds **only ciphertext it can never open**, so recovery stays strictly non-custodial. Cross-
-> device restore = email one-time-code → fetch the sealed box → decrypt locally → the SAME account.
-> Real-user rollout is gated on email-channel verification + real-device passkey validation, and a
-> pending password-strength/OTP-abuse security pass; the WebAuthn-PRF design below is now the
-> implementation, not just a plan. (Guardian/social recovery via a v2 smart account remains future.)
-
-The design (now shipped): keeping a classic Ed25519 key only in browser memory is catastrophic (if the data is wiped, the money is gone). Instead:
-- ONE 32-byte seed is wrapped **twice** into **AES-256-GCM** ciphertext — copy A with a key from **Argon2id(password)** (the floor), copy B with a key from a **WebAuthn-PRF passkey** (the Face ID upgrade). The server stores **only ciphertext it can never open**; there is still **no seed-export path.**
-- Cross-device restore = an **email one-time code** unlocks fetching the sealed box, which is decrypted locally back into the **same account.** Because the WhatsApp in-app browser blocks passkey creation, the **Argon2id password path is primary**, and PRF is the fast-unlock upgrade offered on a real browser.
-
----
-
-## 4. Architectural decisions and why
-
-This section is the heart of the project: every major decision and **why** it was made that way. Rationales are detailed in [stack.md](stack.md). Each decision was stress-tested via an adversarial multi-lens AI review: the **technical decisions are locked**, while the **product/strategy decisions remain provisional bets**.
-
-### Decision 1 — Not React Native, but a **web-first PWA**
-**Why:** The essence of Lumenia is a **link.** A link opens wherever the user taps it (WhatsApp in-app browser, Safari, Chrome). Saying "go to the App Store first to receive the money" kills the funnel — that's the exact opposite of the "30 seconds, zero setup" promise. Also WebAuthn/passkey is **first-class on the web**, whereas in React Native it's polyfill hell (`createKeypair` blows up in RN, requiring crypto/Buffer shims). A Next.js PWA = a single codebase, both a powerful web app and a mobile app installed via "Add to Home Screen." If a true native app is needed, we move to Expo in v2. **Web-first also keeps the passkey door open for v2.**
-
-### Decision 2 — Not a Soroban smart-account, but **classic Ed25519 (v1)**
-**Why:** "A Face ID, seedless wallet" is a UX promise, not a cryptographic one. Keeping a classic Ed25519 key in the device's secure enclave and unlocking it with biometrics is **indistinguishable** from a real passkey in the experience the user lives — and it ships in 30 days. A true passkey smart-account (OpenZeppelin Smart Accounts), on the other hand, requires a factory contract + relayer + Soroban-token balances + RN native modules; SDF's own relayer (Launchtube) was "prototype, no SLA" (SDF is now discontinuing Launchtube — the v2 send path uses **the sponsor Worker's own relay routes**, so there is no third-party relayer in the money path). **The "Zero XLM" feature already comes from sponsorship, not from the account type** — meaning it's achievable today even with a classic account. Smart-account = v2 (for recovery + multi-device); placing the `RecipientAccount` interface in v1 makes the migration cheap.
-> Note: the `passkey-kit` library says in its README "demo only, not audited, do not use to protect anything" → an app that holds money is not built on top of it.
->
-> **Status (2026-07-25):** the passkey *smart-account* for identity/recovery/multi-device remains v2/future — but the v2 **Soroban escrow** for the *send* path, **LumenDrop**, is already **built + deployed to testnet** (29 unit + property tests over a written 14-invariant spec, plus a 7/7 escrow, 5/5 relayer and 10/10 governance on-chain proof that the recipient pays no gas) and is now the **default shareable link-send** (late-bound payout; the sponsor Worker's own `/v2-claim` relay route submits the invoke and pays the Soroban fee, so the recipient still pays no gas) and the **SCF Integration centerpiece**, live in the deployed sponsor Worker. The **frozen classic `/c/[id]` Claimable-Balance claim stays v1**, so the app runs a **v1-claim / v2-send hybrid.** The contract is **upgradeable behind an owner** today (upgrade + pause-new-escrow only; no owner path can move escrowed funds; claims and reclaims are never pausable) and is intended to become immutable via a final upgrade that removes the upgrade entrypoint — **after** a professional audit. The contract is also deployed on **mainnet** (`CAC5JYQ2…WGR4`), where it backs the allowlisted, capped pilot described in the Quickstart; opening that to the public is what is gated on the audit.
-
-### Decision 3 — Custody: **sender-funded Claimable Balance + sponsor backend**
-**Why:** Choosing the right primitive for "let the walletless recipient claim the money" is critical.
-- **Claimable Balance** is Stellar's native escrow (it provides at the protocol level what Peanut does on EVM with a smart contract + relayer). With a dual predicate (recipient `unconditional` + sender `reclaim-after-7-days`), **both parties are non-custodial**: the ledger holds the money, not us.
-- **But** the CB alone isn't enough: the claiming account must be funded + have a trustline. This is exactly what the **sponsor service** solves — in an atomic sandwich it sponsors the recipient's account and trustline and fee-bumps, and the recipient ends up with **0 XLM.**
-- **Why a backend is mandatory:** there is no client-only "magic claim"; someone has to pay the account-creation reserve and the transaction fee. The sponsor key **only pays for create/fund + fee, can never spend principal** → the service stays non-custodial.
-- **Rejected alternatives:** a "holding account" where the backend holds USDC = custodial (the thing we avoid). The "deterministic address" (SDP/Meridian) pattern = actually the Soroban smart-wallet path, which we're not taking in v1.
-
-### Decision 4 — Hero flow: **link-send first**, request-money as the differentiation + retention layer
-**Why (PM review correction):** Two flows, two jobs. **Link-send is the hero** because it delivers first value fastest — the recipient taps a link and **sees money in a target ~30 seconds**, the shortest path to an "aha" moment on first run. **Request-money is the differentiator + retention layer**, not the first-run hero: even a user with zero balance can initiate a request, the request creates demand that pulls money + a new user onto the network, and crypto universally leaves request-money underbuilt (even Venmo is bad at uneven splits). The retention engine (since yield is forbidden): **the "chase down who owes you" loop** — the strongest organic return hook in P2P. So link-send wins the first run; request-money wins the long game.
-
-### Decision 5 — Corridor: **EU→TR inbound** (off-ramp deferred)
-**Why:** Research surfaced a bombshell: **there is no live Stellar-native TRY off-ramp in Turkey.** Cash-out is two-hop (USDC→CEX→TRY) and MASAK imposes a 72h delay + $3k/day cap on the first withdrawal → "instantly spendable" breaks. (The exchange acceptance half was **unverified when this decision was made**; one exchange's two-hop path has since been walked end to end by hand — §9.) The solution: **defer the off-ramp in v1**, let USDC circulate internally (1-cohort runway), and **pivot to the leg that works** — EU→TR inbound (diaspora remittance), with MyKobo (EURC/SEPA) the only solid anchor. Same community, reverse direction: now the working leg (the sender) is also the paying/motivated leg. CEX cash-out = a documented "safety valve," not the hero flow.
-
-### Decision 6 — Notifications: **WhatsApp-first**, not SMS
-**Why:** Turkey's SMS market is hostile to this use-case: P2P content is banned, and starting April 2026 a non-resident sender can't send an SMS with a URL to a TR number (the whole product is a link!). WhatsApp's penetration in Turkey is very high + utility templates are free within a 24h window. Web push, meanwhile, is for the installed PWA (on iOS, home-screen installation is required).
-
-### Decision 7 — **No-yield, non-custodial** (regulation)
-**Why:** SCF legal teams flag three things: returns/yield (securities/deposit risk), tokenized securities, and prediction/betting. Custody also brings money-transmitter classification. That's why Lumenia is strictly non-custodial (ledger escrow) and **never uses a "savings/interest/bank" framing** — only "money movement." We leave the regulated part of money transfer to licensed anchors/CEXes.
-
-### Decision 8 — Take the Stellar Wallet SDK as **infrastructure**, write the core on top
-**Why:** The mentor's advice is right — the Wallet SDK wipes out anchor/ramp (SEP-24 interactive + SEP-10 auth + SEP-12 KYC, +SEP-38 quotes; SEP-6 interactive is deprecated) and account/signing boilerplate (the most painful part, which is the real risk on the cash-out side). **But** the SDK does **not** give passkey/smart-wallet or sponsored-claim logic (classic Ed25519). So the SDK handles ~70%; the differentiating 30% (sponsored claim + request-money + link mechanics) is the core we write ourselves with `@stellar/stellar-sdk`.
-
----
-
-## 5. Tech stack
-
-Full pinned list and rationales: **[stack.md](stack.md)**. Summary:
-
-| Layer | Choice |
-|---|---|
-| **Frontend** | Next.js 16 PWA + Serwist (`@serwist/turbopack`), `next/og` dynamic claim cards, TypeScript |
-| **Identity** | Classic Ed25519 keypair; encrypted recovery with WebAuthn PRF + Argon2id (`@simplewebauthn` 13.x) |
-| **Chain** | `@stellar/stellar-sdk@16.0.0` (sponsored-reserve sandwich + fee-bump); `@stellar/typescript-wallet-sdk@3` (SEP flows) |
-| **Contract (v2 send)** | `contracts/lumen-drop` — Rust, `soroban-sdk@26.1` + OpenZeppelin Stellar contracts `0.7.2` (Ownable / Pausable / Upgradeable); deployed on testnet and on mainnet for the capped pilot |
-| **Custody** | Sender-funded Claimable Balance (dual predicate) — ledger escrow, non-custodial |
-| **Backend** | Single **Cloudflare Worker** sponsor service (`worker.ts`), deployed twice — testnet, and a separate mainnet Worker for the pilot; sponsor key = env hot-key behind a `SponsorSigner` interface (an AWS KMS Ed25519 signer sits behind the same interface and is selected when `KMS_KEY_ID` is set — code-complete, AWS not provisioned); anti-drain allowlist + canary caps + pilot allowlist + rate-limit |
-| **State** | **No Postgres** — **Upstash Redis** (rate-limit, waitlist, recovery ciphertext boxes, channel-account leases; in-memory fallback) + everything else **on-chain** (Horizon / Soroban) |
-| **Notifications** | **Email via Resend** (interim OTP + notify, owner-gated) + in-app Horizon poll; WhatsApp Business API is a Q1-2027 long-lead item |
-| **Asset / Network** | Native Circle USDC · testnet, plus a capped allowlisted mainnet pilot |
-
-**Why these versions:** `next-pwa` is dead → Serwist is the standard. `stellar-sdk@16` (not v14) because the `rpc`/sponsorship/fee-bump APIs are the same and v14 is two majors behind for no reason. AWS KMS has done Ed25519 raw-sign since November 2025 → secure custody of the sponsor key is possible.
-
----
-
-## 6. Project structure
-
-```
-lumenia/  (pnpm workspaces)
-├── apps/
-│   ├── web/         → Next.js 16 PWA (PUBLIC, no secrets) → Vercel, getlumenia.com
-│   └── sponsor/     → Cloudflare Worker sponsor service (env hot-key; KMS drop-in later)
-│       ├── src/
-│       │   ├── worker.ts              → Workers `fetch` entry (reuses lib/* verbatim)
-│       │   ├── lib/                   → signer, anti-drain, channels, recovery box
-│       │   ├── spike1b-kms-rawsign.ts → AWS KMS Ed25519 raw-sign proof
-│       │   ├── spike1c-wire-parity.ts → web→sponsor XDR wire-parity proof
-│       │   └── test-antidrain.ts      → anti-drain validator tests
-│       └── wrangler.toml              → Worker config (nodejs_compat)
-├── contracts/
-│   └── lumen-drop/  → v2 Soroban escrow (Rust): late-bound-payout link drops + group drops
-│       ├── src/     → lib.rs (contract) + test.rs (unit + invariant property tests)
-│       ├── fuzz/    → cargo-fuzz solvency target (runs in CI on Linux)
-│       └── README.md→ interface, governance, the 14-invariant spec, tooling
-├── packages/
-│   └── shared/      → claim-secret / asset helpers + shared types
-│                      (web + sponsor cross the wire as XDR, must re-parse byte-identically)
-├── stack.md         → pinned tech stack + adversarial review rulings
-└── README.md        → this document
-```
-
-> Note: the working directory is historically named `faceid-wallet`; the project/monorepo root is `lumenia`.
-
-**Why two separate services:** The sponsor backend holds a hot signing key → it must have its own network boundary and its own deploy cadence (a Cloudflare Worker, deployed independently of the web app); putting it in the same place as the public edge PWA is the wrong blast-radius.
-
----
-
-## 7. Getting started
-
-> The monorepo is **built and deployed** — the web app ships to Vercel on push (product domain **getlumenia.com**) and the sponsor runs as a Cloudflare Worker (`https://lumenia-sponsor.avakit.workers.dev`); the spikes below still run today (all on testnet except the anti-drain validator test, which runs locally).
-
-```bash
-# Requirements: Node 20+, pnpm, a testnet sponsor key
-pnpm install
-
-# Day-1 spikes (run today)
-pnpm spike1          # sponsor economics: sponsored 0-XLM create + changeTrust + fee-bump + claim (testnet)
-pnpm spike1b         # AWS KMS Ed25519 raw-sign proof (testnet)
-pnpm spike1c         # web→sponsor XDR wire-parity proof (testnet)
-pnpm test:antidrain  # anti-drain validator tests (local)
-```
-
-Sponsor Worker vars (`apps/sponsor/wrangler.toml [vars]` + secrets via `wrangler secret put`): `STELLAR_NETWORK=testnet`, `ALLOWED_ORIGIN`, `USDC_ISSUER`, `LUMENDROP_CONTRACT`, plus the sponsor secret and the Upstash/Resend secrets. Web vars: `NEXT_PUBLIC_SPONSOR_URL`, `NEXT_PUBLIC_SITE_URL`, `WEBAUTHN_RP_ID`.
-
----
-
-## 8. Day-1 spikes
-
-Three gates that must pass before writing any feature code (if one fails, the architecture changes):
-
-1. **Sponsor economics:** on testnet, does a sponsored 0-XLM `createAccount` + `changeTrust` + fee-bump + `claim` with KMS-Ed25519 return `SUCCESS`? Is a malicious inner tx **rejected** (anti-drain)?
-2. **PRF round-trip:** on real iOS Safari 18.4+ and Android Chrome, is keygen → PRF → encrypt → store → recover → signature accepted by the network?
-3. **WhatsApp flow:** link → OG card render → claim in the WhatsApp in-app browser → does the **Argon2id fallback trigger automatically**?
-
-> 🔑 **The single most critical validation (non-code, 1 afternoon):** Does any Turkish CASP (BTCTurk/Paribu) accept USDC over the **Stellar network**? If not, a bridge step is added to cash-out. The entire corridor decision branches on this — **test it first.**
-
----
-
-## 9. Known risks
-
-| Risk | Mitigation |
-|---|---|
-| **Turkey off-ramp** (no *productized* Stellar-USDC → TRY exit; MASAK ~$3k/day cap + 72h first withdrawal) | **One end-to-end cash-out has now been walked, 2026-08-28**: real USDC left a Lumenia mainnet account on Stellar, a licensed exchange credited it, an internal move to that exchange's Turkish entity, sold for lira, withdrawn to a Turkish bank — about half an hour, 0.145% in fees. Honest scope: **one run, two dollars, the founder's own fully-KYC'd accounts, done by hand.** It shows the route exists; it is not an integration, not automated, and MASAK's holds and caps still apply. The earlier "USDC-funded card" reading was **wrong** — a review found KAST funds only from Solana/EVM, not Stellar. **CCTP on Stellar** stays the partner-independent fallback. |
-| **WhatsApp webview blocks passkey** | Argon2id primary recovery, PRF upgrade |
-| **Sponsor service single choke-point** | **AWS KMS Ed25519 raw-sign is now available (since 2025-11-07), proven mechanically (Spike #1b) and code-complete behind the signer interface (13/13 offline tests, byte-parity with the SDK's own signing) — the live AWS key is not provisioned yet, so the deployed service still uses an env hot-key**; a **kill-switch** can halt every value-moving endpoint; anti-drain validator hardened to op SOURCE+PARAMETER level (**60/60 unit + 6/6 integration tests**, gating the live `/feebump`); web→sponsor XDR **wire-parity proven (Spike #1c + live browser claim)**; plus per-IP/per-account rate-limit + fee cap. |
-| **Competitor: Sling Money** ($15M, Solana) | Corridor strategy; being a global competitor; frame Sling as validation |
-| **Regulation (MASAK/CASP)** | Strictly non-custodial; leave off-ramp to a licensed CEX; the mainnet pilot is deliberately small and allowlisted, and legal review is a gate on opening it up |
-| **Serwist + Turbopack** newest combo | Day-1 spike; fallback `--webpack` |
-
-Detailed risk table and the "mempool-class" assumption traps that were caught: [stack.md §2](stack.md).
-
-**Security posture (stated honestly).** The open product runs on **testnet**. Real money moves in the
-**allowlisted mainnet pilot** described in the Quickstart — hand-approved wallets, $5 per transfer,
-$50 per day, caps that fail closed, a per-wallet operation budget, a kill-switch, and a 15-minute
-watchdog on both Workers. **Opening that to the public is gated on the audit below.** For the v2 escrow contract a **static-analysis, property-test, fuzz and mutation-testing pass is complete** (Scout, strict clippy, cargo-audit/deny, 29 unit + invariant property tests, mutation testing) — that is self-assessment, **not** an audit, and **a professional audit is pending**. The residual risks we do not paper over: the sponsor key is still an environment hot key (a KMS signer is code-complete but AWS is not provisioned), and the mainnet contract owner is a single **cold, offline** key rather than a multisig with a timelock. Full policy and disclosure: [SECURITY.md](SECURITY.md) · contract interface, governance and the invariant specification: [contracts/lumen-drop/README.md](contracts/lumen-drop/README.md).
-
----
-
-## 10. Roadmap
-
-**v1 — Instaward MVP (30 days, testnet)** ✅ **shipped** — the hero flow:
-- Sponsor backend (sponsored create + fee-bump) — now a **Cloudflare Worker** with an env hot-key signer (a KMS signer sits behind the same interface, code-complete; AWS not provisioned)
-- **Link-send claim flow** (Claimable Balance) — the hero
-- PWA claim page + dynamic OG cards (`next/og`)
-- Full **recovery** (shipped ahead of plan, not "Argon2id only"): password + **email-OTP** + a **WebAuthn-PRF "Face ID"** upgrade over a zero-knowledge ciphertext box
-- North-star metric: **net-new funded recipients that take a retained second action** (raw address count is sybil-gameable, so it is gated on unique-human + a retained action)
-
-**v1.5 — SCF Build** — the retention layer + Integration track:
-- ✅ **Request-money** (push-only) + **uneven splits** — shipped on testnet (SEP-7 "pay from any wallet" still deferred to this track)
-- ✅ **Onward-send** + **sender-reclaim** ("take it back"), both sponsor-paid so the user pays no gas — shipped
-- ✅ **v2 Soroban escrow (LumenDrop)** — built and deployed on testnet **and on mainnet** (where it backs the capped pilot); the default shareable link-send. Hardened 2026-07-25 (soroban-sdk 26.1, owner-gated pause/upgrade, 29 tests, tool-clean) — **a professional audit is still pending**
-- **WhatsApp auto-notifications** (Business API) — still future (email via Resend is the interim channel)
-- EU→TR inbound on-ramp (MyKobo EURC/SEPA + on-chain EURC→USDC swap)
-- ◑ **Mainnet, real USDC** — live since 2026-07-26 as an **allowlisted, capped pilot** (74 approved wallets, 109 real-money transfers as of 2026-08-28; about $4.4 moved in total, median payment $0.002, max $1.00, re-counted from Horizon 2026-09-06). Opening it to the public — no allowlist, higher caps — is what stays gated on the audit
-- ◑ **Cash-out** — one founder-run end-to-end exit to a Turkish bank walked on 2026-08-28 (§9). A licensed provider still does the converting; Lumenia never does
-- _claim-to-second-action ≥ 25% as a retention hypothesis to measure (not a v1 success gate)_
-
-**v2**
-- Migration to OZ Smart Accounts (real passkey signer, social recovery, multi-device)
-- "Send to phone" (deterministic address, no link needed)
-- Integrated TRY cash-out if validated
-
----
-
-## 11. Why Stellar
-
-**NOT cheap/fast fees** (Solana/Base match those). The real muscle is **the stack itself**: native Claimable Balances (escrow without a smart contract) + protocol-level Sponsored Reserves (the recipient pays no gas — zero XLM — with no custom relayer) + passkey + native USDC. To do this, Peanut sets up a vault contract + relayer on every chain; Stellar gives it in the protocol.
-
-**But we're not a monopoly** — Daimo/Peanut offer walletless claim links (sponsor-paid fees) on other chains. The honest positioning: not *"only possible on Stellar,"* but **"zero custom-contract risk + zero setup for the recipient + native USDC + EM rails — and the social primitive that Stellar's consumer ecosystem is missing."** Value metric for SCF: **net-new funded Stellar addresses created via claim** (not TVL — ecosystem activation).
-
----
-
-## 12. Competitors
-
-| Product | Chain | Status |
+| Who | Can | Cannot |
 |---|---|---|
-| **The recipient's own Turkish bank app** (FAST + Kolay Adres) | — (domestic banking) | The real **do-nothing alternative**: instant, free, domestic. For money already inside Turkey, this beats us — we don't try to win the domestic leg. |
-| **Morse** (ex-Sling Money) | Solana | Ships the **same link UX**, MiCA-licensed, Turkey in **closed beta** — same EM thesis, different chain. The biggest threat. |
-| **Peanut Protocol** | EVM (20+) | The exact same mechanic, but locked to EVM, infra-flavored. Not on Stellar. |
-| **Daimo** | ETH + rollup | The best "request money" UX in crypto — but pivoted to B2B. |
-| **LOBSTR** | Stellar | A close threat with a **thin moat**: it **already** sends to email/phone with a claimable-balance claim. Still account-leaning rather than a fully walletless Face-ID claim, but the gap is small. |
+| Link holder | Claim the escrowed USDC to any payout address the link key signs for (`claim`, an Ed25519 signature over contract, network, link and payout) | Change the amount, claim twice, claim after the sender took it back |
+| Sender | Lock USDC behind a link (`deposit`), fund a group link (`create_drop`), take an unclaimed drop back after expiry (`reclaim`, seven days by default; not automatic), fund a known address with a Claimable Balance that names the recipient and a sender-reclaim claimant | Take it back before expiry, redirect a claim, see who claimed beyond the payout address on chain |
+| Recipient | Claim into a fresh account, send onward by link, ask someone to send you dollars, cash out to lira over SEP-6 | Pull money from anyone (every flow is push-only) |
+| 2-of-3 owner multisig (since 2026-09-18) | Upgrade the contract bytecode, pause new escrow (`deposit` and `create_drop`), transfer or renounce ownership | Move escrowed funds, pause `claim` or `reclaim` (exits are never pausable) |
+| Relayer (the sponsor Worker) | Pay fees and reserves, decline to relay (caps, pilot allowlist, rate limits, kill switch) | Redirect a payout (the link signature binds it), source a classic value operation, sign for a user account, open an account with a balance above 0 XLM. The contract calls it sources, claim today and the CCTP mint at the event, can only deliver what the link key or Circle's attestation already fixed: the relay can submit, never redirect |
+| Circle | Freeze USDC as its issuer | Nothing on our side prevents this; the site FAQ says so |
+| Nobody | Move escrow in today's bytecode: the only transfers out of the contract are `claim` to the signed payout and `reclaim` to the original sender after expiry | |
 
-**Lumenia's honest edge:** the **cross-border EU→TR leg** + an **open, shareable claim link** (not a closed in-app transfer). The moat is **distribution, not technology** — the mechanic is proven and copyable.
+There is no timelock yet, so an owner upgrade is instant; a timelock is the next governance step (roadmap tranche 2).
 
-**Verdict:** claim-link is **crowded on EVM, funded on Solana (Morse), and under-built on Stellar** — LOBSTR already does email/phone claimable-balance claim, and Sendit/Beans are adjacent, but no one ships a **non-custodial, browser-complete walletless claim on the EU→TR corridor**. The mechanic is proven, the chain lane is open, the moat = distribution (not "only possible here").
+## Stellar integration
 
----
+| What | Where | Notes |
+|---|---|---|
+| LumenDrop escrow (Soroban, `soroban-sdk` 26.1, OpenZeppelin `stellar-access`, `stellar-contract-utils` and `stellar-macros` 0.7.2 for Ownable, Pausable, Upgradeable) | Testnet [`CAMCI5VPRLQUL6H4QKLZ6X7ASLVCEYBYWS7N3QG7JVOA25HCY2TN3HP3`](https://stellar.expert/explorer/testnet/contract/CAMCI5VPRLQUL6H4QKLZ6X7ASLVCEYBYWS7N3QG7JVOA25HCY2TN3HP3), mainnet [`CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4`](https://stellar.expert/explorer/public/contract/CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4) | `deposit`, `claim`, `reclaim`, group drops (`create_drop`, `claim_share`, `reclaim_pool`). Persistent storage with TTL bumps and versioned records (`DropEntry::V1`); instance storage for the token and the owner; no temporary storage, because nothing in an escrow may expire silently. `require_auth` on deposit and reclaim; `ed25519_verify` on claim because the link holder has no account. Source: [`contracts/lumen-drop`](contracts/lumen-drop) |
+| Circle USDC as a Stellar Asset Contract | Testnet issuer [`GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`](https://stellar.expert/explorer/testnet/asset/USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5), mainnet issuer [`GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`](https://stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN) | The one token pinned into the contract at deploy. Balances count only the pinned issuer |
+| Sponsored reserves (CAP-33) | `POST /create-account` on the sponsor Worker | `beginSponsoringFutureReserves`, `createAccount` with 0 XLM, `changeTrust` USDC, `endSponsoringFutureReserves`; the sponsor sources only the begin and createAccount operations; the recipient co-signs changeTrust and end |
+| Fee-bump transactions (CAP-15) | Every relay route: `/v2-deposit`, `/v2-claim`, `/v2-reclaim`, `/feebump`, `/payout`, `/send-link`, `/cctp-relay` | The sponsor pays the fee; for claim it also sources the invoke because the link holder has no account, and the contract binds the payout to the link signature. Each family of routes has its own fail-closed policy: `apps/sponsor/src/lib/anti-drain.ts` checks op type, op source and sensitive parameters on the classic routes (`/feebump`, `/send-link`, `/payout`), `soroban-relay.ts` allowlists the contract methods and caps the fee on the LumenDrop invokes, and `cctp-relay.ts` pins the forwarder, the method and the message header on the mint |
+| Claimable Balances (CAP-23) | Sends to a known address | Two claimants: the recipient, unconditional, and the sender after seven days. The link path uses the contract instead because the payout is chosen at claim time |
+| SEP-1, SEP-10, SEP-6 | `tr-mock-anchor.fly.dev` (the organisers' sandbox anchor), `SIGNING_KEY` `GDXYO6FJCNXZEWGXD54GT76FGFYLOLSOGSOJLNQ6WGHCGEQPO7NTE73M` | `apps/web/lib/anchor.ts`: SEP-1 discovery, SEP-10 challenge verified against the published `SIGNING_KEY` before the user key signs anything, SEP-6 withdraw (live) and SEP-6 deposit. The withdrawal is paid by a classic `payment` with the anchor's id memo. Switching anchors is a change of home domain |
+| Circle CCTP V2 | CctpForwarder testnet [`CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ`](https://stellar.expert/explorer/testnet/contract/CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ), Stellar domain 27; Base Sepolia domain 6 | The sponsor relays `mint_and_forward`; the recipient is a trustlined Lumenia account; 6 decimals on the wire, 7 on Stellar |
+| Horizon and Soroban RPC | Reads and submits, testnet and mainnet | Every product surface renders live chain data; empty states are honest empties |
+| WebAuthn PRF and Argon2id | Recovery and fast unlock | One 32-byte seed sealed into a ciphertext box the server cannot open; the password is the floor, Face ID the shortcut (WhatsApp's in-app browser cannot create passkeys) |
+| Stellar CLI | `stellar contract build` (`wasm32v1-none`), deploy, `stellar contract extend` for instance and code TTL | Rent is real: both networks were extended by hand and the watchdog pages before expiry |
 
-*Network: testnet, plus a capped allowlisted mainnet pilot · Regulation: no-yield, non-custodial*
+## Design decisions and challenges
+
+- **`pending_trust` eliminated by sponsored trustlines.** The organisers' anchor walkthrough on 8 Sept 2026 showed a SEP-6 deposit pausing at `pending_trust` because the wallet had no trustline. Lumenia never reaches that state: the sponsor opens every account with `createAccount(0 XLM)` + `changeTrust(USDC)` inside one CAP-33 sponsored-reserves sandwich at claim time, so the anchor always meets a trustlined account. The 18 Sept deposit run walked `pending_anchor` to `completed` with no `pending_trust`.
+- **Every relay route is fail-closed, each by its own policy.** A sponsor that fee-bumps strangers' transactions is a drain target, so `apps/sponsor/src/lib/anti-drain.ts` checks operation type, operation source and the sensitive parameters before any signature: the sponsor may source only `beginSponsoringFutureReserves` and `createAccount`; `startingBalance` must be 0; `changeTrust` must name the pinned USDC and be recipient-sourced; a `payment` is refused unless its destination is allow-listed; a missing constraint means reject. Every new route gets its own tight policy and no existing allowlist is widened: the CCTP relay built at the event reads only a burn hash, pins the forwarder contract and `mint_and_forward`, checks the message header (source domain 6, destination 27, caller equal to the forwarder) before it simulates, and caps the fee. 60 adversarial cases in `test:antidrain`, 37 more in `test:cctp`.
+- **Sponsored reserves, and what a 0-XLM account costs the sponsor.** A claim is free for the recipient and not for us: the sponsor locks about 1.5 XLM of reserves per new account (the account entry plus the USDC trustline entry) and pays the fees, and that reserve does not scale with the amount, which is why there is a minimum escrow (`MIN_DROP_USDC`) and a per-day onboarding budget. The float is finite: the watchdog pages below 40 recipients of remaining capacity during the event (25 normally), and on mainnet every cap fails closed when the counter store is unreachable.
+- **Two escrow paths on purpose.** A link uses the Soroban contract (LumenDrop) because the recipient is unknown and the payout address is chosen at claim time. A send to a known address uses a Claimable Balance (CAP-23) with the recipient as the unconditional claimant and the sender as the reclaim claimant after seven days: protocol-native, no contract and no upgrade key involved. They are not unified, and on either path reclaim is an explicit action by the sender, never automatic.
+- **A walletless claim signed by the link key, with the payout bound in the message.** The link holder has no account, so `claim` cannot use `require_auth`; the contract runs `ed25519_verify` over (contract, network, link, payout) against the link's public key. The secret lives only in the URL fragment and never reaches a server; the device signs, the Worker builds the invoke from a channel account it controls, and the sponsor fee-bumps it. Because the payout address is inside the signed message, the relayer that sources the call cannot redirect it; the one thing it can do is decline to relay.
+
+## Skills and tools used
+
+Cited by path from the official Stellar skills (https://skills.stellar.org, repo `stellar/stellar-dev-skill`):
+
+- `skills/smart-contracts/SKILL.md`: LumenDrop storage types, auth, testing and security patterns
+- `skills/dapp/SKILL.md`: `@stellar/stellar-sdk` transaction building, simulation, signing, submission
+- `skills/assets/SKILL.md`: trustlines, the USDC Stellar Asset Contract
+- `skills/data/SKILL.md`: Horizon and RPC reads
+- `skills/standards/SKILL.md`: SEP-1, SEP-10, SEP-6
+- `skills/cross-chain/cctp.md`: CCTP V2, domain 27, the CctpForwarder rule for Stellar recipients
+- `skills/anchors/SKILL.md`, the community anchors skill: https://github.com/CheesecakeLabs/stellar-anchor-skill (`SKILL.md`): SEP-6 as a deliberate choice, exact memo and memo type, trustline before deposit, status as a state machine, re-run SEP-10 on 401 (the sandbox answers 403; the client handles both)
+
+The Stellar Raven MCP and skills.stellar.org were used for the research passes before the event; the skill files above were read from the installed copies during the event build.
+
+## Quickstart for a judge
+
+The three-step testnet path is under [Demo](#demo). The gate:
+
+```bash
+pnpm install
+
+# The offline gate: no network, no keys. Exactly what CI runs. Counts as of 2026-09-20.
+pnpm test:antidrain                                  # 60   anti-drain validator (claim, send, payout, sweep, sequence, golden policy, muxed)
+pnpm --filter @lumenia/sponsor test:kms              # 13   external Ed25519 signer path, byte parity
+pnpm --filter @lumenia/sponsor test:caps             # 82   per-drop and per-day caps, onboarding budget
+pnpm --filter @lumenia/sponsor test:channels         # 24   channel-account lease
+pnpm --filter @lumenia/sponsor test:events           # 62   event allowlist, funnel, seeded cohort, buckets
+pnpm --filter @lumenia/sponsor test:pilot            # 36   mainnet allowlist and per-wallet budget
+pnpm --filter @lumenia/sponsor test:recovery-store   # 35   ciphertext-only recovery box store
+pnpm --filter @lumenia/sponsor test:identity         # 66   names and ways-back-in registries
+pnpm --filter @lumenia/sponsor test:identity-routes  # 39   the same through worker.fetch
+pnpm --filter @lumenia/web test:recovery             # 18   recovery crypto
+pnpm --filter @lumenia/web test:claimpw              # 13   claim-password derivation
+pnpm --filter @lumenia/web test:receive              # 14   receive and collect logic
+pnpm --filter @lumenia/web test:horizon              # 17   Horizon readers
+pnpm --filter @lumenia/web test:claimerr             # 24   claim-failure classification
+pnpm --filter @lumenia/web test:suggest              # 8    onboarding name suggestions
+pnpm --filter @lumenia/web test:txguard              # 32   client-side guard on sponsor-built transactions
+pnpm --filter @lumenia/web test:money                # 36   amount parsing and formatting
+pnpm --filter @lumenia/web test:anchor               # 142  SEP-1, SEP-10, SEP-6 client: the challenge is verified before signing, deposit and withdraw
+pnpm --filter @lumenia/sponsor test:cctp             # 37   the CCTP relay route on Circle's real message bytes
+pnpm --filter @lumenia/web test:cctp-web             # 18   the browser half of CCTP, golden-tested against the bytes that minted
+(cd contracts/lumen-drop && cargo test)              # 29   unit and property tests over the 14-invariant spec
+```
+
+20 offline suites, 776 assertions, plus 29 contract tests; every suite re-run green on 20 Sept 2026 against the submitted commit. Two more suites sit outside the gate list: the Wallets Kit adapter (`pnpm --filter @lumenia/web test:walletkit`, 16) and the agent MCP (`pnpm --filter @lumenia/web test:agentmcp`, 26). `next build` is clean.
+
+The anchor, live, from the terminal (network, testnet only, spends nothing real):
+
+```bash
+pnpm --filter @lumenia/web test:anchor-live            # SEP-1 + SEP-10 + SEP-6 withdraw, the exact /send-out/bank sequence, 23 s measured on 18 Sept
+pnpm --filter @lumenia/web test:anchor-deposit-live    # SEP-6 deposit, lira in, against the sandbox anchor, 22.6 s measured on 18 Sept
+AMOUNT=2 FINALITY=1000 pnpm --filter @lumenia/sponsor spike7   # CCTP V2 inbound, Base Sepolia to Stellar testnet through the CctpForwarder: burn, Circle attestation, relayer mint. Measured 19 Sept: Fast finality 18 s burn-to-mint (burn 0xddf8f16a...08fc, mint 617908c7...1261); Standard finality proven too (burn 0xf79328e1...aa00, mint a5c4eae0...4a4d). Needs a funded Base Sepolia sender (keys in the gitignored spike file)
+```
+
+## Setup
+
+```bash
+# Node 20+, pnpm 9.12.0 (pinned in package.json); Rust and the stellar CLI only for the contract
+pnpm install
+
+# Web app (Next.js) on http://localhost:3000; testnet works with no env file
+pnpm --filter @lumenia/web dev
+
+# Sponsor Worker on http://localhost:8787 (vars from wrangler.toml, secrets from apps/sponsor/.dev.vars)
+cd apps/sponsor && npx wrangler dev
+```
+
+Web env (`apps/web/.env.local`):
+
+- `NEXT_PUBLIC_SPONSOR_URL`: the testnet sponsor Worker (defaults to the deployed testnet Worker). `NEXT_PUBLIC_LUMENDROP_CONTRACT`, `NEXT_PUBLIC_HORIZON`, `NEXT_PUBLIC_SOROBAN_RPC`: the testnet contract and endpoints (default to the ids above).
+- Mainnet: `NEXT_PUBLIC_SPONSOR_URL_MAINNET` and `NEXT_PUBLIC_LUMENDROP_CONTRACT_MAINNET` (no defaults; without them the app has no mainnet configuration), `NEXT_PUBLIC_HORIZON_MAINNET` and `NEXT_PUBLIC_SOROBAN_RPC_MAINNET` (default to the public endpoints). `NEXT_PUBLIC_STELLAR_NETWORK=mainnet` makes mainnet the default network; unset means testnet.
+- `NEXT_PUBLIC_ANCHOR_HOME_DOMAIN`: the anchor's home domain; the lira screens appear only when it is set (sandbox: `tr-mock-anchor.fly.dev`, testnet only).
+- `NEXT_PUBLIC_WALLETS_KIT=1`: shows "Fund from another Stellar wallet" on `/send` (off by default).
+- `NEXT_PUBLIC_EVENT_MODE=1`: the event flow and the `/event` judge board.
+- `NEXT_PUBLIC_RP_ID` and `NEXT_PUBLIC_SITE_URL`: the WebAuthn relying-party id and the canonical site URL; `NEXT_PUBLIC_PILOT_TX_CAP_USD`: the per-transfer cap shown on `/pilot` (5).
+
+Sponsor env: the caps and switches are plain vars in `apps/sponsor/wrangler.toml` (`[vars]` for testnet, `[env.mainnet.vars]` for mainnet: `MAX_DROP_USDC`, `MAX_DAY_USDC`, `MAX_DAY_ACCOUNTS`, `MAX_DAY_ACCOUNTS_PER_SOURCE`, `PILOT_MODE`, `CAPS_FAIL_CLOSED`, `SPONSOR_MIN_RECIPIENTS`, `EVENTS_EXCLUDE_AIDS`, ...); secrets go in with `wrangler secret put` (`SPONSOR_SECRET`, `KV_REST_API_URL`, `KV_REST_API_TOKEN`, `RESEND_API_KEY`, `PILOT_APPROVE_TOKEN`, `CHANNEL_SECRETS`); `apps/sponsor/.env.example` documents most of them for local runs; `PILOT_APPROVE_TOKEN` and `CHANNEL_SECRETS` are described in `src/lib/pilot.ts` and `src/lib/channels.ts`. Deploy: web = git push to `main` (Vercel); sponsor = `npx wrangler deploy` (testnet) and `npx wrangler deploy --env mainnet` (real money, separate secrets; deploying one never touches the other).
+
+## Technologies
+
+- Next.js 16.3.2 with React 19.2.8, a PWA hosted on Vercel (git push to `main` deploys)
+- `@stellar/stellar-sdk` 16.3.0 in both apps: classic operations, Soroban invokes and simulation, `WebAuth.readChallengeTx` for SEP-10; the same copy the Wallets Kit resolves to; `packages/shared` still pins 16.1.0
+- `soroban-sdk` 26.1 with OpenZeppelin stellar-contracts 0.7.2 (`stellar-access`, `stellar-contract-utils`, `stellar-macros`) for LumenDrop, built with `stellar contract build` to `wasm32v1-none`
+- Cloudflare Workers with `nodejs_compat` for the sponsor: one codebase, two deployments from the same `wrangler.toml` (`lumenia-sponsor` on testnet, `lumenia-sponsor-mainnet` on mainnet)
+- Upstash Redis over REST for counters, caps, rate limits and the ciphertext-only recovery store
+- Horizon and Soroban RPC for every read and submit; Stellar Wallets Kit 2.5.0 behind a flag; viem 2.56.8 for the Base Sepolia side of the CCTP script; the MCP SDK 1.30.0 for the agent-as-sender server
+- WebAuthn PRF and Argon2id for recovery and unlock
+
+## Honest limits
+
+- Mainnet is a hand-approved, capped pilot, not a launch: every sender wallet is admitted by hand (recipients never need approval), $5 per transfer, $50 per day, caps fail closed, a per-wallet operation budget, a kill switch and a 15-minute watchdog. As of 2026-08-28, the pilot's own count: 69 accounts opened, 109 real transfers, about $4.4 in total; median payment $0.002, maximum $1.00, 65 of 69 payments from one scripted run on 24 Aug; a plumbing proof, not demand. The day caps were raised for the two event days, in force from the 18 Sept dry run through 20 Sept, reverted at 21:00 on 20 Sept; the per-transfer cap and fail-closed did not move. The step: $400 per day instead of $50, 200 sponsored accounts per day instead of 40 and 200 per caller IP (the venue shares one Wi-Fi address), 300 requests per minute per IP, 50 operations per approved wallet, and the watchdog floor at 40 recipients instead of 25; every sender stayed hand-approved. The revert is due at 21:00 Istanbul on 20 Sept 2026.
+- Not audited. The contract passed a static-analysis, property-test, fuzz and mutation pass; that is self-assessment. Opening mainnet beyond the pilot waits for a professional audit and a written Turkish legal opinion; the product is free and invite-only until then.
+- The contract owner is a 2-of-3 multisig since 2026-09-18 with no timelock yet: an upgrade is instant. The owner can pause new escrow and never withdrawals; no owner path moves escrowed funds.
+- The sponsor key is an environment hot key on both Workers. A KMS signer is code-complete behind the same interface and not provisioned; taking it live is in progress under the current Instaward follow-on (SOW 2).
+- USDC can be frozen by its issuer, Circle. The sponsor can decline to relay; that is how the pilot limits are enforced, and it is real power.
+- Unclaimed money does not return by itself: the sender can take it back after seven days; reclaim is not automatic.
+- The lira rail is a sandbox anchor on testnet. No Turkish lira moved for real, and no Turkish provider is integrated. The sandbox ignores a caller-supplied payout account, so the IBAN shown is the anchor's own. SEP-12 and SEP-38 are not used.
+- CCTP inbound runs on testnet (Base Sepolia to Stellar testnet) and is relayed by our sponsor; the live-run latency on the day is the number to trust, not an estimate.
+- WhatsApp's in-app browser cannot create passkeys, so the claim is one tap with a key made on the device; locking the account and recovery use a password, and Face ID is offered afterwards as a faster unlock.
+- The sponsor's XLM float is finite (about 1.5 XLM locked per new account); the watchdog pages below 40 recipients of remaining capacity during the event (25 normally).
+- Request-money (ask someone to send you dollars) was shown for about ten seconds on stage; the hero is sending to someone with no wallet.
+
+## Roadmap toward the SCF Build Integration Track
+
+Lumenia is an application on existing Stellar primitives, not a new primitive, so after the current Instaward follow-on (SOW 2, ends 2026-10-17) the target is the SCF Build Integration Track; the referral path we are pursuing is Rise In. Tranches are mapped 10/20/30/40, and the final tranche is tied to one self-set on-chain metric: cumulative payment volume through registered sponsored accounts (CAP-33 sponsorship attribution, counted from Horizon) within 90 days of mainnet launch, seeded cohorts excluded. The number is set by one rule, fixed here before it can be chosen to flatter us: ten times the event's organic mainnet dollar delta over 90 days, with a floor of $500.
+
+| Tranche | Deliverable | Proof |
+|---|---|---|
+| 1 (10%) | A STRIDE threat model and a monitoring plan in SDF's templates; the Integration List blocks named: the anchor over SEP-6, Stellar Wallets Kit, CCTP; KYC | The two documents delivered; the three integrations named with their code paths; the KYC plan |
+| 2 (20%) | An upgrade timelock on LumenDrop in front of the 2-of-3 owner; the KMS signer live on the mainnet Worker (in progress under the current Instaward, SOW 2) | Owner address is the timelock on stellar.expert; a mainnet fee-bump signed by the KMS key |
+| 3 (30%) | Testnet-complete lira in and out over SEP-6, and CCTP inbound in the product, not only the script | Round-trip hashes both ways against the anchor; a burn on Base and the mint on Stellar from the product screen |
+| 4 (40%) | Mainnet with the self-set on-chain metric above | Horizon-counted volume through CAP-33-registered sponsored accounts within 90 days of launch, against the number the rule above fixes |
+
+Next, after the tranches: a permissionless exit page and raw-key export (anyone holding XLM can submit `claim` or `reclaim` against the contract without our Worker); USDT0 as a second asset with an inbound LayerZero composer (Turkey's stablecoin volume is USDT-heavy); the Africa corridor through Yellow Card, which supports USDC on Stellar in 35+ countries and has not yet been contacted; a professional audit, then the final upgrade that removes the upgrade entrypoint and makes the escrow immutable; WhatsApp notifications through the Business API; opening mainnet beyond the pilot only after the legal opinion.
+
+## Team
+
+- Meric Cintosun, founder and engineer, [github.com/mericcintosun](https://github.com/mericcintosun)
+
+Rise In x Stellar Pro Hackathon, Scale Track, Istanbul, 19-20 Sept 2026. Two Instawards received (2026). Public repo: [github.com/getlumenia/lumenia](https://github.com/getlumenia/lumenia). The deck is linked from the submission portal.

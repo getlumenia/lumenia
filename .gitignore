@@ -185,3 +185,7 @@ HACKATHON_CD_KIT.md
 HACKATHON_MAINNET_EVENT_CONFIG.md
 README_HACKATHON_DRAFT.md
 docs/events-snapshot-*.json
+
+# Event-day seeded claim links: these files carry bearer link fragments (testnet, but
+# publishing them drains the demo pool). Nothing under docs/ is tracked; keep it that way.
+docs/

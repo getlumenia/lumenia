@@ -52,6 +52,14 @@ SPONSOR_MIN_XLM = "50"
 # contract's instance or code is fewer than this many days from Soroban state archival.
 SPONSOR_MIN_RECIPIENTS = "25"
 SPONSOR_MIN_TTL_DAYS = "21"
+# EVENT 19-20 Sept 2026: the venue is one NAT address and one claim costs three sponsor requests
+# (/create-account, /feebump, /v2-claim), so the 30/min default 429s a crowd. The per-account cap
+# is raised with it, because all three calls key on the SAME fresh recipient key and at 5 a single
+# retry inside a minute 429s a real claimer. The daily onboarding budget is untouched (lib/caps.ts:
+# 500/day, 100 per source), so the sponsor's reserve exposure is unchanged. Optional revert after
+# the event: testnet is play money. The mainnet block below declares its own RATE_CAP.
+RATE_CAP = "300"
+ACCOUNT_RATE_CAP = "15"
 # The wasm the escrow is EXPECTED to run. An upgrade emits no event, so a mismatch here is the
 # only signal that the deployed bytecode changed. Update this whenever you intentionally upgrade.
 #
