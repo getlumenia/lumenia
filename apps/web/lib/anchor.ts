@@ -36,10 +36,16 @@
  * anchor's own hosted screen does its own know-your-customer step, and on SEP-6 an anchor that
  * demands documents is one this product should not be using. The one SEP-12 call here
  * (`setBankAccount`) sends a payout destination the person typed, nothing about who they are; see
- * its comment for where that line sits. It does not persist the session token. It does not
- * deposit, only withdraw, because the direction this product needs first is dollars out to local
- * currency. SEP-38 is limited to `requestQuote`: a firm quote for the figure shown before the
- * person approves, never an indicative one dressed up as a promise.
+ * its comment for where that line sits. It does not persist the session token. SEP-38 is limited
+ * to `requestQuote`: a firm quote for the figure shown before the person approves, never an
+ * indicative one dressed up as a promise.
+ *
+ * LIRA IN (SEP-6 deposit, added at the hackathon, 2026-09-19, decision register D27 item 2.1).
+ * `startDeposit` opens a plain SEP-6 `/deposit` for the person's own account (already created
+ * and trustlined by the sponsor, so the anchor always meets a ready account), `readDeposit` maps
+ * the status walk, and `simulateBankTransfer` stands in for the person's bank on the sandbox
+ * anchor only: it refuses to run anywhere but the test network. Nothing on this path signs or
+ * pays anything: the anchor sends the dollars, the person only signs the SEP-10 sign-in.
  *
  * DECISION 2026-09-09 (owner, on the organiser's guidance): for the hackathon period the product
  * uses SEP-6 ONLY, plus the SEP-1 discovery and SEP-10 sign-in that SEP-6 cannot work without.
@@ -65,9 +71,11 @@
  * HONESTY. Whether any given anchor actually settles in a particular currency is the anchor's
  * claim, not ours. `readAnchorInfo` reports what the anchor publishes and nothing more.
  */
-import { Transaction, WebAuth } from "@stellar/stellar-sdk";
+import { Networks, Transaction, WebAuth } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
 import { activeNetwork, type NetworkConfig } from "./network";
+
+const TESTNET_PASSPHRASE = Networks.TESTNET;
 
 /** The anchor's home domain, e.g. "testanchor.stellar.org". Configuration, never user input. */
 export function anchorHomeDomain(): string | null {
@@ -246,6 +254,21 @@ export interface TransferLimits {
  * shown in the anchor's own words even when the amount passed this check. No sign-in needed.
  */
 export async function readWithdrawLimits(info: AnchorInfo, assetCode: string): Promise<TransferLimits> {
+  return readLimits(info, assetCode, "withdraw");
+}
+
+/**
+ * The same, for a deposit (lira in). MEASURED 2026-09-19 on the sandbox anchor: the published
+ * deposit range (0.5-300) is in DOLLARS, the on-chain asset, while the `amount` the person types
+ * is LIRA: a 400 TRY deposit was accepted and paid 8.1584363 USDC (payment `8c2c5d76...4c93`). So
+ * a screen must not compare the typed lira against these figures; it shows the anchor's own
+ * refusal instead.
+ */
+export async function readDepositLimits(info: AnchorInfo, assetCode: string): Promise<TransferLimits> {
+  return readLimits(info, assetCode, "deposit");
+}
+
+async function readLimits(info: AnchorInfo, assetCode: string, direction: "deposit" | "withdraw"): Promise<TransferLimits> {
   const none: TransferLimits = { min: null, max: null, feePercent: null };
   let body: unknown;
   try {
@@ -253,8 +276,8 @@ export async function readWithdrawLimits(info: AnchorInfo, assetCode: string): P
   } catch {
     return none;
   }
-  const withdraw = (body as { withdraw?: Record<string, unknown> } | null)?.withdraw;
-  const entry = withdraw?.[assetCode] as { min_amount?: unknown; max_amount?: unknown; fee_percent?: unknown } | undefined;
+  const side = (body as Record<string, unknown> | null)?.[direction] as Record<string, unknown> | undefined;
+  const entry = side?.[assetCode] as { min_amount?: unknown; max_amount?: unknown; fee_percent?: unknown } | undefined;
   if (!entry) return none;
   const num = (v: unknown) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? String(v) : null);
   return { min: num(entry.min_amount), max: num(entry.max_amount), feePercent: num(entry.fee_percent) };
@@ -578,6 +601,182 @@ export async function readWithdrawal(
       // anything an anchor invents. All of them mean "not yet", never "finished".
       return { status: "waiting" };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* SEP-6 deposit: lira in                                               */
+/* ------------------------------------------------------------------ */
+
+/** One line of the anchor's payment instructions, exactly as it sent it. */
+export interface DepositInstruction {
+  /** The anchor's field name, e.g. "bank_account_number". */
+  key: string;
+  value: string;
+  /** The anchor's own description of the field, when it gave one. */
+  description: string | null;
+}
+
+/** A deposit the anchor has opened: where the person sends the lira, and under which reference. */
+export interface OpenedDeposit {
+  id: string;
+  /** In the order the anchor listed them. Shown verbatim; nothing here is rewritten. */
+  instructions: DepositInstruction[];
+  /** The anchor's own sentence (`extra_info.message`, else the deprecated `how`), verbatim. */
+  note: string | null;
+  /** Seconds the anchor expects, when it says. */
+  eta: number | null;
+  minAmount: string | null;
+  maxAmount: string | null;
+  feePercent: string | null;
+}
+
+/** A deposit, as far as this client is concerned. Anything unrecognised is `waiting`, never settled. */
+export type AnchorDepositState =
+  /** `awaiting-transfer`: the anchor waits for the bank transfer. `processing`: it has it and is paying. */
+  | { status: "waiting"; stage: "awaiting-transfer" | "processing"; raw: string }
+  | {
+      status: "settled";
+      id: string;
+      /** The Stellar payment that brought the dollars in. */
+      stellarTransactionId: string | null;
+      amountIn: string | null;
+      amountOut: string | null;
+      amountFee: string | null;
+    }
+  | { status: "refunded"; id: string }
+  | { status: "failed"; id: string; reason: string };
+
+/**
+ * SEP-6 `GET /deposit`: open a lira-in transfer to the person's own account.
+ *
+ * Plain `/deposit`, never `/deposit-exchange` and never a quote (decision D2): the anchor names
+ * its own rate in its own sentence, which the screen shows verbatim. The asset code is bare
+ * (`USDC`), the SEP-6 form. `funding_method` is the current SEP-6 name for how the fiat arrives
+ * and `type` the older one the sandbox anchor still lists as required in `/info`; both are sent
+ * with the same value so either reading of the spec is satisfied. The account must already hold
+ * the trustline: every account the sponsor creates does, so `pending_trust` should never appear.
+ */
+export async function startDeposit(
+  info: AnchorInfo,
+  token: string,
+  params: { assetCode: string; account: string; amount: string; fundingMethod?: string; lang?: string },
+): Promise<OpenedDeposit> {
+  if (info.door !== "sep6") throw new Error("that anchor takes deposits on its own screen, which this product does not open");
+  const method = params.fundingMethod ?? "bank_account";
+  const q = new URLSearchParams();
+  q.set("asset_code", params.assetCode);
+  q.set("account", params.account);
+  q.set("amount", params.amount);
+  q.set("funding_method", method);
+  q.set("type", method);
+  if (params.lang) q.set("lang", params.lang);
+
+  const res = (await getJson(`${info.transferServer}/deposit?${q.toString()}`, {
+    headers: { authorization: `Bearer ${token}` },
+  })) as {
+    id?: unknown;
+    how?: unknown;
+    eta?: unknown;
+    min_amount?: unknown;
+    max_amount?: unknown;
+    fee_percent?: unknown;
+    instructions?: Record<string, { value?: unknown; description?: unknown } | undefined>;
+    extra_info?: { message?: unknown };
+  } | null;
+
+  const id = res?.id != null ? String(res.id) : "";
+  if (!res || !id) throw new Error("that anchor could not open the deposit");
+
+  const instructions: DepositInstruction[] = [];
+  for (const [key, v] of Object.entries(res.instructions ?? {})) {
+    if (!v || v.value == null || String(v.value) === "") continue;
+    instructions.push({ key, value: String(v.value), description: v.description != null ? String(v.description) : null });
+  }
+  const text = (v: unknown) => (v != null && String(v).trim() !== "" ? String(v) : null);
+  const num = (v: unknown) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? String(v) : null);
+  return {
+    id,
+    instructions,
+    note: text(res.extra_info?.message) ?? text(res.how),
+    eta: typeof res.eta === "number" && Number.isFinite(res.eta) ? res.eta : null,
+    minAmount: num(res.min_amount),
+    maxAmount: num(res.max_amount),
+    feePercent: num(res.fee_percent),
+  };
+}
+
+/**
+ * Ask the anchor where a deposit stands. The same conservative rule as `readWithdrawal`: a status
+ * we do not recognise is `waiting`, never settled, because calling an unknown state "done" is how
+ * a screen tells someone money arrived when it did not.
+ */
+export async function readDeposit(info: AnchorInfo, token: string, id: string): Promise<AnchorDepositState> {
+  const res = (await getJson(`${info.transferServer}/transaction?id=${encodeURIComponent(id)}`, {
+    headers: { authorization: `Bearer ${token}` },
+  })) as { transaction?: Record<string, unknown> } | null;
+
+  const t = res?.transaction;
+  if (!t) return { status: "waiting", stage: "awaiting-transfer", raw: "" };
+  const status = String(t.status ?? "");
+  const str = (v: unknown) => (v != null && String(v) !== "" ? String(v) : null);
+
+  switch (status) {
+    case "completed":
+      return {
+        status: "settled",
+        id,
+        stellarTransactionId: str(t.stellar_transaction_id),
+        amountIn: str(t.amount_in),
+        amountOut: str(t.amount_out),
+        amountFee: str(t.amount_fee),
+      };
+    case "refunded":
+      return { status: "refunded", id };
+    case "error":
+      return { status: "failed", id, reason: str(t.message) ?? "the anchor reported a problem" };
+    case "expired":
+      return { status: "failed", id, reason: "the anchor let this deposit expire before the bank transfer arrived" };
+    case "too_small":
+    case "too_large":
+      return { status: "failed", id, reason: `the anchor refused the amount (${status.replace("_", " ")})` };
+    case "no_market":
+      return { status: "failed", id, reason: "the anchor has no market for this conversion right now" };
+    case "pending_trust":
+      // Every account the sponsor creates holds the trustline, so this means the account is not
+      // one of ours in the state we expect. Terminal here: waiting would wait forever.
+      return { status: "failed", id, reason: "this account cannot hold these dollars yet (no trustline)" };
+    case "pending_customer_info_update":
+      return { status: "failed", id, reason: "this rail wants identity information, which this product does not collect" };
+    case "incomplete":
+    case "pending_user_transfer_start":
+      return { status: "waiting", stage: "awaiting-transfer", raw: status };
+    default:
+      // pending_user_transfer_complete, pending_external, pending_anchor, pending_stellar and
+      // anything an anchor invents: the transfer is in, the dollars are not here yet.
+      return { status: "waiting", stage: "processing", raw: status };
+  }
+}
+
+/**
+ * THE SANDBOX'S BANK, not a Stellar standard. The Turkish sandbox anchor exposes
+ * `POST /sep6/tx/{id}/simulate-bank-transfer` so a test can play the person's bank and say "the
+ * lira arrived". It exists only on test deployments, and a real anchor learns this from its bank,
+ * never from us. So this refuses unless both our network and the anchor's declared network are
+ * the test network: on real money the button must not exist and the call must not be possible.
+ */
+export async function simulateBankTransfer(
+  info: AnchorInfo,
+  id: string,
+  amount: string,
+  net: NetworkConfig = activeNetwork(),
+): Promise<void> {
+  if (net.isMainnet || net.passphrase !== TESTNET_PASSPHRASE) throw new Error("the simulated bank transfer exists only on the test network");
+  if (info.networkPassphrase !== TESTNET_PASSPHRASE) throw new Error("that anchor is not a test-network anchor");
+  await getJson(`${info.transferServer}/tx/${encodeURIComponent(id)}/simulate-bank-transfer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ amount }),
+  });
 }
 
 /* ------------------------------------------------------------------ */

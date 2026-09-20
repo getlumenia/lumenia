@@ -5,9 +5,10 @@
  * (HACKATHON_DURING.md 2.1): it proves the sequence and records the status walk and the hashes, and
  * it is the recorded fallback if the sandbox's settlement queue starves on the day.
  *
- * It deliberately uses the RAW SEP-6 endpoints for the deposit itself (no `startDeposit` in
- * lib/anchor.ts yet: that client code is event work, decision D27). SEP-1 discovery and SEP-10
- * sign-in come from lib/anchor.ts, exactly as the product does them.
+ * Since the hackathon build (2026-09-19) every step goes through the PRODUCT client in
+ * lib/anchor.ts, the same calls the /add-money/bank screen makes: `startDeposit`,
+ * `simulateBankTransfer` and `readDeposit`. It was written against the raw endpoints first
+ * (2026-09-18) and switched over once that client existed.
  *
  *   1. SEP-1 + SEP-10 (challenge verified against the anchor's SIGNING_KEY before signing).
  *   2. GET /sep6/deposit?asset_code=USDC&account=<G>&amount=<TRY>&funding_method=bank_account
@@ -20,7 +21,7 @@
  *   (env: AMOUNT_TRY, default 100; NEXT_PUBLIC_ANCHOR_HOME_DOMAIN, default the sandbox anchor)
  */
 import { Asset, BASE_FEE, Horizon, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
-import { authenticate, readAnchorInfo, withSession, type AnchorSession } from "./anchor";
+import { authenticate, readAnchorInfo, readDeposit, simulateBankTransfer, startDeposit, withSession, type AnchorSession } from "./anchor";
 import { activeNetwork, USDC_ISSUER } from "./network";
 import { localSignerFromSeed } from "./signer";
 
@@ -33,18 +34,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const t0 = Date.now();
 const at = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
 const step = (m: string) => console.log(`[${at()}] ${m}`);
-
-async function getJson(url: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
-  const res = await fetch(url, init);
-  const text = await res.text();
-  let body: unknown = null;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = text;
-  }
-  return { status: res.status, body };
-}
 
 async function main() {
   const net = activeNetwork();
@@ -72,62 +61,39 @@ async function main() {
   const session: AnchorSession = { info, token: await authenticate(info, signer, net), signer, net };
   step(`SEP-10 ok at ${info.homeDomain} (signing key ${info.signingKey.slice(0, 8)}...)`);
 
-  // 3. Plain SEP-6 deposit: bare asset code, the account the sponsor trustlined, amount in TRY.
-  const q = new URLSearchParams({ asset_code: "USDC", account: kp.publicKey(), amount: AMOUNT_TRY, funding_method: "bank_account" });
-  const opened = await withSession(session, async (token) => {
-    const r = await getJson(`${info.transferServer}/deposit?${q}`, { headers: { authorization: `Bearer ${token}` } });
-    if (r.status === 401 || r.status === 403) throw Object.assign(new Error("auth"), { status: r.status });
-    return r;
-  });
-  if (opened.status !== 200) throw new Error(`/deposit ${opened.status}: ${JSON.stringify(opened.body)}`);
-  const dep = opened.body as {
-    id: string;
-    how?: string;
-    eta?: number;
-    min_amount?: number;
-    max_amount?: number;
-    fee_percent?: number;
-    instructions?: Record<string, { value: string; description?: string }>;
-    extra_info?: { message?: string };
-  };
-  step(`deposit ${dep.id}: eta ${dep.eta}s, limits ${dep.min_amount}-${dep.max_amount} TRY, fee ${dep.fee_percent}%`);
-  for (const [k, v] of Object.entries(dep.instructions ?? {})) step(`  instruction ${k}: ${v.value}${v.description ? ` (${v.description})` : ""}`);
-  step(`  anchor said: ${dep.extra_info?.message ?? dep.how ?? "(nothing)"}`);
+  // 3. Plain SEP-6 deposit through the product client: bare asset code, the trustlined account, TRY.
+  const dep = await withSession(session, (token) =>
+    startDeposit(info, token, { assetCode: "USDC", account: kp.publicKey(), amount: AMOUNT_TRY }),
+  );
+  step(`deposit ${dep.id}: eta ${dep.eta}s, fee ${dep.feePercent}%`);
+  for (const i of dep.instructions) step(`  instruction ${i.key}: ${i.value}${i.description ? ` (${i.description})` : ""}`);
+  step(`  anchor said: ${dep.note ?? "(nothing)"}`);
+  const first = await withSession(session, (token) => readDeposit(info, token, dep.id));
+  step(`status right after opening: ${first.status}${first.status === "waiting" ? ` / ${first.stage} (${first.raw})` : ""}`);
 
-  // 4. The sandbox bank transfer (unauthenticated on the mock; a real bank does this off-chain).
-  const sim = await getJson(`${info.transferServer}/tx/${encodeURIComponent(dep.id)}/simulate-bank-transfer`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ amount: AMOUNT_TRY }),
-  });
-  step(`simulate-bank-transfer -> ${sim.status} ${JSON.stringify(sim.body).slice(0, 160)}`);
-  if (sim.status !== 200 && sim.status !== 201) throw new Error("the sandbox bank refused the transfer");
+  // 4. The sandbox bank transfer, through the guarded client call (refuses off the test network).
+  await simulateBankTransfer(info, dep.id, AMOUNT_TRY, net);
+  step("simulated bank transfer accepted");
 
-  // 5. Status walk until completed.
+  // 5. Status walk until a terminal state.
   const seen: string[] = [];
   const deadline = Date.now() + WAIT_MS;
-  let final: Record<string, unknown> | null = null;
+  let final: Awaited<ReturnType<typeof readDeposit>> | null = null;
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
-    const r = await withSession(session, async (token) => {
-      const x = await getJson(`${info.transferServer}/transaction?id=${encodeURIComponent(dep.id)}`, { headers: { authorization: `Bearer ${token}` } });
-      if (x.status === 401 || x.status === 403) throw Object.assign(new Error("auth"), { status: x.status });
-      return x;
-    });
-    const t = (r.body as { transaction?: Record<string, unknown> })?.transaction;
-    const status = String(t?.status ?? "?");
-    if (seen[seen.length - 1] !== status) {
-      seen.push(status);
-      step(`status ${status}${t?.message ? ` (${String(t.message)})` : ""}`);
+    const st = await withSession(session, (token) => readDeposit(info, token, dep.id));
+    const label = st.status === "waiting" ? `waiting/${st.stage}(${st.raw})` : st.status;
+    if (seen[seen.length - 1] !== label) {
+      seen.push(label);
+      step(`status ${label}`);
     }
-    if (status === "completed" || status === "error" || status === "refunded") {
-      final = t ?? null;
+    if (st.status !== "waiting") {
+      final = st;
       break;
     }
-    if (status === "pending_trust") step("  (pending_trust would mean no trustline; ours is open, so this should never appear)");
   }
   if (!final) throw new Error(`no terminal status inside the wait; statuses seen: ${seen.join(" -> ")}`);
-  if (final.status !== "completed") throw new Error(`terminal status ${String(final.status)}: ${JSON.stringify(final).slice(0, 300)}`);
+  if (final.status !== "settled") throw new Error(`terminal status ${final.status}: ${JSON.stringify(final).slice(0, 300)}`);
 
   const bal = await horizon.loadAccount(kp.publicKey());
   const usdcBal = bal.balances.find((b) => "asset_code" in b && b.asset_code === "USDC" && b.asset_issuer === USDC_ISSUER.testnet);
@@ -137,10 +103,11 @@ async function main() {
   console.log(`  account             ${kp.publicKey()}`);
   console.log(`  trustline tx        ${trustHash}`);
   console.log(`  deposit id          ${dep.id}`);
-  console.log(`  reference           ${dep.instructions?.external_transfer_memo?.value ?? "?"} to IBAN ${dep.instructions?.bank_account_number?.value ?? "?"}`);
+  const ins = (k: string) => dep.instructions.find((i) => i.key === k)?.value ?? "?";
+  console.log(`  reference           ${ins("external_transfer_memo")} to IBAN ${ins("bank_account_number")}`);
   console.log(`  status walk         ${seen.join(" -> ")}`);
-  console.log(`  amount in / out     ${String(final.amount_in)} TRY -> ${String(final.amount_out)} USDC (fee ${String(final.amount_fee)})`);
-  console.log(`  stellar payment     ${String(final.stellar_transaction_id)}`);
+  console.log(`  amount in / out     ${final.amountIn} TRY -> ${final.amountOut} USDC (fee ${final.amountFee})`);
+  console.log(`  stellar payment     ${final.stellarTransactionId}`);
   console.log(`  recipient USDC now  ${usdcBal?.balance ?? "0"}`);
   console.log(`  total               ${at()}`);
   console.log("\nANCHOR DEPOSIT LIVE TEST PASS");

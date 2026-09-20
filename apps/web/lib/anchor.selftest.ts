@@ -33,8 +33,12 @@ import { Keypair, Networks, WebAuth } from "@stellar/stellar-sdk";
 import {
   authenticate,
   readAnchorInfo,
+  readDeposit,
+  readDepositLimits,
   readWithdrawal,
   readWithdrawLimits,
+  simulateBankTransfer,
+  startDeposit,
   requestQuote,
   setBankAccount,
   startWithdrawal,
@@ -753,6 +757,105 @@ code = "try"
     } finally {
       restore();
     }
+  }
+
+  console.log("\n[sep-6 deposit] lira in: plain /deposit, the anchor's instructions verbatim, a conservative status map");
+  {
+    const info6: AnchorInfo = { ...INFO, door: "sep6", transferServer: `https://${HOME}/sep6` };
+    // The body the live sandbox returned on 2026-09-19 (deposit sep_sav7401sudvksalp9wgo), trimmed.
+    const opened = {
+      id: "sep_dep1",
+      how: "old field",
+      eta: 5,
+      fee_percent: 0.5,
+      instructions: {
+        bank_name: { value: "TR Mock Bank A.S.", description: "Bank holding the anchor account" },
+        bank_account_number: { value: "TR050009900000000000000001", description: "IBAN to send TRY to" },
+        external_transfer_memo: { value: "TRMA-HFEW-K3U7", description: "Write this reference in the transfer description" },
+        empty_field: { value: "" },
+      },
+      extra_info: { message: "This is a sandbox: no real bank exists." },
+    };
+    const seen: { url: string; init?: RequestInit }[] = [];
+    let restore = stubFetch((url, init) => (seen.push({ url, init }), { body: opened }));
+    const d = await startDeposit(info6, "jwt", { assetCode: "USDC", account: USER, amount: "100.00" }).finally(restore);
+    const u = new URL(seen[0].url);
+    ok("opens a plain /deposit, never /deposit-exchange", u.pathname === "/sep6/deposit");
+    ok("the asset code is bare", u.searchParams.get("asset_code") === "USDC");
+    ok("the account is the person's own", u.searchParams.get("account") === USER);
+    ok("the amount is passed as typed", u.searchParams.get("amount") === "100.00");
+    ok("funding_method and the older type both say bank_account", u.searchParams.get("funding_method") === "bank_account" && u.searchParams.get("type") === "bank_account");
+    ok("no quote id and no destination asset are sent", !u.searchParams.has("quote_id") && !u.searchParams.has("destination_asset"));
+    ok("the session token rides as a Bearer header", new Headers(seen[0].init?.headers).get("authorization") === "Bearer jwt");
+    ok("the id comes back", d.id === "sep_dep1");
+    ok("the instructions come back in the anchor's order, empty ones dropped", d.instructions.map((i) => i.key).join(",") === "bank_name,bank_account_number,external_transfer_memo");
+    ok("the IBAN is passed through untouched", d.instructions[1].value === "TR050009900000000000000001");
+    ok("the anchor's description is kept", d.instructions[2].description === "Write this reference in the transfer description");
+    ok("the anchor's sentence wins over the deprecated how", d.note === "This is a sandbox: no real bank exists.");
+    ok("eta and fee are read", d.eta === 5 && d.feePercent === "0.5");
+
+    restore = stubFetch(() => ({ body: { id: "x", how: "Send TRY to ..." } }));
+    const old = await startDeposit(info6, "jwt", { assetCode: "USDC", account: USER, amount: "1" }).finally(restore);
+    ok("with no extra_info, the deprecated how is shown instead", old.note === "Send TRY to ..." && old.instructions.length === 0);
+
+    restore = stubFetch(() => ({ body: { how: "no id" } }));
+    await throws("a deposit without an id is refused", () => startDeposit(info6, "jwt", { assetCode: "USDC", account: USER, amount: "1" }).finally(restore), "could not open");
+    restore = stubFetch(() => ({ status: 400, body: { error: "amount must be at least 50 TRY" } }));
+    await throws("the anchor's refusal is surfaced in its own words", () => startDeposit(info6, "jwt", { assetCode: "USDC", account: USER, amount: "1" }).finally(restore), "at least 50 TRY");
+    await throws("a SEP-24-only anchor is refused, not half-driven", () => startDeposit(INFO, "jwt", { assetCode: "USDC", account: USER, amount: "1" }), "own screen");
+
+    // 401/403 renews the session once, then the deposit goes through.
+    let calls = 0;
+    restore = stubFetch((url) => {
+      if (url.includes("/auth")) return { body: { transaction: challenge(anchorKp), network_passphrase: PASSPHRASE, token: "fresh" } };
+      calls++;
+      return calls === 1 ? { status: 403, body: { type: "authentication_required" } } : { body: opened };
+    });
+    const sess: AnchorSession = { info: info6, token: "stale", signer, net: NET };
+    const renewed = await withSession(sess, (t) => startDeposit(info6, t, { assetCode: "USDC", account: USER, amount: "100.00" })).finally(restore);
+    ok("a 403 on /deposit renews the sign-in once and opens the deposit", renewed.id === "sep_dep1" && sess.token === "fresh");
+
+    const walk = async (tx: Record<string, unknown> | null) => {
+      const r = stubFetch(() => ({ body: tx === null ? {} : { transaction: tx } }));
+      return readDeposit(info6, "jwt", "sep_dep1").finally(r);
+    };
+    const s1 = await walk({ status: "pending_user_transfer_start" });
+    ok("pending_user_transfer_start waits for the bank transfer", s1.status === "waiting" && s1.stage === "awaiting-transfer");
+    const s2 = await walk({ status: "pending_anchor" });
+    ok("pending_anchor is processing, not done", s2.status === "waiting" && s2.stage === "processing");
+    const s3 = await walk({ status: "pending_stellar" });
+    ok("pending_stellar is processing, not done", s3.status === "waiting" && s3.stage === "processing");
+    const s4 = await walk({ status: "something_new" });
+    ok("an unknown status is waiting, never settled", s4.status === "waiting");
+    const s5 = await walk(null);
+    ok("no transaction in the answer is waiting", s5.status === "waiting");
+    const s6 = await walk({ status: "completed", stellar_transaction_id: "8c2c5d76", amount_in: "400.00", amount_out: "8.1584363", amount_fee: "2.00" });
+    ok("completed carries the Stellar payment and the amounts", s6.status === "settled" && s6.stellarTransactionId === "8c2c5d76" && s6.amountOut === "8.1584363" && s6.amountIn === "400.00");
+    const s7 = await walk({ status: "error", message: "bank bounced" });
+    ok("error is terminal with the anchor's message", s7.status === "failed" && s7.reason === "bank bounced");
+    const s8 = await walk({ status: "pending_trust" });
+    ok("pending_trust is terminal (our accounts are trustlined; waiting would be forever)", s8.status === "failed");
+    const s9 = await walk({ status: "pending_customer_info_update" });
+    ok("pending_customer_info_update is terminal (no identity collection, D2)", s9.status === "failed");
+    const s10 = await walk({ status: "expired" });
+    ok("expired is terminal", s10.status === "failed");
+    const s11 = await walk({ status: "refunded" });
+    ok("refunded is reported as refunded", s11.status === "refunded");
+
+    // The sandbox's bank button exists on the test network only.
+    const sim: string[] = [];
+    restore = stubFetch((url, init) => (sim.push(`${init?.method} ${url} ${String(init?.body)}`), { body: { ok: true } }));
+    await simulateBankTransfer(info6, "sep_dep1", "100.00", NET).finally(restore);
+    ok("the simulated bank transfer posts the amount to the sandbox endpoint", sim[0] === `POST https://${HOME}/sep6/tx/sep_dep1/simulate-bank-transfer {"amount":"100.00"}`);
+    const MAIN: NetworkConfig = { ...NET, id: "public", passphrase: Networks.PUBLIC, isMainnet: true };
+    await throws("the simulated bank transfer refuses on real money", () => simulateBankTransfer(info6, "sep_dep1", "100.00", MAIN), "test network");
+    await throws("the simulated bank transfer refuses a real-network anchor", () => simulateBankTransfer({ ...info6, networkPassphrase: Networks.PUBLIC }, "sep_dep1", "100.00", NET), "not a test-network");
+
+    restore = stubFetch(() => ({ body: { deposit: { USDC: { min_amount: 0.5, max_amount: 300, fee_percent: 0.5 } }, withdraw: { USDC: { min_amount: 1, max_amount: 50 } } } }));
+    const dl = await readDepositLimits(info6, "USDC");
+    const wl = await readWithdrawLimits(info6, "USDC").finally(restore);
+    ok("deposit limits come from the deposit side of /info", dl.min === "0.5" && dl.max === "300" && dl.feePercent === "0.5");
+    ok("withdraw limits still come from the withdraw side", wl.min === "1" && wl.max === "50");
   }
 
   console.log("\n[iban] a typo is caught on this device, before any rail sees it");

@@ -57,6 +57,7 @@ import { formatIban } from "../../../../lib/iban";
 import { sendEvent } from "../../../../lib/events";
 import { activeNetwork, explorerTx } from "../../../../lib/network";
 import { netKey } from "../../../../lib/scoped-store";
+import { RAIL_LAST_WITHDRAW_KEY, saveRailRun } from "../../../../lib/rail-record";
 import { copy } from "../../../../lib/copy";
 import { MoneyCard } from "../../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../../components/brand/PrimaryButton";
@@ -310,6 +311,7 @@ export default function BankCashOutPage() {
 
       // Paid exactly once, above. From here we only READ the rail; nothing in this loop sends.
       setProgress("Paid. Waiting for the bank rail to confirm the payout…");
+      const paidAt = Date.now();
       const deadline = Date.now() + SETTLE_TIMEOUT_MS;
       let misses = 0;
       for (;;) {
@@ -328,7 +330,19 @@ export default function BankCashOutPage() {
           if (++misses >= MAX_POLL_MISSES) throw e;
           continue;
         }
-        if (state.status === "settled") break;
+        if (state.status === "settled") {
+          // Kept on this device only, for the event board's "last round trip" tile.
+          saveRailRun(RAIL_LAST_WITHDRAW_KEY(), {
+            at: new Date().toISOString(),
+            rail: live.info.homeDomain,
+            amountIn: amt.toFixed(2),
+            amountOut: null,
+            amountFee: null,
+            tx: res.hash,
+            seconds: Math.round((Date.now() - paidAt) / 1000),
+          });
+          break;
+        }
         if (state.status === "refunded") {
           setLateNote("The bank rail says it sent the money back. Check your balance and the record below.");
           break;
