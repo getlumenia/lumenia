@@ -297,11 +297,13 @@ async function main() {
     "a one-to-one deposit on mainnet is untouched by any of this",
     (await relayDeposit(MAINNET, buildInvoke({ fn: "deposit", args: depositArgs(usdc(1)), network: Networks.PUBLIC }))).accepted,
   );
-  /* The claim half opens with the pool: what it must NOT do is refuse for the old reason. A stub
-     signature gets no further than the contract call, so the assertion is on the message. */
+  /* The claim half opens with the pool: what it must NOT do is refuse for the old reason. The link
+     is deliberately a byte short, so it fails the local length check BEFORE any RPC call: this
+     suite is part of the offline gate and must never reach the network. Reaching that message at
+     all is the proof that no group gate fired above it. */
   const mainnetShare = await relayClaimHandler(MAINNET, stubSigner, {
     method: "claim_share",
-    linkHex: "ab".repeat(32),
+    linkHex: "ab".repeat(31),
     payout: stranger.publicKey(),
     sigHex: "cd".repeat(64),
   }).then(
@@ -310,7 +312,7 @@ async function main() {
   );
   check(
     "claim_share on mainnet is no longer turned away for being a group claim",
-    !/not available on this network/.test(mainnetShare.message),
+    !/not available on this network/.test(mainnetShare.message) && /link must be 32 bytes/.test(mainnetShare.message),
     mainnetShare.message,
   );
 

@@ -369,7 +369,11 @@ export async function createV2GroupLink(opts: {
      never receives the pot. `g=` is the share count, and it rides in the fragment as well as the
      query: chat apps trim queries and keep fragments, and a claimant who arrives with neither hint
      would have the pool probed second. */
-  const q = `a=${encodeURIComponent(opts.perShare)}&s=${encodeURIComponent(opts.from)}&g=${opts.slots}${seed ? "&p=1" : ""}${opts.seeded ? "&seeded=1" : ""}`;
+  /* `n=public` is not decoration: resolveNetwork() reads a link with no network marker as practice
+     money, so a mainnet pool without it would reach every claimant labelled as practice AND send
+     their device looking for the pool in the testnet escrow, where it does not exist. The one-to-one
+     link has carried it since the first mainnet send (line 241); a pool has to carry it too. */
+  const q = `a=${encodeURIComponent(opts.perShare)}&s=${encodeURIComponent(opts.from)}&g=${opts.slots}${seed ? "&p=1" : ""}${net.isMainnet ? "&n=public" : ""}${opts.seeded ? "&seeded=1" : ""}`;
   const fragment = `${seed ? passwordFragment(seed) : link.secret()}&g=${opts.slots}`;
   const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
   const made = { link: url, linkHex, perShare: opts.perShare, slots: opts.slots, total };

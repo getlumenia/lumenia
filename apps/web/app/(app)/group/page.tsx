@@ -382,8 +382,13 @@ export default function GroupPage() {
       /* The refusals worth repeating verbatim are the ones written for the person who hit them -
          the network scope, the share count, the per-share floor. Anything with a status code or an
          XDR blob in it is machinery, and machinery never reaches a money screen. */
+      /* The sponsor answers through the relay as "/v2-deposit -> 400: <the readable reason>", so the
+         reason a sender most needs (too many shares, the pot cap, the per-share floor) was being
+         thrown away by the same filter that keeps XDR off a money screen. Strip the transport, then
+         filter what is left. */
+      const clean = msg.replace(/^\/[\w-]+\s*(?:->|→)\s*\d{3}:\s*/, "");
       setError(
-        msg && !/^\/|xdr|\d{3}:/i.test(msg) ? msg : "We couldn't make that link. Your money hasn't moved.",
+        clean && !/^\/|xdr|\d{3}:/i.test(clean) ? clean : "We couldn't make that link. Your money hasn't moved.",
       );
     } finally {
       setBusy(false);
@@ -546,8 +551,8 @@ export default function GroupPage() {
           contract will hold, not a figure a float arrived at. */}
       {total !== "" && (
         <p className="text-sm text-ink">
-          You put in <span className="font-semibold tabular-nums">{formatUsd(total)}</span>. Each of
-          the first {slots} people to open the link takes {formatUsd(share.toFixed(2))}.
+          You put in <span className="font-semibold tabular-nums">{formatUsd(total)}</span>. The
+          first {slots} to take a share get {formatUsd(share.toFixed(2))} each.
         </p>
       )}
 
