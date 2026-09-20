@@ -37,7 +37,7 @@ test("fresh makelink → claim in a real browser → USDC lands (tx hash)", asyn
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
 
   // 3. claim — one decision, one button.
-  await page.getByRole("button", { name: /claim my money/i }).click();
+  await page.getByRole("button", { name: /claim my money|^take \$/i }).click();
 
   // 4. success: the money landed. Anchored to the start of the line, because the
   // already-claimed screen says the same words mid-sentence ("This link was claimed — it's

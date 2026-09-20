@@ -46,7 +46,7 @@ async function claimFresh(context: BrowserContext, amount: string): Promise<void
   const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, amount, from: "Alvin" });
   await page.goto(link.url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
-  await page.getByRole("button", { name: /claim my money/i }).click();
+  await page.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(page);
   await page.close();
 }
@@ -146,7 +146,7 @@ test("first-time asker: request with no account → payer sends the link back �
   await askerPage.goto(claimLink, { waitUntil: "domcontentloaded" });
   await expect(askerPage.getByText("$3.00")).toBeVisible();
   await askerPage.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
-  await askerPage.getByRole("button", { name: /claim my money/i }).click();
+  await askerPage.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(askerPage);
   console.log("\n✅ first-time-asker loop: request → bearer link sent back → claimed\n");
 

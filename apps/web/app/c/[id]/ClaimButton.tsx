@@ -7,7 +7,7 @@ import { copy } from "../../../lib/copy";
 import { runClaim } from "../../../lib/sponsor";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../lib/claim-error";
 import { resolveNetwork } from "../../../lib/network";
-import { sendEvent } from "../../../lib/events";
+import { isSeededLink, sendEvent } from "../../../lib/events";
 import { savePhase1 } from "../../../lib/keystore";
 import { MoneyMovingAnimation } from "../../../components/brand/MoneyMovingAnimation";
 import { Confetti } from "../../../components/brand/Confetti";
@@ -53,6 +53,7 @@ export default function ClaimButton({
   /** Why the last attempt failed. Null until one does. */
   const [failure, setFailure] = useState<ClaimErrorInfo | null>(null);
   const secretRef = useRef("");
+  const seededRef = useRef(false);
 
   /* Marker that THIS tab already saw a key for THIS claim, so a later mount without one can tell
    * "you reloaded" from "this link never had a key" and give the right instruction. It is a
@@ -87,7 +88,10 @@ export default function ClaimButton({
       if (strippedHere) setReloaded(true);
       else setNoKey(true);
     }
-    void sendEvent("claim_opened", claimId);
+    // A team-funded practice link (the event board's QR) carries a public seeded=1 marker, so the
+    // funnel can count it apart from money people send each other.
+    seededRef.current = isSeededLink(window.location.search);
+    void sendEvent("claim_opened", claimId, undefined, { seeded: seededRef.current });
   }, [claimId, seenKey]);
 
   async function onClaim() {
@@ -107,7 +111,7 @@ export default function ClaimButton({
       });
       setHash(result.hash);
       setState("done");
-      void sendEvent("claim_succeeded", claimId, Keypair.fromSecret(bearerSecret).publicKey());
+      void sendEvent("claim_succeeded", claimId, Keypair.fromSecret(bearerSecret).publicKey(), { seeded: seededRef.current });
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
       // Phase 1 — persist the claimed account locally (WebCrypto-wrapped seed in
       // IndexedDB) so /home has it. Best-effort: never block the success screen.

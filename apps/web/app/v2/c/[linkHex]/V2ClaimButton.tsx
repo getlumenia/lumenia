@@ -28,6 +28,7 @@ import {
 import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../../lib/claim-error";
 import { copy } from "../../../../lib/copy";
+import { formatUsd } from "../../../../lib/money";
 import { savePhase1 } from "../../../../lib/keystore";
 import { isSeededLink, sendEvent } from "../../../../lib/events";
 import { resolveNetwork, setActiveNetwork, type NetworkConfig } from "../../../../lib/network";
@@ -86,6 +87,7 @@ function settledCopy(kind: SettledKind, sender: string): { title: string; body: 
 
 export default function V2ClaimButton({
   linkHex,
+  amount,
   sender,
 }: {
   linkHex: string;
@@ -312,6 +314,13 @@ export default function V2ClaimButton({
     return (
       <div className="flex w-full flex-col items-center gap-4">
         <p className="text-lg font-semibold text-money">It&apos;s yours 🎉</p>
+        {/* The receipt says what just happened on chain, in plain words: the sponsor paid the
+            network fee and the reserve, and the account is new. Every v2 claim creates a fresh
+            sponsored account (claimV2ToSponsoredAccount), so the second line is always true here. */}
+        <div className="flex flex-col items-center gap-0.5 text-sm text-ink-soft">
+          <p>Network fee: $0.00, covered by Lumenia.</p>
+          <p>Your account was just created on Stellar. You didn&apos;t need XLM.</p>
+        </div>
         <a
           href={explorer(hash, net ?? resolveNetwork(undefined))}
           target="_blank"
@@ -438,7 +447,7 @@ export default function V2ClaimButton({
           data-link={linkHex}
           className="h-14 w-full rounded-full bg-money px-8 text-base font-semibold text-primary-foreground transition-colors hover:bg-money/90 active:bg-money-pressed"
         >
-          {state === "error" ? copy.claim.retry : "Claim my money"}
+          {state === "error" ? copy.claim.retry : amount ? `Take ${formatUsd(amount)}` : "Claim my money"}
         </button>
       )}
       {state === "error" && failure && (

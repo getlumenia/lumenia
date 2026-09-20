@@ -18,6 +18,7 @@ import { useWallet } from "../../lib/wallet";
 import { ensureCanReceive } from "../../lib/receivable";
 import { loadUnreadCount } from "../../lib/notifications";
 import { TestnetBanner } from "./TestnetBanner";
+import { eventMode } from "../../lib/event-mode";
 import { FeedbackDialog } from "../FeedbackDialog";
 import { copy } from "../../lib/copy";
 import { AccountMenu } from "./AccountMenu";
@@ -232,7 +233,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               each component's own classes happen to be. */}
           {!onboarding && (
           <div className="app-nav-tools">
-            <NotificationsBell />
+            {/* Event mode keeps the header to the money: the bell is one of the surfaces it hides. */}
+            {!eventMode() && <NotificationsBell />}
             {/* Report-a-problem is one tap away on EVERY money surface (owner directive) —
                 a life-buoy next to the bell, opening the portaled FeedbackDialog. */}
             <FeedbackDialog

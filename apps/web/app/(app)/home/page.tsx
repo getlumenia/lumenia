@@ -31,6 +31,8 @@ import { ActivityRow } from "../../../components/brand/ActivityRow";
 import { LockMoneyCard } from "../../../components/brand/LockMoneyCard";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { WelcomeNudge } from "../../../components/brand/WelcomeNudge";
+import { eventMode } from "../../../lib/event-mode";
+import { anchorHomeDomain } from "../../../lib/anchor";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { FeedbackDialog } from "../../../components/FeedbackDialog";
 import { copy } from "../../../lib/copy";
@@ -54,7 +56,23 @@ const ACTIONS: Array<{ href: string; label: string; icon: string }> = [
   { href: "/contacts", label: "People", icon: "/brand-kit-assets/icon-contacts.webp" },
 ];
 
+/**
+ * EVENT MODE (lib/event-mode.ts): the four money verbs, big, and nothing else competing with them.
+ * Cash out goes straight to the bank rail when one is connected on the test network, because that
+ * is the leg the event demonstrates; otherwise to the exchange cash-out, as always.
+ */
+function eventActions(): Array<{ href: string; label: string; icon: string }> {
+  const bank = anchorHomeDomain() && !activeNetwork().isMainnet;
+  return [
+    { href: "/send", label: "Send", icon: "/brand-kit-assets/icon-send.webp" },
+    { href: "/request", label: "Ask", icon: "/brand-kit-assets/icon-hand.webp" },
+    { href: "/split", label: "Split", icon: "/brand-kit-assets/icon-receipt.webp" },
+    { href: bank ? "/send-out/bank" : "/send-out", label: "Cash out", icon: "/brand-kit-assets/icon-check.webp" },
+  ];
+}
+
 export default function HomePage() {
+  const event = eventMode();
   const { status, account, accounts, getSigner, refresh: refreshWallet } = useWallet();
   const router = useRouter();
   const [usd, setUsd] = useState<string | null>(null);
@@ -328,8 +346,8 @@ export default function HomePage() {
 
       {/* Primary actions — a soft-3D icon tile each (the brand icon set, in the screens it was drawn
           for). Every tile goes to a surface that exists; no mock actions. */}
-      <nav className="app-actions">
-        {ACTIONS.map((a) => (
+      <nav className="app-actions" style={event ? { gridTemplateColumns: "repeat(4, 1fr)" } : undefined}>
+        {(event ? eventActions() : ACTIONS).map((a) => (
           <Link key={a.href} href={a.href} className="app-action">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={a.icon} alt="" width={46} height={46} />
@@ -342,9 +360,11 @@ export default function HomePage() {
           yet. It sits BELOW the balance and the money verbs on purpose: nothing about setting up
           may come before the money, which is the entire product. Dismissible, and silent for
           everybody else — see components/brand/WelcomeNudge.tsx. */}
-      <WelcomeNudge />
+      {!event && <WelcomeNudge />}
 
-      {/* Split — a request-money composition (one link per person). A quiet entry, not a big tile. */}
+      {/* Split: a request-money composition (one link per person). A quiet entry, not a big tile.
+          In event mode it is one of the four big verbs above instead. */}
+      {!event && (
       <Link
         href="/split"
         className="flex items-center gap-3 rounded-[16px] border border-line bg-surface px-4 py-3 transition-colors hover:border-money/40"
@@ -355,6 +375,7 @@ export default function HomePage() {
         <span className="flex-1 text-sm font-semibold text-ink">Split a bill</span>
         <span className="text-ink-soft">→</span>
       </Link>
+      )}
 
       {account.phase === 1 && <LockMoneyCard />}
 

@@ -84,12 +84,20 @@ export default async function V2ClaimPage({
        different product from the one they land on right after. */
     <main className="claim-pw mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-8 bg-paper px-6 py-12 text-center text-ink">
       <div className="flex flex-col items-center gap-2">
+        {/* Which network, before anything else: real dollars and practice dollars must never look
+            alike on the one screen a stranger sees (hackathon build, 2026-09-19). */}
+        <span
+          className={`mb-2 rounded-full border px-3 py-0.5 text-xs font-semibold ${real ? "border-money text-money" : "border-line text-ink-soft"}`}
+        >
+          {real ? "Real money" : "Practice money"}
+        </span>
         <p className="text-ink-soft">{sender} sent you money</p>
         {amount ? (
           <p className="text-6xl font-bold tabular-nums text-money">{formatUsd(amount)}</p>
         ) : (
           <p className="text-2xl font-semibold text-ink">You have money to claim</p>
         )}
+        <p className="mt-1 text-sm font-medium text-ink">No app. No wallet. You pay nothing.</p>
         {locked && (
           <p className="mt-2 text-sm text-ink-soft">
             This one is locked. You&apos;ll need the password {sender} gave you.

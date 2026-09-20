@@ -102,6 +102,16 @@ export function resolveNetwork(param?: string | null): NetworkConfig {
   return MAINNET;
 }
 
+/** The test network's config, whatever this device is switched to (the event board reads both). */
+export function testnetConfig(): NetworkConfig {
+  return TESTNET;
+}
+
+/** stellar.expert link for a transaction on a NAMED network, independent of the device switch. */
+export function explorerTxOn(net: NetworkConfig, hash: string): string {
+  return `https://stellar.expert/explorer/${net.id}/tx/${hash}`;
+}
+
 /** Is a mainnet link servable by this deployment at all? (for UI that wants to hide/label it) */
 export const MAINNET_CONFIGURED = Boolean(MAINNET.contract && MAINNET.sponsorUrl);
 

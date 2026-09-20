@@ -18,7 +18,7 @@ test("claim → persisted → /home shows the real balance + activity", async ({
 
   await page.goto(link.url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
-  await page.getByRole("button", { name: /claim my money/i }).click();
+  await page.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(page);
 
   // hand-off: the claimed account is persisted → /home shows it

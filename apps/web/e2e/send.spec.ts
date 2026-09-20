@@ -40,7 +40,7 @@ test("claim → send $7 onward → the onward link is claimable (loop closed)", 
   const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, amount: "20", from: "Alvin" });
   await page.goto(link.url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
-  await page.getByRole("button", { name: /claim my money/i }).click();
+  await page.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(page);
 
   // 2. send $7 onward
@@ -59,7 +59,7 @@ test("claim → send $7 onward → the onward link is claimable (loop closed)", 
   await page.goto(onward, { waitUntil: "domcontentloaded" });
   await expect(page.getByText("$7.00")).toBeVisible();
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
-  await page.getByRole("button", { name: /claim my money/i }).click();
+  await page.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(page);
   console.log("\n✅ loop closed: claim $20 → send $7 onward → onward claim OK\n");
 });

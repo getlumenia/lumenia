@@ -72,7 +72,7 @@ test("recovery: back up with a password → restore on a fresh device → same a
   const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, amount: "20", from: "Backup" });
   await a.goto(link.url, { waitUntil: "domcontentloaded" });
   await a.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
-  await a.getByRole("button", { name: /claim my money/i }).click();
+  await a.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(a);
 
   const shortA = await readAccountShort(a);
