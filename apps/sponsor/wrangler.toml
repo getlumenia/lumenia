@@ -47,8 +47,8 @@ MAX_DROP_USDC = "100"
 MAX_DAY_USDC = "1000"
 # How many shares one GROUP link may hold (lib/soroban-relay.ts). The caps above bind the pot; this
 # binds how many ways it is cut, which is what the sponsor actually pays for: every share claimed
-# opens a fresh account at ~1.5 XLM of reserve. Deliberately absent from [env.mainnet.vars] below,
-# because group links are refused there outright on config.network, not on a variable.
+# opens a fresh account at ~1.5 XLM of reserve. [env.mainnet.vars] declares its own, much tighter
+# value, and the code clamps mainnet to at most 8 whatever that block says (lib/soroban-relay.ts).
 MAX_POOL_SLOTS = "30"
 # Onboarding reserve budget (lib/caps.ts), set explicitly for the event instead of left on the
 # 500/day fallback: a group claim is one sponsored account per person, so a full room moves the day
@@ -138,7 +138,7 @@ LUMENDROP_WASM_HASH = "38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce2
 EVENTS_EXCLUDE_AIDS = "b8336d21766a3493"
 # Canary caps — real money. Raise only after an audit and a soak period.
 MAX_DROP_USDC = "5"
-MAX_DAY_USDC = "400"
+MAX_DAY_USDC = "50"
 CAPS_FAIL_CLOSED = "1"
 # Group links are OPEN on mainnet (owner decision, 2026-09-20) and this is the bound that makes it
 # safe: the $5 per-transfer cap above already binds the whole POT, and this binds how many ways it
@@ -154,22 +154,16 @@ MAX_POOL_SLOTS = "6"
 # spend more than one) — a recipient refused here is holding real money they cannot reach.
 # The share bounds ONE connection (IPv6 /64, IPv4 as-is), so a caller that exhausts its own cannot
 # refuse everybody else's claim until UTC midnight.
-MAX_DAY_ACCOUNTS = "200"
-MAX_DAY_ACCOUNTS_PER_SOURCE = "200"
+MAX_DAY_ACCOUNTS = "40"
+MAX_DAY_ACCOUNTS_PER_SOURCE = "20"
 # The float is meant to be tiny; alert well before it runs out.
 SPONSOR_MIN_XLM = "3"
 # Same two watchdog floors as testnet. Measured 2026-09-06 on the live account: 33.18 XLM
 # spendable at 1.50004 XLM per onboarding = 22 recipients left, so this fires until the top-up.
-SPONSOR_MIN_RECIPIENTS = "40"
+SPONSOR_MIN_RECIPIENTS = "25"
 SPONSOR_MIN_TTL_DAYS = "21"
 # Pilot mode ON for mainnet: only owner-approved wallets may move value here.
 PILOT_MODE = "1"
-# EVENT STEP 19-20 Sept 2026, revert at 21:00 Istanbul on 20 Sept per docs/HACKATHON_MAINNET_EVENT_CONFIG.md 1.4
-# (MAX_DAY_USDC 50 -> 400, MAX_DAY_ACCOUNTS 40 -> 200, MAX_DAY_ACCOUNTS_PER_SOURCE 20 -> 200,
-# SPONSOR_MIN_RECIPIENTS 25 -> 40; the three lines below are new and are deleted on revert).
-RATE_CAP = "300"
-PILOT_MAX_TX = "50"
-ALERT_COOLDOWN_MINUTES = "60"
 
 [env.mainnet.triggers]
 crons = ["*/15 * * * *"]
