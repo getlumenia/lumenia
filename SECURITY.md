@@ -89,9 +89,11 @@ these levels describe **real dollars**, bounded by the caps above.
 - The escrow contract is currently **upgradeable behind an owner** (upgrade + pause-new-escrow
   only; no owner path can move escrowed funds) and is intended to become **immutable after the
   audit** by shipping a final wasm with the upgrade entrypoint removed. The honest residual: an
-  owner who shipped a malicious wasm would be the one way around that, so the mainnet owner is a
-  **cold key held offline**, separate from the always-online sponsor key since 2026-08-08.
-  Promoting it to a 2-of-3 multisig with a timelock is open work, not done.
+  owner who shipped a malicious wasm would be the one way around that, so the mainnet owner has
+  been a **2-of-3 multisig** since 2026-09-18, separate from the always-online sponsor key since
+  2026-08-08. What that does not mean, stated plainly: all three keys are held by the
+  founder today, one of them still has to move off the laptop, and there is **no timelock**, so an
+  owner upgrade is instant. A timelock in front of the multisig is the next governance step.
 - The sponsor key is still an **environment hot key**. An AWS-KMS Ed25519 signer is code-complete
   behind the same interface (13/13 offline tests) but the live AWS key is **not provisioned**.
 - Pausing can only stop NEW escrow. Claims and reclaims are never pausable, so escrowed funds

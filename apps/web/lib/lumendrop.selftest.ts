@@ -143,7 +143,7 @@ function main() {
   // sender emptied is indistinguishable from a fully-claimed one by the counter alone. It is its own
   // state, and the screens branch on it before they print any count.
   const reclaimed = poolStatusOf({ remaining: 0n, slots: 6, claimed: 6, expiry: now - 1 }, now);
-  ok("emptied and past the deadline → closed, NOT full", reclaimed === "closed" && reclaimed !== "full");
+  ok("emptied and past the deadline → closed, NOT full", reclaimed === "closed");
 
   // The count the screens render. Derived from `claimed`, because there is nothing else: the
   // deployed Pool struct has no `amount` field, so "total minus remaining" is not computable - and

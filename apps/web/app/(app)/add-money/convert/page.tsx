@@ -363,14 +363,19 @@ export default function ConvertPage() {
       console.error("[add-money/convert]", e);
       if (!alive.current) return;
       const f = classifySwapFailure(e);
-      if (f.kind === "undecided" && handed.current) {
+      /* Read the ref afresh. It is reset to null at the top of this function and written again
+         inside the signer callback, which flow analysis cannot see, so TypeScript would narrow it to
+         that null here and treat both branches below as unreachable. At run time it can hold the
+         transaction that was handed over, and that is exactly the case these branches exist for. */
+      const handedNow = handed.current as { hash: string; retrySafeAfter: number } | null;
+      if (f.kind === "undecided" && handedNow) {
         await watchBalance(before);
         return;
       }
       setStage("idle");
       setDetail("");
       setFailure(f);
-      setCanRetry(!handed.current || retryAllowed(handed.current.retrySafeAfter, Date.now()));
+      setCanRetry(!handedNow || retryAllowed(handedNow.retrySafeAfter, Date.now()));
       void readBalances();
     } finally {
       inFlight.current = false;
