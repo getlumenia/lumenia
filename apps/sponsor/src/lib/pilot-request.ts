@@ -261,15 +261,19 @@ export async function notifyPilotInterest(email: string, origin?: string): Promi
  * `wrangler tail`) when Resend isn't configured, so an approval is never blocked by mail.
  * Sending to a real user's inbox needs a VERIFIED sender domain (RESEND_FROM =
  * you@getlumenia.com); until then the shared onboarding sender only reaches the owner.
+ *
+ * Resolves true only when Resend ACCEPTED the mail. The Worker ignores the result; the owner CLI
+ * must not, or a refused send (unverified sender, bad key) reads as "emailed" and the owner
+ * records a date for a mail nobody received.
  */
-export async function notifyPilotApproved(pubkey: string, email: string): Promise<void> {
+export async function notifyPilotApproved(pubkey: string, email: string): Promise<boolean> {
   const clean = email.trim().toLowerCase();
-  if (!EMAIL_RE.test(clean)) return;
+  if (!EMAIL_RE.test(clean)) return false;
 
   const key = process.env.RESEND_API_KEY;
   if (!key) {
     console.log(`[pilot:approved] ${pubkey} — ${clean} (no RESEND_API_KEY)`);
-    return;
+    return false;
   }
 
   const switchUrl = `${process.env.WEB_ORIGIN ?? "https://getlumenia.com"}/account?switch=mainnet`;
@@ -307,21 +311,23 @@ export async function notifyPilotApproved(pubkey: string, email: string): Promis
     }),
   });
   if (!res.ok) console.log(`[pilot:approved] resend ${res.status} — ${pubkey}`);
+  return res.ok;
 }
 
 /**
  * Tell a not-yet applicant, gently (TASK 2). Not a cold "no" — a "not yet, we're working on it"
  * that keeps goodwill, points them at practice mode, and never uses a hard rejection word. Sent
- * on the shared branded skeleton. Best-effort; logs when Resend isn't configured.
+ * on the shared branded skeleton. Best-effort; logs when Resend isn't configured. Resolves true
+ * only when Resend accepted the mail (same contract as notifyPilotApproved).
  */
-export async function notifyPilotRejected(pubkey: string, email: string): Promise<void> {
+export async function notifyPilotRejected(pubkey: string, email: string): Promise<boolean> {
   const clean = email.trim().toLowerCase();
-  if (!EMAIL_RE.test(clean)) return;
+  if (!EMAIL_RE.test(clean)) return false;
 
   const key = process.env.RESEND_API_KEY;
   if (!key) {
     console.log(`[pilot:rejected] ${pubkey} — ${clean} (no RESEND_API_KEY)`);
-    return;
+    return false;
   }
 
   const homeUrl = `${process.env.WEB_ORIGIN ?? "https://getlumenia.com"}/home`;
@@ -358,4 +364,5 @@ export async function notifyPilotRejected(pubkey: string, email: string): Promis
     }),
   });
   if (!res.ok) console.log(`[pilot:rejected] resend ${res.status} — ${pubkey}`);
+  return res.ok;
 }

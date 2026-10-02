@@ -19,7 +19,9 @@ import {
   startPilotRequest,
   getPilotEmail,
   PILOT_EMAIL_RETENTION_SECONDS,
+  listPilot,
 } from "./lib/pilot.js";
+import { notifyPilotApproved, notifyPilotRejected } from "./lib/pilot-request.js";
 import { ipBucket } from "./lib/rate-limit.js";
 
 let pass = 0,
@@ -67,6 +69,13 @@ function installFakeKv() {
           const n = Number(store.get(key!) ?? "0") - 1;
           store.set(key!, String(n));
           return { result: n };
+        }
+        case "SCAN": {
+          // SCAN <cursor> MATCH <glob> COUNT <n>: one page holds everything, the cursor comes back "0".
+          const at = cmd.indexOf("MATCH");
+          const glob = at > 0 ? String(cmd[at + 1]) : "*";
+          const re = new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
+          return { result: ["0", [...store.keys()].filter((k) => re.test(k))] };
         }
         default:
           throw new Error(`unexpected command ${op}`);
@@ -169,6 +178,49 @@ async function main() {
     await revokePilot(W);
     check("revoking erases it", (await getPilotEmail(W)) === null);
     clearKv();
+  }
+
+  console.log("[10] the owner can list who is waiting without an inbox");
+  {
+    const kv = installFakeKv();
+    process.env.STELLAR_NETWORK = "mainnet";
+    await startPilotRequest(W, "one@example.com");
+    await startPilotRequest(W2, "two@example.com");
+    await approvePilot(W2);
+    kv.store.set("pilot:testnet:status:GTESTNETONLY", "pending"); // the other network's queue
+    const pending = await listPilot("pending");
+    check("a pending wallet is listed with its contact flag", pending.length === 1 && pending[0]!.pubkey === W && pending[0]!.hasEmail);
+    const approved = await listPilot("approved");
+    check("an approved wallet is listed under approved", approved.length === 1 && approved[0]!.pubkey === W2);
+    const all = await listPilot();
+    check("the default lists every state on THIS network only", all.length === 2 && all.every((r) => r.pubkey !== "GTESTNETONLY"));
+    kv.store.delete(`pilot:mainnet:email:${W}`);
+    check("a contact that expired shows as unreachable", (await listPilot("pending"))[0]!.hasEmail === false);
+    installFakeKv();
+    check("an empty store lists nothing", (await listPilot()).length === 0);
+    delete process.env.STELLAR_NETWORK;
+    clearKv();
+  }
+
+  console.log("[11] the welcome mail says whether Resend took it, and quotes the cap it is given");
+  {
+    const sent: string[] = [];
+    let status = 200;
+    globalThis.fetch = (async (_url: string | URL, init?: { body?: string }) => {
+      sent.push(String(init?.body ?? ""));
+      return { ok: status >= 200 && status < 300, status } as Response;
+    }) as typeof fetch;
+    delete process.env.RESEND_API_KEY;
+    check("no RESEND_API_KEY -> reported as not sent, nothing posted", (await notifyPilotApproved(W, "one@example.com")) === false && sent.length === 0);
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.MAX_DROP_USDC = "5";
+    check("Resend accepts -> reported as sent", (await notifyPilotApproved(W, "one@example.com")) === true);
+    check("the mail quotes the cap from MAX_DROP_USDC, not the code default", sent.length === 1 && sent[0]!.includes("capped at $5") && !sent[0]!.includes("$100"));
+    status = 403; // e.g. an unverified RESEND_FROM sending to a real inbox
+    check("Resend refuses -> reported as NOT sent (the CLI must not print \"emailed\")", (await notifyPilotApproved(W, "one@example.com")) === false);
+    check("the decline mail follows the same contract", (await notifyPilotRejected(W, "one@example.com")) === false);
+    delete process.env.RESEND_API_KEY;
+    delete process.env.MAX_DROP_USDC;
   }
 
   console.log("[approval links] a signed, per-wallet, expiring token — not the shared secret");

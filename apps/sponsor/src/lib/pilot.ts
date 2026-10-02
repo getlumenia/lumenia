@@ -315,6 +315,54 @@ export async function revokePilot(pubkey: string): Promise<void> {
   ]);
 }
 
+/**
+ * Every wallet that ever asked for (or was put on) this network's pilot, with its recorded state.
+ *
+ * Walks the status keys with SCAN. The set is tens of entries, so a full walk costs one or two
+ * round trips, and it is the only way to answer "who is still waiting" that does not depend on
+ * the owner's inbox: the request mails carry the same wallets, but a mail can be missed, and the
+ * signed links in them expire after a week. Owner CLI only; no route exposes this.
+ *
+ * `hasEmail` says whether an approval mail can still be sent (the contact expires after
+ * PILOT_EMAIL_RETENTION_SECONDS), so the owner knows whom to tell by hand.
+ */
+export async function listPilot(
+  filter: PilotState | "all" = "all",
+): Promise<Array<{ pubkey: string; state: PilotState; hasEmail: boolean }>> {
+  const kv = kvConfigFromEnv();
+  if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
+  const prefix = `pilot:${net()}:status:`;
+  const keys: string[] = [];
+  let cursor = "0";
+  let rounds = 0;
+  do {
+    const [page] = (await pipe(kv, [["SCAN", cursor, "MATCH", `${prefix}*`, "COUNT", 500]])) as [
+      [string | number, string[]],
+    ];
+    cursor = String(page[0]);
+    keys.push(...page[1]);
+    // A store answering with a cursor that never returns to 0 would loop forever; bound the walk.
+    if (++rounds > 1000) throw new Error("pilot store SCAN did not terminate");
+  } while (cursor !== "0");
+  const pubkeys = [...new Set(keys.map((k) => k.slice(prefix.length)))];
+  if (pubkeys.length === 0) return [];
+  const rows = await pipe(
+    kv,
+    pubkeys.flatMap((pk) => [
+      ["GET", statusKey(pk)],
+      ["GET", emailKey(pk)],
+    ]),
+  );
+  const all = pubkeys.map((pk, i) => ({
+    pubkey: pk,
+    state: (typeof rows[i * 2] === "string" ? rows[i * 2] : "none") as PilotState,
+    hasEmail: typeof rows[i * 2 + 1] === "string" && rows[i * 2 + 1] !== "",
+  }));
+  return all
+    .filter((r) => filter === "all" || r.state === filter)
+    .sort((a, b) => a.pubkey.localeCompare(b.pubkey));
+}
+
 /** Read a wallet's pilot status — for the client status endpoint, owner CLI and audits. */
 export async function pilotStatus(
   pubkey: string,
