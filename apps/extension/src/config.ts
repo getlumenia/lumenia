@@ -73,6 +73,8 @@ export const URLS = {
   settings: `${WEB_ORIGIN}/settings`,
   pilot: `${WEB_ORIGIN}/pilot`,
   privacy: `${WEB_ORIGIN}/privacy`,
+  /** The website's way in: "Yes, bring it here" opens a backed-up account on any phone or computer. */
+  start: `${WEB_ORIGIN}/start`,
 } as const;
 
 /** The network a stored choice names. Mainnet is configured at build time; a missing one throws. */

@@ -37,7 +37,8 @@ import { SendForm, type SendInput } from "./screens/Send";
 import { Sending } from "./screens/Sending";
 import { Settings } from "./screens/Settings";
 import { Unlock } from "./screens/Unlock";
-import { BrandBar, Button, Notice, SubBar, TopBar, openUrl } from "./ui";
+import { NetHeader } from "./netswitch";
+import { BrandBar, Button, Notice, SubBar, openUrl } from "./ui";
 // A link the person has already moved past ("Make another link") is not offered again on reopen.
 import { readDismissed, writeDismissed } from "./local";
 
@@ -145,6 +146,18 @@ export function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws, recordsLoaded]);
+
+  // Another money, another screen: a ready link or a refusal from the money just left would sit under
+  // the wrong switch, so the home screen goes back to the form. A send in progress keeps its screen
+  // (the switch is disabled while it runs).
+  const netNow = ws?.settings.net ?? null;
+  const lastNet = useRef(netNow);
+  useEffect(() => {
+    if (lastNet.current !== null && netNow !== null && lastNet.current !== netNow) {
+      setFlow((f) => (f.kind === "sending" ? f : { kind: "form" }));
+    }
+    lastNet.current = netNow;
+  }, [netNow]);
 
   /* ----------------------------------- making a link ----------------------------------- */
 
@@ -429,7 +442,10 @@ export function App() {
         return <ProblemPanel key={flow.problem.code + flow.problem.title} problem={flow.problem} onAction={() => problemAction(flow.problem)} />;
       default:
         return (
+          // Keyed by the money: switching remounts the form with that money's defaults (on real money
+          // the name and link-password section opens, because its password is on).
           <SendForm
+            key={ws?.settings.net ?? "testnet"}
             draft={draft}
             patch={(p) => setDraft((d) => ({ ...d, ...p }))}
             formError={formError}
@@ -494,7 +510,7 @@ export function App() {
 
     return (
       <>
-        <TopBar net={w.settings.net} onLinks={() => setView("links")} onSettings={() => setView("settings")} />
+        <NetHeader busy={flow.kind === "sending"} onLinks={() => setView("links")} onSettings={() => setView("settings")} />
         {renderHome()}
       </>
     );

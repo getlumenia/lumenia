@@ -5,11 +5,12 @@
  * email and the account password. Nothing is decrypted here and the password is not asked again.
  */
 import { useEffect, useRef, useState } from "preact/hooks";
+import { URLS } from "../../config";
 import { ask } from "../api";
 import { useApp } from "../context";
 import { plainSentence } from "../format";
 import { useAlive, useCountdown } from "../hooks";
-import { Button, Heading, Mascot, Notice, TextField } from "../ui";
+import { Button, ExtLink, Heading, Mascot, Notice, TextField } from "../ui";
 
 const RESEND_AFTER_MS = 30_000;
 
@@ -23,6 +24,9 @@ export function Backup() {
         <Heading class="h1--center">{done ? "Backed up" : "Already backed up"}</Heading>
         <p class="lede lede--center">
           If this browser is ever lost, restore your account on any device with your email and your password.
+        </p>
+        <p class="fine fine--center">
+          It opens on your phone too: <ExtLink href={URLS.start}>getlumenia.com</ExtLink>, then "Yes, bring it here".
         </p>
         <div class="screen__spacer" />
         <Button onClick={() => go("home")}>Done</Button>

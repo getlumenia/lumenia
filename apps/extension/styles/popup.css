@@ -183,52 +183,6 @@ input {
   flex: none;
 }
 
-/* Which money: calm for practice, in the accent (solid) for real. It is a safety cue, so it is loud on purpose. */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 11px 0 9px;
-  border: 1px solid var(--pw-line);
-  border-radius: 999px;
-  background: var(--pw-surface);
-  color: var(--pw-muted);
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background-color 0.15s, border-color 0.15s;
-}
-
-.chip:hover {
-  border-color: color-mix(in srgb, var(--pw-accent) 45%, var(--pw-line));
-}
-
-.chip__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.6;
-}
-
-.chip--real {
-  border-color: var(--pw-accent);
-  background: var(--pw-accent);
-  color: var(--pw-on-accent);
-}
-
-.chip--real:hover {
-  background: var(--pw-accent-hover);
-  border-color: var(--pw-accent-hover);
-}
-
-.chip--real .chip__dot {
-  opacity: 1;
-}
-
 /* ------------------------------------------------------------------ screens */
 
 .screen {
@@ -1796,4 +1750,86 @@ input {
   .mascot--flying {
     animation: none;
   }
+}
+
+/* ------------------------------------------------------------------ the money switch */
+
+/* Which money, always in the header: a two-way switch. Practice is calm; real, when it is on, is the
+   accent (solid). It is a safety cue, so it is loud on purpose. */
+.netswitch {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border: 1px solid var(--pw-line);
+  border-radius: 999px;
+  background: var(--pw-soft);
+}
+
+.netswitch__opt {
+  height: 26px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pw-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.netswitch__opt:hover:not(:disabled):not(.is-on) {
+  color: var(--pw-ink);
+}
+
+.netswitch__opt.is-on {
+  background: var(--pw-surface);
+  color: var(--pw-ink);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--pw-ink) 14%, transparent);
+  cursor: default;
+}
+
+.netswitch__opt--real.is-on {
+  background: var(--pw-accent);
+  color: var(--pw-on-accent);
+}
+
+.netswitch__opt:disabled:not(.is-on) {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* What the switch says when it needs a word (the real-money check, the invite-only answer, the
+   one-time note, a refusal): a panel under the header, over the screen. Escape, a tap outside or
+   "Not now" closes it. */
+.netsheet {
+  position: fixed;
+  inset: 56px 0 0;
+  z-index: 30;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--pw-ink) 22%, transparent);
+}
+
+.netsheet__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--pw-line);
+  border-radius: 16px;
+  background: var(--pw-paper);
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--pw-ink) 20%, transparent);
+}
+
+.netsheet__panel .fine {
+  margin: 0;
+}
+
+/* In the panel the note is the panel: no second box inside the first. */
+.netsheet__panel > .warning {
+  padding: 0;
+  border: 0;
+  background: transparent;
 }

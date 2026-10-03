@@ -219,21 +219,37 @@ export function Heading({ children, focus = true, class: cls }: { children: Comp
   );
 }
 
-/** The network the popup is on: calm for practice money, in the accent for real money. */
-export function NetChip({ net, onClick }: { net: NetId; onClick: () => void }) {
-  const real = net === "public";
-  const label = real ? "Real money" : "Practice money";
+/**
+ * Which money, always in the header: two halves, one tap. Practice is calm; real, when it is on, is
+ * the accent (solid), because it is a safety cue and is loud on purpose. What a tap does, including
+ * the real-money ceremony, lives in netswitch.tsx.
+ */
+export function NetSwitch({ net, disabled = false, onPick }: { net: NetId; disabled?: boolean; onPick: (net: NetId) => void }) {
   return (
-    <button
-      type="button"
-      class={cx("chip", real && "chip--real")}
-      onClick={onClick}
-      aria-label={`${label}. Open settings to change.`}
-      title="Open settings"
-    >
-      <span class="chip__dot" aria-hidden="true" />
-      {label}
-    </button>
+    <div class="netswitch" role="group" aria-label="Which money">
+      <button
+        type="button"
+        class={cx("netswitch__opt", net === "testnet" && "is-on")}
+        aria-pressed={net === "testnet"}
+        aria-label="Practice money"
+        title="Practice money: play dollars"
+        disabled={disabled}
+        onClick={() => onPick("testnet")}
+      >
+        Practice
+      </button>
+      <button
+        type="button"
+        class={cx("netswitch__opt", "netswitch__opt--real", net === "public" && "is-on")}
+        aria-pressed={net === "public"}
+        aria-label="Real money"
+        title="Real money: invite-only, capped"
+        disabled={disabled}
+        onClick={() => onPick("public")}
+      >
+        Real
+      </button>
+    </div>
   );
 }
 
@@ -246,12 +262,24 @@ export function BrandBar() {
   );
 }
 
-/** The header of the home screens: wordmark, which money, and the two places to go. */
-export function TopBar({ net, onLinks, onSettings }: { net: NetId; onLinks: () => void; onSettings: () => void }) {
+/** The header of the home screens: wordmark, the money switch, and the two places to go. */
+export function TopBar({
+  net,
+  switchDisabled = false,
+  onPick,
+  onLinks,
+  onSettings,
+}: {
+  net: NetId;
+  switchDisabled?: boolean;
+  onPick: (net: NetId) => void;
+  onLinks: () => void;
+  onSettings: () => void;
+}) {
   return (
     <header class="bar">
       <Wordmark />
-      <NetChip net={net} onClick={onSettings} />
+      <NetSwitch net={net} disabled={switchDisabled} onPick={onPick} />
       <span class="bar__spacer" />
       <button type="button" class="icon-btn" aria-label="Links" title="Links" onClick={onLinks}>
         <IconList />

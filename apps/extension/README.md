@@ -33,10 +33,14 @@ money.
 - **Shows each link's status**: Waiting, Claimed, Reclaimable (unclaimed after 7 days: you can
   take it back), Reclaimed, Closed (claimed or taken back, when we cannot tell which), Uncertain
   (sent but not confirmed yet) or Didn't go through.
-- **Practice money by default** (Stellar testnet). **Real money** (mainnet) only for accounts the
+- **Practice money by default** (Stellar testnet), switched in one tap with the Practice | Real
+  switch that is always at the top of the popup. **Real money** (mainnet) only for accounts the
   invite-only pilot approved, capped at $5 per link and $50 per day, only with a password-locked
   account, after a one-time note that this is an early preview not yet reviewed by an outside
-  security firm.
+  security firm. The worker checks all of that again before it changes the money.
+- **Works with the website**: an account backed up here opens on getlumenia.com ("Yes, bring it
+  here"), and one made on the website opens here the same way; getlumenia.com/extension is where
+  the website points people to install it.
 
 ## What it never does
 
