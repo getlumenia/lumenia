@@ -3,10 +3,10 @@ import { expectMoneyLanded } from "./landed";
 import { cents, mintClaimLink, usd } from "./mintLink";
 
 /**
- * Stage 5 — the loop closes. Claim money → send part of it onward with a link of
- * your own (0-XLM sender, sponsor-reserved CB via /send-link) → the onward link is
- * itself claimable. All real testnet data. Runs against a local stack pre-deploy or
- * the live URLs.
+ * Stage 5: the loop closes. Claim money, send part of it onward with a link of your
+ * own (a 0-XLM sender locking it in the LumenDrop escrow through /v2-deposit, the fee
+ * paid by the sponsor), and the onward link is itself claimable. All real testnet
+ * data. Runs against a local stack pre-deploy or the live URLs.
  */
 const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const WEB = process.env.WEB_URL ?? "https://getlumenia.com";

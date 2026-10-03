@@ -18,7 +18,7 @@ test("fresh makelink → claim in a real browser → USDC lands (tx hash)", asyn
     console.log("[requestfailed]", r.method(), r.url(), r.failure()?.errorText),
   );
   await rewriteSponsor(page.context()); // no-op against the live sponsor; enables local runs
-  const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, amount: "20", from: "Alvin" });
+  const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, from: "Alvin" });
   test.info().annotations.push({ type: "claim-url", description: link.url });
 
   // 1. value-first: the money is painted before any action, no crypto words.
