@@ -1,6 +1,6 @@
 import { test, expect, type BrowserContext } from "@playwright/test";
 import { expectMoneyLanded } from "./landed";
-import { mintClaimLink } from "./mintLink";
+import { mintClaimLink, usd } from "./mintLink";
 
 /**
  * Recovery live-flow regression (Stage 3) — the funds-permanence promise end to end in a real
@@ -10,8 +10,8 @@ import { mintClaimLink } from "./mintLink";
  * The blob store + OTP are STUBBED (the OTP email can't be read headless; the sponsor recovery
  * store is separately unit-tested — test-recovery-store.ts, 35/35). ONLY the three /recovery* endpoints
  * are stubbed; /create-account + /feebump still hit the real Worker, so the account is a genuine
- * testnet account that really holds $20 — this proves the CLIENT crypto + the secure/restore UI
- * drive it correctly across devices.
+ * testnet account that really holds the money it claimed. This proves the CLIENT crypto + the
+ * secure/restore UI drive it correctly across devices.
  */
 const SPONSOR = process.env.SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const WEB = (process.env.WEB_URL ?? "https://getlumenia.com").replace(/\/$/, "");
@@ -69,7 +69,9 @@ test("recovery: back up with a password → restore on a fresh device → same a
   const a = await ctxA.newPage();
   a.on("pageerror", (e) => console.log("[A pageerror]", e.message));
 
-  const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, amount: "20", from: "Backup" });
+  const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, from: "Backup" });
+  // What this link really holds, not a typed number (see usd() in mintLink.ts).
+  const claimed = usd(link.amount);
   await a.goto(link.url, { waitUntil: "domcontentloaded" });
   await a.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await a.getByRole("button", { name: /claim my money|^take \$/i }).click();
@@ -122,15 +124,15 @@ test("recovery: back up with a password → restore on a fresh device → same a
      already replaced, on a restore that had in fact succeeded (the failure snapshot showed the
      money and the locked account sitting right there). What actually matters is the next two
      lines: the SAME account, with the SAME money, on a device that never had either. */
-  await expect(b.getByText(/you have \$20\.00/i)).toBeVisible({ timeout: 30_000 });
+  await expect(b.getByText(`You have ${claimed}`)).toBeVisible({ timeout: 30_000 });
 
   const shortB = await readAccountShort(b);
   expect(shortB, "the restored device shows the SAME account").toBe(shortA);
   // and the money followed the account across devices
   await b.goto(`${WEB}/home`, { waitUntil: "domcontentloaded" });
-  // Exact + first: the balance and the activity row ("+$20.00") both contain this string, so an
+  // Exact + first: the balance and the activity row (with a "+" in front) both contain this string, so an
   // unqualified match is a strict-mode violation rather than anything being wrong with the money.
-  await expect(b.getByText("$20.00", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
-  console.log(`\n✅ recovery loop: backed up + restored ${shortA} on a fresh device with $20\n`);
+  await expect(b.getByText(claimed, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+  console.log(`\n✅ recovery loop: backed up + restored ${shortA} on a fresh device with ${claimed}\n`);
   await ctxB.close();
 });

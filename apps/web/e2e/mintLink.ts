@@ -17,6 +17,26 @@ export interface MintedLink {
 }
 
 /**
+ * A dollar amount the way every money surface prints it (lib/money.ts formatUsd): "$0.50".
+ *
+ * Specs build the amounts they expect from what was actually minted (`MintedLink.amount`), never
+ * from a number typed into the spec. The size of a demo link is sponsor configuration
+ * (apps/sponsor/src/lib/demo-link.ts, 0.5 today). The specs used to type "$20.00", the amount the
+ * old CLI path minted, and when minting moved to /demo-link on 2026-09-06 they went red on claims
+ * that had worked. Restated here rather than imported, so a broken formatter fails the specs
+ * instead of agreeing with them.
+ */
+export function usd(amount: string | number): string {
+  const n = typeof amount === "string" ? Number.parseFloat(amount) : amount;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Whole cents, so sums and comparisons of two-decimal amounts stay exact. */
+export function cents(amount: string | number): number {
+  return Math.round((typeof amount === "string" ? Number.parseFloat(amount) : amount) * 100);
+}
+
+/**
  * Mint a fresh real testnet claim link.
  *
  * Two ways, and the default changed on 2026-09-06.

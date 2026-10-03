@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { expectMoneyLanded } from "./landed";
-import { mintClaimLink } from "./mintLink";
+import { mintClaimLink, usd } from "./mintLink";
 import { rewriteSponsor } from "./sponsorRewrite";
 
 /**
@@ -14,7 +14,9 @@ const WEB = process.env.WEB_URL ?? "https://getlumenia.com";
 test("claim → persisted → /home shows the real balance + activity", async ({ page }) => {
   page.on("pageerror", (e) => console.log("[pageerror]", e.message));
   await rewriteSponsor(page.context()); // no-op against the live sponsor; enables local runs
-  const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, amount: "20", from: "Alvin" });
+  const link = await mintClaimLink({ sponsor: SPONSOR, web: WEB, from: "Alvin" });
+  // What this link really holds, not a typed number (see usd() in mintLink.ts).
+  const claimed = usd(link.amount);
 
   await page.goto(link.url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
@@ -25,9 +27,10 @@ test("claim → persisted → /home shows the real balance + activity", async ({
   await page.getByRole("link", { name: /see my money/i }).click();
   await expect(page).toHaveURL(/\/home/);
   await expect(page.getByText("Your money", { exact: true })).toBeVisible({ timeout: 30_000 });
-  // The balance AND the activity row both read $20.00 (the row as "+$20.00"), so an unqualified
-  // text match is a strict-mode violation rather than a failure of the app. Assert the big number.
-  await expect(page.getByText("$20.00", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+  // The balance AND the activity row both read the claimed amount (the row with a "+" in front), so
+  // an unqualified text match is a strict-mode violation rather than a failure of the app. Assert
+  // the big number.
+  await expect(page.getByText(claimed, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Received", { exact: true })).toBeVisible({ timeout: 30_000 });
   // honest custody label for a fresh (Phase 1) account
   await expect(page.getByText(/not locked/i)).toBeVisible();
