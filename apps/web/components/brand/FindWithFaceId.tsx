@@ -30,7 +30,15 @@ import { PrimaryButton } from "./PrimaryButton";
 
 type Step = "idle" | "finding" | "lock" | "done";
 
-export function FindWithFaceId() {
+export function FindWithFaceId({
+  onFound,
+  onDone,
+}: {
+  /** Told the moment the money is found, before the lock step is offered. */
+  onFound?: () => void;
+  /** Told once the money is back AND the lock step is answered (locked, or "Not now"). */
+  onDone?: () => void;
+} = {}) {
   const { findAccountWithFaceId, lockWithPassword } = useWallet();
   const [capable, setCapable] = useState(false);
   const [step, setStep] = useState<Step>("idle");
@@ -54,6 +62,7 @@ export function FindWithFaceId() {
       const r = await findAccountWithFaceId();
       setFound(r);
       setStep("lock");
+      onFound?.();
     } catch (e) {
       setError((e as Error).message);
       setStep("idle");
@@ -70,6 +79,7 @@ export function FindWithFaceId() {
       setPassword("");
       setLocked(true);
       setStep("done");
+      onDone?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -136,6 +146,7 @@ export function FindWithFaceId() {
             onClick={() => {
               setLocked(false);
               setStep("done");
+              onDone?.();
             }}
             className="text-sm text-ink-soft underline-offset-2 hover:underline"
           >

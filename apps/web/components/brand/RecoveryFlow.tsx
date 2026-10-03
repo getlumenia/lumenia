@@ -26,7 +26,14 @@ import { passwordStrength } from "../../lib/password-strength";
 const field = "w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-[16px] text-ink";
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
+export function RecoveryFlow({
+  mode,
+  onDone,
+}: {
+  mode: "secure" | "restore";
+  /** Told once the backup is stored, or the money is restored. /start uses it to move on. */
+  onDone?: () => void;
+}) {
   const { account, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId } = useWallet();
   const secure = mode === "secure";
   /* In "secure" mode the SAME field means two opposite things, and saying "Choose a password" for
@@ -144,6 +151,7 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
         await restoreRecovery(box, password);
       }
       setStep("done");
+      onDone?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -165,6 +173,7 @@ export function RecoveryFlow({ mode }: { mode: "secure" | "restore" }) {
       }
       await restoreWithFaceId(box);
       setStep("done");
+      onDone?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
