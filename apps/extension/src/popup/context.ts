@@ -6,7 +6,7 @@ import { createContext } from "preact";
 import { useContext } from "preact/hooks";
 import type { LinkRecord, NetId, WorkerState } from "../lib/types";
 
-export type View = "home" | "links" | "settings";
+export type View = "home" | "links" | "settings" | "backup";
 
 export interface AppApi {
   ws: WorkerState;
@@ -22,10 +22,14 @@ export interface AppApi {
   /** replace the list with one the worker just returned (links.refresh answers with one) */
   setRecords(rs: LinkRecord[]): void;
   go(view: View): void;
-  /** Connect -> the email step */
+  /** the account question -> the restore steps (email, code, password) */
   startRestore(): void;
-  /** back to the Connect screen from the email step */
+  /** back to the account question from the restore steps */
   leaveRestore(): void;
+  /** the account question -> pick a password for a new account */
+  startCreate(): void;
+  /** an account was just made here: show the "you're in" beat, once */
+  justCreated(): void;
 }
 
 export const AppCtx = createContext<AppApi | null>(null);

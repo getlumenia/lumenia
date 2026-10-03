@@ -7,7 +7,7 @@ import { URLS } from "../../config";
 import { ask } from "../api";
 import { useApp } from "../context";
 import { plainSentence } from "../format";
-import { BrandBar, Button, ExtLink, Heading, Notice } from "../ui";
+import { BrandBar, Button, ExtLink, Heading, Mascot, Notice } from "../ui";
 
 export function Consent() {
   const { applyState } = useApp();
@@ -27,30 +27,31 @@ export function Consent() {
     <>
       <BrandBar />
       <main class="screen">
-        <Heading>Before you start</Heading>
-        <p class="lede">Here is what leaves this browser, and when.</p>
-        <ul class="facts">
+        <div class="beat beat--row">
+          <Mascot pose="thumbsup" size="sm" />
+          <div class="beat__text">
+            <Heading>One thing first</Heading>
+            <p class="lede">Here is what leaves this browser, and when.</p>
+          </div>
+        </div>
+        <ul class="facts facts--tight">
           <li>
-            <strong>To restore your account.</strong> We send your email address and a one-time code to Lumenia's server.
+            <strong>Restore or back up:</strong> your email and a one-time code, to Lumenia's server.
           </li>
           <li>
-            <strong>When you send or take back.</strong> The signed transfer goes to Lumenia's server, which pays the network
-            fee. A practice top-up sends your public key.
+            <strong>Send or take back:</strong> the transfer you signed, so Lumenia can pay the network fee. Practice dollars and the
+            real-money check send your public key.
           </li>
           <li>
-            <strong>Real money only.</strong> Your public key, to check whether the pilot approved your account.
+            <strong>Counting:</strong> a few usage counts like "link created": an event name and one-way hashes, never a web address, a
+            link's secret or page content.
           </li>
           <li>
-            <strong>Counting.</strong> A few usage counts, like "link created": an event name and one-way hashes, never a web
-            address, a link's secret or page content.
+            <strong>Servers:</strong> Lumenia's see your IP address, for rate limits. Public Stellar servers show balances and link
+            status, and see the account or link asked about.
           </li>
           <li>
-            <strong>Servers.</strong> Lumenia's servers see your IP address, for rate limits. Public Stellar servers supply
-            balances and link status, and see the account or link asked about.
-          </li>
-          <li>
-            <strong>On this device.</strong> Your key is stored here, encrypted with your password. Your links stay in this browser,
-            each full link encrypted with your key.
+            <strong>On this device:</strong> your key, locked with your password, and your links, each encrypted with your key.
           </li>
         </ul>
         <div class="screen__spacer" />

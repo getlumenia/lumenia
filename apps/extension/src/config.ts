@@ -64,8 +64,6 @@ export const API_HOSTS = [
 ] as const;
 
 export const URLS = {
-  home: `${WEB_ORIGIN}/home`,
-  start: `${WEB_ORIGIN}/start`,
   /**
    * Where a password backup is made. The plan said /settings, but the backup form lives on /account
    * (apps/web/app/(app)/settings/page.tsx sends people there: "Looking for your balance or your

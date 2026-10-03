@@ -6,17 +6,22 @@
  * extension at all. Every request is parsed by the zod contract in lib/messages.ts
  * before anything acts on it.
  */
-import { createV2Link, getTestMoney, loadV2DropStatus, reclaimV2, sendEvent, v2DepositLanded, type NetworkConfig } from "../core";
+import { createV2Link, getTestMoney, loadV2DropStatus, prepareAccount, reclaimV2, sendEvent, v2DepositLanded, type NetworkConfig } from "../core";
 import { API_HOSTS, VERSION, netConfig } from "../config";
 import { readBalance } from "../lib/balance";
 import { ext, isFirefox } from "../lib/browser";
-import { ExtError, fail, openLinksMessage, toFailure } from "../lib/errors";
+import { ExtError, MESSAGES, fail, openLinksMessage, toFailure } from "../lib/errors";
 import { openLinks } from "../lib/links";
 import { RequestSchema, type Request, type ResponseMap } from "../lib/messages";
 import { sealLink, unsealLink } from "../lib/sealed";
 import { K, readSettings, session, writeSettings } from "../lib/storage";
 import type { LinkRecord, Result, WorkerState } from "../lib/types";
 import {
+  backupCancel,
+  backupRequestCode,
+  backupSubmitCode,
+  backupView,
+  createAccount,
   currentAccount,
   forget,
   isUnlockedNow,
@@ -33,6 +38,7 @@ import {
 } from "./account";
 import { clearPendingInsert, insertLink, readPendingInsert } from "./insert";
 import { keepAlive } from "./keepalive";
+import { addPracticeDollars } from "./practice";
 import { cachedPilot, canSendRealMoney, pilotStatus } from "./pilot";
 import { allRecords, getRecord, putRecord } from "./records";
 import { runReclaim } from "./reclaim";
@@ -116,12 +122,13 @@ async function hostAccess(): Promise<boolean> {
 }
 
 async function workerState(): Promise<WorkerState> {
-  const [settings, acct, unlocked, restore, pending] = await Promise.all([
+  const [settings, acct, unlocked, restore, pending, backup] = await Promise.all([
     readSettings(),
     currentAccount(),
     isUnlockedNow(),
     restoreState(),
     readPendingInsert(),
+    backupView(),
   ]);
   return {
     account: acct ? { pubkey: acct.pubkey } : null,
@@ -132,6 +139,7 @@ async function workerState(): Promise<WorkerState> {
     pilot: acct ? await cachedPilot(acct.pubkey) : null,
     sending,
     pendingInsert: pending ? { host: pending.host, at: pending.at } : null,
+    backup,
     hostAccess: await hostAccess(),
     version: VERSION,
   };
@@ -164,6 +172,17 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
     }
     case "restore.cancel":
       return restoreCancel();
+    case "account.create": {
+      const out = await createAccount(req.password);
+      void runSettle();
+      return out;
+    }
+    case "backup.requestCode":
+      return backupRequestCode(req.email);
+    case "backup.submitCode":
+      return backupSubmitCode(req.code);
+    case "backup.cancel":
+      return backupCancel();
     case "unlock":
       return unlock(req.password);
     case "lock":
@@ -174,6 +193,9 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
       // This browser holds the only list of these links and the only way to take them back.
       const open = openLinks(await allRecords());
       if (open.length > 0 && !req.leaveOpenLinks) throw new ExtError("open-links", openLinksMessage(open));
+      // An account made here and never backed up has no other copy anywhere: forgetting it deletes
+      // the account and any money in it, for good.
+      if ((await backupView()).needed && !req.loseAccount) throw new ExtError("not-backed-up", MESSAGES["not-backed-up"]);
       return forget();
     }
     case "settings.set": {
@@ -207,12 +229,20 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
       const settings = await readSettings();
       if (settings.net !== "testnet") throw new ExtError("internal", "Practice dollars are for practice money only.");
       const net = netConfig("testnet");
-      try {
-        await getTestMoney(net.sponsorUrl, acct.pubkey);
-      } catch (e) {
-        throw new ExtError("sponsor-refused", e instanceof Error ? e.message : "Couldn't get practice dollars right now.");
-      }
-      return readBalance(acct.pubkey, net);
+      return keepAlive(
+        addPracticeDollars(
+          {
+            balance: readBalance,
+            signer: signerFor,
+            prepare: async (signer, n) => {
+              await prepareAccount({ sponsorUrl: n.sponsorUrl, signer, net: n });
+            },
+            faucet: getTestMoney,
+          },
+          acct.pubkey,
+          net,
+        ),
+      );
     }
     case "send": {
       if (sending) throw fail("busy");

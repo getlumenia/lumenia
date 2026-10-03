@@ -7,7 +7,7 @@ import { useState } from "preact/hooks";
 import { API_HOSTS } from "../../config";
 import { ext } from "../../lib/browser";
 import { useApp } from "../context";
-import { BrandBar, Button, Heading, Notice } from "../ui";
+import { BrandBar, Button, Heading, Notice, Mascot } from "../ui";
 
 export function HostAccess() {
   const { refresh } = useApp();
@@ -33,6 +33,7 @@ export function HostAccess() {
     <>
       <BrandBar />
       <main class="screen">
+        <Mascot pose="phone" size="md" />
         <Heading>Allow Lumenia to reach its servers</Heading>
         <p class="lede">
           Your browser asks before an extension can contact a website. Lumenia only contacts its own servers and the public

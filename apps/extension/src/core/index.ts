@@ -23,8 +23,18 @@ export {
   type NetworkId,
 } from "../../../web/lib/network";
 export { localSignerFromSeed, type Signer } from "../../../web/lib/signer";
-export { requestRecoveryOtp, fetchRecoveryBox } from "../../../web/lib/recovery-api";
-export { unwrapWithPassword, findCopy, type RecoveryBox, type PasswordCopy } from "../../../web/lib/recovery";
+export { requestRecoveryOtp, fetchRecoveryBox, storeRecoveryBox } from "../../../web/lib/recovery-api";
+export {
+  unwrapWithPassword,
+  wrapWithPassword,
+  findCopy,
+  emptyBox,
+  putCopy,
+  type RecoveryBox,
+  type PasswordCopy,
+} from "../../../web/lib/recovery";
+export { prepareAccount } from "../../../web/lib/sponsor";
+export { passwordStrength } from "../../../web/lib/password-strength";
 export { savePhase2, unlockPhase2, getActive, clearKeystore } from "../../../web/lib/keystore";
 export { DEFAULT_ARGON } from "../../../web/lib/argon";
 export { formatUsd, sanitizeAmountInput } from "../../../web/lib/money";

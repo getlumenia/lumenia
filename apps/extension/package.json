@@ -11,7 +11,7 @@
     "build-for-amo": "node build.mjs",
     "lint:firefox": "web-ext lint --source-dir dist/firefox",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm run test:url && pnpm run test:links && pnpm run test:send && pnpm run test:session && pnpm run test:restore && pnpm run test:security && pnpm run test:router && pnpm run test:popup",
+    "test": "pnpm run test:url && pnpm run test:links && pnpm run test:send && pnpm run test:session && pnpm run test:restore && pnpm run test:security && pnpm run test:router && pnpm run test:account && pnpm run test:popup",
     "test:url": "tsx test/url.selftest.ts",
     "test:links": "tsx test/links.selftest.ts",
     "test:send": "tsx test/send.selftest.ts",
@@ -19,6 +19,7 @@
     "test:restore": "tsx test/restore.selftest.ts",
     "test:security": "tsx test/security.selftest.ts",
     "test:router": "tsx test/router.selftest.ts",
+    "test:account": "tsx test/account.selftest.ts",
     "test:popup": "tsx src/popup/popup.selftest.ts"
   },
   "dependencies": {

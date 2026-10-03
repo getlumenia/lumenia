@@ -14,7 +14,7 @@ import { useEscape } from "../escape";
 import { plainSentence } from "../format";
 import { useAlive, useCountdown } from "../hooks";
 import { IconBack } from "../icons";
-import { BrandBar, Button, ExtLink, Heading, Notice, Progress, TextField } from "../ui";
+import { BrandBar, Button, ExtLink, Heading, Mascot, Notice, Progress, TextField } from "../ui";
 
 interface RestoreProblem {
   text: string;
@@ -104,8 +104,13 @@ export function RestoreEmail() {
       <BrandBar />
       <main class="screen">
         <BackLink onClick={leaveRestore}>Back</BackLink>
-        <Heading focus={false}>Restore your account</Heading>
-        <p class="lede">Enter the email you used for your backup on getlumenia.com. We'll send you a <span class="nowrap">6-digit</span> code.</p>
+        <div class="beat beat--row">
+          <Mascot pose="phone" size="sm" />
+          <div class="beat__text">
+            <Heading focus={false}>Bring your account here</Heading>
+            <p class="lede">Enter the email of your backup. We'll send you a <span class="nowrap">6-digit</span> code.</p>
+          </div>
+        </div>
         <form class="stack" onSubmit={submit} noValidate>
           <TextField
             id="email"

@@ -17,10 +17,25 @@ export const RequestSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("restore.submitCode"), code: z.string().min(1).max(16) }).strict(),
   z.object({ type: z.literal("restore.submitPassword"), password: z.string().min(1).max(1024) }).strict(),
   z.object({ type: z.literal("restore.cancel") }).strict(),
+  /** a new account made here, locked with this password (it also opens the account's backup) */
+  z.object({ type: z.literal("account.create"), password: z.string().min(1).max(1024) }).strict(),
+  z.object({ type: z.literal("backup.requestCode"), email: z.string().min(3).max(254) }).strict(),
+  z.object({ type: z.literal("backup.submitCode"), code: z.string().min(1).max(16) }).strict(),
+  z.object({ type: z.literal("backup.cancel") }).strict(),
   z.object({ type: z.literal("unlock"), password: z.string().min(1).max(1024) }).strict(),
   z.object({ type: z.literal("lock") }).strict(),
-  /** `leaveOpenLinks`: the person saw that links are still open and chose to forget anyway */
-  z.object({ type: z.literal("forget"), confirm: z.literal("FORGET"), leaveOpenLinks: z.literal(true).optional() }).strict(),
+  /**
+   * `leaveOpenLinks`: the person saw that links are still open and chose to forget anyway;
+   * `loseAccount`: the account was never backed up, and they chose to delete its only copy anyway.
+   */
+  z
+    .object({
+      type: z.literal("forget"),
+      confirm: z.literal("FORGET"),
+      leaveOpenLinks: z.literal(true).optional(),
+      loseAccount: z.literal(true).optional(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("settings.set"),
@@ -69,6 +84,10 @@ export interface ResponseMap {
   "restore.submitCode": { step: "password" };
   "restore.submitPassword": { pubkey: string };
   "restore.cancel": null;
+  "account.create": { pubkey: string };
+  "backup.requestCode": { codeSentAt: number };
+  "backup.submitCode": { backedUpAt: number };
+  "backup.cancel": null;
   unlock: { lockAt: number };
   lock: null;
   forget: null;

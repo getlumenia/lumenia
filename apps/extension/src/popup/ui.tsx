@@ -241,7 +241,7 @@ export function NetChip({ net, onClick }: { net: NetId; onClick: () => void }) {
 export function BrandBar() {
   return (
     <header class="bar">
-      <span class="wordmark">Lumenia</span>
+      <Wordmark />
     </header>
   );
 }
@@ -250,7 +250,7 @@ export function BrandBar() {
 export function TopBar({ net, onLinks, onSettings }: { net: NetId; onLinks: () => void; onSettings: () => void }) {
   return (
     <header class="bar">
-      <span class="wordmark">Lumenia</span>
+      <Wordmark />
       <NetChip net={net} onClick={onSettings} />
       <span class="bar__spacer" />
       <button type="button" class="icon-btn" aria-label="Links" title="Links" onClick={onLinks}>
@@ -276,10 +276,64 @@ export function SubBar({ title, onBack }: { title: string; onBack: () => void })
 }
 
 /** The small round badge that marks an arrival: the accent and a check, never green. */
-export function CheckBadge() {
+
+/* ------------------------------------------- brand ------------------------------------------- */
+
+/** The wordmark, as the landing page draws it: the periwinkle mark on light, the recoloured one on dark. */
+export function Wordmark({ class: cls }: { class?: string }) {
   return (
-    <span class="badge" aria-hidden="true">
-      <IconCheck />
+    <span class={cx("wordmark", cls)}>
+      <img class="wordmark__light" src="brand/wordmark.svg" alt="Lumenia" draggable={false} />
+      <img class="wordmark__dark" src="brand/wordmark-dark.svg" alt="" aria-hidden="true" draggable={false} />
     </span>
+  );
+}
+
+export type Pose = "wave" | "messenger" | "thumbsup" | "celebrate" | "phone";
+
+const POSE_ALT: Record<Pose, string> = {
+  wave: "The Lumenia messenger, waving",
+  messenger: "The Lumenia messenger, holding a glowing envelope",
+  thumbsup: "The Lumenia messenger, giving a thumbs up",
+  celebrate: "The Lumenia messenger, celebrating with both arms up",
+  phone: "The Lumenia messenger, holding a phone",
+};
+
+/**
+ * The messenger, at a beat (brand.md section 9): the hello, a question, a link that is ready, a
+ * claim, an empty list. Decorative unless `label` says it carries the screen, so a screen reader is
+ * not told the same thing twice.
+ */
+export function Mascot({
+  pose,
+  size = "md",
+  label = false,
+  class: cls,
+}: {
+  pose: Pose;
+  size?: "xs" | "sm" | "md" | "lg" | "xl";
+  label?: boolean;
+  class?: string;
+}) {
+  return (
+    <div class={cx("mascot", `mascot--${size}`, `mascot--${pose}`, cls)}>
+      <span class="mascot__halo" aria-hidden="true" />
+      <img class="mascot__img" src={`mascot/${pose}.webp`} alt={label ? POSE_ALT[pose] : ""} draggable={false} />
+      <span class="mascot__ground" aria-hidden="true" />
+    </div>
+  );
+}
+
+/** A message from the messenger: the landing page's opening bubble, small. */
+export function Bubble({ children, class: cls, tail = "down" }: { children: ComponentChildren; class?: string; tail?: "down" | "left" }) {
+  return (
+    <div class={cx("bubble", `bubble--tail-${tail}`, cls)}>
+      <div class="bubble__top">
+        <img class="bubble__mark" src="brand/mark-link.webp" alt="" draggable={false} />
+        <span class="bubble__time">now</span>
+      </div>
+      <p class="bubble__text">{children}</p>
+      <span class="bubble__tail" aria-hidden="true" />
+    </div>
   );
 }

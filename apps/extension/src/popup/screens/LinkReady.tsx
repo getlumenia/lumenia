@@ -15,7 +15,7 @@ import { dayWords, plainSentence } from "../format";
 import { useAlive, useFlash } from "../hooks";
 import { IconCheck, IconCopy, IconPaste } from "../icons";
 import { QrCode } from "../qr";
-import { Button, CheckBadge, Heading, Notice } from "../ui";
+import { Button, Heading, Mascot, Notice } from "../ui";
 
 /** Why a paste did not happen, in words (the worker names the cause in `how`). */
 function whyNotPasted(how: string | undefined): string {
@@ -53,6 +53,7 @@ export function LinkReady({
   const [link, setLink] = useState(given ?? "");
   const [revealProblem, setRevealProblem] = useState("");
   const [copied, flashCopied] = useFlash();
+  const [showQr, setShowQr] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [paste, setPaste] = useState<PasteState>(inserted ? { kind: "done" } : { kind: "idle" });
 
@@ -107,7 +108,7 @@ export function LinkReady({
   return (
     <main class="screen screen--ready">
       <div class="ready__head">
-        <CheckBadge />
+        <Mascot pose={standing === "claimed" ? "thumbsup" : "celebrate"} size="sm" label />
         <div>
           <Heading class="h1--ready">Your link is ready</Heading>
           <p class="ready__sub">
@@ -156,11 +157,15 @@ export function LinkReady({
         <p class="fine fine--center">Pastes into the box you picked on {ws.pendingInsert.host || "the page"}.</p>
       ) : null}
 
-      {ready ? (
+      {ready && showQr ? (
         <figure class="qr-tile">
           <QrCode value={link} size={168} label="QR code of the link. Whoever scans it can claim the money." />
           <figcaption class="fine">Scan to open it on a phone. Anyone who scans it can claim the money.</figcaption>
         </figure>
+      ) : ready ? (
+        <Button variant="quiet" small onClick={() => setShowQr(true)} class="btn--qr">
+          Show a QR code
+        </Button>
       ) : null}
 
       <div class="ready__notes">
@@ -168,6 +173,8 @@ export function LinkReady({
           <p>It was claimed.</p>
         ) : standing === "reclaimed" ? (
           <p>You took it back.</p>
+        ) : standing === "closed" ? (
+          <p>It was claimed, or your take-back went through.</p>
         ) : (
           <>
             <p>Waiting to be claimed. The recipient pays no gas.</p>

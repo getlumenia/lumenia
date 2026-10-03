@@ -1,7 +1,8 @@
 /**
- * The one account this extension holds: restored from the user's own backup, kept as a Phase-2
- * record (Argon2id + AES-GCM under their password) in this extension's IndexedDB, unlocked into
- * storage.session for a limited time.
+ * The one account this extension holds: made here, or restored from the user's own backup, kept as
+ * a Phase-2 record (Argon2id + AES-GCM under their password) in this extension's IndexedDB,
+ * unlocked into storage.session for a limited time. An account made here exists only in this
+ * browser until it is backed up with an email (backupRequestCode / backupSubmitCode).
  *
  * Every signature goes through `signerFor`, which refuses unless the session is unexpired AND
  * belongs to the account being signed for, decodes the seed, builds the signer and zeroes the bytes
@@ -12,23 +13,30 @@ import { Keypair } from "@stellar/stellar-sdk";
 import {
   clearKeystore,
   DEFAULT_ARGON,
+  emptyBox,
   fetchRecoveryBox,
   findCopy,
   getActive,
   localSignerFromSeed,
+  passwordStrength,
+  putCopy,
   requestRecoveryOtp,
   savePhase2,
+  storeRecoveryBox,
   unlockPhase2,
   unwrapWithPassword,
+  wrapWithPassword,
   type RecoveryBox,
   type Signer,
 } from "../core";
+import { finishBackup, startBackup, type BackupDeps } from "../lib/backup";
 import { ext } from "../lib/browser";
 import { ExtError, fail } from "../lib/errors";
 import { openBox, startRestore, submitCode, type RestoreDeps } from "../lib/restore";
 import { canSign, isUnlocked, LOCKED, reduce, type SessionView } from "../lib/session";
 import { forgetSealed, linksKeyFromSeed } from "../lib/sealed";
 import { K, local, readSettings, session } from "../lib/storage";
+import type { BackupView } from "../lib/types";
 
 export const AUTOLOCK_ALARM = "autolock";
 
@@ -50,11 +58,23 @@ const restoreDeps: RestoreDeps = {
   },
 };
 
-/** The account held here, from the keystore (the truth), or null. */
+const backupDeps: BackupDeps = {
+  requestOtp: requestRecoveryOtp,
+  store: (email, code, box, signer) => storeRecoveryBox(email, code, box, undefined, signer),
+};
+
+/**
+ * The account held here, from the keystore (the truth), or null. The storage.local mirror that
+ * scopes the link records (records.ts) follows it: a mirror lost to a write that never finished
+ * (the keystore is written first) is put back here, so the account's records are never hidden.
+ */
 export async function currentAccount(): Promise<{ pubkey: string; phase: 1 | 2 } | null> {
   try {
     const a = await getActive();
-    return a ? { pubkey: a.pubkey, phase: a.phase } : null;
+    if (!a) return null;
+    const mirror = await local().get<{ pubkey?: string }>(K.account);
+    if (mirror?.pubkey !== a.pubkey) await local().set({ [K.account]: { pubkey: a.pubkey, restoredAt: Date.now() } });
+    return { pubkey: a.pubkey, phase: a.phase };
   } catch {
     return null;
   }
@@ -102,13 +122,98 @@ export async function restoreSubmitPassword(password: string): Promise<{ pubkey:
   } finally {
     seed.fill(0);
   }
-  await local().set({ [K.account]: { pubkey, restoredAt: Date.now() } });
+  // Restored from a backup, so a backup exists by definition.
+  await local().set({ [K.account]: { pubkey, restoredAt: Date.now() }, [K.backedUp]: { at: Date.now() } });
   await session().remove(K.restore);
   return { pubkey };
 }
 
 export async function restoreCancel(): Promise<null> {
   await session().remove(K.restore);
+  return null;
+}
+
+/* --------------------------------- a new account, made here --------------------------------- */
+
+/**
+ * Make a new account in this extension, locked with `password` (the website's own Phase-2 record:
+ * Argon2id + AES-GCM). The same password wraps the account's backup copy, kept here as ciphertext
+ * until the person backs it up with an email; until then the account exists only in this browser,
+ * and the popup says so. The password has to pass the website's own floor (password-strength.ts):
+ * once backed up, its copy sits on a server where it can be attacked offline.
+ */
+export async function createAccount(password: string): Promise<{ pubkey: string }> {
+  await requireConsent();
+  if (await currentAccount()) throw new ExtError("internal", "An account is already connected here. Forget it in Settings first.");
+  const strength = passwordStrength(password);
+  if (!strength.ok) throw new ExtError("weak-password", strength.reason ?? "Pick a stronger password.");
+  const kp = Keypair.random();
+  const pubkey = kp.publicKey();
+  const seed = new Uint8Array(kp.rawSecretKey());
+  try {
+    // The key record first: everything after it can be repaired, a key that was never kept cannot.
+    await savePhase2(pubkey, seed, password, DEFAULT_ARGON, "user");
+    const box = putCopy(emptyBox(), await wrapWithPassword(seed, password));
+    await local().set({ [K.account]: { pubkey, restoredAt: Date.now() }, [K.pendingBackup]: box });
+    await startSession(pubkey, seed);
+  } finally {
+    seed.fill(0);
+  }
+  return { pubkey };
+}
+
+/* --------------------------------- backup --------------------------------- */
+
+interface BackupState {
+  email: string;
+  codeSentAt: number;
+}
+
+export async function backupView(): Promise<BackupView> {
+  const pending = await local().get<RecoveryBox>(K.pendingBackup);
+  const b = await session().get<BackupState>(K.backup);
+  return { needed: Boolean(pending), step: b ? "code" : null, email: b?.email ?? "", codeSentAt: b?.codeSentAt ?? null };
+}
+
+async function pendingBox(): Promise<RecoveryBox> {
+  const box = await local().get<RecoveryBox>(K.pendingBackup);
+  if (!box) throw new ExtError("internal", "This account is already backed up.");
+  return box;
+}
+
+/** Back up, step 1: mail a code to `email`. */
+export async function backupRequestCode(email: string): Promise<{ codeSentAt: number }> {
+  await requireConsent();
+  if (!(await currentAccount())) throw fail("no-account");
+  await pendingBox();
+  await startBackup(backupDeps, email);
+  const codeSentAt = Date.now();
+  await session().set({ [K.backup]: { email: email.trim(), codeSentAt } satisfies BackupState });
+  return { codeSentAt };
+}
+
+/**
+ * Back up, step 2: the code stores the box. The unlocked key signs the row to this account, so a
+ * later write by whoever reads the mailbox is refused; a locked extension is refused here first.
+ */
+export async function backupSubmitCode(code: string): Promise<{ backedUpAt: number }> {
+  await requireConsent();
+  const acct = await currentAccount();
+  if (!acct) throw fail("no-account");
+  const b = await session().get<BackupState>(K.backup);
+  if (!b) throw new ExtError("internal", "Start again: enter your email.");
+  const box = await pendingBox();
+  const signer = await signerFor(acct.pubkey);
+  await finishBackup(backupDeps, b.email, code, box, signer);
+  const backedUpAt = Date.now();
+  await local().remove(K.pendingBackup);
+  await local().set({ [K.backedUp]: { at: backedUpAt } });
+  await session().remove(K.backup);
+  return { backedUpAt };
+}
+
+export async function backupCancel(): Promise<null> {
+  await session().remove(K.backup);
   return null;
 }
 

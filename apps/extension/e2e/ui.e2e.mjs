@@ -4,7 +4,8 @@
  * screenshots taken from those real screens on the way.
  *
  *   1. a throwaway practice account is made and backed up on getlumenia.com (e2e/lib.mjs);
- *   2. in the popup: "Before you start" -> Agree; Restore; email; the mailed code; the backup password;
+ *   2. in the popup: Hello -> Get started; "One thing first" -> Agree; "Yes, bring it here"; email; the
+ *      mailed code; the backup password;
  *   3. "Paste a Lumenia link here" is chosen on the chat box of a local page (the click is
  *      simulated); in the popup, $0.10 -> "Make the link"; the worker pastes the link into that box;
  *   4. two more $0.10 links are made in the popup; the Links screen shows them Waiting;
@@ -15,12 +16,13 @@
  *      taken back too, so no link shown in any image can still be claimed.
  *
  * Shots land in dist/store-shots/raw-*.png (the popup at 2x) and the 1280x800 composites in
- * store/screenshots/. Evidence in dist/e2e-evidence-ui-<time>.json.
+ * store/screenshots/ (01-hello, 02-send, 03-link-ready, 04-paste, 05-links). Evidence in
+ * dist/e2e-evidence-ui-<time>.json.
  *
  *   node build.mjs --e2e-ttl=180 && node e2e/ui.e2e.mjs     (from apps/extension; about seven minutes)
  *   node e2e/ui.e2e.mjs --compose-only                     re-make the composites from the last raw captures
  *   node build.mjs --e2e-ttl=604800 && node e2e/ui.e2e.mjs --paste-shots
- *                                                          re-take shots 2 and 4 with the store's own
+ *                                                          re-take shots 3 and 4 with the store's own
  *                                                          seven days, then claim both links shown
  */
 import { mkdir, readFile, rm } from "node:fs/promises";
@@ -68,12 +70,23 @@ async function main() {
     log(`shot ${name}`);
   };
 
-  // 2. first run, restore through the screens
+  // The name field sits behind "Add your name or a password" until it is opened.
+  const fillFrom = async (name) => {
+    const field = p.getByLabel("From (optional)");
+    if (!(await field.isVisible().catch(() => false))) await p.getByRole("button", { name: /Add your name or a password/ }).click();
+    await field.fill(name);
+  };
+
+  // 2. first run: hello, the agreement, the account question, then restore through the screens
+  const getStarted = p.getByRole("button", { name: "Get started" });
+  await getStarted.waitFor({ timeout: 30_000 });
+  await shot("hello");
+  await getStarted.click();
   const agree = p.getByRole("button", { name: "Agree and continue" });
-  await agree.waitFor({ timeout: 30_000 });
+  await agree.waitFor({ timeout: 10_000 });
   await shot("before-you-start");
   await agree.click();
-  await p.getByRole("button", { name: "Restore my Lumenia account" }).click();
+  await p.getByRole("button", { name: "Yes, bring it here" }).click();
   await mail.skipExisting();
   await p.getByLabel("Email").fill(mail.address);
   await p.getByRole("button", { name: "Send me a code" }).click();
@@ -92,7 +105,7 @@ async function main() {
   // Shot 1: the Send screen with an amount and a name typed, nothing pressed.
   await p.getByText(/You have \$/).waitFor({ timeout: 30_000 }).catch(() => undefined);
   await p.getByLabel("Amount").fill("5.00");
-  await p.getByLabel("From (optional)").fill("Alex");
+  await fillFrom("Alex");
   if (!process.argv.includes("--paste-shots")) await shot("send");
 
   // 3. the paste target, then the first link from the screen
@@ -106,7 +119,7 @@ async function main() {
   await p.reload();
   await p.getByText(/will be pasted into/i).waitFor({ timeout: 15_000 });
   await p.getByLabel("Amount").fill(SEND_USD);
-  await p.getByLabel("From (optional)").fill("Alex");
+  await fillFrom("Alex");
   const t1 = Date.now();
   await p.getByRole("button", { name: "Make the link" }).click();
   await p.getByText("Your link is ready").waitFor({ timeout: 120_000 });
@@ -236,9 +249,9 @@ function page(caption, sub, right) {
 async function compose(browser) {
   const raw = (n) => path.join(RAW, `raw-${n}.png`);
   const shots = [
-    ["01-send.png", "Make a payment link", "Enter an amount. The recipient pays no gas.", await popupFrame(raw("send"))],
-    ["02-link-ready.png", "Copy it, or paste it where you type", "If nobody claims it, you can take it back after 7 days.", await popupFrame(raw("link-ready"))],
-    ["03-links.png", "See what happened to every link you made here", "Waiting, Claimed, Reclaimable, Reclaimed.", await popupFrame(raw("links"))],
+    ["01-hello.png", "Money home, in a link", "They tap it, and the money is theirs. No app, no wallet, and they pay no gas.", await popupFrame(raw("hello"))],
+    ["02-send.png", "Make a payment link", "Enter an amount. The recipient pays no gas.", await popupFrame(raw("send"))],
+    ["03-link-ready.png", "Copy it, or paste it where you type", "If nobody claims it, you can take it back after 7 days.", await popupFrame(raw("link-ready"))],
     [
       "04-paste.png",
       "Paste it into a text box",
@@ -248,8 +261,10 @@ async function compose(browser) {
          <img src="${await dataUrl(raw("ready-pasted"))}" style="width:288px;height:480px;border:1px solid ${LINE};border-radius:20px;box-shadow:0 18px 48px rgba(30,27,34,0.16);display:block">
        </div>`,
     ],
-    ["05-before-you-start.png", "Know what leaves your browser", "Nothing is sent until you agree.", await popupFrame(raw("before-you-start"))],
+    ["05-links.png", "See what happened to every link you made here", "Waiting, Claimed, Reclaimable, Reclaimed.", await popupFrame(raw("links"))],
   ];
+  // The earlier set had other names; only the five above belong in the store folder.
+  for (const old of ["01-send.png", "02-link-ready.png", "03-links.png", "05-before-you-start.png"]) await rm(path.join(OUT, old), { force: true });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
   const pg = await ctx.newPage();
   for (const [file, caption, sub, right] of shots) {

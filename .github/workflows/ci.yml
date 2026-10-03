@@ -150,7 +150,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck - extension
         run: pnpm --filter @lumenia/extension exec tsc --noEmit
-      - name: Self-tests - extension (url + links + send + session + restore + security + router + popup)
+      - name: Self-tests - extension (url + links + send + session + restore + security + router + account + popup)
         run: pnpm --filter @lumenia/extension test
       - name: Build - extension (Chrome + Firefox)
         run: pnpm --filter @lumenia/extension build

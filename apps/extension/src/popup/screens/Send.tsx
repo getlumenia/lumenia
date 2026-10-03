@@ -16,7 +16,7 @@ import { type BalanceView, useBalance, usePilot } from "../data";
 import { openRecord, type Draft, type FormError } from "../flow";
 import { centsOf, plainSentence } from "../format";
 import { useAlive } from "../hooks";
-import { Button, ExtLink, Switch, TextField } from "../ui";
+import { Bubble, Button, ExtLink, Mascot, Switch, TextField } from "../ui";
 
 export interface SendInput {
   amount: string;
@@ -50,6 +50,8 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
   const [getting, setGetting] = useState(false);
   const [practiceNote, setPracticeNote] = useState("");
   const [askAnyway, setAskAnyway] = useState(false);
+  // The name and the link password sit behind one button; real money opens it (its password is on).
+  const [more, setMore] = useState(() => lock || Boolean(draft.from));
   useEffect(() => {
     amountRef.current?.focus();
   }, []);
@@ -153,9 +155,25 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
         </div>
       ) : null}
 
+      {ws.backup.needed && !ws.pendingInsert && !unconfirmed ? (
+        <div class="banner" role="status">
+          <p class="banner__text">Your account lives only in this browser.</p>
+          <Button variant="quiet" small onClick={() => go("backup")}>
+            Back it up
+          </Button>
+        </div>
+      ) : null}
+
+      <div class="send__beat">
+        <Mascot pose="messenger" size="xs" />
+        <Bubble tail="left" class="send__bubble">
+          How much are you sending?
+        </Bubble>
+      </div>
+
       <form class="send" onSubmit={submit} noValidate>
         <div class="field">
-          <label class="field__label" for="amount">
+          <label class="field__label sr-only" for="amount">
             Amount
           </label>
           <div class={amountError ? "amount is-invalid" : "amount"}>
@@ -201,6 +219,8 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
           onRetry={balance.reload}
         />
 
+        {more ? (
+        <>
         <TextField
           id="from"
           label="From (optional)"
@@ -243,11 +263,17 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
                 </p>
               ) : null}
               <p class="fine" id="password-hint">
-                Tell them the password another way: a call, or a different app.
+                Tell them the password another way, like a call.
               </p>
             </>
           ) : null}
         </div>
+        </>
+        ) : (
+          <button type="button" class="more" aria-expanded={false} onClick={() => setMore(true)}>
+            {from.trim() ? `From ${from.trim()}. ` : ""}Add your name or a password
+          </button>
+        )}
 
         <div class="send__foot">
           {real ? <CapsLine pilotInfo={pilot} /> : <p class="caps">Practice money: play dollars, nothing here is real.</p>}

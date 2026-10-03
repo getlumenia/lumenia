@@ -16,7 +16,7 @@ import { useEscape } from "../escape";
 import { dayWords, plainSentence, when } from "../format";
 import { useAlive, useFlash, useNow } from "../hooks";
 import { IconCheck, IconCopy, IconExternal, IconLock } from "../icons";
-import { Button, Spinner, openUrl } from "../ui";
+import { Button, Mascot, Spinner, openUrl } from "../ui";
 
 export function Links() {
   const { records, setRecords, reloadRecords } = useApp();
@@ -39,6 +39,7 @@ export function Links() {
     return (
       <main class="screen screen--center">
         <div class="empty">
+          <Mascot pose="wave" size="md" />
           <h2 class="h2">No links yet</h2>
           <p class="lede lede--center">Links you make here are listed here. Links made on getlumenia.com stay there.</p>
           {checking ? (

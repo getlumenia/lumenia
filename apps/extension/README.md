@@ -10,10 +10,18 @@ money.
 
 ## What it does
 
-- **Connects your existing Lumenia account** by restoring it from your own backup: your email,
-  the one-time code we mail you, and your backup password. Accounts without a password backup
-  cannot connect (back up with a password on getlumenia.com/account first); a passkey backup opens
-  on getlumenia.com only.
+- **Starts with one question.** The first screen is the landing page's opening ("Hey, I've got a
+  message for you.") and one button, Get started; after a short note on what leaves the browser
+  (agreed once), it asks: do you already have a Lumenia account?
+- **Makes a new account right here** ("No, I'm new here"): you pick a password (held to the
+  website's own floor: at least 10 characters, not a common or patterned one), the key is made and
+  locked in this browser, and practice dollars are added on the spot (the sponsor opens the account
+  on the test network, no XLM needed, and its faucet pays it). Until you back it up with your email
+  (one screen: email, then the mailed code), the account lives only in this browser, and the
+  extension says so.
+- **Or brings your existing account here** ("Yes, bring it here") from your own backup: your
+  email, the one-time code we mail you, and your backup password. A passkey-only backup opens on
+  getlumenia.com only; add a password there first.
 - **Makes a payment link**: the amount goes into the Lumenia escrow (a Stellar smart contract)
   behind a fresh link key whose secret lives only in the link's `#fragment`. Optionally the
   recipient must also know a password you tell them some other way.
@@ -50,15 +58,17 @@ money.
 | What | Where | Form |
 |---|---|---|
 | Your account key | IndexedDB `lumenia` (this extension only) | Encrypted: Argon2id from your password, then AES-256-GCM (`apps/web/lib/keystore.ts`, the website's own code) |
+| A new account's backup, until you back it up | `storage.local` | The password copy of the key (Argon2id + AES-GCM, the website's own backup format), ciphertext only; removed once it is stored on Lumenia's server |
 | The unlocked key, while unlocked | `storage.session` (memory only) | Removed on Lock, after 5/15/60 minutes without use (default 15), and when the browser closes |
 | Each full link (with its secret) | IndexedDB `lumenia-ext-links` | AES-256-GCM under a key derived from your account key (HKDF-SHA-256) and bound to the link's id. That key is never stored: the links can be read back only while the extension is unlocked (`src/lib/sealed.ts`) |
 | The list of links you made | `storage.local` | Amount, link id, network, status, transaction hashes. Never the link's secret |
 | Settings | `storage.local` | Network, auto-lock, default "from" name, consent time |
 
-"Forget this account" in Settings removes all of it. If links you made here are still open (being
-made, waiting, reclaimable or unconfirmed), it first says how many and how much, because this
-browser holds the only list of them and the only way to take them back: take them back first, or
-choose to forget anyway. Your money stays where it is, and your backup on getlumenia.com can
+"Forget this account" in Settings removes all of it. If the account was made here and never backed
+up, it first says that forgetting it deletes the account and any money in it for good, and offers
+the backup instead. If links you made here are still open (being made, waiting, reclaimable or
+unconfirmed), it says how many and how much, because this browser holds the only list of them and
+the only way to take them back: take them back first, or choose to forget anyway. Your money stays where it is, and your backup on getlumenia.com can
 restore the account again.
 
 ## What it sends, and to whom
@@ -66,6 +76,8 @@ restore the account again.
 | When | What | To |
 |---|---|---|
 | Restoring your account | Your email address, then the 6-digit code | `lumenia-sponsor.avakit.workers.dev` (`/recovery-otp`, `/recovery-fetch`; returns ciphertext only) |
+| Backing up an account made here | Your email address, then the 6-digit code, the backup ciphertext, and a signature from the account that binds the stored backup to it | `lumenia-sponsor.avakit.workers.dev` (`/recovery-otp`, `/recovery`) |
+| Practice dollars (practice money only) | Your public key, and for a new account the signed "open the account and add the dollar line" transaction the sponsor built | `lumenia-sponsor.avakit.workers.dev` (`/create-account`, `/faucet`) |
 | Sending or taking back | The signed transaction (your public key, the amount, the link id) | The network's sponsor: `lumenia-sponsor.avakit.workers.dev` (practice) or `lumenia-sponsor-mainnet.avakit.workers.dev` (real money) |
 | Real money only | Your public key, to ask whether the pilot approved it (at most once a minute on its own; pressing Real money asks again, never more often than every 10 seconds) | `lumenia-sponsor-mainnet.avakit.workers.dev/pilot-status` |
 | After you agree on first run (on Firefox, only while you keep its optional "technical and interaction data" permission) | Usage counters: an event name, two one-way SHA-256 hashes cut to 8 bytes (of your account and of the link: pseudonymous, not anonymous, since anyone holding the address can compute the same hash), and the marker `src: "ext"`. Never a URL, never a link secret, never an address | The network's sponsor, `/events`, which keeps counters and hashed-id sets, no event log |
@@ -125,6 +137,10 @@ resource; or if the CSP differs from the one above. It prints every URL in the o
 To try it: `chrome://extensions` -> Developer mode -> Load unpacked -> `apps/extension/dist/chrome`;
 in Firefox, `about:debugging` -> This Firefox -> Load Temporary Add-on -> `dist/firefox/manifest.json`.
 
+`e2e/create.e2e.mjs` makes a NEW account in the extension on testnet (practice dollars arrive on
+their own), sends $0.10 that is claimed on getlumenia.com, backs the account up with a disposable
+inbox, and restores it in a fresh browser profile to the same address.
+
 `e2e/testnet.e2e.mjs` runs the whole flow on testnet against the live website (practice money,
 network-dependent, about six minutes): a practice account backed up on getlumenia.com with a
 disposable inbox, restored in the extension, a $0.10 link sent and claimed in a browser with no
@@ -134,6 +150,8 @@ packaged.
 
 ## Known limits, stated plainly
 
+- An account made in the extension exists only in this browser until it is backed up. If the
+  browser profile is lost before that, the account and its money are lost with it.
 - Links made here are listed here; links made on getlumenia.com are listed there. There is no
   shared list.
 - The escrow marks a claim and a take-back the same way, so the list says only what it knows:

@@ -4,9 +4,8 @@
  */
 import { useState } from "preact/hooks";
 import { useAlive } from "../hooks";
-import { IconInfo } from "../icons";
 import type { Problem } from "../problems";
-import { Button, Heading } from "../ui";
+import { Button, Heading, Mascot } from "../ui";
 
 export function ProblemPanel({ problem, onAction }: { problem: Problem; onAction: () => Promise<void> | void }) {
   const alive = useAlive();
@@ -26,9 +25,7 @@ export function ProblemPanel({ problem, onAction }: { problem: Problem; onAction
   return (
     <main class="screen screen--center">
       <section class={stop ? "panel panel--stop" : "panel"}>
-        <span class="panel__icon" aria-hidden="true">
-          <IconInfo />
-        </span>
+        <Mascot pose={stop ? "phone" : "wave"} size="md" />
         <Heading class="h1--panel">{problem.title}</Heading>
         <p class="panel__body">{problem.body}</p>
         <Button variant={stop ? "primary" : "secondary"} onClick={act} busy={busy} busyLabel={problem.label}>

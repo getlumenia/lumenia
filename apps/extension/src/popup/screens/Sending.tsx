@@ -5,7 +5,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { formatUsd } from "../../core";
 import { useApp } from "../context";
-import { Heading, Progress, Spinner } from "../ui";
+import { Heading, Mascot, Progress } from "../ui";
 
 const SLOW_AFTER_MS = 15_000;
 
@@ -23,9 +23,7 @@ export function Sending({ amount: given, startedAt }: { amount: string | null; s
   return (
     <main class="screen screen--center" aria-live="polite">
       <div class="sending">
-        <span class="sending__badge" aria-hidden="true">
-          <Spinner />
-        </span>
+        <Mascot pose="messenger" size="lg" class="mascot--flying" />
         <Heading class="h1--center">
           Putting {amount ? <span class="money">{formatUsd(amount)}</span> : "your money"} in the link.
         </Heading>

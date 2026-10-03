@@ -32,7 +32,8 @@ export function normalizeCode(code: string): string {
   return code.replace(/\s+/g, "");
 }
 
-function networkFailure(e: unknown, fallback: string): ExtError {
+/** A failed request, as the refusal a person can act on. Shared with the backup steps (lib/backup.ts). */
+export function networkFailure(e: unknown, fallback: string): ExtError {
   const msg = e instanceof Error ? e.message : String(e);
   // Only a request that never got an answer is "offline"; any other TypeError is a bad answer.
   if (/Failed to fetch|NetworkError|fetch failed|Load failed/i.test(msg)) return fail("offline");

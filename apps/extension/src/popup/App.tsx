@@ -22,8 +22,12 @@ import { EMPTY_DRAFT, type Draft, type Flow, type FormError, recentReady } from 
 import { plainSentence } from "./format";
 import { sleep } from "./hooks";
 import { describeProblem, type Problem } from "./problems";
-import { Connect } from "./screens/Connect";
+import { Backup } from "./screens/Backup";
+import { Choose } from "./screens/Choose";
 import { Consent } from "./screens/Consent";
+import { Create } from "./screens/Create";
+import { Created } from "./screens/Created";
+import { Hello } from "./screens/Hello";
 import { HostAccess } from "./screens/HostAccess";
 import { LinkReady } from "./screens/LinkReady";
 import { Links } from "./screens/Links";
@@ -47,14 +51,19 @@ export function App() {
   const [records, setRecordsState] = useState<LinkRecord[]>([]);
   const [recordsLoaded, setRecordsLoaded] = useState(false);
   const [view, setView] = useState<View>("home");
-  const [guest, setGuest] = useState<"connect" | "email">("connect");
+  /** before an account exists: the account question, the restore steps, or a new account's password */
+  const [guest, setGuest] = useState<"choose" | "email" | "create">("choose");
+  /** first run: the hello screen was passed (the agreement comes next) */
+  const [started, setStarted] = useState(false);
+  /** an account was just made here: the "you're in" beat shows once */
+  const [fresh, setFresh] = useState(false);
   const [flow, setFlow] = useState<Flow>({ kind: "form" });
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [formError, setFormError] = useState<FormError | null>(null);
 
   const alive = useRef(true);
-  const live = useRef({ ws, view, flow });
-  live.current = { ws, view, flow };
+  const live = useRef({ ws, view, flow, guest });
+  live.current = { ws, view, flow, guest };
 
   /* ----------------------------------- reading the worker ----------------------------------- */
 
@@ -369,7 +378,8 @@ export function App() {
       }
       const { view: v, flow: f } = live.current;
       e.preventDefault();
-      if (v !== "home") setView("home");
+      if (!live.current.ws?.account && live.current.guest !== "choose") setGuest("choose");
+      else if (v !== "home") setView("home");
       else if (f.kind === "problem") setFlow({ kind: "form" });
       else window.close();
     };
@@ -392,7 +402,9 @@ export function App() {
             setRecords,
             go: setView,
             startRestore: () => setGuest("email"),
-            leaveRestore: () => setGuest("connect"),
+            leaveRestore: () => setGuest("choose"),
+            startCreate: () => setGuest("create"),
+            justCreated: () => setFresh(true),
           }
         : null,
     [ws, records, refresh, reloadRecords, setRecords],
@@ -431,12 +443,14 @@ export function App() {
 
   /** The router: a plain reading of what the worker said, in the order things have to be true. */
   const renderScreen = (w: WorkerState): ComponentChildren => {
-    if (w.settings.consentAt === null) return <Consent />;
+    if (w.settings.consentAt === null) return started ? <Consent /> : <Hello onStart={() => setStarted(true)} />;
     if (!w.hostAccess) return <HostAccess />;
 
     if (!w.account) {
       if (w.restore) return w.restore.step === "code" ? <RestoreCode /> : <RestorePassword />;
-      return guest === "email" ? <RestoreEmail /> : <Connect />;
+      if (guest === "email") return <RestoreEmail />;
+      if (guest === "create") return <Create />;
+      return <Choose />;
     }
 
     if (!w.unlocked) {
@@ -451,11 +465,21 @@ export function App() {
       return <Unlock />;
     }
 
+    if (fresh) return <Created onDone={() => setFresh(false)} />;
+
     if (view === "links") {
       return (
         <>
           <SubBar title="Links" onBack={() => setView("home")} />
           <Links />
+        </>
+      );
+    }
+    if (view === "backup") {
+      return (
+        <>
+          <SubBar title="Back up" onBack={() => setView("home")} />
+          <Backup />
         </>
       );
     }

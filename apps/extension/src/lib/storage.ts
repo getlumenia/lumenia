@@ -65,11 +65,17 @@ export function useAreas(l: Area, s: Area): void {
 export const K = {
   settings: "settings",
   account: "account",
+  /** an account made HERE that is not backed up yet: its password copy, ciphertext only */
+  pendingBackup: "pendingBackup",
+  /** when this account's backup was stored (made here and backed up, or restored from one) */
+  backedUp: "backedUp",
   // session
   seed: "seed",
   unlockedPubkey: "unlockedPubkey",
   lockAt: "lockAt",
   restore: "restore",
+  /** a backup in progress: the email the code was sent to */
+  backup: "backup",
   sending: "sending",
   pendingInsert: "pendingInsert",
   pilot: (pubkey: string) => `pilot:${pubkey}`,

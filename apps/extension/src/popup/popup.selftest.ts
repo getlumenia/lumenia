@@ -54,6 +54,9 @@ const ALL_CODES = {
   "host-access": true,
   "open-send": true,
   "open-links": true,
+  "weak-password": true,
+  "backup-refused": true,
+  "not-backed-up": true,
   internal: true,
 } satisfies Record<ErrorCode, true>;
 const codes = Object.keys(ALL_CODES) as ErrorCode[];

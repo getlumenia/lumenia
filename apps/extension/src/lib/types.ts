@@ -108,6 +108,7 @@ export interface WorkerState {
   pilot: PilotInfo | null;
   sending: { startedAt: number; linkHex?: string } | null;
   pendingInsert: { host: string; at: number } | null;
+  backup: BackupView;
   /** Firefox: the six API hosts are granted (Chrome grants them at install) */
   hostAccess: boolean;
   version: string;
@@ -133,6 +134,9 @@ export type ErrorCode =
   | "no-password-copy"
   | "bad-password"
   | "weak-link-password"
+  | "weak-password"
+  | "backup-refused"
+  | "not-backed-up"
   | "unsupported-backup"
   | "account-not-found"
   | "not-enough-money"
@@ -164,4 +168,16 @@ export interface BalanceInfo {
   usd: string | null;
   /** the account does not exist on that network yet */
   missing: boolean;
+  /** the account can hold these dollars (it has the pinned issuer's line); undefined when unknown */
+  line?: boolean;
+}
+
+/** Where this account's backup stands. */
+export interface BackupView {
+  /** the account was made in this extension and is not backed up yet: it exists only here */
+  needed: boolean;
+  /** a backup in progress: the code was mailed to `email` at `codeSentAt` */
+  step: "code" | null;
+  email: string;
+  codeSentAt: number | null;
 }

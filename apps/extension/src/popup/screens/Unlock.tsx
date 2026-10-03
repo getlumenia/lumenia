@@ -7,7 +7,7 @@ import { ask } from "../api";
 import { useApp } from "../context";
 import { plainSentence, shortAddress } from "../format";
 import { useAlive } from "../hooks";
-import { BrandBar, Button, Heading, Notice, Progress, TextField } from "../ui";
+import { BrandBar, Button, Heading, Mascot, Notice, Progress, TextField } from "../ui";
 
 export function Unlock() {
   const { ws, refresh, go } = useApp();
@@ -44,10 +44,15 @@ export function Unlock() {
     <>
       <BrandBar />
       <main class="screen">
-        <Heading focus={false}>Welcome back</Heading>
-        <p class="lede">
-          Enter your password to unlock{ws.account ? <> <span class="mono-ish">{shortAddress(ws.account.pubkey)}</span></> : null}.
-        </p>
+        <div class="beat beat--row">
+          <Mascot pose="wave" size="sm" />
+          <div class="beat__text">
+            <Heading focus={false}>Welcome back</Heading>
+            <p class="lede">
+              Enter your password to unlock{ws.account ? <> <span class="mono-ish">{shortAddress(ws.account.pubkey)}</span></> : null}.
+            </p>
+          </div>
+        </div>
         <form class="stack" onSubmit={submit}>
           <TextField
             id="unlock-password"

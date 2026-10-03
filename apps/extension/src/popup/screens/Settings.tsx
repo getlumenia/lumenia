@@ -10,7 +10,7 @@ import { useState } from "preact/hooks";
 import { AUTOLOCK_CHOICES, DAY_CAP_USD, TX_CAP_USD, URLS, VERSION } from "../../config";
 import { formatUsd } from "../../core";
 import type { AutolockMin } from "../../config";
-import { openLinksMessage } from "../../lib/errors";
+import { MESSAGES, openLinksMessage } from "../../lib/errors";
 import { openLinks } from "../../lib/links";
 import type { NetId, PilotInfo } from "../../lib/types";
 import { ask } from "../api";
@@ -50,6 +50,8 @@ export function Settings({ locked = false }: { locked?: boolean }) {
   const [workerOpen, setWorkerOpen] = useState<string | null>(null);
   const open = openLinks(records);
   const openNote = workerOpen ?? (open.length > 0 ? openLinksMessage(open) : null);
+  /** an account made here and never backed up: forgetting it deletes its only copy */
+  const lossNote = ws.backup.needed ? MESSAGES["not-backed-up"] : null;
   const [lockMessage, setLockMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -154,7 +156,11 @@ export function Settings({ locked = false }: { locked?: boolean }) {
 
   async function forget() {
     setForgetting(true);
-    const r = await ask("forget", { confirm: "FORGET", ...(openNote ? { leaveOpenLinks: true as const } : {}) });
+    const r = await ask("forget", {
+      confirm: "FORGET",
+      ...(openNote ? { leaveOpenLinks: true as const } : {}),
+      ...(lossNote ? { loseAccount: true as const } : {}),
+    });
     if (!alive.current) return;
     setForgetting(false);
     if (!r.ok) {
@@ -190,6 +196,14 @@ export function Settings({ locked = false }: { locked?: boolean }) {
             {copied ? "Copied" : "Copy"}
           </Button>
         </div>
+        {ws.backup.needed && !locked ? (
+          <div class="kv kv--note">
+            <p class="kv__note">Not backed up yet. It lives only in this browser.</p>
+            <Button small onClick={() => go("backup")}>
+              Back it up
+            </Button>
+          </div>
+        ) : null}
       </section>
 
       {/* ------------------------------ money ------------------------------ */}
@@ -308,17 +322,23 @@ export function Settings({ locked = false }: { locked?: boolean }) {
         <h2 class="group__title">This account</h2>
         {confirmForget ? (
           <div class="confirm" role="group" aria-label="Forget this account">
+            {lossNote ? <p class="confirm__text confirm__text--loss">{lossNote}</p> : null}
             {openNote ? (
               <p class="confirm__text">{openNote}</p>
-            ) : (
+            ) : lossNote ? null : (
               <p class="confirm__text">
                 This removes the account and your list of links from this browser. Your money stays where it is, and you can restore again
                 from your backup.
               </p>
             )}
             <div class="row">
+              {lossNote ? (
+                <Button small onClick={() => go("backup")} disabled={forgetting}>
+                  Back it up first
+                </Button>
+              ) : null}
               <Button small variant="danger" onClick={forget} busy={forgetting} busyLabel="Forgetting">
-                {openNote ? "Forget anyway" : "Forget this account"}
+                {openNote || lossNote ? "Forget anyway" : "Forget this account"}
               </Button>
               <Button small variant="secondary" onClick={() => setConfirmForget(false)} disabled={forgetting}>
                 Keep it

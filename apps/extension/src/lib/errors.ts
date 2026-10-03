@@ -48,6 +48,10 @@ export const MESSAGES: Record<ErrorCode, string> = {
   "no-password-copy": "This backup opens with a passkey on getlumenia.com only. Add a password on your account page there, then try again.",
   "bad-password": "That password doesn't open this backup.",
   "weak-link-password": "Pick a stronger password for the link.",
+  "weak-password": "Use at least 10 characters. This password is the only key to your money.",
+  "backup-refused": "That email can't hold this backup. Use another email address.",
+  "not-backed-up":
+    "This account exists only in this browser. If you forget it here, it and any money in it are gone for good. Back it up first.",
   "unsupported-backup": "This backup has settings this extension doesn't support, so it wasn't opened.",
   "account-not-found": "This account isn't on this network yet. Add dollars to it on getlumenia.com first.",
   "not-enough-money": "That's more than you have.",
