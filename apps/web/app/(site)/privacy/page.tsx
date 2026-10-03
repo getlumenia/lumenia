@@ -72,8 +72,8 @@ export default function Privacy() {
 
           <h2>The browser extension</h2>
           <p>
-            The Lumenia browser extension makes a payment link from the Lumenia account you already have,
-            and shows whether it was claimed. Here is everything it sends, who gets it, what it keeps on
+            The Lumenia browser extension makes a payment link from a Lumenia account, one you make in
+            the extension or one you already have, and shows whether it was claimed. Here is everything it sends, who gets it, what it keeps on
             your device, and what it never collects. It sends nothing until you press &quot;Agree and
             continue&quot; on its first screen.
           </p>
@@ -86,6 +86,17 @@ export default function Privacy() {
               (lumenia-sponsor.avakit.workers.dev). The server hands your address to an email delivery
               service only to send that one message, and answers with your encrypted key record, still
               locked by your password, which we can&apos;t open.
+            </li>
+            <li>
+              <strong>To back up an account made in the extension:</strong>{" "}
+              your email address and the 6-digit code we email you, then your backup, to Lumenia&apos;s
+              server. The backup is your key locked with your password; we can&apos;t open it. It is
+              signed by your account, so nobody who can only read your email can replace it.
+            </li>
+            <li>
+              <strong>To add practice dollars (practice money only):</strong>{" "}
+              your public key, and for a new account the transaction that opens it on the practice
+              network, which Lumenia builds and pays for and your extension checks and signs.
             </li>
             <li>
               <strong>To send, take back or top up:</strong>{" "}
@@ -128,6 +139,10 @@ export default function Privacy() {
               Your key record, encrypted with your password (Argon2id and AES-GCM), in the
               extension&apos;s own storage. Your password is never sent anywhere.
             </li>
+            <li>
+              For an account made in the extension, until you back it up: its backup, locked with your
+              password, so it can be stored the moment you give an email.
+            </li>
             <li>Your list of links (amount, link ID, network, status) and your settings.</li>
             <li>
               Each full link with its secret, encrypted with a key derived from your account key, so it
@@ -155,8 +170,10 @@ export default function Privacy() {
           <p>
             To remove it, choose &quot;Forget this account&quot; in the extension&apos;s settings, which
             erases the key record, your links and your settings from this browser, or uninstall the
-            extension. If links you made are still open, it tells you first: the extension holds the
-            only list of them and the only way to take them back. Your money isn&apos;t touched either
+            extension. If the account was made in the extension and never backed up, it tells you first
+            that forgetting it deletes the account and any money in it for good. If links you made are
+            still open, it tells you that too: the extension holds the only list of them and the only
+            way to take them back. Your money isn&apos;t touched either
             way: it waits on the public ledger, and your backup on getlumenia.com can bring the account
             back.
           </p>
