@@ -102,9 +102,11 @@ async function main() {
   log(`popup: restored ${pubkey} (same account as the web: ${same})`);
   if (!same) throw new Error("the restored account is not the one backed up on the web");
 
-  // Shot 1: the Send screen with an amount and a name typed, nothing pressed.
+  // Shot 1: the Send screen with an amount and a name typed, nothing pressed. The amount stays
+  // under what the restored account holds (one $0.50 practice link), so the picture never shows a
+  // send the balance could not cover.
   await p.getByText(/You have \$/).waitFor({ timeout: 30_000 }).catch(() => undefined);
-  await p.getByLabel("Amount").fill("5.00");
+  await p.getByLabel("Amount").fill("0.25");
   await fillFrom("Alex");
   if (!process.argv.includes("--paste-shots")) await shot("send");
 
