@@ -137,11 +137,14 @@ export async function runClaim({
 export async function prepareAccount({
   sponsorUrl,
   signer,
+  net: netOverride,
 }: {
   sponsorUrl: string;
   signer: Signer;
+  /** The network to open the account on; omitted, the one this device is on (the browser extension passes its own). */
+  net?: NetworkConfig;
 }): Promise<{ hash: string }> {
-  const net = activeNetwork();
+  const net = netOverride ?? activeNetwork();
   const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = net;
   const server = new Horizon.Server(HORIZON_URL);
   const base = sponsorUrl.replace(/\/$/, "");
