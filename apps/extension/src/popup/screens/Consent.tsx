@@ -34,24 +34,26 @@ export function Consent() {
             <p class="lede">Here is what leaves this browser, and when.</p>
           </div>
         </div>
+        {/* Short enough to read in one screen with the button in view: every item names what is
+            sent, to whom and why, and the privacy policy carries the rest. */}
         <ul class="facts facts--tight">
           <li>
-            <strong>Restore or back up:</strong> your email and a one-time code, to Lumenia's server.
+            <strong>Back up or restore:</strong> your email, a one-time code and your locked key, to Lumenia.
           </li>
           <li>
-            <strong>Send or take back:</strong> the transfer you signed, so Lumenia can pay the network fee. Practice dollars and the
-            real-money check send your public key.
+            <strong>Send or take back:</strong> the transfer you signed, so Lumenia can pay the fee. Other checks send only your public
+            key.
           </li>
           <li>
-            <strong>Counting:</strong> a few usage counts like "link created": an event name and one-way hashes, never a web address, a
-            link's secret or page content.
+            <strong>Counting:</strong> event names like "link created" with one-way hashes. Never a web address, a link's secret or page
+            content.
           </li>
           <li>
-            <strong>Servers:</strong> Lumenia's see your IP address, for rate limits. Public Stellar servers show balances and link
-            status, and see the account or link asked about.
+            <strong>Servers:</strong> ours see your IP address, for rate limits. Public Stellar servers see the account or link you look
+            up.
           </li>
           <li>
-            <strong>On this device:</strong> your key, locked with your password, and your links, each encrypted with your key.
+            <strong>On this device:</strong> your key, locked with your password, and your links, encrypted.
           </li>
         </ul>
         <div class="screen__spacer" />
@@ -60,8 +62,7 @@ export function Consent() {
           Agree and continue
         </Button>
         <p class="fine fine--center">
-          <ExtLink href={URLS.privacy}>Privacy policy</ExtLink>. If you'd rather not, just close this window. Nothing is sent until you
-          agree.
+          <ExtLink href={URLS.privacy}>Privacy policy</ExtLink>. Nothing is sent until you agree.
         </p>
       </main>
     </>

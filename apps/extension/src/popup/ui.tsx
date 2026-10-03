@@ -318,7 +318,11 @@ export function Mascot({
   return (
     <div class={cx("mascot", `mascot--${size}`, `mascot--${pose}`, cls)}>
       <span class="mascot__halo" aria-hidden="true" />
-      <img class="mascot__img" src={`mascot/${pose}.webp`} alt={label ? POSE_ALT[pose] : ""} draggable={false} />
+      {/* The body casts the shadow and the picture inside it fades its feet out. Two elements,
+          because a mask clips its own element's filter: on one element the shadow is cut square. */}
+      <span class="mascot__body">
+        <img class="mascot__img" src={`mascot/${pose}.webp`} alt={label ? POSE_ALT[pose] : ""} draggable={false} />
+      </span>
       <span class="mascot__ground" aria-hidden="true" />
     </div>
   );

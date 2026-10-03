@@ -428,8 +428,13 @@ input {
   font-weight: 600;
 }
 
+/* The consent list: five items that have to fit one screen with the button in view. */
 .facts--tight {
-  gap: 10px;
+  gap: 8px;
+}
+
+.facts--tight li {
+  line-height: 1.4;
 }
 
 /* ------------------------------------------------------------------ buttons */
@@ -1440,16 +1445,44 @@ input {
   max-width: 100%;
 }
 
-.mascot__img {
+.mascot__body {
   position: relative;
   z-index: 1;
+  display: flex;
+  height: 100%;
+  max-width: 100%;
+  filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--pw-accent) 22%, transparent));
+}
+
+.mascot__img {
   display: block;
   height: 100%;
   width: auto;
   max-width: 100%;
   object-fit: contain;
   user-select: none;
-  filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--pw-accent) 22%, transparent));
+  -webkit-mask-image: var(--mascot-fade);
+  mask-image: var(--mascot-fade);
+}
+
+/* The feet fade out, eased so no band shows where the fade starts: the same fade the web app's
+   mascot uses (apps/web/components/brand/Mascot.tsx). It also hides the maker's mark on the
+   messenger's foot and the square artefacts under the celebrate pose, which sit in the last few
+   percent of each character. Stops are in % of the image, worked out from the character's box
+   inside it: the messenger and celebrate cutouts are 1024 px squares with a wide transparent
+   margin, the other three are cropped tight. */
+.mascot--messenger {
+  --mascot-fade: linear-gradient(to bottom, #000 69.43%, rgb(0 0 0 / 0.844) 72.71%, rgb(0 0 0 / 0.5) 75.99%, rgb(0 0 0 / 0.156) 79.28%, transparent 82.56%);
+}
+
+.mascot--celebrate {
+  --mascot-fade: linear-gradient(to bottom, #000 67.69%, rgb(0 0 0 / 0.844) 71.12%, rgb(0 0 0 / 0.5) 74.56%, rgb(0 0 0 / 0.156) 77.99%, transparent 81.42%);
+}
+
+.mascot--wave,
+.mascot--phone,
+.mascot--thumbsup {
+  --mascot-fade: linear-gradient(to bottom, #000 82%, rgb(0 0 0 / 0.844) 86.5%, rgb(0 0 0 / 0.5) 91%, rgb(0 0 0 / 0.156) 95.5%, transparent 100%);
 }
 
 /* A soft periwinkle halo behind the character, as on the landing page. */
@@ -1493,6 +1526,13 @@ input {
 .mascot--xs .mascot__ground,
 .mascot--sm .mascot__ground {
   height: 6px;
+}
+
+/* The two square cutouts end well above their image's bottom edge, so their shadow moves up to
+   where the faded feet are, instead of lying under empty space. */
+.mascot--messenger .mascot__ground,
+.mascot--celebrate .mascot__ground {
+  bottom: 12%;
 }
 
 /* ------------------------------------------------------------------ the message bubble */
