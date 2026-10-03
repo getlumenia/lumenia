@@ -1,0 +1,121 @@
+/*
+ * The messenger (components/brand/Mascot.tsx). The same treatment the landing's greeting gives it
+ * (a breathing halo, a pool of light at its feet, a slow float, the envelope's glow), rebuilt
+ * against the app's own tokens so it is right in both themes. `--money` is the accent inside
+ * `.app-pw`; the fallback keeps it on-brand anywhere else.
+ */
+.mascot {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  justify-content: center;
+  width: -moz-fit-content;
+  width: fit-content;
+  margin-inline: auto;
+}
+
+/* The body floats and carries the shadow. It has to sit OUTSIDE the masked frame: a mask clips
+   everything beyond its own border box (mask-clip), the element's own filter included, so a shadow
+   on the frame itself showed up as a pale rectangle around the character. */
+.mascot-body {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  filter: drop-shadow(0 18px 24px color-mix(in srgb, var(--money, #6e5fce) 20%, transparent));
+  animation: mascot-float 4.8s ease-in-out infinite;
+}
+
+/* The frame IS the character's box, so its height is the character's height in every pose. Two
+   declarations per size: the small-viewport unit where it exists, the plain one where it does not.
+   Its mask (the eased fade at the feet) is set inline, per pose, by Mascot.tsx. */
+.mascot-frame {
+  position: relative;
+  width: auto;
+  height: 104px;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+.mascot--hero .mascot-frame { height: clamp(200px, 36vh, 330px); height: clamp(200px, 36svh, 330px) }
+.mascot--lg .mascot-frame { height: clamp(168px, 30vh, 272px); height: clamp(168px, 30svh, 272px) }
+.mascot--md .mascot-frame { height: clamp(128px, 21vh, 190px); height: clamp(128px, 21svh, 190px) }
+.mascot--sm .mascot-frame { height: 104px }
+
+.mascot-img {
+  position: absolute;
+  display: block;
+  max-width: none;
+  height: auto;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mascot-halo {
+  position: absolute;
+  z-index: 0;
+  left: 50%;
+  top: 46%;
+  width: 128%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--money, #6e5fce) 26%, transparent), transparent 62%);
+  filter: blur(18px);
+  animation: mascot-breathe 6s ease-in-out infinite;
+}
+
+.mascot-pool {
+  position: absolute;
+  z-index: 0;
+  left: 50%;
+  bottom: 2%;
+  width: 74%;
+  height: 11%;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, color-mix(in srgb, var(--money, #6e5fce) 34%, transparent), transparent 70%);
+  filter: blur(8px);
+}
+
+.mascot-envglow {
+  position: absolute;
+  z-index: 2;
+  width: 38%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--money, #6e5fce) 62%, white), transparent 66%);
+  filter: blur(7px);
+  animation: mascot-env 2.6s ease-in-out infinite;
+}
+
+/* Arrivals. Transform only for "rise": an element that paints at opacity 0 never becomes the page's
+   LCP, and on the first beat the messenger is the largest thing on screen. */
+.mascot[data-enter="rise"] { animation: mascot-rise 0.8s cubic-bezier(0.2, 0.75, 0.2, 1) both }
+.mascot[data-enter="pop"] { animation: mascot-pop 0.75s cubic-bezier(0.2, 0.9, 0.25, 1.15) both }
+
+@keyframes mascot-float { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-10px) } }
+@keyframes mascot-breathe {
+  0%, 100% { opacity: 0.7; transform: translate(-50%, -50%) scale(1) }
+  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.06) }
+}
+@keyframes mascot-env {
+  0%, 100% { opacity: 0.3; transform: translate(-50%, -50%) scale(0.9) }
+  50% { opacity: 0.85; transform: translate(-50%, -50%) scale(1.12) }
+}
+@keyframes mascot-rise { from { transform: translateY(18px) } to { transform: translateY(0) } }
+@keyframes mascot-pop {
+  0% { opacity: 0; transform: translateY(14px) scale(0.6) }
+  60% { opacity: 1; transform: translateY(0) scale(1.06) }
+  100% { opacity: 1; transform: translateY(0) scale(1) }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot,
+  .mascot-body,
+  .mascot-halo,
+  .mascot-envglow { animation: none }
+}
