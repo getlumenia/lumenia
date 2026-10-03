@@ -1,0 +1,62 @@
+/*
+ * The Periwinkle tokens (brand.md section 4), copied from apps/web/components/site/pw-tokens.css.
+ *
+ * The website scopes them to `.op, .pg` and drives dark mode with :root[data-theme="dark"]; a popup
+ * has no theme provider, so here they sit on :root and follow the browser's own colour scheme. A
+ * data-theme attribute on <html> still wins either way, so a later in-popup switch costs nothing.
+ *
+ * Fonts: the website's Sentient and Switzer are Fontshare fonts, and their licence has not been
+ * confirmed for redistribution inside a store package, so the popup uses system faces: Georgia for
+ * the serif headings, the platform UI face for everything else.
+ */
+:root {
+  --pw-paper: #f5f3ef;
+  --pw-surface: #fbfaf8;
+  --pw-ink: #1e1b22;
+  --pw-muted: #67626e;
+  --pw-line: #e5dfe8;
+  --pw-accent: #6e5fce;
+  --pw-accent-hover: #5f50c2;
+  --pw-on-accent: #f6f4fd;
+  --pw-danger: #c4362b;
+  /* Not in the website's set: a tint of the accent for selected and informational surfaces, mixed
+     here from the accent and the paper so it moves with both in dark mode. */
+  --pw-soft: color-mix(in srgb, var(--pw-accent) 14%, var(--pw-paper));
+
+  --pw-radius-input: 14px;
+  --pw-radius-card: 20px;
+  --pw-pill-height: 56px;
+  --pw-font-serif: Georgia, "Times New Roman", serif;
+  --pw-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --pw-paper: #15121c;
+    --pw-surface: #1d1926;
+    --pw-ink: #edeaf3;
+    --pw-muted: #a59db2;
+    --pw-line: #2c2536;
+    --pw-accent: #b7ace8;
+    --pw-accent-hover: #c7bef0;
+    --pw-on-accent: #1a1622;
+    /* Lifted off #C4362B, which only reaches 3.2:1 on the dark ground. */
+    --pw-danger: #e5695f;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --pw-paper: #15121c;
+  --pw-surface: #1d1926;
+  --pw-ink: #edeaf3;
+  --pw-muted: #a59db2;
+  --pw-line: #2c2536;
+  --pw-accent: #b7ace8;
+  --pw-accent-hover: #c7bef0;
+  --pw-on-accent: #1a1622;
+  --pw-danger: #e5695f;
+  color-scheme: dark;
+}

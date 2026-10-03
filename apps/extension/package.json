@@ -1,0 +1,41 @@
+{
+  "name": "@lumenia/extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lumenia browser extension: send a walletless dollar link from any page and see whether it was claimed",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "sources": "node build.mjs --sources",
+    "build-for-amo": "node build.mjs",
+    "lint:firefox": "web-ext lint --source-dir dist/firefox",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm run test:url && pnpm run test:links && pnpm run test:send && pnpm run test:session && pnpm run test:restore && pnpm run test:security && pnpm run test:router && pnpm run test:popup",
+    "test:url": "tsx test/url.selftest.ts",
+    "test:links": "tsx test/links.selftest.ts",
+    "test:send": "tsx test/send.selftest.ts",
+    "test:session": "tsx test/session.selftest.ts",
+    "test:restore": "tsx test/restore.selftest.ts",
+    "test:security": "tsx test/security.selftest.ts",
+    "test:router": "tsx test/router.selftest.ts",
+    "test:popup": "tsx src/popup/popup.selftest.ts"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "16.3.0",
+    "buffer": "6.0.3",
+    "hash-wasm": "4.12.0",
+    "preact": "10.29.8",
+    "uqr": "0.1.3",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/chrome": "0.3.4",
+    "@types/node": "26.1.1",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3",
+    "web-ext": "10.7.0"
+  }
+}
