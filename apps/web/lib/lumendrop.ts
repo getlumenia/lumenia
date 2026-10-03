@@ -166,6 +166,104 @@ export interface V2Link {
 }
 
 /**
+ * A deposit at the moment it is signed and its link assembled, and before it is sent. Handed to
+ * `onPrepared` so a caller that can be killed mid-request (an extension's service worker, a tab) can
+ * keep it FIRST: the POST is the point of no return, and after it the sponsor may submit the deposit
+ * while the reply never arrives. With this saved the link is not lost, and the escrow can still be
+ * asked whether the money landed (`v2DepositLanded`).
+ */
+export interface PreparedDeposit {
+  /** The claim URL this deposit produces, bearer secret included. Keep it as carefully as the money. */
+  link: string;
+  /** The link id (the ephemeral key's 32-byte public key, hex), the drop's on-chain key. */
+  linkHex: string;
+  /** Unix ms after which the signed transaction can no longer be included. See DepositUncertainError. */
+  retrySafeAfter: number;
+  /** Hex hash of the SIGNED INNER transaction. The sponsor fee-bumps it, so this is the id the ledger can be asked about. */
+  innerHash: string;
+  /** Unix seconds the sender's take-back opens at (a group link also stops paying out then). */
+  expiry: number;
+  /** A pot of shares (create_drop) rather than a one-to-one drop (deposit). */
+  group: boolean;
+  /** Group only: how many shares. */
+  slots?: number;
+  /** What the claim screen shows as the amount: the whole amount of a one-to-one link, ONE share of a group link. */
+  amount: string;
+  /** Group only: the whole pot, exactly `amount` times `slots`. */
+  total?: string;
+}
+
+/** The parts of a claim URL. See `v2LinkUrl`. */
+export interface V2LinkParts {
+  webOrigin: string;
+  /** The link id: the link key's public half, hex. */
+  linkHex: string;
+  /** `a=`. The whole amount of a one-to-one link, ONE share of a group link. */
+  amount: string;
+  /** `s=`. The sender's display name. */
+  from: string;
+  /** The fragment's key material: the S... secret, or `p1.<seed>` for a password-locked link. Never the password. */
+  fragment: string;
+  /** Group links only: the share count, as `g=` in the query and as the `&g=` copy in the fragment. */
+  slots?: number;
+  /** `p=1`: the key is derived from a password the recipient has to know. */
+  passwordLocked?: boolean;
+  /** `n=public`. */
+  mainnet?: boolean;
+  /** `seeded=1`. */
+  seeded?: boolean;
+  /** `src=`, last in the query. One to eight lowercase letters; anything else throws. */
+  src?: string;
+}
+
+/* `src` is written by code (the extension passes "ext"), never typed by a person, so a bad one is a
+   bug to surface and not input to clean up. Lowercase letters only: the value goes into the query
+   as written, and this is what keeps it from ever carrying a second parameter or a fragment. */
+const LINK_SRC = /^[a-z]{1,8}$/;
+
+function assertLinkSrc(src: unknown): void {
+  if (typeof src !== "string" || !LINK_SRC.test(src)) {
+    throw new Error("a link's src must be one to eight lowercase letters");
+  }
+}
+
+/**
+ * The claim URL for a deposit, as ONE pure function: the link id in the path, what the claim screen
+ * shows in the query, the key material in the #fragment. createV2Link and createV2GroupLink both
+ * build their link here, and lib/ext-seam.selftest.ts holds it byte for byte to the templates they
+ * carried inline before.
+ *
+ * Where each piece goes, and why:
+ *   - `a=` is what ONE person takes. A group claimant never receives the pot, so it is the figure
+ *     the claim screen puts at 60px.
+ *   - `g=` (group only) is the share count, and it rides in the fragment as well as the query: chat
+ *     apps trim queries and keep fragments, and a claimant who arrives with neither hint would have
+ *     the pool probed second.
+ *   - `p=1` lets the claim screen ask for the password BEFORE it reads the fragment, so a recipient
+ *     sees "this one needs the password" rather than a button that quietly fails.
+ *   - `n=public` is what tells the RECIPIENT's device this is real money. resolveNetwork() treats a
+ *     missing `n` as testnet, so a mainnet link without it sent the claimer looking for the drop in
+ *     the testnet escrow, where it does not exist, and the claim failed for a reason neither side
+ *     could see. The recipient arrives with no prior state (that is the whole point of the product),
+ *     so the network cannot come from their device; it has to travel in the link. A pool needs it
+ *     as much as a one-to-one link does.
+ *   - `s=` is the sender's display name, so the seeded marker is spelled out as `seeded=1`.
+ *   - `seeded=1` and `src=` are public markers, never secrets. `src` goes at the very END of the
+ *     query so every link without one is unchanged. The claim page ignores params it does not know.
+ *   - The key material is only ever in the fragment: nothing in the path or the query can carry it.
+ */
+export function v2LinkUrl(p: V2LinkParts): string {
+  if (p.src !== undefined) assertLinkSrc(p.src);
+  const group = p.slots !== undefined;
+  const q =
+    `a=${encodeURIComponent(p.amount)}&s=${encodeURIComponent(p.from)}` +
+    `${group ? `&g=${p.slots}` : ""}${p.passwordLocked ? "&p=1" : ""}${p.mainnet ? "&n=public" : ""}` +
+    `${p.seeded ? "&seeded=1" : ""}${p.src !== undefined ? `&src=${p.src}` : ""}`;
+  const fragment = group ? `${p.fragment}&g=${p.slots}` : p.fragment;
+  return `${p.webOrigin.replace(/\/$/, "")}/v2/c/${p.linkHex}?${q}#${fragment}`;
+}
+
+/**
  * Deposit `amount` USDC behind a fresh link — GASLESS. The SENDER signs the invoke (authorizes the
  * USDC transfer into the escrow) but pays no gas: the sponsor FEE-BUMPS it via /v2-deposit, so even
  * a 0-XLM sender can create a link (proven: the gasless-deposit spike, 5/5).
@@ -192,11 +290,33 @@ export async function createV2Link(opts: {
    * never as sender adoption. Public on purpose: the marker is honest, not hidden.
    */
   seeded?: boolean;
+  /**
+   * The network to build, sign and look up against. Omit it for THE NETWORK THIS DEVICE IS ON (see
+   * `defaultNet`). A caller with no device state to read, such as an extension's service worker,
+   * names it instead.
+   */
+  net?: NetworkConfig;
+  /**
+   * Where this link was made, when it is not the website: a trailing `&src=<value>` on the link's
+   * query (never the fragment), a public marker like `seeded`. One to eight lowercase letters, or
+   * it throws. See `v2LinkUrl`.
+   */
+  src?: string;
+  /**
+   * Awaited AFTER the deposit is signed and the link assembled, and BEFORE anything is sent. Keep
+   * what it is handed: the sponsor may submit the deposit and the reply never arrive, and a caller
+   * that can die mid-request would otherwise lose the only copy of the link. If it throws, this
+   * rethrows and nothing is posted, so a failed save can never leave money behind a lost link.
+   */
+  onPrepared?: (p: PreparedDeposit) => void | Promise<void>;
 }): Promise<V2Link> {
-  // Resolved ONCE and reused for the transaction and the link's `n` label. Deriving it twice is
-  // how the tx and the label could disagree, which would mint a link pointing at an escrow that
-  // never received the money.
-  const net = defaultNet();
+  // Resolved ONCE and reused for the transaction, the link's `n` label and every escrow read below.
+  // Deriving it twice is how the tx and the label could disagree, which would mint a link pointing
+  // at an escrow that never received the money.
+  const net = opts.net ?? defaultNet();
+  // A bad `src` is a bug in the caller. Say so before a key is derived (Argon2id, with a password)
+  // or the RPC is asked, not after.
+  if (opts.src !== undefined) assertLinkSrc(opts.src);
   const server = new rpc.Server(net.rpcUrl);
   // No password ⇒ a random ephemeral key that IS the fragment (the fast default).
   // A password ⇒ a key derived from a random seed + the password; the seed is the fragment.
@@ -237,10 +357,30 @@ export async function createV2Link(opts: {
   /* Assembled BEFORE the deposit is submitted. The link is a pure function of the key we just
      generated, so having it early costs nothing — and it means an unconfirmed deposit can still be
      handed to the user if the ledger later shows it landed. */
-  // `s=` is the sender's display name, so the seeded marker is spelled out as `seeded=1`.
-  const q = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}${seed ? "&p=1" : ""}${net.isMainnet ? "&n=public" : ""}${opts.seeded ? "&seeded=1" : ""}`;
-  const fragment = seed ? passwordFragment(seed) : link.secret();
-  const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
+  const url = v2LinkUrl({
+    webOrigin: opts.webOrigin,
+    linkHex,
+    amount: opts.amount,
+    from: opts.from,
+    fragment: seed ? passwordFragment(seed) : link.secret(),
+    passwordLocked: Boolean(seed),
+    mainnet: net.isMainnet,
+    seeded: opts.seeded,
+    src: opts.src,
+  });
+
+  /* The caller keeps this BEFORE the request leaves, because the request is the point of no return:
+     the sponsor can submit the deposit and the reply be lost, and a link that was never saved is
+     money with no way to its key. A save that fails stops the send here, with nothing posted. */
+  await opts.onPrepared?.({
+    link: url,
+    linkHex,
+    retrySafeAfter,
+    innerHash: prepared.hash().toString("hex"),
+    expiry: Number(expiry),
+    group: false,
+    amount: opts.amount,
+  });
 
   const base = opts.sponsorUrl.replace(/\/$/, "");
   let res: Response;
@@ -255,7 +395,7 @@ export async function createV2Link(opts: {
      * losing signal mid-flight looks identical to one that never sent — and the sponsor may have
      * submitted the deposit before we lost the reply. So we ask the escrow rather than assume the
      * convenient answer. */
-    const landed = await v2DepositLanded(linkHex, sender);
+    const landed = await v2DepositLanded(linkHex, sender, { net });
     if (landed === true) return { link: url, linkHex, hash: "" };
     if (landed === "unknown" || Date.now() < retrySafeAfter)
       throw new DepositUncertainError(linkHex, url, retrySafeAfter);
@@ -277,7 +417,7 @@ export async function createV2Link(opts: {
    */
   const text = await res.text();
   if (res.status === 202) {
-    const landed = await v2DepositLanded(linkHex, sender);
+    const landed = await v2DepositLanded(linkHex, sender, { net });
     if (landed === "unknown" || (landed === false && Date.now() < retrySafeAfter))
       throw new DepositUncertainError(linkHex, url, retrySafeAfter);
     if (landed === false) throw new Error(`/v2-deposit → not submitted: ${text}`);
@@ -287,13 +427,6 @@ export async function createV2Link(opts: {
   }
   const { hash } = (text ? JSON.parse(text) : { hash: "" }) as { hash: string };
 
-  // `p=1` lets the claim screen ask for the password BEFORE it reads the fragment, so a
-  // recipient sees "this one needs the password" rather than a button that quietly fails.
-  // `n=public` is what tells the RECIPIENT's device this is real money. resolveNetwork() treats a
-  // missing `n` as testnet, so a mainnet link without it sent the claimer looking for the drop in
-  // the testnet escrow, where it does not exist — the claim failed for a reason neither side could
-  // see. The recipient arrives with no prior state (that is the whole point of the product), so the
-  // network cannot come from their device; it has to travel in the link.
   return { link: url, linkHex, hash };
 }
 
@@ -323,8 +456,15 @@ export async function createV2GroupLink(opts: {
   password?: string;
   /** the team funded this pot for the event; marks the claims so they are never counted as adoption */
   seeded?: boolean;
+  /** The network to build, sign and look up against; omitted, the one this device is on. See `createV2Link`. */
+  net?: NetworkConfig;
+  /** Where this link was made, when it is not the website: a trailing `&src=` on the query. See `createV2Link`. */
+  src?: string;
+  /** Awaited after signing and before anything is sent; if it throws, nothing is posted. See `createV2Link`. */
+  onPrepared?: (p: PreparedDeposit) => void | Promise<void>;
 }): Promise<V2Link & { perShare: string; slots: number; total: string }> {
-  const net = defaultNet();
+  const net = opts.net ?? defaultNet();
+  if (opts.src !== undefined) assertLinkSrc(opts.src);
   /* REAL MONEY: mainnet pools are open (owner decision, 2026-09-20) and bounded rather than
      refused. Three things hold them: the per-transfer cap binds the POT and not the share, the
      per-share floor stops a cent buying a row of sponsored accounts, and the seat ceiling below
@@ -365,18 +505,33 @@ export async function createV2GroupLink(opts: {
   const prepared = await opts.signer.sign(rpc.assembleTransaction(tx, sim).build());
   const retrySafeAfter = Number(prepared.timeBounds?.maxTime ?? 0) * 1000 || Number.POSITIVE_INFINITY;
 
-  /* `a=` is what ONE person takes - it is the figure the claim screen puts at 60px, and the claimant
-     never receives the pot. `g=` is the share count, and it rides in the fragment as well as the
-     query: chat apps trim queries and keep fragments, and a claimant who arrives with neither hint
-     would have the pool probed second. */
-  /* `n=public` is not decoration: resolveNetwork() reads a link with no network marker as practice
-     money, so a mainnet pool without it would reach every claimant labelled as practice AND send
-     their device looking for the pool in the testnet escrow, where it does not exist. The one-to-one
-     link has carried it since the first mainnet send (line 241); a pool has to carry it too. */
-  const q = `a=${encodeURIComponent(opts.perShare)}&s=${encodeURIComponent(opts.from)}&g=${opts.slots}${seed ? "&p=1" : ""}${net.isMainnet ? "&n=public" : ""}${opts.seeded ? "&seeded=1" : ""}`;
-  const fragment = `${seed ? passwordFragment(seed) : link.secret()}&g=${opts.slots}`;
-  const url = `${opts.webOrigin.replace(/\/$/, "")}/v2/c/${linkHex}?${q}#${fragment}`;
+  // `a=` is ONE share here, and `g=` rides in the fragment too (see v2LinkUrl).
+  const url = v2LinkUrl({
+    webOrigin: opts.webOrigin,
+    linkHex,
+    amount: opts.perShare,
+    from: opts.from,
+    fragment: seed ? passwordFragment(seed) : link.secret(),
+    slots: opts.slots,
+    passwordLocked: Boolean(seed),
+    mainnet: net.isMainnet,
+    seeded: opts.seeded,
+    src: opts.src,
+  });
   const made = { link: url, linkHex, perShare: opts.perShare, slots: opts.slots, total };
+
+  // Kept by the caller before the request leaves; see the same call in createV2Link.
+  await opts.onPrepared?.({
+    link: url,
+    linkHex,
+    retrySafeAfter,
+    innerHash: prepared.hash().toString("hex"),
+    expiry: Number(expiry),
+    group: true,
+    slots: opts.slots,
+    amount: opts.perShare,
+    total,
+  });
 
   const base = opts.sponsorUrl.replace(/\/$/, "");
   let res: Response;
@@ -390,7 +545,7 @@ export async function createV2GroupLink(opts: {
     /* Same three-valued answer as the single-link path, asked of get_pool. A retry that mints a
        SECOND pot escrows the whole amount twice, so "we could not tell" must never become "try
        again" until the signed transaction can no longer be included. */
-    const landed = await v2DepositLanded(linkHex, sender, { group: true });
+    const landed = await v2DepositLanded(linkHex, sender, { group: true, net });
     if (landed === true) return { ...made, hash: "" };
     if (landed === "unknown" || Date.now() < retrySafeAfter)
       throw new DepositUncertainError(linkHex, url, retrySafeAfter);
@@ -398,7 +553,7 @@ export async function createV2GroupLink(opts: {
   }
   const text = await res.text();
   if (res.status === 202) {
-    const landed = await v2DepositLanded(linkHex, sender, { group: true });
+    const landed = await v2DepositLanded(linkHex, sender, { group: true, net });
     if (landed === "unknown" || (landed === false && Date.now() < retrySafeAfter))
       throw new DepositUncertainError(linkHex, url, retrySafeAfter);
     if (landed === false) throw new Error(`/v2-deposit → not submitted: ${text}`);
@@ -1065,10 +1220,13 @@ export async function v2DepositLanded(
    * `group: true` asks get_pool instead of get_drop. Without it an unconfirmed pool reads as
    * "nothing moved", and the retry that follows mints a SECOND pot under a fresh link key with the
    * whole amount escrowed twice - the worst money bug this path has.
+   *
+   * `net` is the network the deposit was built for. The create functions pass theirs on, so the
+   * question is asked of the escrow the money actually went to; omitted, it is this device's.
    */
-  opts?: { group?: boolean },
+  opts?: { group?: boolean; net?: NetworkConfig },
 ): Promise<boolean | "unknown"> {
-  const net = defaultNet();
+  const net = opts?.net ?? defaultNet();
   const server = new rpc.Server(net.rpcUrl);
   try {
     return (
@@ -1126,11 +1284,13 @@ export async function loadV2DropStatus(
    * `group: true` reads the pool. A pool has no get_drop record at all, so without this every group
    * link a sender ever made reads "settled" the instant it is created - money still on the link,
    * reported as received.
+   *
+   * `net` is the network the link lives on; omitted, the one this device is on.
    */
-  opts?: { group?: boolean },
+  opts?: { group?: boolean; net?: NetworkConfig },
 ): Promise<"pending" | "settled" | "unknown"> {
   try {
-    const net = defaultNet();
+    const net = opts?.net ?? defaultNet();
     if (opts?.group) {
       const pool = await loadPool(linkHex, { net, sourceAccount });
       if (!pool) return "settled";
@@ -1187,9 +1347,14 @@ async function resolveDropContract(
  * get_drop(link) per record (a read-only simulation); classic-CB ids (not 64-hex link keys) are
  * skipped, so this never double-counts the classic Horizon path (loadReclaimableSends).
  * `sender` is the user's home account (an existing account is needed as the simulation source).
+ *
+ * `net` chooses the escrow that is asked and nothing else: the local records are still read from
+ * this device's own network scope (`netKey`). Where there is no localStorage (a service worker) the
+ * answer is an empty list, and a `net` other than this device's would pair its records with the
+ * wrong escrow, so do not pass one here.
  */
-export async function loadReclaimableV2(sender: string): Promise<ReclaimableV2[]> {
-  const net = defaultNet();
+export async function loadReclaimableV2(sender: string, opts?: { net?: NetworkConfig }): Promise<ReclaimableV2[]> {
+  const net = opts?.net ?? defaultNet();
   let records: Record<string, { balanceId?: string; slots?: number }>;
   try {
     records = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as typeof records;
@@ -1257,8 +1422,15 @@ export async function reclaimV2(opts: {
    * take-back to `reclaim`, which reverts with nothing moved and no way for the screen to explain it.
    */
   group?: boolean;
+  /** The network the link lives on; omitted, the one this device is on. */
+  net?: NetworkConfig;
+  /**
+   * Called once, right before the signed take-back is posted. A failure before it posted nothing,
+   * so the caller can say "nothing moved" for certain; a failure after it may have been relayed.
+   */
+  onPosting?: () => void;
 }): Promise<{ hash: string }> {
-  const net = defaultNet();
+  const net = opts.net ?? defaultNet();
   const server = new rpc.Server(net.rpcUrl);
   const sender = opts.signer.publicKey();
   /* A wrong answer here cannot move money the wrong way - the contract simply refuses a `reclaim`
@@ -1272,7 +1444,7 @@ export async function reclaimV2(opts: {
   }
   const method = group ? "reclaim_pool" : "reclaim";
   // Your own money can be sitting in a superseded escrow — reclaim from wherever it is.
-  const contract = await resolveDropContract(server, sender, opts.linkHex, group);
+  const contract = await resolveDropContract(server, sender, opts.linkHex, group, net);
   const source = await server.getAccount(sender);
   const tx = new TransactionBuilder(source, { fee: "2000000", networkPassphrase: net.passphrase })
     .addOperation(new Contract(contract).call(method, xdr.ScVal.scvBytes(Buffer.from(opts.linkHex, "hex"))))
@@ -1284,6 +1456,7 @@ export async function reclaimV2(opts: {
   await opts.signer.sign(prepared); // sender authorizes (source-account auth); sponsor fee-bumps
 
   const base = opts.sponsorUrl.replace(/\/$/, "");
+  opts.onPosting?.();
   const res = await fetch(`${base}/v2-reclaim`, {
     method: "POST",
     headers: { "content-type": "application/json" },

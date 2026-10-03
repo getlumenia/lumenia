@@ -27,12 +27,15 @@ const check = (n: string, ok: boolean, d = "") => {
 function installFakeKv() {
   const nums = new Map<string, number>();
   const sets = new Map<string, Set<string>>();
+  /** Every command the module issued, in order, so a test can say what a call did and did not touch. */
+  const log: string[][] = [];
   process.env.KV_REST_API_URL = "https://fake-kv.test";
   process.env.KV_REST_API_TOKEN = "t";
   globalThis.fetch = (async (_url: string | URL, init?: { body?: string }) => {
     const cmds = JSON.parse(String(init?.body ?? "[]")) as string[][];
     const results = cmds.map(([op, key, ...args]) => {
       const k = key!;
+      log.push([op!, k, ...args]);
       switch (op) {
         case "INCR": {
           const n = (nums.get(k) ?? 0) + 1;
@@ -64,7 +67,7 @@ function installFakeKv() {
     });
     return { ok: true, status: 200, json: async () => results.map((result) => ({ result })) } as unknown as Response;
   }) as typeof fetch;
-  return { nums, sets };
+  return { nums, sets, log };
 }
 
 console.log("============================================================");
@@ -228,6 +231,85 @@ s = (await eventsSummary())!;
 check("they are counted", s.totals.link_shared === 1 && s.totals.deposit_started === 1 && s.totals.cctp_funded === 1);
 check("link_shared and deposit_started do not move the acted or referral sets", s.funnel.acted === beforeNew.funnel.acted && s.funnel.referral === beforeNew.funnel.referral, `acted ${beforeNew.funnel.acted} -> ${s.funnel.acted}`);
 check("every allowlisted event appears in totals, zero or not", Object.keys(s.totals).length === Object.keys(s.seeded.totals).length && "wallet_funded" in s.totals);
+
+console.log("\n[16] EXTENSION traffic is counted apart: counters only, never per person");
+const DAY = new Date().toISOString().slice(0, 10);
+const extKeys = () => [...kv.nums.keys()].filter((k) => k.includes(":x:ext:"));
+const extState = () => JSON.stringify([...kv.nums].filter(([k]) => k.includes(":x:ext:")).sort(([a], [b]) => (a < b ? -1 : 1)));
+const setState = () =>
+  JSON.stringify([...kv.sets].map(([k, v]): [string, string[]] => [k, [...v].sort()]).sort(([a], [b]) => (a < b ? -1 : 1)));
+
+const beforeExt = (await eventsSummary())!;
+check("before any extension event nothing lives under x:ext", extKeys().length === 0);
+check(
+  "the summary carries bySource.ext: one zero per allowed event",
+  Object.keys(beforeExt.bySource.ext).length === Object.keys(beforeExt.totals).length && Object.values(beforeExt.bySource.ext).every((v) => v === 0),
+);
+
+const setsBefore = setState();
+const logBefore = kv.log.length;
+await recordEvent({ event: "claim_opened", cid: "ext00001", src: "ext" });
+const issued = kv.log.slice(logBefore);
+s = (await eventsSummary())!;
+check("an extension event bumps the all-time x:ext counter", kv.nums.get("ev:testnet:x:ext:t:claim_opened") === 1);
+check("...and the daily one", kv.nums.get(`ev:testnet:x:ext:d:${DAY}:claim_opened`) === 1);
+check(
+  "...with the same 180-day expiry as the other daily keys",
+  issued.some((c) => c[0] === "EXPIRE" && c[1] === `ev:testnet:x:ext:d:${DAY}:claim_opened` && c[2] === String(180 * 24 * 60 * 60)),
+);
+check("it is ALSO an ordinary event: the extension's figure is a subset of the total", s.totals.claim_opened === beforeExt.totals.claim_opened + 1);
+check("bySource.ext reports it, and only it", s.bySource.ext.claim_opened === 1 && Object.values(s.bySource.ext).reduce((a, b) => a + b, 0) === 1);
+check("it adds no set member anywhere", setState() === setsBefore);
+check(
+  "every command under x:ext is an INCR or an EXPIRE, never a SADD",
+  issued.filter((c) => c[1]!.includes(":x:ext:")).length === 3 && issued.filter((c) => c[1]!.includes(":x:ext:")).every((c) => c[0] === "INCR" || c[0] === "EXPIRE"),
+);
+
+// An extension SEND is a real send, so it still joins the ordinary funnel; what it must not do is
+// put the account anywhere under x:ext.
+const EXT_AID = "e1e1e1e1e1e1e1e1";
+const actedBefore = s.funnel.acted;
+const logBefore2 = kv.log.length;
+await recordEvent({ event: "send_link_created", cid: EXT_AID, aid: EXT_AID, src: "ext" });
+const issued2 = kv.log.slice(logBefore2);
+s = (await eventsSummary())!;
+check("an extension send still joins the ordinary funnel", s.funnel.acted === actedBefore + 1 && s.bySource.ext.send_link_created === 1, `acted ${actedBefore} -> ${s.funnel.acted}`);
+check("...but no command that touches x:ext carries the aid", issued2.filter((c) => c[1]!.includes(":x:")).every((c) => !c.includes(EXT_AID)));
+check("no set lives under x:ext", [...kv.sets.keys()].every((k) => !k.includes(":x:")));
+check(
+  "every key under x:ext is a counter named by event and day, never by a person",
+  extKeys().every((k) => /^ev:testnet:x:ext:(t:[a-z_]+|d:\d{4}-\d{2}-\d{2}:[a-z_]+)$/.test(k)),
+  extKeys().join(" "),
+);
+
+// Only the literal "ext" is a source. The label decides which counters get written, so anything
+// else has to be a no-op rather than a new key.
+const junk: unknown[] = ["web", "EXT", "Ext", " ext", "ext ", "ext\n", 1, true, "1", "true", "garbage", "", 0, null, {}, ["ext"], { toString: () => "ext" }];
+const extBeforeJunk = extState();
+const openedBeforeJunk = (await eventsSummary())!.totals.claim_opened;
+for (const src of junk) await recordEvent({ event: "claim_opened", cid: "junk0001", src });
+check(`${junk.length} other values ("web", "EXT", 1, true, garbage, ...) move no x:ext counter`, extState() === extBeforeJunk);
+check("...and those events are still counted as ordinary ones", (await eventsSummary())!.totals.claim_opened === openedBeforeJunk + junk.length);
+
+const lines: string[] = [];
+const realLog = console.log;
+console.log = (...a: unknown[]) => {
+  lines.push(a.map(String).join(" "));
+};
+try {
+  handleEvent({ event: "claim_opened", cid: "ext00001", src: "ext" });
+  handleEvent({ event: "claim_opened", cid: "ext00001", src: "web" });
+} finally {
+  console.log = realLog;
+}
+check("the log line carries src for the extension and for nothing else", lines.length === 2 && lines[0]!.includes('"src":"ext"') && !lines[1]!.includes("src"), lines.join(" | "));
+
+// The team exclusion runs before any counter, x:ext included.
+process.env.EVENTS_EXCLUDE_AIDS = "e2e2e2e2e2e2e2e2";
+const extBeforeTeam = extState();
+await recordEvent({ event: "send_link_created", cid: "e2e2e2e2e2e2e2e2", aid: "e2e2e2e2e2e2e2e2", src: "ext" });
+check("a team account's extension event is dropped before x:ext is touched", extState() === extBeforeTeam);
+delete process.env.EVENTS_EXCLUDE_AIDS;
 
 console.log("\n[8] the store being absent is survivable");
 delete process.env.KV_REST_API_URL;

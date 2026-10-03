@@ -55,6 +55,12 @@
  *   - NEW EVENTS for the event build: `deposit_started` / `deposit_completed` (TRY in over SEP-6),
  *     `cctp_funded` (Circle CCTP inbound), `wallet_funded` (Stellar Wallets Kit), and
  *     `link_shared` (the share or copy button, vs merely creating a link).
+ *
+ * SOURCE, 2026-10-02. The sender-side browser extension beacons from a service worker and marks its
+ * events `src: "ext"`. They are counted as usual AND again under `ev:<net>:x:ext:*` (all-time and
+ * daily, counters only), so how much of the traffic is the extension is a read, not a guess. Only
+ * the literal "ext" is honoured, and nothing per person is ever stored under that prefix: no set,
+ * no aid.
  */
 import { kvConfigFromEnv } from "./rate-limit.js";
 
@@ -141,6 +147,8 @@ export interface EventInput {
   seeded?: unknown;
   /** `claim_succeeded` only: whole seconds since the claim was opened, measured on the device. */
   dur?: unknown;
+  /** Where the event came from. Only the literal `"ext"` (the browser extension) is honoured; anything else is ignored. */
+  src?: unknown;
 }
 
 function net(): string {
@@ -161,6 +169,15 @@ function clean(v: unknown): string | null {
 /** `seeded` arrives as `1`, `"1"` or `true` from a beacon; anything else is not seeded. */
 function isSeeded(v: unknown): boolean {
   return v === 1 || v === "1" || v === true;
+}
+
+/**
+ * `src` is honoured for exactly one value. The label decides which counters an event is added to,
+ * so an open vocabulary would let any beacon mint its own keys; `"ext"` is the browser extension's
+ * service worker, and `"EXT"`, `1`, `true` and everything else are simply not it.
+ */
+function isExt(v: unknown): boolean {
+  return v === "ext";
 }
 
 /** A duration is a non-negative whole number of seconds inside one day; anything else is ignored. */
@@ -198,6 +215,7 @@ export function handleEvent(input: EventInput): { ok: true } {
       cid: clean(input.cid),
       aid: clean(input.aid),
       ...(isSeeded(input.seeded) ? { seeded: 1 } : {}),
+      ...(isExt(input.src) ? { src: "ext" } : {}),
     })}`,
   );
   return { ok: true };
@@ -245,6 +263,14 @@ export async function recordEvent(input: EventInput): Promise<void> {
     cmds.push(["INCR", `ev:${n}:s:t:${input.event}`]);
     cmds.push(["INCR", `ev:${n}:s:d:${day}:${input.event}`]);
     cmds.push(["EXPIRE", `ev:${n}:s:d:${day}:${input.event}`, String(DAY_TTL_SECONDS)]);
+  }
+  // The extension's traffic is counted AGAIN under its own prefix, the way seeded is, so its figure
+  // is a read and not a reconstruction. Counters only: no SADD and no aid ever goes under `x:ext`,
+  // because a per-person set keyed by where somebody came from is a profile, and nothing here needs one.
+  if (isExt(input.src)) {
+    cmds.push(["INCR", `ev:${n}:x:ext:t:${input.event}`]);
+    cmds.push(["INCR", `ev:${n}:x:ext:d:${day}:${input.event}`]);
+    cmds.push(["EXPIRE", `ev:${n}:x:ext:d:${day}:${input.event}`, String(DAY_TTL_SECONDS)]);
   }
   if (input.event === FUNNEL_IN) {
     const dur = cleanDuration(input.dur);
@@ -312,6 +338,14 @@ export interface EventsSummary {
     referral: number;
     acted: number;
   };
+  /**
+   * All-time totals by where the event came from. `ext` is the browser extension. Each figure is a
+   * subset of `totals`, counted again under its own prefix the way `seeded` is, and nothing per
+   * person is kept under it.
+   */
+  bySource: {
+    ext: Record<string, number>;
+  };
   /** claim_opened → claim_succeeded, whole seconds, counted into buckets; never per person */
   durations: Record<DurationBucket, number>;
   /** how many team accounts are configured to be dropped (their count, never their ids) */
@@ -337,6 +371,7 @@ export async function eventsSummary(): Promise<EventsSummary | null> {
     ["SCARD", `evf:${n}:s:claimed`],
     ["SINTER", `evf:${n}:s:claimed`, `evf:${n}:referral`],
     ["SINTER", `evf:${n}:s:claimed`, `evf:${n}:sent`],
+    ...names.map((e) => ["GET", `ev:${n}:x:ext:t:${e}`]),
   ]);
   if (!rows) return null;
 
@@ -365,6 +400,10 @@ export async function eventsSummary(): Promise<EventsSummary | null> {
   const seededClaimed = num(rows[i++]);
   const seededReferral = len(rows[i++]);
   const seededActed = len(rows[i++]);
+  const extTotals: Record<string, number> = {};
+  names.forEach((e) => {
+    extTotals[e] = num(rows[i++]);
+  });
 
   return {
     network: n,
@@ -385,6 +424,7 @@ export async function eventsSummary(): Promise<EventsSummary | null> {
       referral: referral - seededReferral,
       acted: both - seededActed,
     },
+    bySource: { ext: extTotals },
     durations,
     excludedAccounts: excludedAids().size,
   };

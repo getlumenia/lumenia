@@ -23,6 +23,7 @@
     "test:anchor": "tsx lib/anchor.selftest.ts",
     "test:walletkit": "tsx lib/wallets-kit.selftest.ts",
     "test:agentmcp": "tsx lib/agent-mcp.selftest.ts",
+    "test:extseam": "tsx lib/ext-seam.selftest.ts",
     "test:agentmcp-live": "tsx lib/agent-mcp.livetest.ts",
     "test:anchor-live": "tsx lib/anchor.livetest.ts",
     "test:anchor-deposit-live": "tsx lib/anchor.deposit.livetest.ts",

@@ -114,6 +114,13 @@ export interface EventOptions {
    * sponsor counts it into buckets (0-15, 15-30, 30-60, 60-120, 120+) and stores nothing per claim.
    */
   durationS?: number;
+  /**
+   * Where the event came from, when it is not the website. Only `"ext"` (the browser extension's
+   * service worker) is ever sent, and nothing else can be: the sponsor counts that traffic apart,
+   * counters only, so the extension's funnel can be read on its own. A public marker like `seeded`,
+   * never the URL or the fragment.
+   */
+  src?: "ext";
 }
 
 /**
@@ -135,7 +142,14 @@ export interface EventOptions {
 export async function sendEvent(event: string, claimId: string, account?: string, opts: EventOptions = {}): Promise<void> {
   try {
     if (!ALLOWED.has(event)) return;
-    if (typeof navigator === "undefined" || !navigator.sendBeacon) return;
+    /* A page beacons. An extension's service worker has no `navigator.sendBeacon` (and no window), so
+       it sends the same body with a `keepalive` fetch instead. The fallback is for a context with no
+       page at all: a PAGE without sendBeacon is a browser where it was switched off on purpose
+       (Firefox's beacon.enabled=false), and that opt-out is honoured by sending nothing. With
+       neither path there is nothing to send with, and nothing is hashed. */
+    const beacon = typeof navigator !== "undefined" && Boolean(navigator.sendBeacon);
+    const worker = typeof window === "undefined";
+    if (!beacon && !(worker && typeof fetch === "function")) return;
     const cid = await hashId(claimId);
     const aid = account ? await hashId(account) : undefined;
     const dur = typeof opts.durationS === "number" && Number.isFinite(opts.durationS) && opts.durationS >= 0 ? Math.floor(opts.durationS) : undefined;
@@ -145,9 +159,17 @@ export async function sendEvent(event: string, claimId: string, account?: string
       ...(aid ? { aid } : {}),
       ...(opts.seeded ? { seeded: 1 } : {}),
       ...(dur !== undefined ? { dur } : {}),
+      ...(opts.src === "ext" ? { src: "ext" } : {}),
     }); // NEVER url / fragment (C2)
-    // text/plain keeps this a "simple" CORS request (no preflight); response ignored.
-    navigator.sendBeacon(`${sponsorUrl(opts.net)}/events`, new Blob([body], { type: "text/plain" }));
+    const url = `${sponsorUrl(opts.net)}/events`;
+    if (beacon) {
+      // text/plain keeps this a "simple" CORS request (no preflight); response ignored.
+      navigator.sendBeacon(url, new Blob([body], { type: "text/plain" }));
+    } else {
+      // A string body goes out as text/plain;charset=UTF-8, which is CORS-safelisted too: the same
+      // simple request, no preflight. Fire and forget, and a rejection is swallowed like every failure here.
+      void fetch(url, { method: "POST", body, keepalive: true }).catch(() => {});
+    }
   } catch {
     /* analytics must never break the claim */
   }
