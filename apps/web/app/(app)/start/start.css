@@ -1,0 +1,233 @@
+/*
+ * /start, the first run. One beat per screen: the wordmark at the top, the messenger, one line and
+ * at most two buttons. Written against the `.app-pw` tokens (components/site/app-theme.css), so both
+ * themes come for free; the greeting's bubble is the landing's own (landing.css .op-bubble), rebuilt
+ * here because landing.css belongs to the (site) group.
+ */
+.fr {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: max(10px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
+}
+
+/* The light behind every beat: one soft bloom of the accent, centred where the character stands. */
+.fr-glow {
+  position: absolute;
+  z-index: -2;
+  left: 50%;
+  top: 46%;
+  width: min(880px, 150vw);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--money) 15%, transparent), transparent 62%);
+}
+.fr-field {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Back on the left, the wordmark dead centre, an empty cell on the right to keep it there. */
+.fr-top {
+  flex: none;
+  width: 100%;
+  max-width: 480px;
+  height: 52px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+}
+.fr-brand {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  border-radius: 10px;
+}
+/* No `display` here: the theme swap (.site-wordmark-light/dark in globals.css) owns it. */
+.fr-brand img { height: 24px; width: auto }
+.fr-back {
+  grid-column: 1;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  margin-left: -8px;
+  padding: 0 14px 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.18s, background 0.18s;
+}
+.fr-back:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent) }
+
+.fr-main {
+  flex: 1;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 8px 0 4px;
+  text-align: center;
+  animation: fr-in 0.5s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+/* The greeting brings its own entrance (the bubble), and its messenger must never start at opacity
+   0: that would cost the page its LCP (docs/SITE_REDESIGN.md section 5). */
+.fr[data-step="hello"] .fr-main { animation: none }
+
+/* A heading takes focus when its beat arrives, for screen readers; it is not a control. */
+.fr [tabindex="-1"]:focus { outline: none }
+
+.fr .fr-title {
+  margin: 4px 0 0;
+  max-width: 15em;
+  font-family: "Sentient", Georgia, serif;
+  font-weight: 600;
+  font-size: clamp(27px, 7vw, 36px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.fr-lead {
+  margin: -4px 0 0;
+  max-width: 30em;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  text-wrap: pretty;
+}
+
+.fr-actions {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 6px;
+}
+.fr-actions[data-ready="false"] { visibility: hidden }
+.fr-btn-quiet {
+  width: 100%;
+  height: 56px;
+  padding: 0 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.18s, transform 0.15s;
+}
+.fr-btn-quiet:hover:not(:disabled) { border-color: color-mix(in srgb, var(--money) 50%, var(--line)) }
+.fr-btn-quiet:active:not(:disabled) { transform: translateY(1px) }
+.fr-btn-quiet:disabled { opacity: 0.5; cursor: default }
+.fr-error { margin: 2px 0 0; font-size: 14px; line-height: 1.45; color: var(--danger) }
+
+.fr-back:focus-visible,
+.fr-brand:focus-visible,
+.fr-btn-quiet:focus-visible { outline: 2px solid var(--money); outline-offset: 2px }
+
+/* ---- a. The greeting --------------------------------------------------------------------- */
+.fr-hello { display: flex; flex-direction: column; align-items: center }
+.fr-bubble {
+  position: relative;
+  z-index: 2;
+  max-width: min(480px, 100%);
+  min-width: min(320px, 100%);
+  margin-bottom: 20px;
+  padding: 14px 22px 18px;
+  border-radius: 22px;
+  text-align: left;
+  color: #f6f4fd;
+  /* The landing's bubble, with its light corner fixed rather than mixed from the theme accent: on
+     dark that accent is pale lavender, and white type on its lightest stretch fell under 3:1. */
+  background: linear-gradient(152deg, #8b7fd9 0%, #6e5fce 52%, #5f50c2 100%);
+  box-shadow:
+    0 26px 54px -22px rgba(110, 95, 206, 0.62),
+    0 2px 8px rgba(78, 64, 168, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transform-origin: bottom center;
+  animation: fr-bubble 1s cubic-bezier(0.2, 0.8, 0.25, 1) 0.3s both;
+}
+.fr-bubble-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.fr-bubble-mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  background: #f6f4fd;
+  box-shadow: 0 3px 8px rgba(78, 64, 168, 0.28);
+}
+.fr-bubble-mark img { width: 18px; height: 18px; object-fit: contain }
+.fr-bubble-time { margin-left: auto; font-size: 12px; font-weight: 500; color: rgba(246, 244, 253, 0.72) }
+.fr .fr-bubble-text {
+  margin: 0;
+  font-family: "Switzer", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  font-size: clamp(20px, 5.6vw, 27px);
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+  color: #fff;
+  text-wrap: balance;
+}
+/* Only the half of the turned square that hangs below the bubble is drawn, in the colour the
+   gradient has where the two meet. Drawn whole (as on the landing), its upper half showed through
+   the bubble as a darker diamond. */
+.fr-bubble-tail {
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  width: 20px;
+  height: 20px;
+  transform: translateX(-50%) rotate(45deg);
+  border-radius: 0 0 6px 0;
+  background: #6a5bcb;
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+
+/* ---- d. Bringing an account here ----------------------------------------------------------- */
+.fr-restore { width: 100%; display: flex; flex-direction: column; gap: 12px; text-align: left }
+
+@keyframes fr-in { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+@keyframes fr-bubble {
+  0% { opacity: 0; transform: translateY(8px) scale(0.8) }
+  55% { opacity: 1; transform: translateY(0) scale(1.04) }
+  100% { opacity: 1; transform: none }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fr-main,
+  .fr-bubble { animation: none }
+  .fr-back,
+  .fr-btn-quiet { transition: none }
+}

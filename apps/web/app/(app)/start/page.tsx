@@ -1,248 +1,468 @@
 "use client";
 
 /**
- * /start — the guided path to becoming a SENDER.
+ * /start: the one way into Lumenia.
  *
- * Lumenia's whole promise is that a RECIPIENT does nothing: tap a link, confirm with your face,
- * the money is yours. That stays. But a sender is a different person with genuinely different
- * needs — an account, a password, pilot approval, dollars, and only then a link to send — and the
- * product had every one of those pieces built while telling nobody what order they go in. Someone
- * who wanted to actually USE Lumenia landed on /account and read "when someone sends you money
- * with a link, your account is created here", which is a dead end if nobody has sent you anything.
+ * The brief, kept literally: show as little as possible and still let the whole brand come through.
+ * The first screen is the landing's greeting and one button, and every screen after it asks one
+ * thing, with the messenger at each beat:
  *
- * So this page invents no new machinery. It reads the real state of the five things that already
- * exist and shows which one is next. One step is live at a time; finished steps collapse to a
- * line; later steps stay visible but quiet, so the whole path is legible from the first screen
- * rather than revealed one surprise at a time.
+ *   hello    "Hey, I've got a message for you."  [Get started]
+ *   ask      "Do you already have a Lumenia account?"  [No, I'm new here] [Yes, bring it here]
+ *   new      "You're in."  (shown only after the account is really open)
+ *   restore  the existing restore, unchanged: Face ID where this device has it, else email, a code
+ *            and the password. The same components, the same calls, as the no-account /account page.
  *
- * Every status here is READ, never assumed: the account comes from the keystore, the lock from its
- * phase, approval from the sponsor's allowlist, and the balance from the ledger. A checklist that
- * lies about where you are is worse than no checklist.
+ * WHERE YOU ARE LIVES IN THE URL (?step=...), written with the native history API. Next mirrors
+ * those calls into useSearchParams without asking the server for anything, and the browser's back
+ * button walks the steps like pages. Every entry this page pushes carries how deep into the flow it
+ * is. That is what lets the Back link pop history instead of stacking more of it, and lets leaving
+ * for /home rewind the flow first, so Back on /home does not land on a step that would only bounce.
+ *
+ * AN ACCOUNT ON THIS DEVICE ENDS THE FLOW. If there is one when the page opens, this page is not
+ * for them and they go straight to /home. That check reads the keystore's first answer only: an
+ * account that appears BECAUSE of this page (opened or brought back here) gets its closing beat.
+ * Going back to hello or the question with an account in hand also goes home, so the question can
+ * never be answered twice and open a second account.
+ *
+ * NOTHING HAPPENS ON ARRIVAL. Link previews and crawlers open URLs too, and every new account parks
+ * a reserve with the sponsor. The tap on "No, I'm new here" is the gesture; ?step=new opened cold,
+ * with no account behind it, falls back to the question.
+ *
+ * REAL MONEY GOES TO /welcome. A device switched to real money cannot open an account without a
+ * pilot invite, and /welcome is where that is explained and asked for (the same hand-off /send
+ * makes). Everything opened here is on practice money, and the closing beat says so.
+ *
+ * AFTER "YOU'RE IN", /home. /send records why /welcome was taken off the main path (nothing about
+ * setting up may come before the money), and /home's WelcomeNudge offers the @name from there.
  */
-import { useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
+import { activeNetwork } from "../../../lib/network";
+import { isPlatformAuthenticatorAvailable } from "../../../lib/passkey-prf";
+import { Mascot, mascotSrc } from "../../../components/brand/Mascot";
+import { LumenField } from "../../../components/brand/LumenField";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
-import { loadBalance } from "../../../lib/horizon";
-import { MAINNET_CONFIGURED } from "../../../lib/network";
+import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
+import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
+import "./start.css";
 
-type StepState = "done" | "current" | "later";
+type Step = "hello" | "ask" | "new" | "restore";
+type HeadingRef = RefObject<HTMLHeadingElement | null>;
 
-interface Step {
-  id: string;
-  title: string;
-  /** Shown while this step is the current one — what to do and why it matters. */
-  body: string;
-  /** Shown once finished, in place of the body. */
-  doneNote: string;
-  href: string;
-  cta: string;
-  state: StepState;
+const STEPS: readonly Step[] = ["hello", "ask", "new", "restore"];
+
+/** Where Back leads from each step, for someone who arrived mid-flow with no history to pop. */
+const PARENT: Record<Step, Step | null> = { hello: null, ask: "hello", new: "ask", restore: "ask" };
+
+/** The key each entry this page pushes carries: how many steps past the arrival entry it is. */
+const DEPTH = "lumeniaStartDepth";
+
+const toStep = (raw: string | null): Step => STEPS.find((s) => s === raw) ?? "hello";
+const urlFor = (step: Step) => (step === "hello" ? "/start" : `/start?step=${step}`);
+
+function depthHere(): number {
+  const d = (window.history.state as Record<string, unknown> | null)?.[DEPTH];
+  return typeof d === "number" && d > 0 ? d : 0;
+}
+
+/** Opening an account fails for connection reasons almost every time. Say that, never the raw error. */
+function createErrorMessage(e: unknown): string {
+  const message = e instanceof Error ? e.message : "";
+  // The one refusal that is about this phone, not the connection, and it is already plain words.
+  if (/accounts on this phone/i.test(message)) return message;
+  return "We couldn't open your account just now. Check your connection and try again.";
 }
 
 export default function StartPage() {
-  const { status, account, network, pilotState, mainnetApproved, switchNetwork } = useWallet();
-  const [usdc, setUsdc] = useState<string | null>(null);
-  const [checking, setChecking] = useState(false);
+  // useSearchParams needs a Suspense boundary. Its fallback is the first beat without its button,
+  // so even a static render of this page opens on the greeting.
+  return (
+    <Suspense
+      fallback={
+        <Frame step="hello">
+          <HelloBeat />
+        </Frame>
+      }
+    >
+      <FirstRun />
+    </Suspense>
+  );
+}
 
-  // The dollar balance is the only step we cannot answer from local state, so it is the only one
-  // that touches the network. Re-read whenever the account or network changes; a stale balance
-  // would park someone on "add money" after they already had.
+function FirstRun() {
+  const router = useRouter();
+  const urlStep = toStep(useSearchParams().get("step"));
+  const { status, account, createAccount } = useWallet();
+
+  /** A step chosen this instant, shown before the router reports the new URL a frame later. */
+  const [pending, setPending] = useState<Step | null>(null);
+  /** The beat kept on screen while the flow rewinds its history on the way to /home. */
+  const [leaving, setLeaving] = useState<Step | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [faceFound, setFaceFound] = useState(false);
+  const [restored, setRestored] = useState(false);
+  const [faceCapable, setFaceCapable] = useState(false);
+
+  const step: Step = leaving ?? pending ?? urlStep;
+  const beat = step === "restore" && restored ? "restored" : step;
+
+  // Whatever the URL says now is the truth again, including after the browser's own back button.
+  useEffect(() => setPending(null), [urlStep]);
+
+  const alive = useRef(true);
   useEffect(() => {
-    let alive = true;
-    if (!account) {
-      setUsdc(null);
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  const go = useCallback((next: Step) => {
+    setPending(next);
+    window.history.pushState({ [DEPTH]: depthHere() + 1 }, "", urlFor(next));
+  }, []);
+
+  const replaceWith = useCallback((next: Step) => {
+    setPending(next);
+    window.history.replaceState({ [DEPTH]: depthHere() }, "", urlFor(next));
+  }, []);
+
+  const back = useCallback(() => {
+    const parent = PARENT[step];
+    if (!parent) return;
+    if (depthHere() > 0) window.history.back();
+    else replaceWith(parent);
+  }, [step, replaceWith]);
+
+  /**
+   * Out of the flow, to the money. With history behind us, rewind to the entry the visitor arrived
+   * on first and replace THAT with /home, so the steps are gone from Back rather than waiting there
+   * to bounce. The current beat stays on screen meanwhile instead of flashing the greeting.
+   */
+  const leaveForHome = useCallback(() => {
+    setLeaving(step);
+    const d = depthHere();
+    if (d === 0) {
+      router.replace("/home");
       return;
     }
-    setChecking(true);
-    loadBalance(account.address)
-      .then((b) => {
-        if (alive) setUsdc(b?.usd ?? "0");
-      })
-      .catch(() => {
-        if (alive) setUsdc(null);
-      })
-      .finally(() => {
-        if (alive) setChecking(false);
-      });
-    return () => {
-      alive = false;
+    const onPop = () => {
+      window.removeEventListener("popstate", onPop);
+      // A tick later, so Next has applied its own restore of this entry before we replace it.
+      window.setTimeout(() => router.replace("/home"), 0);
     };
-  }, [account, network]);
+    window.addEventListener("popstate", onPop);
+    window.history.go(-d);
+  }, [router, step]);
 
-  if (status === "loading") {
-    return <p className="py-8 text-ink-soft">One moment…</p>;
-  }
+  /** The keystore's first answer decides whether this page is for them at all. */
+  const answered = useRef(false);
+  useEffect(() => {
+    if (status !== "ready") return;
+    if (!answered.current) {
+      answered.current = true;
+      if (account) {
+        router.replace("/home");
+        return;
+      }
+    }
+    if (leaving || creating) return;
+    if (account && (step === "hello" || step === "ask")) router.replace("/home");
+    else if (!account && step === "new") replaceWith("ask");
+  }, [status, account, step, leaving, creating, router, replaceWith]);
 
-  const hasAccount = Boolean(account);
-  const isLocked = account?.phase === 2;
-  const onMainnet = network === "public";
-  const isApproved = pilotState === "approved";
-  const hasMoney = usdc !== null && parseFloat(usdc) > 0;
+  // Face ID is offered only where this device has a platform authenticator; the copy follows suit.
+  useEffect(() => {
+    let live = true;
+    void isPlatformAuthenticatorAvailable().then((ok) => {
+      if (live) setFaceCapable(ok);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
-  /* The order is not cosmetic — each step is genuinely blocked by the one above it, and getting it
-     wrong strands people. Approval must come BEFORE the network switch: switchNetwork() refuses
-     outright while `mainnetApproved` is false, and it refuses SILENTLY, so a checklist that offered
-     "switch to real money" first would hand every user a button that does nothing and no reason why.
-     You cannot lock an account you do not have; mainnet will not sign without the password; the
-     sponsor will not let an unapproved wallet deposit; a link cannot carry dollars you do not hold. */
-  const done = [hasAccount, isLocked, isApproved, onMainnet, hasMoney];
-  const firstUnfinished = done.findIndex((d) => !d);
-  const stateFor = (i: number): StepState =>
-    done[i] ? "done" : i === firstUnfinished ? "current" : "later";
+  // The later beats' characters, fetched while the first is being read, so no step draws late.
+  useEffect(() => {
+    for (const pose of ["wave", "celebrate", "phone", "thumbsup"] as const) {
+      const img = new Image();
+      img.src = mascotSrc(pose);
+    }
+  }, []);
 
-  const steps: Step[] = [
-    {
-      id: "account",
-      title: "Get an account",
-      body:
-        "Try it the way your friends will: send yourself a demo link and claim it. That claim creates your account — there is no signup form anywhere, and there never will be.",
-      doneNote: "You have an account.",
-      href: "/try",
-      cta: "Send myself a demo link",
-      state: stateFor(0),
-    },
-    {
-      id: "lock",
-      title: "Lock it with a password",
-      body:
-        "Real money never sits on an unlocked phone here. Pick a password and only you can spend this money.",
-      doneNote: "Locked to you.",
-      href: "/home",
-      cta: "Lock my money",
-      state: stateFor(1),
-    },
-    {
-      id: "pilot",
-      title: "Ask to join the pilot",
-      body:
-        "Real sending is invite-only for now, so we can help every early user personally. Ask here and we approve by hand, usually quickly.",
-      doneNote: "You are in the pilot.",
-      href: "/pilot",
-      cta: "Ask to join",
-      state: stateFor(2),
-    },
-    {
-      id: "mainnet",
-      title: "Switch to real money",
-      body:
-        "Everything so far was practice money. Switching opens your account on the real network, so real dollars can reach you.",
-      doneNote: "You are on real money.",
-      href: "/account",
-      cta: "Switch to real money",
-      state: stateFor(3),
-    },
-    {
-      id: "money",
-      title: "Add dollars",
-      body:
-        "Send USDC from an exchange or another wallet to your address, on the Stellar network. No memo needed — this account is yours alone.",
-      doneNote: usdc ? `You hold $${usdc}.` : "You have dollars.",
-      href: "/add-money",
-      cta: "Show me my address",
-      state: stateFor(4),
-    },
-  ];
+  const startNew = useCallback(async () => {
+    if (creating) return;
+    // Real money is invite-only, and /welcome is the screen that explains it and asks.
+    if (activeNetwork().isMainnet) {
+      router.push("/welcome?start=1");
+      return;
+    }
+    setCreateError(null);
+    setCreating(true);
+    try {
+      await createAccount();
+      if (alive.current) go("new");
+    } catch (e) {
+      if (alive.current) setCreateError(createErrorMessage(e));
+    } finally {
+      if (alive.current) setCreating(false);
+    }
+  }, [creating, createAccount, go, router]);
 
-  const allDone = done.every(Boolean);
+  /* Back is offered only where there is somewhere sensible to go back to: never while an account is
+     being opened, and never once one exists, because the question behind it is answered. */
+  const canGoBack = (step === "ask" && !creating) || (step === "restore" && !account);
+
+  useEffect(() => {
+    if (!canGoBack) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      back();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canGoBack, back]);
+
+  // A new beat moves focus to its heading, so a screen reader announces it and Tab starts there.
+  const heading = useRef<HTMLHeadingElement>(null);
+  const shownBeat = useRef(beat);
+  useEffect(() => {
+    if (shownBeat.current === beat) return;
+    shownBeat.current = beat;
+    heading.current?.focus();
+  }, [beat]);
 
   return (
-    <div className="flex flex-col gap-5 py-4">
-      <header>
-        <h1 className="text-xl font-bold text-ink">
-          {allDone ? "You're ready to send" : "Get set up to send"}
-        </h1>
-        <p className="mt-1 text-sm text-ink-soft">
-          {allDone
-            ? "Everything is in place. Send someone a link and they'll have the money in about thirty seconds, with nothing to install."
-            : "Receiving money here takes no setup at all. Sending it takes five short steps, and this page keeps your place in them."}
-        </p>
-      </header>
+    <Frame step={step} beat={beat} onBack={canGoBack ? back : undefined}>
+      {step === "hello" && (
+        <HelloBeat heading={heading} onStart={status === "ready" && !account ? () => go("ask") : undefined} />
+      )}
+      {(step === "ask" || (step === "new" && !account)) && (
+        <AskBeat
+          heading={heading}
+          ready={status === "ready"}
+          busy={creating}
+          error={createError}
+          onNew={startNew}
+          onRestore={() => go("restore")}
+        />
+      )}
+      {step === "new" && account && <InBeat heading={heading} onContinue={leaveForHome} />}
+      {step === "restore" && (
+        <RestoreBeat
+          heading={heading}
+          faceCapable={faceCapable}
+          found={faceFound}
+          restored={restored}
+          locked={account?.phase === 2}
+          onFound={() => setFaceFound(true)}
+          onDone={() => setRestored(true)}
+          onContinue={leaveForHome}
+        />
+      )}
+    </Frame>
+  );
+}
 
-      {allDone ? (
-        <MoneyCard className="p-5">
-          <p className="font-semibold text-ink">Send your first one</p>
-          <p className="mb-4 mt-1 text-sm text-ink-soft">
-            Pick an amount, get a link, send it however you already talk to them.
-          </p>
-          <Link href="/send" className="block">
-            <PrimaryButton>Send money</PrimaryButton>
-          </Link>
-        </MoneyCard>
-      ) : null}
-
-      <ol className="flex list-none flex-col gap-3 p-0">
-        {steps.map((s, i) => (
-          <li key={s.id}>
-            <MoneyCard
-              className={`p-4 ${s.state === "later" ? "opacity-55" : ""}`}
-              aria-current={s.state === "current" ? "step" : undefined}
-            >
-              <div className="flex items-start gap-3">
-                {/* A number until it is done, a tick after — the cheapest possible "where am I". */}
-                <span
-                  aria-hidden
-                  className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                    s.state === "done"
-                      ? "bg-money text-surface"
-                      : s.state === "current"
-                        ? "bg-ink text-surface"
-                        : "border border-line text-ink-soft"
-                  }`}
-                >
-                  {s.state === "done" ? "✓" : i + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-ink">{s.title}</p>
-                  <p className="mt-1 text-sm text-ink-soft">
-                    {s.state === "done" ? s.doneNote : s.body}
-                  </p>
-
-                  {/* Only the current step gets a button. Two live buttons would ask the reader to
-                      decide what to do next, which is the one thing this page exists to answer. */}
-                  {s.state === "current" ? (
-                    <div className="mt-3">
-                      {s.id === "mainnet" && MAINNET_CONFIGURED && mainnetApproved ? (
-                        <PrimaryButton onClick={() => switchNetwork("public")}>
-                          {s.cta}
-                        </PrimaryButton>
-                      ) : (
-                        <Link href={s.href} className="block">
-                          <PrimaryButton>{s.cta}</PrimaryButton>
-                        </Link>
-                      )}
-                      {s.id === "pilot" && pilotState === "pending" ? (
-                        <p className="mt-2 text-sm text-ink-soft">
-                          Your request is in. We&apos;ll email you the moment it&apos;s approved.
-                        </p>
-                      ) : null}
-                      {s.id === "money" && checking ? (
-                        <p className="mt-2 text-sm text-ink-soft">Checking your balance…</p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </MoneyCard>
-          </li>
-        ))}
-      </ol>
-
-      {/* Someone who already has money on another phone does not belong in this list at all, and
-          sending them through five setup steps to reach a restore button would be absurd. */}
-      <MoneyCard className="p-4">
-        <p className="font-semibold text-ink">Already used Lumenia on another phone?</p>
-        <p className="mt-1 text-sm text-ink-soft">
-          Don&apos;t start over — bring your money here with Face ID, or your email and password.
-        </p>
-        <Link
-          href="/account"
-          className="mt-2 inline-block text-sm font-medium text-money underline-offset-2 hover:underline"
-        >
-          Bring my money back
+/** The page around every beat: the wordmark, Back where it applies, the light behind. */
+function Frame({
+  step,
+  beat,
+  onBack,
+  children,
+}: {
+  step: Step;
+  beat?: string;
+  onBack?: () => void;
+  children: ReactNode;
+}) {
+  const shown = beat ?? step;
+  // The drifting lights belong to the greeting and to the two arrivals, not to the questions.
+  const lights = shown === "hello" || shown === "new" || shown === "restored";
+  return (
+    <div className="fr" data-step={step}>
+      <div className="fr-glow" aria-hidden="true" />
+      {lights && <LumenField className="fr-field" />}
+      <header className="fr-top">
+        {onBack && (
+          <button type="button" className="fr-back" onClick={onBack}>
+            <ArrowLeft className="size-4" aria-hidden="true" />
+            Back
+          </button>
+        )}
+        <Link href="/" className="fr-brand" aria-label="Lumenia home">
+          {/* Wordmark swaps per theme (its paper-filled counters only read on light). */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand-kit-assets/logo-wordmark-t.svg" alt="" className="site-wordmark-light" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand-kit-assets/logo-wordmark-dark.svg" alt="" className="site-wordmark-dark" />
         </Link>
-      </MoneyCard>
+      </header>
+      <main key={shown} className="fr-main">
+        {children}
+      </main>
     </div>
+  );
+}
+
+/** a. The greeting from the landing, and one button. */
+function HelloBeat({ heading, onStart }: { heading?: HeadingRef; onStart?: () => void }) {
+  return (
+    <>
+      <div className="fr-hello">
+        <div className="fr-bubble">
+          <div className="fr-bubble-top" aria-hidden="true">
+            <span className="fr-bubble-mark">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/brand-kit-assets/mark-link.webp" alt="" width={18} height={18} />
+            </span>
+            <span className="fr-bubble-time">now</span>
+          </div>
+          <h1 ref={heading} tabIndex={-1} className="fr-bubble-text">
+            Hey, I&apos;ve got a message for you.
+          </h1>
+          <span className="fr-bubble-tail" aria-hidden="true" />
+        </div>
+        <Mascot pose="messenger" size="hero" priority alt="The Lumenia messenger, holding a glowing envelope" />
+      </div>
+      {/* Held back (space kept) until the keystore has answered: someone who already has an account
+          is on their way to /home and should not be offered a start they do not need. */}
+      <div className="fr-actions" data-ready={onStart ? "true" : "false"}>
+        <PrimaryButton onClick={onStart} disabled={!onStart}>
+          Get started
+        </PrimaryButton>
+      </div>
+    </>
+  );
+}
+
+/** b. The one question. */
+function AskBeat({
+  heading,
+  ready,
+  busy,
+  error,
+  onNew,
+  onRestore,
+}: {
+  heading: HeadingRef;
+  ready: boolean;
+  busy: boolean;
+  error: string | null;
+  onNew: () => void;
+  onRestore: () => void;
+}) {
+  return (
+    <>
+      <Mascot pose="wave" size="lg" />
+      <h1 ref={heading} tabIndex={-1} className="fr-title">
+        Do you already have a Lumenia account?
+      </h1>
+      <div className="fr-actions">
+        <PrimaryButton loading={busy} loadingLabel="Opening your account..." disabled={!ready} onClick={onNew}>
+          No, I&apos;m new here
+        </PrimaryButton>
+        <button type="button" className="fr-btn-quiet" disabled={busy || !ready} onClick={onRestore}>
+          Yes, bring it here
+        </button>
+        {error && (
+          <p className="fr-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** c. The arrival. Reached only once the account exists. */
+function InBeat({ heading, onContinue }: { heading: HeadingRef; onContinue: () => void }) {
+  return (
+    <>
+      <Mascot pose="celebrate" size="lg" enter="pop" />
+      <h1 ref={heading} tabIndex={-1} className="fr-title">
+        You&apos;re in.
+      </h1>
+      <p className="fr-lead">
+        Your account lives on this phone. It starts with practice money, so you can try everything
+        for free.
+      </p>
+      <div className="fr-actions">
+        <PrimaryButton onClick={onContinue}>See my money</PrimaryButton>
+      </div>
+    </>
+  );
+}
+
+/** d. Bringing an account here: the existing restore components, framed by the phone pose. */
+function RestoreBeat({
+  heading,
+  faceCapable,
+  found,
+  restored,
+  locked,
+  onFound,
+  onDone,
+  onContinue,
+}: {
+  heading: HeadingRef;
+  faceCapable: boolean;
+  /** Face ID found the account; its own card now carries the lock step, so email steps aside. */
+  found: boolean;
+  restored: boolean;
+  /** Read from the account itself, not assumed: the closing line asserts a safety property. */
+  locked: boolean;
+  onFound: () => void;
+  onDone: () => void;
+  onContinue: () => void;
+}) {
+  if (restored) {
+    return (
+      <>
+        <Mascot pose="thumbsup" size="lg" enter="pop" />
+        <h1 ref={heading} tabIndex={-1} className="fr-title">
+          Your money is back.
+        </h1>
+        <p className="fr-lead">
+          {locked
+            ? "Only your password can spend it on this phone."
+            : "It isn't locked yet, so anyone holding this phone could spend it. You can lock it any time from your Account."}
+        </p>
+        <div className="fr-actions">
+          <PrimaryButton onClick={onContinue}>See my money</PrimaryButton>
+        </div>
+      </>
+    );
+  }
+  return (
+    <>
+      <Mascot pose="phone" size="md" />
+      <h1 ref={heading} tabIndex={-1} className="fr-title">
+        Welcome back.
+      </h1>
+      <p className="fr-lead">
+        {faceCapable
+          ? "Bring your account here with Face ID, or with the email you backed it up with."
+          : "Bring your account here with the email you backed it up with."}
+      </p>
+      <div className="fr-restore">
+        <FindWithFaceId onFound={onFound} onDone={onDone} />
+        {!found && (
+          <MoneyCard className="p-5">
+            <p className="font-semibold text-ink">With your email</p>
+            <p className="mb-3 mt-1 text-sm text-pretty text-ink-soft">
+              We&apos;ll send you a code, then your password opens it.
+            </p>
+            <RecoveryFlow mode="restore" onDone={onDone} />
+          </MoneyCard>
+        )}
+      </div>
+    </>
   );
 }

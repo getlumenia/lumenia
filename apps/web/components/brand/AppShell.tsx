@@ -91,15 +91,16 @@ function StartSendingLink() {
      already becomes one in three taps. Nothing about a practice account needs activating, so the
      pill was a standing instruction to go and do work that does not exist.
      On real money it still means something: an account that is not backed up, or not on the pilot
-     list, genuinely cannot send yet, and /start is where that is explained. */
+     list, genuinely cannot send yet, and /activate is where that is explained. (The checklist lived
+     at /start until /start became the first-run entry, which sends anyone with an account home.) */
   if (network !== "public") return null;
   const ready = account.phase === 2 && pilotState === "approved";
   if (ready) return null;
   return (
     <Link
-      href="/start"
+      href="/activate"
       className="app-nav-cta"
-      data-active={pathname === "/start"}
+      data-active={pathname === "/activate"}
       /* The pill has room for one word; the sentence it stands for goes to anyone who needs it
          spelled out, and to every screen reader. */
       title="Activate your account so you can send money"
@@ -187,6 +188,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     observer.observe(row);
     return () => observer.disconnect();
   }, [pathname]);
+
+  /**
+   * /start, the first run, gets no shell at all: no nav bar, no action bar, no bell. Its first screen
+   * is meant to hold the greeting and one button and nothing else, and it draws its own centred
+   * wordmark the way the landing's greeting does. Nobody on it has an account yet (it sends anyone
+   * who does to /home), so none of the shell's controls would have anything to act on. The toast
+   * host stays: it is not chrome, it is where a confirmation lands.
+   */
+  if (pathname === "/start") {
+    return (
+      <div className="app-pw">
+        {children}
+        <ToastHost />
+      </div>
+    );
+  }
+
   /**
    * The welcome screen is the one surface that gets the chrome taken away.
    *

@@ -27,6 +27,7 @@ import { useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
 import { hasBackup } from "../../../lib/recovery-api";
+import { Mascot } from "../../../components/brand/Mascot";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { HandleCard } from "../../../components/brand/HandleCard";
 import { AccountsCard } from "../../../components/brand/AccountsCard";
@@ -63,13 +64,16 @@ export default function SettingsPage() {
           <h1 className="text-xl font-bold text-ink">Settings</h1>
         </header>
         <MoneyCard className="p-5">
+          {/* An empty state is one of the messenger's beats: a wave, since nobody is here yet. */}
+          <Mascot pose="wave" size="sm" className="mb-4" />
           <p className="font-semibold text-ink">There is no account on this phone yet.</p>
           <p className="mt-1 text-sm text-ink-soft">
             An account appears here the moment someone sends you money with a link — or you can open
             one yourself, on practice money, in a few seconds.
           </p>
+          {/* /start is the one way in: it opens an account here, or brings one back from another phone. */}
           <Link
-            href="/welcome?start=1"
+            href="/start"
             className="mt-4 inline-flex rounded-full border border-line px-4 py-2.5 text-sm font-medium text-ink"
           >
             Get started
