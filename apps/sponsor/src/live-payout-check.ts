@@ -177,21 +177,27 @@ async function main(): Promise<void> {
     await HZ.submitTransaction(tx);
   }
 
+  /* The faucet dispenses FAUCET_AMOUNT (1 USDC since 2026-09-10), so the two payouts that must
+     land stay well inside it. Balances are compared in whole stroops, never as floats. */
+  const HAPPY = "0.30";
+  const MUXED = "0.20";
+  const stroops = (v: string): number => Math.round(Number.parseFloat(v) * 1e7);
+
   /* --- 1 + 2: the happy path, and the memo that decides whether a deposit is credited --- */
   const TAG = `LUMENIA-${Date.now().toString().slice(-8)}`;
   const before = await usdcBalance(exchange.publicKey(), USDC);
   const happy = await postExpectingSuccess("/payout", {
-    xdr: await buildPayout(sender, USDC, { destination: exchange.publicKey(), amount: "3.00", memo: TAG }),
+    xdr: await buildPayout(sender, USDC, { destination: exchange.publicKey(), amount: HAPPY, memo: TAG }),
     senderPublicKey: sender.publicKey(),
     destination: exchange.publicKey(),
-    amount: "3.00",
+    amount: HAPPY,
   });
   check("a 0-XLM sender can pay out (sponsor covers the fee)", happy.status === 200, `HTTP ${happy.status}`);
 
   const after = await usdcBalance(exchange.publicKey(), USDC);
   check(
     "the dollars actually arrived at the destination",
-    Number.parseFloat(after) - Number.parseFloat(before) === 3,
+    stroops(after) - stroops(before) === stroops(HAPPY),
     `${before} → ${after}`,
   );
 
@@ -214,15 +220,15 @@ async function main(): Promise<void> {
   const muxed = new MuxedAccount(new Account(exchange.publicKey(), "0"), "80085").accountId();
   const beforeMux = await usdcBalance(exchange.publicKey(), USDC);
   const muxedRes = await postExpectingSuccess("/payout", {
-    xdr: await buildPayout(sender, USDC, { destination: muxed, amount: "1.50" }),
+    xdr: await buildPayout(sender, USDC, { destination: muxed, amount: MUXED }),
     senderPublicKey: sender.publicKey(),
     destination: muxed,
-    amount: "1.50",
+    amount: MUXED,
   });
   check("a muxed M… destination is accepted with no memo at all", muxedRes.status === 200, `HTTP ${muxedRes.status}`);
   check(
     "the muxed payout landed on the underlying account",
-    Number.parseFloat(await usdcBalance(exchange.publicKey(), USDC)) - Number.parseFloat(beforeMux) === 1.5,
+    stroops(await usdcBalance(exchange.publicKey(), USDC)) - stroops(beforeMux) === stroops(MUXED),
   );
 
   /* --- 4-8: the rejections. Each must be refused by the deployed POLICY, with its own

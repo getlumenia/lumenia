@@ -101,10 +101,12 @@ async function main(): Promise<void> {
   const after = await postSettled("/recovery-alias-fetch", { id: aliasId });
   check("...and the refused attempt created NO alias row", after.status === 404, `HTTP ${after.status}`);
 
-  /* The un-OTP'd route must still be bounded. Hammer one id until the limiter answers. */
+  /* The un-OTP'd route must still be bounded. Hammer one id until the limiter answers. The
+     per-account cap is 5 a minute by default and 15 on the testnet Worker (wrangler.toml
+     ACCOUNT_RATE_CAP), so 20 tries cross either. */
   const hammerId = randomId();
   let sawLimit = false;
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 20; i++) {
     const r = await post("/recovery-alias-fetch", { id: hammerId });
     if (r.status === 429) {
       sawLimit = true;
