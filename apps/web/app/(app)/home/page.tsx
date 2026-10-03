@@ -27,6 +27,7 @@ import { isNeedsPassword } from "../../../lib/signer-error";
 import { indicativeRate, getLiveRate } from "../../../lib/rate";
 import { formatUsd } from "../../../lib/money";
 import { BalanceHeader } from "../../../components/brand/BalanceHeader";
+import { Mascot } from "../../../components/brand/Mascot";
 import { ActivityRow } from "../../../components/brand/ActivityRow";
 import { LockMoneyCard } from "../../../components/brand/LockMoneyCard";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
@@ -220,30 +221,26 @@ export default function HomePage() {
     return <p className="py-10 text-center text-ink-soft">Loading…</p>;
   }
 
-  // No local account yet — honest empty (someone must send you a link first),
-  // plus the one thing a person with no money CAN do here: ask for some.
+  // No local account yet: an honest empty with the waving messenger, ONE way in (/start opens an
+  // account here or brings one back from another phone), and the one thing a person with no money
+  // can also do from here: ask for some. It used to offer four links; a first-timer who deep-linked
+  // here needs one path into the product, not a menu.
   if (!account) {
     return (
-      <div className="flex flex-col items-center gap-3 py-16 text-center">
+      <div className="flex flex-col items-center gap-3 py-12 text-center">
+        <Mascot pose="wave" size="md" />
         <h1 className="text-xl font-bold text-ink">No money here yet</h1>
         <p className="max-w-xs text-ink-soft">
           When someone sends you money with a link, you claim it and it shows up here.
         </p>
         <Link
-          href="/request"
+          href="/start"
           className="mt-2 flex h-12 items-center justify-center rounded-full bg-money px-6 text-sm font-semibold text-primary-foreground"
         >
+          Get started
+        </Link>
+        <Link href="/request" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
           {copy.claim.ctaRequest}
-        </Link>
-        {/* A first-timer who deep-linked here needs a path INTO the product, not a wall. */}
-        <Link href="/try" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
-          See how receiving works
-        </Link>
-        <Link href="/how-it-works" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
-          See how it works
-        </Link>
-        <Link href="/claimed" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
-          What is this?
         </Link>
       </div>
     );
@@ -387,9 +384,11 @@ export default function HomePage() {
         {loadingData && activity.length === 0 ? (
           <p className="py-6 text-center text-sm text-ink-soft">Loading…</p>
         ) : activity.length === 0 ? (
-          <p className="py-6 text-center text-sm text-ink-soft">
-            No activity yet. Send your first link.
-          </p>
+          /* An empty state is one of the messenger's beats: the first link is the thing to do. */
+          <div className="flex flex-col items-center gap-2 py-4 text-center">
+            <Mascot pose="messenger" size="sm" />
+            <p className="text-sm text-ink-soft">No activity yet. Send your first link.</p>
+          </div>
         ) : (
           <div className="rounded-[20px] border border-line bg-surface px-4">
             {activity.slice(0, 5).map((a) => (
