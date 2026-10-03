@@ -39,6 +39,10 @@ const SLIDES: Slide[] = [
             Send dollars by link. The person receiving needs{" "}
             <b>no wallet, no app and no XLM</b>.
           </p>
+          <p className="dk-dim">
+            As presented on 20 Sept 2026. The lira rail on these slides was removed from the product
+            on 3 Oct 2026.
+          </p>
         </div>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img

@@ -6,8 +6,8 @@ name: CI
 # They stay as the local + post-deploy gates. Everything here passes offline: typecheck, the
 # contract security gate (clippy strict + tests + audit/deny + coverage), the anti-drain
 # validator, the other offline sponsor suites (kms/caps/channels/pilot/recovery-store/identity),
-# the web self-tests (recovery/claimpw/receive/horizon/claimerr/suggest/txguard/money/anchor/
-# cctp-web/group/swap/extseam/walletkit/agentmcp), a production web build, and the browser
+# the web self-tests (recovery/claimpw/receive/horizon/claimerr/suggest/txguard/money/cctp-web/
+# group/swap/extseam/walletkit/agentmcp), a production web build, and the browser
 # extension (typecheck, its offline self-tests, the Chrome + Firefox build and the Firefox lint,
 # with both zips kept as a build artifact).
 
@@ -63,7 +63,7 @@ jobs:
           pnpm --filter @lumenia/sponsor test:identity
           pnpm --filter @lumenia/sponsor test:identity-routes
           pnpm --filter @lumenia/sponsor test:soroban-relay
-      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + anchor + cctp-web + group + swap + extseam + walletkit + agentmcp)
+      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + cctp-web + group + swap + extseam + walletkit + agentmcp)
         run: |
           pnpm --filter @lumenia/web test:recovery
           pnpm --filter @lumenia/web test:claimpw
@@ -73,7 +73,6 @@ jobs:
           pnpm --filter @lumenia/web test:suggest
           pnpm --filter @lumenia/web test:txguard
           pnpm --filter @lumenia/web test:money
-          pnpm --filter @lumenia/web test:anchor
           pnpm --filter @lumenia/web test:cctp-web
           pnpm --filter @lumenia/web test:group
           pnpm --filter @lumenia/web test:swap

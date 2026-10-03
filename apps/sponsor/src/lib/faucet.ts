@@ -37,9 +37,8 @@ export interface FaucetResult {
  * At 0.5 a single top-up onboards forty people instead of one, which is what a room full of
  * strangers actually needs. Nobody trying the flow is counting the dollars.
  */
-/* Raised to 1.0 on 2026-09-10 (owner decision): the sandbox anchor refuses any cash-out under
- * 1 USDC, so a half-dollar left a first-time practice user one faucet tap short of trying the
- * bank rail. One tap, one dollar, one cash-out. */
+/* Raised to 1.0 on 2026-09-10 (owner decision): one tap, one practice dollar. At this amount a
+ * single top-up from Circle's faucet (20 USDC per address every two hours) serves twenty people. */
 export const FAUCET_AMOUNT = "1";
 
 export async function faucetHandler(

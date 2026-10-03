@@ -37,8 +37,8 @@
  *     set holds only accounts that created a link, so `funnel.referral` = claimed ∩ referral is
  *     the honest "recipient became a sender" figure. `acted`/`both` stay, labelled as the mixed
  *     "did anything with the money" figure.
- *   - BANK CASH-OUT separately. `cashout_bank_sent` (the SEP-6 anchor leg, what judges weigh) is
- *     distinct from `cashout_sent` (dollars sent to an exchange address). Both count as acting.
+ *   - BANK CASH-OUT separately, as `cashout_bank_sent` (the SEP-6 anchor leg). Removed on
+ *     2026-10-03 with the anchor; see REMOVED below.
  *   - CLAIM DURATION as buckets. The web sends `dur` (whole seconds, claim opened to claim
  *     succeeded, measured on the device) and it is counted into five buckets. No timestamps are
  *     stored, so no per-person timing exists anywhere.
@@ -52,9 +52,16 @@
  *   - TEAM EXCLUSION. `EVENTS_EXCLUDE_AIDS` (comma-separated hashed account ids; compute one with
  *     `pnpm --filter @lumenia/sponsor aid G...`) drops every event those accounts send, before any
  *     counter is touched. Events with no account (`claim_opened`) cannot be excluded this way.
- *   - NEW EVENTS for the event build: `deposit_started` / `deposit_completed` (TRY in over SEP-6),
- *     `cctp_funded` (Circle CCTP inbound), `wallet_funded` (Stellar Wallets Kit), and
- *     `link_shared` (the share or copy button, vs merely creating a link).
+ *   - NEW EVENTS for the event build: `cctp_funded` (Circle CCTP inbound), `wallet_funded`
+ *     (Stellar Wallets Kit) and `link_shared` (the share or copy button, vs merely creating a
+ *     link). The two lira deposit events added with them are gone; see REMOVED below.
+ *
+ * REMOVED, 2026-10-03. `cashout_bank_sent`, `deposit_started` and `deposit_completed` counted the
+ * sandbox anchor's bank cash-out and lira deposit. The anchor and both of its screens were removed
+ * (no mock integrations, no fiat rails), so the names are off the allowlist: a beacon carrying one
+ * is refused like any unknown event, and the summary no longer reads their counters. Nothing
+ * already stored was deleted: accounts those events put into the funnel sets before the removal
+ * are still members, so `acted` and `repeat` keep counting them.
  *
  * SOURCE, 2026-10-02. The sender-side browser extension beacons from a service worker and marks its
  * events `src: "ext"`. They are counted as usual AND again under `ev:<net>:x:ext:*` (all-time and
@@ -88,14 +95,6 @@ const ALLOWED_EVENTS = new Set<string>([
   // read about cashing out from people who did it. Carries the hashed account.
   // Must stay in step with apps/web/lib/events.ts.
   "cashout_sent",
-  // The same step through the SEP-6 anchor (/send-out/bank): lira on a bank rail, which is the
-  // leg the hackathon jury weighs. Kept apart from cashout_sent so the anchor leg has its own
-  // number. Carries the hashed account.
-  "cashout_bank_sent",
-  // TRY in over SEP-6 (the deposit screen, built at the event): a deposit opened, and one the
-  // anchor completed on chain. Carry the hashed account.
-  "deposit_started",
-  "deposit_completed",
   // A link account funded from another chain via Circle CCTP (relayed by the sponsor).
   "cctp_funded",
   // A link funded by an external Stellar wallet through Stellar Wallets Kit.
@@ -105,7 +104,7 @@ const ALLOWED_EVENTS = new Set<string>([
 /** The two funnel stages, by the event that proves the person reached them. */
 const FUNNEL_IN = "claim_succeeded";
 /** "Acted": did anything with the money. Mixed on purpose; the referral set is the pure one. */
-const FUNNEL_OUT = new Set(["send_link_created", "cashout_sent", "cashout_bank_sent"]);
+const FUNNEL_OUT = new Set(["send_link_created", "cashout_sent"]);
 /** "Referral": the recipient became a SENDER. This is the H3-relevant set, and only this one. */
 const REFERRAL_EVENT = "send_link_created";
 /**
@@ -113,7 +112,7 @@ const REFERRAL_EVENT = "send_link_created";
  * the second puts it into `repeat`. Funding events count: a person who claimed and then topped up
  * with their own money took a second action, which is exactly the signal the growth team asked for.
  */
-const VALUE_EVENTS = new Set([...FUNNEL_OUT, "deposit_completed", "cctp_funded", "wallet_funded"]);
+const VALUE_EVENTS = new Set([...FUNNEL_OUT, "cctp_funded", "wallet_funded"]);
 
 /**
  * Claim duration buckets, in whole seconds from `claim_opened` to `claim_succeeded` as measured on
@@ -310,7 +309,10 @@ export interface EventsSummary {
   funnel: {
     /** accounts that completed a claim */
     claimed: number;
-    /** accounts that later moved money onward — a link, or out to an exchange or a bank rail */
+    /**
+     * accounts that later moved money onward: a link, or out to an exchange (plus any that the
+     * removed bank cash-out added before 2026-10-03)
+     */
     acted: number;
     /** claimed ∩ acted: the honest claim→any-second-action number (mixed; see `referral`) */
     both: number;

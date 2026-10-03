@@ -27,7 +27,6 @@ import { AlertTriangle, Copy, Check, QrCode } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { activeNetwork } from "../../../lib/network";
-import { anchorHomeDomain } from "../../../lib/anchor";
 import { loadBalance, loadTotalUsd, loadXlmBalance } from "../../../lib/horizon";
 import { formatXlm, shouldOfferConversion, spendableXlm } from "../../../lib/swap";
 import { prepareAccount } from "../../../lib/sponsor";
@@ -93,8 +92,8 @@ export default function AddMoneyPage() {
     { enabled: addresses.length > 0 },
   );
 
-  /* XLM that lands in a Lumenia account is money no rail here can take: the link send, the
-     cash-out and the lira rail all settle in dollars. Read it once, so the conversion card below
+  /* XLM that lands in a Lumenia account is money no rail here can take: the link send and the
+     cash-out both settle in dollars. Read it once, so the conversion card below
      appears only when there is something above the ledger's own reserve to convert AND this
      account can already hold the dollars it would become. A failed read shows no card at all
      rather than an invitation that would fail. */
@@ -221,25 +220,6 @@ export default function AddMoneyPage() {
         </MoneyCard>
       )}
 
-      {/* Lira in through the bank rail, when one is connected and this device is on the test
-          network (the rail is a sandbox anchor). Shown only then, so nobody is offered a door
-          that opens onto nothing. */}
-      {anchorHomeDomain() && !activeNetwork().isMainnet && (
-        <MoneyCard className="p-4">
-          <p className="text-sm font-semibold text-ink">Add lira by bank transfer</p>
-          <p className="mt-1 text-sm text-ink-soft">
-            Send lira from your bank with a reference; the rail pays the dollars into this account.
-            Test network, sandbox bank.
-          </p>
-          <Link
-            href="/add-money/bank"
-            className="mt-3 inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
-          >
-            Add lira
-          </Link>
-        </MoneyCard>
-      )}
-
       {/* USDC from Base through Circle CCTP (test network): burned on Base, minted here, the
           Stellar side paid by the sponsor. Testnet only, like the relay route behind it. */}
       {!activeNetwork().isMainnet && (
@@ -265,8 +245,8 @@ export default function AddMoneyPage() {
         <MoneyCard className="p-4">
           <p className="text-sm font-semibold text-ink">You have XLM sitting here</p>
           <p className="mt-1 text-sm text-ink-soft">
-            {formatXlm(convertible)} XLM in this account. Lumenia moves dollars and the lira rail settles in dollars
-            only, so XLM cannot go out as it is. One transaction turns it into dollars in this same account.
+            {formatXlm(convertible)} XLM in this account. Lumenia moves dollars only, so XLM cannot go out
+            as it is. One transaction turns it into dollars in this same account.
           </p>
           <Link
             href="/add-money/convert"

@@ -27,7 +27,8 @@ MIN_DROP_USDC = "0.01"
 # TESTNET USDC = Circle's own testnet issuer (home_domain centre.io), since 2026-09-06. It was this
 # project's own practice issuer (GDO7HI2W…) until then. The Turkish sandbox ramp settles Circle's
 # asset and no other, so while the two named different assets an anchor dollar could not travel
-# through a Lumenia link. Links minted against the old asset still exit: their escrow is in
+# through a Lumenia link (that ramp was removed on 2026-10-03; Circle CCTP mints this same asset,
+# so it stays). Links minted against the old asset still exit: their escrow is in
 # LUMENDROP_LEGACY_CONTRACTS below, which is read and exit only.
 USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
 # v2 Soroban LumenDrop escrow (public contract id) — enables the /v2-deposit,

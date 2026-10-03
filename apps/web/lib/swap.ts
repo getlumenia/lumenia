@@ -1,12 +1,12 @@
 /**
  * Turning the XLM an account holds into the dollars the rails actually settle in.
  *
- * WHY THIS EXISTS, in one sentence: the lira rail settles in USDC and refuses everything else, so
- * an account holding XLM cannot reach it at all. Someone pays you in XLM, or you fund the account
- * from a wallet that only sends XLM, and the money is on the ledger but no product surface can
- * move it: /send-out, the link send and the lira rail all speak dollars. This module converts what
- * the account holds into dollars ONCE, at a price read from the order book, with a bound under it,
- * into the same account.
+ * WHY THIS EXISTS, in one sentence: every way out of a Lumenia account settles in USDC and refuses
+ * everything else, so an account holding XLM cannot use any of them. Someone pays you in XLM, or
+ * you fund the account from a wallet that only sends XLM, and the money is on the ledger but no
+ * product surface can move it: /send-out and the link send both speak dollars. This module converts
+ * what the account holds into dollars ONCE, at a price read from the order book, with a bound under
+ * it, into the same account.
  *
  * WHAT IT IS NOT. Nothing is held anywhere, by us or by anyone else. There is no position, no
  * counterparty holding the money overnight and no second asset left behind: one Stellar path

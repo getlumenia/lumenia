@@ -183,9 +183,9 @@ export interface PayoutInput {
   /**
    * Called with the payment's identity the moment it exists and BEFORE it is handed to the
    * sponsor. A caller that records this first can, after a crash, a reload or a closed tab, ask
-   * the ledger what became of the payment instead of assuming nothing happened. Same reasoning as
-   * the latch in lib/offramp.ts: an attempt that was never written down looks like an attempt
-   * never made, and on this screen that reading pays an exchange twice.
+   * the ledger what became of the payment instead of assuming nothing happened. An attempt that was
+   * never written down looks like an attempt never made, and on this screen that reading pays an
+   * exchange twice.
    */
   onHandedOver?: (payment: { hash: string; retrySafeAfter: number }) => void;
 }

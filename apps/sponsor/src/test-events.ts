@@ -146,13 +146,16 @@ check("acted still counts both", s.funnel.acted === 2 && s.funnel.both === 2, `a
 check("referral counts only the account that created a link", s.funnel.referral === 1, `got ${s.funnel.referral}`);
 check("referral rate is referral/claimed", s.funnel.referralRate === 0.5, `got ${s.funnel.referralRate}`);
 
-console.log("\n[10] the bank rail leg has its own number, and it counts as acting");
-await recordEvent({ event: "claim_succeeded", cid: "dddd4444", aid: "3333333333333333" });
-await recordEvent({ event: "cashout_bank_sent", cid: "3333333333333333", aid: "3333333333333333" });
+console.log("\n[10] the bank-rail events removed on 2026-10-03 are refused and write nothing");
+// The sandbox anchor and its two screens are gone, so nothing may still count them: a stale build
+// or a hand-made beacon carrying one of these names is an unknown event, like any other.
+const REMOVED = ["cashout_bank_sent", "deposit_started", "deposit_completed"];
+for (const e of REMOVED) check(`refuses ${e}`, !accepts(e));
+const logBeforeRemoved = kv.log.length;
+for (const e of REMOVED) await recordEvent({ event: e, cid: "3333333333333333", aid: "3333333333333333" });
+check("no store command was issued for any of them", kv.log.length === logBeforeRemoved, `${kv.log.length - logBeforeRemoved} issued`);
 s = (await eventsSummary())!;
-check("cashout_bank_sent is counted apart from cashout_sent", s.totals.cashout_bank_sent === 1 && s.totals.cashout_sent === 1);
-check("the bank cash-out account is in the acted set", s.funnel.acted === 3 && s.funnel.both === 3, `acted ${s.funnel.acted}`);
-check("...but not in the referral set", s.funnel.referral === 1);
+check("the summary does not report them", REMOVED.every((e) => !(e in s.totals) && !(e in s.seeded.totals) && !(e in s.bySource.ext)));
 
 console.log("\n[11] claim duration is counted into buckets, never stored per person");
 await recordEvent({ event: "claim_succeeded", cid: "eeee5555", aid: "4444444444444444", dur: 12 });
@@ -176,10 +179,10 @@ console.log("\n[12] REPEATS: a second value event by the same account is one per
 s = (await eventsSummary())!;
 // Account 1 created four links (sections 4 and 5): it is already a repeater.
 check("the four-link sender is one repeater", s.funnel.repeat === 1, `got ${s.funnel.repeat}`);
-await recordEvent({ event: "cashout_bank_sent", cid: "2222222222222222", aid: "2222222222222222" });
+await recordEvent({ event: "cashout_sent", cid: "2222222222222222", aid: "2222222222222222" });
 s = (await eventsSummary())!;
-check("cash-out then bank cash-out by the same account is a second repeater", s.funnel.repeat === 2);
-await recordEvent({ event: "deposit_completed", cid: "4444444444444444", aid: "4444444444444444" });
+check("a second cash-out by the same account is a second repeater", s.funnel.repeat === 2);
+await recordEvent({ event: "cctp_funded", cid: "4444444444444444", aid: "4444444444444444" });
 s = (await eventsSummary())!;
 check("one funding event alone is not a repeat", s.funnel.repeat === 2);
 await recordEvent({ event: "wallet_funded", cid: "4444444444444444", aid: "4444444444444444" });
@@ -208,7 +211,7 @@ const beforeTeam = (await eventsSummary())!;
 const keysBefore = kv.nums.size;
 await recordEvent({ event: "claim_succeeded", cid: "team0001", aid: "bbbbbbbbbbbbbbbb", seeded: 1, dur: 9 });
 await recordEvent({ event: "send_link_created", cid: "bbbbbbbbbbbbbbbb", aid: "bbbbbbbbbbbbbbbb" });
-await recordEvent({ event: "cashout_bank_sent", cid: "cccccccccccccccc", aid: "cccccccccccccccc" });
+await recordEvent({ event: "cashout_sent", cid: "cccccccccccccccc", aid: "cccccccccccccccc" });
 s = (await eventsSummary())!;
 check("no total moved", JSON.stringify(s.totals) === JSON.stringify(beforeTeam.totals));
 check("no funnel figure moved", JSON.stringify(s.funnel) === JSON.stringify(beforeTeam.funnel));
@@ -219,17 +222,20 @@ delete process.env.EVENTS_EXCLUDE_AIDS;
 await recordEvent({ event: "send_link_created", cid: "bbbbbbbbbbbbbbbb", aid: "bbbbbbbbbbbbbbbb" });
 check("with the list cleared the same account counts again", (await eventsSummary())!.totals.send_link_created === beforeTeam.totals.send_link_created + 1);
 
-console.log("\n[15] the hackathon events exist on the allowlist");
-for (const e of ["link_shared", "cashout_bank_sent", "deposit_started", "deposit_completed", "cctp_funded", "wallet_funded"]) {
+console.log("\n[15] the event-build events exist on the allowlist");
+for (const e of ["link_shared", "cctp_funded", "wallet_funded"]) {
   check(`accepts ${e}`, accepts(e));
 }
 const beforeNew = (await eventsSummary())!;
 await recordEvent({ event: "link_shared", cid: "1111111111111111", aid: "1111111111111111" });
-await recordEvent({ event: "deposit_started", cid: "1111111111111111", aid: "1111111111111111" });
 await recordEvent({ event: "cctp_funded", cid: "1111111111111111", aid: "1111111111111111" });
 s = (await eventsSummary())!;
-check("they are counted", s.totals.link_shared === 1 && s.totals.deposit_started === 1 && s.totals.cctp_funded === 1);
-check("link_shared and deposit_started do not move the acted or referral sets", s.funnel.acted === beforeNew.funnel.acted && s.funnel.referral === beforeNew.funnel.referral, `acted ${beforeNew.funnel.acted} -> ${s.funnel.acted}`);
+check(
+  "they are counted",
+  s.totals.link_shared === beforeNew.totals.link_shared! + 1 && s.totals.cctp_funded === beforeNew.totals.cctp_funded! + 1,
+  `link_shared ${s.totals.link_shared}, cctp_funded ${s.totals.cctp_funded}`,
+);
+check("link_shared and cctp_funded do not move the acted or referral sets", s.funnel.acted === beforeNew.funnel.acted && s.funnel.referral === beforeNew.funnel.referral, `acted ${beforeNew.funnel.acted} -> ${s.funnel.acted}`);
 check("every allowlisted event appears in totals, zero or not", Object.keys(s.totals).length === Object.keys(s.seeded.totals).length && "wallet_funded" in s.totals);
 
 console.log("\n[16] EXTENSION traffic is counted apart: counters only, never per person");

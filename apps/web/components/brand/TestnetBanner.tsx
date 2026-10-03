@@ -3,8 +3,8 @@
 /**
  * TestnetBanner: retired as a permanent status bar (a finished product carries none), and brought
  * back for EVENT MODE only as a small network badge (hackathon build, 2026-09-19): on a stage where
- * the mainnet claim and the testnet lira rail are shown minutes apart, real and practice money must
- * never look alike. Outside event mode it renders nothing, exactly as before.
+ * the mainnet claim and the testnet lira rail (removed 2026-10-03) were shown minutes apart, real
+ * and practice money must never look alike. Outside event mode it renders nothing, exactly as before.
  *
  * The network is read after mount: it lives in this device's storage (lib/network activeNetwork),
  * so reading it during render would differ between the server and the phone.

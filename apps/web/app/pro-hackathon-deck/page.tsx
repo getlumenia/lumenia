@@ -10,7 +10,9 @@
  * machine reports.
  *
  * noindex: this is a submission artefact with a date on it, not a page we want ranking for
- * "Lumenia". Every number on it is measured and every claim is one the README backs.
+ * "Lumenia". Every number on it is measured and every claim is one the README backs. The lira
+ * rail it shows (a SEP-6 sandbox anchor) was removed from the product on 2026-10-03; the slides
+ * stay as presented and the cover says so.
  */
 import type { Metadata } from "next";
 import { Deck } from "./Deck";

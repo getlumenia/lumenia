@@ -49,7 +49,6 @@ import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { activeNetwork, explorerTx } from "../../../lib/network";
-import { anchorHomeDomain } from "../../../lib/anchor";
 
 import { netKey } from "../../../lib/scoped-store";
 const explorer = explorerTx;
@@ -412,8 +411,7 @@ export default function SendOutPage() {
            back. A reload or a crash between the hand-over and the answer used to leave nothing
            behind: the page came back as an empty form while the sponsor was still submitting,
            and the same amount could be paid again. Now the record exists first; if the answer
-           never arrives, the mount effect asks the ledger about this hash instead of assuming.
-           Same reasoning as the latch in lib/offramp.ts, here made to survive the tab. */
+           never arrives, the mount effect asks the ledger about this hash instead of assuming. */
         onHandedOver: ({ hash: h, retrySafeAfter }) => {
           const held: PendingPayout = { amount, at: new Date().toISOString(), hash: h, retrySafeAfter };
           try {
@@ -771,23 +769,6 @@ export default function SendOutPage() {
           </p>
         )}
       </header>
-
-      {/* The bank rail, when one is connected on this network: IBAN in, lira out, one approval.
-          Shown only when configured, so nobody is offered a door that opens onto nothing. */}
-      {anchorHomeDomain() && (
-        <MoneyCard className="p-4">
-          <p className="text-sm font-semibold text-ink">Cash out straight to a bank account</p>
-          <p className="mt-1 text-sm text-ink-soft">
-            The rail tells you its rate and the account it pays, you approve once. No exchange account needed.
-          </p>
-          <Link
-            href="/send-out/bank"
-            className="mt-3 inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
-          >
-            Cash out to my bank
-          </Link>
-        </MoneyCard>
-      )}
 
       {/* Been here before? Repeat the address that already worked. Fewer taps, and one
           fewer chance to paste something wrong. */}

@@ -73,12 +73,6 @@ const ALLOWED = new Set([
   // the gap between them is the honest answer to "do people want to off-ramp?".
   // Carries the hashed account. Must stay in step with apps/sponsor/src/lib/events.ts.
   "cashout_sent",
-  // The same step through the SEP-6 anchor (/send-out/bank): lira on a bank rail. Kept apart so
-  // the anchor leg, the one the hackathon jury weighs, has its own number.
-  "cashout_bank_sent",
-  // TRY in over SEP-6 (the deposit screen): opened, and completed on chain by the anchor.
-  "deposit_started",
-  "deposit_completed",
   // A link account funded from another chain via Circle CCTP (relayed by the sponsor).
   "cctp_funded",
   // A link funded by an external Stellar wallet through Stellar Wallets Kit.

@@ -12,13 +12,10 @@
  *     construction. Counts only: the counters never see an amount; every transfer is on the ledger.
  *     The board says that out loud under the real-money tiles, with the pre-measurement pilot's own
  *     figure AND its dollar value, so a zero there reads as a scope rather than as an absence.
- *  2. LIRA RAIL: the last deposit and cash-out completed ON THIS DEVICE (lib/rail-record.ts). The
- *     anchor lists a person's transfers only to that person's own session and we keep no server
- *     record of anyone's bank activity, so another device honestly shows "no run here yet".
- *  3. PARTNERS: Circle CCTP inbound with the two proven runs' hashes (19 Sept 2026, Base Sepolia to
+ *  2. PARTNERS: Circle CCTP inbound with the two proven runs' hashes (19 Sept 2026, Base Sepolia to
  *     Stellar testnet through the CctpForwarder) plus the live `cctp_funded` count; Stellar Wallets
  *     Kit only when its flag is on in this build.
- *  4. SCAN: a fresh practice link minted by the testnet sponsor's demo pool (`POST /demo-link`,
+ *  3. SCAN: a fresh practice link minted by the testnet sponsor's demo pool (`POST /demo-link`,
  *     testnet-only in the Worker), marked seeded=1 so it is counted as team-funded. The same link
  *     is printed under the code as text, because a judge reading this on a laptop cannot scan their
  *     own screen; its middle is hidden, because the link is a bearer key and a board on a projector
@@ -30,7 +27,6 @@
 import { useCallback, useEffect, useState } from "react";
 import QRCode from "react-qr-code";
 import { explorerTxOn, mainnetConfig, testnetConfig, type NetworkConfig } from "../../../lib/network";
-import { RAIL_LAST_DEPOSIT_KEY, RAIL_LAST_WITHDRAW_KEY, readRailRun, type RailRun } from "../../../lib/rail-record";
 import { walletsKitEnabled } from "../../../lib/wallets-kit";
 
 interface Summary {
@@ -124,58 +120,11 @@ function PeopleTiles({ load, real }: { load: Load; real: boolean }) {
   );
 }
 
-function RailRunView({ title, run, href }: { title: string; run: RailRun | null; href: string }) {
-  return (
-    <div className="ev-card">
-      <h3>{title}</h3>
-      {run ? (
-        <>
-          <div className="ev-row">
-            <span>When</span>
-            <b>{new Date(run.at).toLocaleTimeString()}</b>
-          </div>
-          {run.amountIn && (
-            <div className="ev-row">
-              <span>In</span>
-              <b>{run.amountIn}</b>
-            </div>
-          )}
-          {run.amountOut && (
-            <div className="ev-row">
-              <span>Out</span>
-              <b>{run.amountOut} USDC</b>
-            </div>
-          )}
-          <div className="ev-row">
-            <span>Time</span>
-            <b>{run.seconds} s</b>
-          </div>
-          {run.tx && (
-            <a className="ev-hash" href={explorerTxOn(testnetConfig(), run.tx)} target="_blank" rel="noreferrer">
-              {run.tx}
-            </a>
-          )}
-          <span className="ev-muted">Rail: {run.rail} (sandbox anchor, test network), SEP-10 sign-in and SEP-6.</span>
-        </>
-      ) : (
-        <>
-          <span className="ev-muted">No run on this device yet. The rail only shows a person their own transfers, and we keep no copy of anyone&apos;s.</span>
-          <a className="ev-btn" href={href}>
-            Run one now
-          </a>
-        </>
-      )}
-    </div>
-  );
-}
-
 export function EventBoard() {
   const main = mainnetConfig();
   const test = testnetConfig();
   const [real, setReal] = useState<Load>({ state: "loading" });
   const [practice, setPractice] = useState<Load>({ state: "loading" });
-  const [dep, setDep] = useState<RailRun | null>(null);
-  const [wd, setWd] = useState<RailRun | null>(null);
   const [link, setLink] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
   const [mintError, setMintError] = useState("");
@@ -184,9 +133,6 @@ export function EventBoard() {
     const [r, p] = await Promise.all([main ? readSummary(main) : Promise.resolve<Load>({ state: "unavailable", why: "Mainnet is not configured in this build." }), readSummary(test)]);
     setReal(r);
     setPractice(p);
-    // The rail record is written per network by the rail screens; the rail is testnet-only.
-    setDep(readRailRun(RAIL_LAST_DEPOSIT_KEY("testnet")));
-    setWd(readRailRun(RAIL_LAST_WITHDRAW_KEY("testnet")));
   }, [main, test]);
 
   useEffect(() => {
@@ -215,11 +161,9 @@ export function EventBoard() {
   }
 
   const cctpCount = practice.state === "ok" ? (practice.data.totals.cctp_funded ?? 0) : null;
-  const depCount = practice.state === "ok" ? (practice.data.totals.deposit_completed ?? 0) : null;
-  const wdCount = practice.state === "ok" ? (practice.data.totals.cashout_bank_sent ?? 0) : null;
 
   return (
-    <section className="stat-body" aria-label="Live event board: people, the lira rail and the partner runs">
+    <section className="stat-body" aria-label="Live event board: people and the partner runs">
       <div className="stat-inner">
         <div className="ev-head">
           <h2 className="stat-section-h">People, real money</h2>
@@ -249,21 +193,6 @@ export function EventBoard() {
         </div>
         <p className="stat-section-sub">The same product on the test network, where most guests try it first. Includes our own testing.</p>
         <PeopleTiles load={practice} real={false} />
-
-        <div className="ev-head">
-          <h2 className="stat-section-h">Lira rail: TRY to dollars and back</h2>
-          <span className="ev-badge">Testnet, sandbox anchor</span>
-        </div>
-        <p className="stat-section-sub">
-          SEP-1 discovery, SEP-10 sign-in and SEP-6 deposit and withdraw against the organisers&apos; sandbox
-          anchor. The anchor always meets a ready account: our sponsor opened it and its dollar
-          trustline for someone holding zero XLM.
-          {depCount !== null && wdCount !== null ? ` Counted so far: ${depCount} lira-in completed, ${wdCount} bank cash-outs sent.` : ""}
-        </p>
-        <div className="ev-two">
-          <RailRunView title="Last lira in (deposit)" run={dep} href="/add-money/bank" />
-          <RailRunView title="Last lira out (bank cash-out)" run={wd} href="/send-out/bank" />
-        </div>
 
         <div className="ev-head">
           <h2 className="stat-section-h">Partners</h2>

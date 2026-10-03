@@ -3,11 +3,11 @@
 /**
  * /add-money/convert - turn the XLM in this account into the dollars every rail here settles in.
  *
- * WHY THIS SCREEN EXISTS. Lumenia moves dollars: a link, a cash-out and the lira rail all speak
- * USDC and refuse everything else. So XLM that lands in a Lumenia account - someone paid in
- * lumens, or the account was funded from a wallet that only sends them - is money on the ledger
- * that no product surface can touch. One path payment, quoted first and bounded, turns it into
- * dollars in this same account, and then every rail will take it.
+ * WHY THIS SCREEN EXISTS. Lumenia moves dollars: a link and a cash-out both speak USDC and refuse
+ * everything else. So XLM that lands in a Lumenia account - someone paid in lumens, or the account
+ * was funded from a wallet that only sends them - is money on the ledger that no product surface
+ * can touch. One path payment, quoted first and bounded, turns it into dollars in this same
+ * account, and then every rail will take it.
  *
  * WHAT HAPPENS, in order: the price is read from Stellar's own order books (a read, nothing is
  * moved), a floor is put under it, the account's OWN key signs one operation whose destination is
@@ -20,7 +20,7 @@
  * the watchdog exactly as they are. The conversion is only offered to an account that already
  * holds XLM, so it can always pay.
  *
- * Test network only, like the two rails either side of it.
+ * Test network only, like the Base bridge beside it on /add-money.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -403,7 +403,7 @@ export default function ConvertPage() {
         <h1 className="text-xl font-bold text-ink">It is dollars now</h1>
         <p className="text-sm text-ink-soft">
           {usd !== null ? `You hold ${formatUsd(usd)} in this account.` : "The dollars are in this account."} They can go
-          out as a link, to an exchange, or through the lira rail.
+          out as a link or to an exchange.
         </p>
         {hash && (
           <MoneyCard className="p-4">
@@ -432,8 +432,8 @@ export default function ConvertPage() {
         <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">Test network</p>
         <h1 className="text-xl font-bold text-ink">Turn XLM into dollars</h1>
         <p className="mt-1 text-sm text-ink-soft">
-          Lumenia moves dollars, and the lira rail settles in dollars only. XLM sitting here cannot reach any of that as
-          it is. One transaction turns it into dollars, in this same account.
+          Lumenia moves dollars only, so XLM sitting here cannot go out as it is. One transaction turns it into
+          dollars, in this same account.
         </p>
       </header>
 

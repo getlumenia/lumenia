@@ -73,6 +73,8 @@ const MAINNET: NetworkConfig = {
  * arriving from that anchor could not travel through a Lumenia link at all. Second, it puts
  * practice money on the same issuer as real money, so the only difference between the two networks
  * is the network, which is one less thing that behaves differently in testing than in production.
+ * The ramp itself was removed on 2026-10-03; the second reason still holds, and Circle CCTP mints
+ * this same asset.
  *
  * Links already holding the old asset keep working: the escrow that holds them stays in the legacy
  * list, which is read and exit only.

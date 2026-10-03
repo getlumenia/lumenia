@@ -23,7 +23,8 @@ export type StellarNetwork = "testnet" | "mainnet";
  * disabled, the same posture as the mainnet asset). The reason is interoperability: the Turkish
  * sandbox ramp used at the September 2026 hackathon settles this asset and no other, so a dollar
  * from that anchor could not travel through a Lumenia link while the two sides named different
- * assets. Circle's faucet also becomes a valid funding source.
+ * assets. Circle's faucet also becomes a valid funding source. (That ramp integration was removed
+ * on 2026-10-03. The asset stays: it is also the USDC that Circle CCTP mints here.)
  *
  * Anything holding the old asset keeps working: the superseded escrow stays in
  * LUMENDROP_LEGACY_CONTRACTS, which is exit-only by design.
