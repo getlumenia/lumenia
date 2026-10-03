@@ -6,8 +6,10 @@ name: CI
 # They stay as the local + post-deploy gates. Everything here passes offline: typecheck, the
 # contract security gate (clippy strict + tests + audit/deny + coverage), the anti-drain
 # validator, the other offline sponsor suites (kms/caps/channels/pilot/recovery-store/identity),
-# the web self-tests (recovery/claimpw/receive/horizon/claimerr/suggest/txguard/money), and a
-# production web build.
+# the web self-tests (recovery/claimpw/receive/horizon/claimerr/suggest/txguard/money/anchor/
+# cctp-web/group/swap/extseam/walletkit/agentmcp), a production web build, and the browser
+# extension (typecheck, its offline self-tests, the Chrome + Firefox build and the Firefox lint,
+# with both zips kept as a build artifact).
 
 on:
   push:
@@ -61,7 +63,7 @@ jobs:
           pnpm --filter @lumenia/sponsor test:identity
           pnpm --filter @lumenia/sponsor test:identity-routes
           pnpm --filter @lumenia/sponsor test:soroban-relay
-      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + anchor)
+      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + anchor + cctp-web + group + swap + extseam + walletkit + agentmcp)
         run: |
           pnpm --filter @lumenia/web test:recovery
           pnpm --filter @lumenia/web test:claimpw
@@ -75,6 +77,9 @@ jobs:
           pnpm --filter @lumenia/web test:cctp-web
           pnpm --filter @lumenia/web test:group
           pnpm --filter @lumenia/web test:swap
+          pnpm --filter @lumenia/web test:extseam
+          pnpm --filter @lumenia/web test:walletkit
+          pnpm --filter @lumenia/web test:agentmcp
 
   build:
     name: Build web
@@ -127,10 +132,41 @@ jobs:
       - name: Coverage gate (lines ≥ 90%)
         run: cargo llvm-cov --fail-under-lines 90 --summary-only
 
+  # The browser extension (SOW 2, D1). Everything here is offline: the self-tests fake the Soroban
+  # RPC, the sponsor and the recovery server, and need no keys. The zips are kept so a reviewer can
+  # install exactly what CI built.
+  extension:
+    name: "Extension: typecheck + selftests + build + Firefox lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck - extension
+        run: pnpm --filter @lumenia/extension exec tsc --noEmit
+      - name: Self-tests - extension (url + links + send + session + restore + security + router + popup)
+        run: pnpm --filter @lumenia/extension test
+      - name: Build - extension (Chrome + Firefox)
+        run: pnpm --filter @lumenia/extension build
+      - name: Lint - Firefox build (web-ext)
+        run: pnpm --filter @lumenia/extension lint:firefox
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lumenia-extension-zips
+          path: apps/extension/dist/*.zip
+          if-no-files-found: error
+
   # A single required status to protect main against, if branch protection is ever turned on.
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: [quality, build, contract]
+    needs: [quality, build, contract, extension]
     steps:
       - run: echo "All CI checks passed."
