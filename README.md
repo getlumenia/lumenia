@@ -305,7 +305,7 @@ Sponsor env: the caps and switches are plain vars in `apps/sponsor/wrangler.toml
 
 ## Technologies
 
-- Next.js 16.3.2 with React 19.2.8, a PWA hosted on Vercel (git push to `main` deploys)
+- Next.js 16.3.8 with React 19.2.8, a PWA hosted on Vercel (git push to `main` deploys)
 - `@stellar/stellar-sdk` 16.3.0 in both apps: classic operations, Soroban invokes and simulation; the same copy the Wallets Kit resolves to; `packages/shared` still pins 16.1.0
 - `soroban-sdk` 26.1 with OpenZeppelin stellar-contracts 0.7.2 (`stellar-access`, `stellar-contract-utils`, `stellar-macros`) for LumenDrop, built with `stellar contract build` to `wasm32v1-none`
 - Cloudflare Workers with `nodejs_compat` for the sponsor: one codebase, two deployments from the same `wrangler.toml` (`lumenia-sponsor` on testnet, `lumenia-sponsor-mainnet` on mainnet)
