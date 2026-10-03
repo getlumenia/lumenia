@@ -31,26 +31,29 @@ package when the rule is broken; "Test" names the offline suite that holds it.
 | 4 | Five API permissions only (storage, alarms, contextMenus, activeTab, scripting); no optional permissions, no web-accessible resources, no content scripts, no `externally_connectable`. | `build.mjs:206`, `build.mjs:208`, `build.mjs:203` | Build |
 | 5 | No code built from strings: the bundles contain no `eval(`, `Function(`, string timers, `.constructor("...")`, `importScripts(`, dynamic `import(`, and no HTML assigned from a string. The one allowed occurrence is Preact's own `dangerouslySetInnerHTML` branch, which no source here uses (the build fails on that word under `src/`). | `build.mjs:113`, `build.mjs:136` | Build; counts in the shipped bundles: `eval(` 0, `Function(` 0, `import(` 0, `process.env` 0, `innerHTML` 0 in `background.js` and 3 (Preact) in `popup.js` |
 | 6 | The bundles are not minified, and every URL they contain is printed at build time (the remote-code scan). | `build.mjs:180`, `build.mjs:319` | Build output |
-| 7 | Only this extension's own pages may ask the worker anything: the sender must carry this extension's id AND a URL on its own extension origin (the paste function running inside a page reports the page's URL, so it is refused too). | `apps/extension/src/background/router.ts:333` | Test: `test/router.selftest.ts` [a] |
-| 8 | Every request is parsed by a strict schema before anything acts on it: unknown requests, extra keys and wrong types are refused. | `router.ts:340`, `apps/extension/src/lib/messages.ts:12` | Test: `test/router.selftest.ts` [b] |
-| 9 | The account key at rest is the website's own Phase-2 record (Argon2id from the password, then AES-GCM) in the extension's IndexedDB. | `apps/web/lib/keystore.ts` (reused unchanged), `apps/extension/src/background/account.ts:92` | Test: `test/restore.selftest.ts` (97 assertions, fake `/recovery-fetch`) |
-| 10 | The unlocked key lives only in `storage.session` (memory, cleared when the browser closes), readable only by trusted extension contexts, never by a content script. | `account.ts:135`, `apps/extension/src/background/index.ts:52` | Test: `test/session.selftest.ts` |
-| 11 | Auto-lock after 5, 15 or 60 minutes without use (default 15); the deadline is checked again at signing time, not only by the alarm; a refusal wipes the stored key. | `apps/extension/src/lib/session.ts:47`, `account.ts:202` | Test: `test/session.selftest.ts` (54) |
-| 12 | Key bytes are zeroed after each use. | `account.ts:103`, `account.ts:159`, `account.ts:220`, `account.ts:246` | Code |
-| 13 | Each full link (with its secret) is kept encrypted with AES-256-GCM under a key derived from the account key (HKDF-SHA-256), bound to the link's id. The key is never stored, so a locked extension cannot read a kept link back. | `apps/extension/src/lib/sealed.ts:34`, `sealed.ts:49`, `sealed.ts:94`, `account.ts:228` | Test: `test/security.selftest.ts` [a], [e] |
-| 14 | The list of links in `storage.local` never holds a link's secret, and belongs to the account the extension holds: another account's record is neither listed nor written. | `apps/extension/src/lib/types.ts:28`, `apps/extension/src/background/records.ts:16`, `records.ts:47` | Test: `test/security.selftest.ts` [d] |
+| 7 | Only this extension's own pages may ask the worker anything: the sender must carry this extension's id AND a URL on its own extension origin (the paste function running inside a page reports the page's URL, so it is refused too). | `apps/extension/src/background/router.ts:363` | Test: `test/router.selftest.ts` [a] |
+| 8 | Every request is parsed by a strict schema before anything acts on it: unknown requests, extra keys and wrong types are refused. | `router.ts:370`, `apps/extension/src/lib/messages.ts:12` | Test: `test/router.selftest.ts` [b] |
+| 9 | The account key at rest is the website's own Phase-2 record (Argon2id from the password, then AES-GCM) in the extension's IndexedDB, whether the account was restored or made here. | `apps/web/lib/keystore.ts` (reused unchanged), `apps/extension/src/background/account.ts:155` | Tests: `test/restore.selftest.ts` (97), `test/account.selftest.ts` [a] |
+| 10 | The unlocked key lives only in `storage.session` (memory, cleared when the browser closes), readable only by trusted extension contexts, never by a content script. | `account.ts:240`, `apps/extension/src/background/index.ts:52` | Test: `test/session.selftest.ts` |
+| 11 | Auto-lock after 5, 15 or 60 minutes without use (default 15); the deadline is checked again at signing time, not only by the alarm; a refusal wipes the stored key. | `apps/extension/src/lib/session.ts:47`, `account.ts:307` | Test: `test/session.selftest.ts` (54) |
+| 12 | Key bytes are zeroed after each use. | `account.ts:123`, `account.ts:160`, `account.ts:264`, `account.ts:325`, `account.ts:351` | Code |
+| 13 | Each full link (with its secret) is kept encrypted with AES-256-GCM under a key derived from the account key (HKDF-SHA-256), bound to the link's id. The key is never stored, so a locked extension cannot read a kept link back. | `apps/extension/src/lib/sealed.ts:34`, `sealed.ts:49`, `sealed.ts:94`, `account.ts:333` | Test: `test/security.selftest.ts` [a], [e] |
+| 14 | The list of links in `storage.local` never holds a link's secret, and belongs to the account the extension holds: another account's record is neither listed nor written; the mirror that scopes it is repaired from the keystore. | `apps/extension/src/lib/types.ts:28`, `apps/extension/src/background/records.ts:16`, `records.ts:47`, `account.ts:76` | Tests: `test/security.selftest.ts` [d], `test/account.selftest.ts` [d] |
 | 15 | The link is kept BEFORE the signed transfer is posted: if it cannot be kept, nothing is posted. | `apps/extension/src/background/send.ts:105`, `apps/web/lib/lumendrop.ts:375` | Test: `test/send.selftest.ts` [d], [h] |
-| 16 | Nothing is ever sent twice automatically. An unconfirmed send is settled by reading the escrow, never by sending again; "didn't go through" needs the sponsor's own JSON refusal raised before submission, or two empty escrow reads past the send's deadline plus five minutes, and a failed link is read once more an hour later. | `apps/extension/src/lib/links.ts:17`, `links.ts:82`, `links.ts:119`, `apps/extension/src/lib/errors.ts:148` | Tests: `test/links.selftest.ts` (216), `test/send.selftest.ts` (247), `test/url.selftest.ts` (227, against the real `createV2Link`) |
+| 16 | Nothing is ever sent twice automatically. An unconfirmed send is settled by reading the escrow, never by sending again; "didn't go through" needs the sponsor's own JSON refusal raised before submission, or two empty escrow reads past the send's deadline plus five minutes, and a failed link is read once more an hour later. | `apps/extension/src/lib/links.ts:17`, `links.ts:82`, `links.ts:119`, `apps/extension/src/lib/errors.ts:152` | Tests: `test/links.selftest.ts` (216), `test/send.selftest.ts` (247), `test/url.selftest.ts` (227, against the real `createV2Link`) |
 | 17 | While a send is unconfirmed, a second one needs the person's explicit "Send a new one anyway". | `send.ts:68` | Test: `test/send.selftest.ts` [e] |
 | 18 | The escrow records a claim and a take-back the same way, so a link whose take-back answer was lost reads "Closed", never a guess. | `links.ts:143` | Test: `test/links.selftest.ts` [c], [f] |
-| 19 | Real money needs a password-locked account, the pilot's approval, a send left and the one-time note; the network switch checks the same. A cached approval stands in for a failed check for at most five minutes. | `send.ts:78`, `router.ts:185`, `apps/extension/src/background/pilot.ts:23` | Tests: `test/send.selftest.ts` [e], `test/security.selftest.ts` [c] |
-| 20 | "Forget this account" waits for a running send or take-back, and refuses while links are still open (this browser holds the only list of them and the only way to take them back) unless the person chooses to forget anyway. | `router.ts:173`, `router.ts:176` | Test: `test/router.selftest.ts` [c], [d] |
-| 21 | One take-back per link at a time; a take-back that failed before it was posted is "nothing moved" for certain. | `router.ts:280`, `apps/extension/src/background/reclaim.ts:57` | Tests: `test/router.selftest.ts` [d], `test/links.selftest.ts` [i] |
-| 22 | The page is touched only on demand: the paste function is injected with `activeTab` + `scripting` after the person picks "Paste a Lumenia link here" (editable fields only) or presses the popup's button. It only inserts text, never presses Send, and refuses if the picked frame has moved to another site. | `apps/extension/src/background/insert.ts:31`, `apps/extension/src/background/insert.ts:117`, `apps/extension/src/content/insert.ts:13`, `apps/extension/src/content/insert.ts:16` | Test: `test/security.selftest.ts` [b]; live run below |
-| 23 | The clipboard is written only on a click. | `apps/extension/src/popup/screens/Links.tsx:107`, `apps/extension/src/popup/screens/LinkReady.tsx:75` | Code |
-| 24 | Nothing leaves the device before the first-run "Agree and continue", and usage counters stay off on Firefox unless the optional "technical and interaction data" permission is kept. A counter is an event name, two SHA-256 hashes cut to 8 bytes and the marker `src: "ext"`: never a URL, a link secret or an address. | `apps/extension/src/popup/screens/Consent.tsx:30`, `router.ts:57`, `router.ts:58`, `router.ts:62`, `apps/extension/manifest.firefox.json:49`, `apps/web/lib/events.ts:123` | Tests: `apps/sponsor` `test:events` (79), `apps/web` `test:extseam` (141) |
+| 19 | Real money needs a password-locked account, the pilot's approval, a send left and the one-time note; the network switch checks the same. A cached approval stands in for a failed check for at most five minutes. | `send.ts:78`, `router.ts:207`, `apps/extension/src/background/pilot.ts:23` | Tests: `test/send.selftest.ts` [e], `test/security.selftest.ts` [c] |
+| 20 | "Forget this account" waits for a running send or take-back, refuses while links are still open (this browser holds the only list of them and the only way to take them back), and refuses to delete an account made here that was never backed up (its only copy), each unless the person chooses to forget anyway. | `router.ts:192`, `router.ts:195`, `router.ts:198` | Tests: `test/router.selftest.ts` [c], [d], `test/account.selftest.ts` [d] |
+| 21 | One take-back per link at a time; a take-back that failed before it was posted is "nothing moved" for certain. | `router.ts:310`, `apps/extension/src/background/reclaim.ts:57` | Tests: `test/router.selftest.ts` [d], `test/links.selftest.ts` [i] |
+| 22 | The page is touched only on demand: the paste function is injected with `activeTab` + `scripting` after the person picks "Paste a Lumenia link here" (editable fields only) or presses the popup's button. It only inserts text, never presses Send, and refuses if the picked frame has moved to another site. | `apps/extension/src/background/insert.ts:31`, `apps/extension/src/background/insert.ts:117`, `apps/extension/src/content/insert.ts:13`, `apps/extension/src/content/insert.ts:16` | Test: `test/security.selftest.ts` [b]; live runs below |
+| 23 | The clipboard is written only on a click. | `apps/extension/src/popup/screens/Links.tsx:108`, `apps/extension/src/popup/screens/LinkReady.tsx:76` | Code |
+| 24 | Nothing leaves the device before the first-run "Agree and continue" (the hello screen before it sends nothing), and usage counters stay off on Firefox unless the optional "technical and interaction data" permission is kept. A counter is an event name, two SHA-256 hashes cut to 8 bytes and the marker `src: "ext"`: never a URL, a link secret or an address. | `apps/extension/src/popup/screens/Consent.tsx:33`, `account.ts:84`, `router.ts:63`, `router.ts:64`, `router.ts:68`, `apps/extension/manifest.firefox.json:49`, `apps/web/lib/events.ts:117` | Tests: `apps/sponsor` `test:events`, `apps/web` `test:extseam` (141) |
 | 25 | Test-only hooks never ship: the short-expiry end-to-end build has its own entry and output folder and is never packaged. | `build.mjs:164`, `build.mjs:325` | The shipped bundles contain no `__lumeniaE2E` |
 | 26 | The worker is kept alive for a long send by an extension call every 20 s, capped at three minutes. | `apps/extension/src/background/keepalive.ts:18` | Measured on Chrome 153: a bare 60 s request in the worker is cut at 30 s, and completes with the calls |
+| 27 | An account made in the extension needs a password that passes the website's own floor (at least 10 characters, not common, not patterned); its key record is written first, and its backup copy is wrapped with the same password and kept here as ciphertext only. | `account.ts:145`, `account.ts:148`, `account.ts:155`, `account.ts:156` | Test: `test/account.selftest.ts` [a] |
+| 28 | A backup is stored only with the mailed code AND a signature from the unlocked account, which binds the stored row so a later write from someone who can only read the mailbox is refused; a locked extension cannot back up. | `account.ts:199`, `account.ts:206`, `apps/extension/src/lib/backup.ts:38` | Test: `test/account.selftest.ts` [b] |
+| 29 | Practice dollars only: a new account is opened by the sponsor (no XLM needed) with a transaction the extension checks with the website's own guard before signing (a sponsored create plus a trustline sourced by the account, nothing else), then the faucet pays; real money is refused. | `apps/extension/src/background/practice.ts:28`, `practice.ts:29`, `apps/web/lib/sponsor.ts:165` | Test: `test/account.selftest.ts` [c]; live run below |
 
 Third-party code in the shipped bundles: `@stellar/stellar-sdk` 16.3.0 (with `@stellar/js-xdr`,
 `@noble/hashes`, `@noble/ed25519`, `bignumber.js`, `base32.js`, `feaxios`, `eventsource`),
@@ -64,7 +67,7 @@ the popup `preact` 10.29.8 and `uqr` 0.1.3. `pnpm audit` lists advisories for `a
 
 | What | Result |
 |---|---|
-| `pnpm --filter @lumenia/extension test` (offline, no keys) | 8 suites, 1,695 assertions: url 227, links 216, send 247, session 54, restore 97, security 23, router 33, popup 798 |
+| `pnpm --filter @lumenia/extension test` (offline, no keys) | 9 suites, 1,808 assertions: url 227, links 216, send 247, session 54, restore 97, security 23, router 33, account 41, popup 870 |
 | `pnpm --filter @lumenia/extension typecheck` | clean (includes the reused `apps/web/lib` files) |
 | `pnpm --filter @lumenia/extension build` | `dist/lumenia-chrome-0.1.0.zip`, `dist/lumenia-firefox-0.1.0.zip` |
 | Rebuild from the sources archive (`pnpm --filter @lumenia/extension sources`, unpacked in an empty directory, `pnpm install --frozen-lockfile`, build) | every file of `dist/chrome` and `dist/firefox` byte-identical to the original build |
@@ -92,18 +95,43 @@ All four were read back from `horizon-testnet.stellar.org` as successful (ledger
 5,005,384). The paste also landed in a text area, a one-line field and the Lexical editor (the
 editor WhatsApp Web is built on), each holding exactly one copy of the link.
 
-The same flow through the popup's own screens (`apps/extension/e2e/ui.e2e.mjs`, the run that also
-takes the store screenshots): "Before you start", restore with the mailed code, "Paste a Lumenia
-link here" on a chat box, $0.10, Make the link. The box held the link 6.8 s after the click; the
-link was claimed on getlumenia.com and the Links screen turned it Claimed; two more links were
-taken back after their expiry with the screen's own "Take it back" button.
+The same flow through the popup's own screens, on the redesigned first run
+(`apps/extension/e2e/ui.e2e.mjs`, 20:10Z, the run that takes store screenshots 1, 2 and 5): Hello
+("Hey, I've got a message for you.") -> Get started -> "One thing first" -> Agree -> "Yes, bring it
+here", restore with the mailed code, "Paste a Lumenia link here" on a chat box, $0.10, Make the
+link. The box held the link 5.8 s after the click; the link was claimed on getlumenia.com and the
+Links screen turned it Claimed; the other two links were taken back after their expiry, each with
+the Links screen's own "Take it back" button and its confirmation.
 
 | Step | Transaction |
 |---|---|
-| Link A made in the popup and pasted (account `GBA5UTKZ...`) | [`b1138f72...b77a1e`](https://stellar.expert/explorer/testnet/tx/b1138f7224b144fc77100967678ed7747ce705ade55d23893e6346afbab77a1e) |
-| Link A claimed on getlumenia.com, no extension | [`f9a30d3d...cc1ceb`](https://stellar.expert/explorer/testnet/tx/f9a30d3d33bf344e1d4ab4169ecd9d0e6cf18f94589799dea68e9d0efccc1ceb) |
-| Link B made, then taken back from the Links screen | [`075cf93d...4bc81f`](https://stellar.expert/explorer/testnet/tx/075cf93ddb50234921e0c5d1253e97216a92fcc518ebad5b6c80af3e114bc81f), [`9651effc...e1f57a`](https://stellar.expert/explorer/testnet/tx/9651effc0c6a5664c3ce34268a0bb03e54347c9792cf59958993c734c4e1f57a) |
-| Link C made, then taken back from the Links screen | [`a201e2c5...9c4afe`](https://stellar.expert/explorer/testnet/tx/a201e2c5f767e04f8a2845f60d87fe5020040b41a467800ce6cb55ad3d9c4afe), [`ca1fcd98...dc699b`](https://stellar.expert/explorer/testnet/tx/ca1fcd98c9b2acc7c4baa4fd28723b08e0e07413204cb6eee548380d92dc699b) |
+| Link A made in the popup and pasted (account `GDO5MESF...`) | [`eaa8255f...a58106`](https://stellar.expert/explorer/testnet/tx/eaa8255f0588d7fffcaa66026e775f8ea8412c94bcd8b330363867483aa58106) |
+| Link A claimed on getlumenia.com, no extension | [`fa648c13...195425`](https://stellar.expert/explorer/testnet/tx/fa648c135a12212d5d020dfd12c17351df6d2149abb79351bc5c9dc219195425) |
+| Link B made, then taken back from the Links screen | [`b632a083...5372e4`](https://stellar.expert/explorer/testnet/tx/b632a08367d1594c2e04d48224f96ceb9886c4b97d7359b7bff918c7945372e4), [`15596e6d...db7dea`](https://stellar.expert/explorer/testnet/tx/15596e6d0191f1126cedeb76c1cc17b71dff6fe2cd4451bef6ab78260ddb7dea) |
+| Link C made, then taken back from the Links screen | [`8712643f...74e0de`](https://stellar.expert/explorer/testnet/tx/8712643ff84e4d7e8a819c5bf0e933191ffa6a39a7b8584121ae12eaec74e0de), [`5f5f2ae1...f15aaa`](https://stellar.expert/explorer/testnet/tx/5f5f2ae113e3bbc66b8b80cff0afc4303e6160cb5093eabbb173a84847f15aaa) |
+
+Store screenshots 3 and 4 come from a second run of the same file built with the store's own seven
+days (`node build.mjs --e2e-ttl=604800 && node e2e/ui.e2e.mjs --paste-shots`, 20:14Z), so the
+take-back date they show is the real one. Both links shown in them were claimed straight after
+(deposits [`3eb2161e...264877`](https://stellar.expert/explorer/testnet/tx/3eb2161e019d82371b2b4776590d9ac84e7e50e63ffb37870eeec451a8264877)
+and [`0c2458d1...ceabbf`](https://stellar.expert/explorer/testnet/tx/0c2458d1a411208e1cb78e48454ff9bed08c39535267edfe500b62d294ceabbf),
+claims [`6f84c59e...75eb85`](https://stellar.expert/explorer/testnet/tx/6f84c59e57303ca2d133cf481b9fbf6e4739cef78ae65bf662ae381f5675eb85)
+and [`a5e27c84...86c870`](https://stellar.expert/explorer/testnet/tx/a5e27c8475b35b9df63e203c1a200ae46cdf2e48f21ad11078e45eef9786c870)),
+so no link in any image can still be claimed. All ten transactions were read back from
+`horizon-testnet.stellar.org` as successful (ledgers 5,006,932 to 5,006,989).
+
+An account MADE in the extension, end to end (`apps/extension/e2e/create.e2e.mjs`, 19:34Z): the
+popup's first run ("Hey, I've got a message for you." -> Get started -> agree -> "No, I'm new here"
+-> a password), practice dollars added on their own, a $0.10 link claimed on getlumenia.com in a
+browser with no extension, the extension reading it as Claimed, a backup with a disposable inbox,
+and a fresh browser profile restoring the account to the same address (balance 0.90).
+
+| Step | Transaction | What the explorer shows |
+|---|---|---|
+| The account opened by the sponsor | [`915f06c3...a257ff`](https://stellar.expert/explorer/testnet/tx/915f06c3d7a7c346801dd0f1d264efff5e7ba33f0f53a1cf81efd4593aa257ff) | One transaction: the sponsor begins sponsoring, creates `GB5Y754L...` with 0 XLM, the new account adds its USDC line (signed in the extension), and the sponsoring ends. The account holds 0 XLM. |
+| Practice dollars from the faucet | [`804c0972...15a8c8`](https://stellar.expert/explorer/testnet/tx/804c09724eb8157916378b10de1b7835618629a87e286bb0eddd43b95f15a8c8) | 1.00 USDC from the faucet account, a separate key from the sponsor's. |
+| The first link | [`802cb10d...3bc2f1`](https://stellar.expert/explorer/testnet/tx/802cb10d2f31955267c7dfd21426b5c5f5b06e45cbc75acdc16a2029f13bc2f1) | The new account's call into the escrow, fee paid by the sponsor. |
+| Claimed on getlumenia.com | [`f9d3b9f0...42860c`](https://stellar.expert/explorer/testnet/tx/f9d3b9f0cf2791c53e242d8fa9f591df18ae15369e88a05e33374e167642860c) | The claim, fee paid by the sponsor. |
 
 ### D1.4 Not verified yet, stated plainly
 
