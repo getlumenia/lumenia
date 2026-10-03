@@ -201,14 +201,12 @@ export function SiteNav() {
           </motion.div>
           <ThemeToggle />
           {/* The cell answers who is looking. Someone with an account on this device gets a door to
-              their money plus their next step; a first-timer gets an ACCOUNT AND THE SEND SCREEN.
-              Not the demo link this once pointed at — the demo is still the best pitch and still
-              one tap away on /try, but as the answer to "Get started" it hands you $5 through a
-              claim link and never gives you an account. And no longer /welcome either: opening the
-              account there meant two screens standing between pressing this button and having a
-              link to send, neither of them about sending money. The account is opened on arrival at
-              /send instead, and /welcome keeps its place one step off the path — from settings, and
-              from the nudge on /home. */}
+              their money; a first-timer gets /start, the one way in: the greeting, one question
+              ("new here, or bringing an account?"), and an account opened on this phone or brought
+              back to it. It used to open an account on arrival at /send, and before that it was the
+              /try demo link, which never gives you an account at all; the demo is still the
+              landing's "See it work" and a footer link. /welcome keeps its place one step off the
+              path, from settings and the nudge on /home. */}
           {hasAccount ? (
             /* ONE DOOR for somebody who already has an account: their money. "Activate" used to sit
                beside it, pointing at the sender checklist — and this header cannot tell a practice
@@ -220,7 +218,7 @@ export function SiteNav() {
             </Button>
           ) : (
             <Button asChild className="rounded-xl px-4 transition-transform duration-200 hover:-translate-y-0.5">
-              <Link href="/send?start=1">Get started</Link>
+              <Link href="/start">Get started</Link>
             </Button>
           )}
         </div>
