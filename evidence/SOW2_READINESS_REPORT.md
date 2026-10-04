@@ -95,30 +95,30 @@ All four were read back from `horizon-testnet.stellar.org` as successful (ledger
 5,005,384). The paste also landed in a text area, a one-line field and the Lexical editor (the
 editor WhatsApp Web is built on), each holding exactly one copy of the link.
 
-The same flow through the popup's own screens, on the redesigned first run
-(`apps/extension/e2e/ui.e2e.mjs`, 20:10Z, the run that takes store screenshots 1, 2 and 5): Hello
-("Hey, I've got a message for you.") -> Get started -> "One thing first" -> Agree -> "Yes, bring it
-here", restore with the mailed code, "Paste a Lumenia link here" on a chat box, $0.10, Make the
-link. The box held the link 5.8 s after the click; the link was claimed on getlumenia.com and the
-Links screen turned it Claimed; the other two links were taken back after their expiry, each with
-the Links screen's own "Take it back" button and its confirmation.
+The same flow through the popup's own screens, on the redesigned first run with the Practice | Real
+switch in the header (`apps/extension/e2e/ui.e2e.mjs`, 2026-10-03 20:56Z, the run that takes store
+screenshots 1, 2 and 5): Hello ("Hey, I've got a message for you.") -> Get started -> "One thing
+first" -> Agree -> "Yes, bring it here", restore with the mailed code, "Paste a Lumenia link here" on
+a chat box, $0.10, Make the link. The box held the link 8.3 s after the click; the link was claimed
+on getlumenia.com and the Links screen turned it Claimed; the other two links were taken back after
+their expiry, each with the Links screen's own "Take it back" button and its confirmation.
 
 | Step | Transaction |
 |---|---|
-| Link A made in the popup and pasted (account `GDO5MESF...`) | [`eaa8255f...a58106`](https://stellar.expert/explorer/testnet/tx/eaa8255f0588d7fffcaa66026e775f8ea8412c94bcd8b330363867483aa58106) |
-| Link A claimed on getlumenia.com, no extension | [`fa648c13...195425`](https://stellar.expert/explorer/testnet/tx/fa648c135a12212d5d020dfd12c17351df6d2149abb79351bc5c9dc219195425) |
-| Link B made, then taken back from the Links screen | [`b632a083...5372e4`](https://stellar.expert/explorer/testnet/tx/b632a08367d1594c2e04d48224f96ceb9886c4b97d7359b7bff918c7945372e4), [`15596e6d...db7dea`](https://stellar.expert/explorer/testnet/tx/15596e6d0191f1126cedeb76c1cc17b71dff6fe2cd4451bef6ab78260ddb7dea) |
-| Link C made, then taken back from the Links screen | [`8712643f...74e0de`](https://stellar.expert/explorer/testnet/tx/8712643ff84e4d7e8a819c5bf0e933191ffa6a39a7b8584121ae12eaec74e0de), [`5f5f2ae1...f15aaa`](https://stellar.expert/explorer/testnet/tx/5f5f2ae113e3bbc66b8b80cff0afc4303e6160cb5093eabbb173a84847f15aaa) |
+| Link A made in the popup and pasted (account `GBV72WN3...`) | [`98885802...cf92ac`](https://stellar.expert/explorer/testnet/tx/988858024a337c8897d7e3481a5747b0e819881de4e8556250022def17cf92ac) |
+| Link A claimed on getlumenia.com, no extension | [`08822388...29c7d8`](https://stellar.expert/explorer/testnet/tx/088223881bc46b1ce93a7d418509ed9bb2d7c8bcee9fd367c1a014b2ea29c7d8) |
+| Link B made, then taken back from the Links screen | [`bdd27263...693ed5`](https://stellar.expert/explorer/testnet/tx/bdd272630290105a77c493f382133a9d0379a34a6799c5f23ce826f960693ed5), [`202aa005...fa9cf9`](https://stellar.expert/explorer/testnet/tx/202aa005a009e03beaf01a2feda87a6ce62bfda30d43e6d12afba5373afa9cf9) |
+| Link C made, then taken back from the Links screen | [`7565df34...9f2541`](https://stellar.expert/explorer/testnet/tx/7565df348294560044a16e3308121a0b75bc48cd5a220947a04101eb159f2541), [`ce774164...38196c`](https://stellar.expert/explorer/testnet/tx/ce7741645427c48b5a7f744f7b46fe1d5080b62034d3df9ded08717cf038196c) |
 
 Store screenshots 3 and 4 come from a second run of the same file built with the store's own seven
-days (`node build.mjs --e2e-ttl=604800 && node e2e/ui.e2e.mjs --paste-shots`, 20:14Z), so the
+days (`node build.mjs --e2e-ttl=604800 && node e2e/ui.e2e.mjs --paste-shots`, 21:01Z), so the
 take-back date they show is the real one. Both links shown in them were claimed straight after
-(deposits [`3eb2161e...264877`](https://stellar.expert/explorer/testnet/tx/3eb2161e019d82371b2b4776590d9ac84e7e50e63ffb37870eeec451a8264877)
-and [`0c2458d1...ceabbf`](https://stellar.expert/explorer/testnet/tx/0c2458d1a411208e1cb78e48454ff9bed08c39535267edfe500b62d294ceabbf),
-claims [`6f84c59e...75eb85`](https://stellar.expert/explorer/testnet/tx/6f84c59e57303ca2d133cf481b9fbf6e4739cef78ae65bf662ae381f5675eb85)
-and [`a5e27c84...86c870`](https://stellar.expert/explorer/testnet/tx/a5e27c8475b35b9df63e203c1a200ae46cdf2e48f21ad11078e45eef9786c870)),
+(deposits [`e72ab1a9...5a6f76`](https://stellar.expert/explorer/testnet/tx/e72ab1a9d360f3ae72e8a00d84e95e20921ab91c6cb8ad9481b0cf66cd5a6f76)
+and [`e5166a8c...12523f`](https://stellar.expert/explorer/testnet/tx/e5166a8ced3239db2ae45004e274274b09eafe74634c55a76dc654722b12523f),
+claims [`cd64a655...4b8286`](https://stellar.expert/explorer/testnet/tx/cd64a655f16edd6ae95225d7b9c5a953487e0265291de5214bc6e5d6534b8286)
+and [`c64c7384...46b996`](https://stellar.expert/explorer/testnet/tx/c64c73849fbad2e8bdc204797dd6fbeb1441ee42717cfde2050b2af66c46b996)),
 so no link in any image can still be claimed. All ten transactions were read back from
-`horizon-testnet.stellar.org` as successful (ledgers 5,006,932 to 5,006,989).
+`horizon-testnet.stellar.org` as successful (ledgers 5,007,494 to 5,007,553).
 
 An account MADE in the extension, end to end (`apps/extension/e2e/create.e2e.mjs`, 19:34Z): the
 popup's first run ("Hey, I've got a message for you." -> Get started -> agree -> "No, I'm new here"
