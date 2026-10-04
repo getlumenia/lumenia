@@ -8,10 +8,12 @@
  *
  *   NEXT_PUBLIC_EXTENSION_CHROME_URL   the Chrome Web Store page. The item is Unlisted, so the store
  *                                      search will not find it; /extension is how people do.
- *   NEXT_PUBLIC_EXTENSION_FIREFOX_URL  the AMO-signed file (unlisted channel), self-hosted as
- *                                      public/extension/lumenia-firefox.xpi. next.config.ts serves
- *                                      it as application/x-xpinstall, which is what makes Firefox
- *                                      offer to install it instead of downloading it.
+ *   NEXT_PUBLIC_EXTENSION_FIREFOX_URL  optional: where the AMO-signed file is, if not here. The
+ *                                      page itself turns "Add to Firefox" on when the signed file
+ *                                      is committed at public/extension/lumenia-firefox.xpi
+ *                                      (app/(site)/extension/page.tsx); next.config.ts serves it as
+ *                                      application/x-xpinstall, which is what makes Firefox offer
+ *                                      to install it instead of downloading it.
  *
  * Unset means "not available yet": /extension renders that button disabled and says so.
  */

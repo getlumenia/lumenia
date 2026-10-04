@@ -7,10 +7,14 @@
  * messenger is the hero because it is also the first thing the extension shows when it opens, so
  * the page and the popup start on the same beat.
  *
- * A button is a link only once its listing exists. Neither does yet, so by default both render
- * disabled with a plain line saying so. The addresses come from lib/extension-install.ts, the one
- * source for them, and nothing here guesses one.
+ * A button is a link only once its listing exists; until then it renders disabled with a plain line
+ * saying so. The addresses come from lib/extension-install.ts, and nothing here guesses one. One
+ * exception needs no address at all: the Firefox add-on is self-hosted (AMO's unlisted channel), so
+ * when the signed file is committed at public/extension/lumenia-firefox.xpi, its presence at build
+ * time is what turns "Add to Firefox" on. next.config.ts serves it as application/x-xpinstall.
  */
+import { existsSync } from "node:fs";
+import path from "node:path";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
@@ -86,8 +90,13 @@ function Install({ id, label, href, pending, primary }: { id: string; label: str
   );
 }
 
+/** The signed Firefox add-on, self-hosted. Read at build time: the page is static. */
+const HOSTED_XPI = "/extension/lumenia-firefox.xpi";
+const hostedXpi = (): string | null => (existsSync(path.join(process.cwd(), "public", HOSTED_XPI)) ? HOSTED_XPI : null);
+
 export default function ExtensionPage() {
-  const links = extensionInstallLinks();
+  const env = extensionInstallLinks();
+  const links = { chrome: env.chrome, firefox: env.firefox ?? hostedXpi() };
   return (
     <div className="pg">
       {/* Nothing in the hero fades in: Chrome will not make an element an LCP candidate if its
