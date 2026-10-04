@@ -12,7 +12,7 @@
  * back to the site.
  *
  * The links cell is hidden below md, where most of this audience is. Without the disclosure panel
- * below it, /how-it-works, /about and /developers exist on a phone only in the footer.
+ * below it, /how-it-works, /extension, /about and /developers exist on a phone only in the footer.
  */
 "use client";
 
@@ -26,6 +26,8 @@ import { ThemeToggle } from "./ThemeToggle";
 
 const LINKS = [
   { href: "/how-it-works", label: "How it works" },
+  // The browser extension's install page: the site's way to the extension.
+  { href: "/extension", label: "Extension" },
   { href: "/about", label: "About" },
   { href: "/developers", label: "Developers" },
 ];
@@ -177,7 +179,7 @@ export function SiteNav() {
             way to convert; pointer-events re-enabled since the header itself is click-through. */}
         <div className="pointer-events-auto relative flex items-center gap-1.5 justify-self-end">
           {/* The phone-sized stand-in for the links cell, so it follows the LINKS' gate rather than
-              this cell's exemption: on the landing those three pages appear at the same scroll
+              this cell's exemption: on the landing those pages appear at the same scroll
               point they do on a desktop, and the opening hero keeps its own wordmark uncovered. */}
           <motion.div
             className="md:hidden"
@@ -223,7 +225,7 @@ export function SiteNav() {
           )}
         </div>
 
-        {/* The panel hangs off the pill instead of taking the screen: three links do not warrant a
+        {/* The panel hangs off the pill instead of taking the screen: four links do not warrant a
             full-screen takeover, and the CTA above it stays reachable while it is open. Its box
             repeats the pill's chrome so the two read as one piece of glass. */}
         <AnimatePresence>

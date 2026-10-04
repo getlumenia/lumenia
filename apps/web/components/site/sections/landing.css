@@ -48,6 +48,15 @@
 .op-btn-primary:hover{background:var(--pw-accent-hover);transform:translateY(-1px)}
 .op-btn-ghost{color:var(--pw-ink);border:1px solid var(--pw-line);background:var(--pw-surface)}
 .op-btn-ghost:hover{border-color:color-mix(in srgb,var(--pw-accent) 40%,var(--pw-line));color:var(--pw-accent)}
+/* The pill under the hero's buttons that points at the browser extension: quieter than the buttons. */
+.op-after-ext{margin-top:22px}
+.op-after-ext a{display:inline-flex;align-items:center;gap:9px;padding:5px 14px 5px 5px;border:1px solid var(--pw-line);border-radius:999px;
+  background:color-mix(in srgb,var(--pw-surface) 82%,transparent);color:var(--pw-ink);font-family:"Switzer",ui-sans-serif,sans-serif;
+  font-size:14px;font-weight:500;text-decoration:none;transition:border-color .18s,color .18s}
+.op-after-ext a:hover{border-color:color-mix(in srgb,var(--pw-accent) 40%,var(--pw-line));color:var(--pw-accent)}
+.op-after-ext-new{display:inline-flex;align-items:center;height:24px;padding:0 10px;border-radius:999px;background:var(--pw-accent);
+  color:var(--pw-on-accent);font-size:12px;font-weight:600;letter-spacing:.01em}
+.op-after-ext svg{width:15px;height:15px;flex:none}
 
 /* Section 2 — four fears (overlay-reveals over the pinned hero resolution) */
 .fears{position:relative;z-index:2;isolation:isolate;background:var(--pw-paper);color:var(--pw-ink);overflow:hidden;

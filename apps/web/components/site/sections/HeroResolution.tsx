@@ -2,12 +2,15 @@
  * HeroResolution — the hero's payoff: the subtraction settles into the promise + the real demo.
  * Rendered right after the scrub hero, still inside .op-over (z1) so it scrolls up over the pinned
  * greeting (the overlay-reveal transition). A living bg-hero-bloom backdrop sits behind; the copy
- * staggers in on view. Copy is the comms-approved §6 headline.
+ * staggers in on view. Copy is the comms-approved §6 headline. Under the two buttons, one quiet pill
+ * points at the browser extension's install page: a way in for someone at a computer, kept smaller
+ * than the buttons so "See it work" stays the first thing to do.
  */
 "use client";
 
 import Link from "next/link";
 import { motion } from "motion/react";
+import { ArrowRight } from "lucide-react";
 import { AmbientVideo } from "../AmbientVideo";
 
 const EASE = [0.2, 0.7, 0.2, 1] as const;
@@ -36,6 +39,13 @@ export function HeroResolution() {
         <Link href="/try" className="op-btn op-btn-primary">See it work</Link>
         <Link href="/how-it-works" className="op-btn op-btn-ghost">See how it works →</Link>
       </motion.div>
+      <motion.p className="op-after-ext" {...rise(0.32)}>
+        <Link href="/extension">
+          <span className="op-after-ext-new">New</span>
+          The Lumenia browser extension
+          <ArrowRight aria-hidden="true" />
+        </Link>
+      </motion.p>
     </section>
   );
 }
