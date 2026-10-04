@@ -1,0 +1,100 @@
+/*
+ * /extension: the install page, on the LOCKED Periwinkle system.
+ *
+ * The page ground, the hero's shape and type, and the buttons come from components/site/page.css.
+ * This file owns only what is this page's own: the hero's two columns, the install pair and its
+ * not-yet state, the three steps and the closing line.
+ *
+ * A consumer surface (brand.md section 8): the steps are an ordered list told by their words, with the
+ * hairline lead-in /try uses for its own three beats, never numerals or a mono rail.
+ */
+
+/* ---- Hero ---------------------------------------------------------------------------------
+   Copy left, the messenger right, holding its envelope out towards the buttons. Below 900px it is
+   one column with the messenger first: it is the beat that opens the page, and after the buttons it
+   would arrive once everything it was there to introduce had already been read. */
+.ex-hero-inner {
+  display: grid; grid-template-columns: 1fr; gap: clamp(16px, 4vw, 56px); align-items: center;
+}
+/* The messenger's glow reads --money, the app's accent token, which this group never sets: left
+   alone it stays the light theme's periwinkle on the dark ground too. Pointed at the page's own
+   accent, it follows the theme here the way it does in the app. */
+.ex-hero-art { order: -1; --money: var(--pw-accent) }
+@media (min-width: 900px) {
+  /* The copy takes the larger share: it carries the h1, the lead and both buttons. */
+  .ex-hero-inner { grid-template-columns: 1.15fr .85fr }
+  .ex-hero-art { order: 0 }
+}
+
+/* ---- The install pair ---------------------------------------------------------------------
+   Two equal columns, so the line under one button cannot push the other off its axis. They give a
+   little before they wrap, which keeps the pair side by side from 900px, where the hero's copy
+   column is at its narrowest. */
+.ex-installs { display: flex; flex-wrap: wrap; gap: 16px 14px; margin-top: clamp(26px, 4vh, 36px) }
+.ex-install { flex: 1 1 200px; max-width: 236px; display: flex; flex-direction: column }
+.ex-install .pg-btn { width: 100% }
+/* The ghost button carries a 1px border and the primary none, so side by side the primary sat 2px
+   short. A clear border evens them without changing how it looks. */
+.ex-install .pg-btn-primary { border: 1px solid transparent }
+/* Not a link yet. Readable rather than greyed towards invisible, because the label is still the
+   news, and dashed so it reads as a place being kept rather than a button that broke. Two classes
+   deep so it outranks page.css's :hover rules whichever stylesheet the bundler emits first. */
+.ex-install .pg-btn:disabled {
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--pw-muted);
+  border: 1px dashed color-mix(in srgb, var(--pw-muted) 55%, var(--pw-line));
+  box-shadow: none;
+  transform: none;
+}
+.ex-status { margin-top: 9px; font-size: 13.5px; line-height: 1.45; color: var(--pw-muted); text-wrap: pretty }
+
+/* ---- Three steps ------------------------------------------------------------------------- */
+.ex-steps {
+  position: relative; z-index: 2; background: var(--pw-paper);
+  padding: clamp(56px, 8vh, 96px) clamp(20px, 6vw, 64px) clamp(88px, 12vh, 140px);
+  border-top: 1px solid var(--pw-line);
+}
+.ex-steps-inner { max-width: 940px; margin: 0 auto }
+.ex-steps-h {
+  font-family: "Sentient", Georgia, serif; font-weight: 600;
+  font-size: clamp(24px, 3vw, 38px); line-height: 1.06; letter-spacing: -.02em; color: var(--pw-ink);
+}
+.ex-steps-list {
+  margin: clamp(28px, 4vh, 44px) 0 0; padding: 0; list-style: none;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(24px, 3vw, 44px);
+}
+/* A hairline lead-in rather than a card: three boxed panels would be the symmetric feature grid
+   brand.md section 8 rules out. */
+.ex-step { border-top: 2px solid color-mix(in srgb, var(--pw-accent) 45%, transparent); padding-top: 16px }
+.ex-step-t {
+  font-family: "Sentient", Georgia, serif; font-weight: 600;
+  font-size: clamp(18px, 2vw, 23px); line-height: 1.15; letter-spacing: -.01em; color: var(--pw-ink);
+}
+.ex-step-b { margin-top: 9px; font-size: clamp(14.5px, 1.5vw, 16px); line-height: 1.55; color: var(--pw-muted) }
+.ex-keep { white-space: nowrap }
+
+/* The honest line, quieter than the steps above it. The hairline runs the width of the steps; only
+   the sentence holds a reading measure. */
+.ex-close { margin-top: clamp(40px, 6vh, 60px); padding-top: clamp(22px, 3vh, 30px); border-top: 1px solid var(--pw-line) }
+.ex-close p { font-size: 15px; line-height: 1.6; color: var(--pw-muted); max-width: 66ch }
+.ex-close a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
+.ex-close a:hover { text-decoration: underline; text-underline-offset: 3px }
+
+/* ---- Narrow -----------------------------------------------------------------------------
+   Kept BELOW the base rules on purpose: same specificity, so whichever comes last wins. */
+@media (max-width: 860px) {
+  .ex-steps-list { grid-template-columns: 1fr; gap: clamp(22px, 3vh, 32px) }
+}
+@media (max-width: 560px) {
+  /* On a phone the pair stacks and each button spans the measure rather than sitting as a pill. */
+  .ex-install { flex-basis: 100%; max-width: none }
+}
+
+/* ---- Large screens ----------------------------------------------------------------------
+   The group's pattern (page.css): containers become clamp(<today>, Xvw, <ceiling>) and display type
+   max(<today's clamp>, min(Yvw, <ceiling>)), both continuous, so nothing at the sizes this page was
+   composed at moves by a pixel. Reading measures do not scale. */
+.ex-steps-inner { max-width: clamp(940px, 58vw, 1640px) }
+.ex-steps-h { font-size: max(clamp(24px, 3vw, 38px), min(2vw, 54px)) }
+.ex-step-t { font-size: max(clamp(18px, 2vw, 23px), min(1.35vw, 32px)) }

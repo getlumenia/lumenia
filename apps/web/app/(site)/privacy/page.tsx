@@ -70,7 +70,7 @@ export default function Privacy() {
             </li>
           </ul>
 
-          <h2>The browser extension</h2>
+          <h2 id="extension">The browser extension</h2>
           <p>
             The Lumenia browser extension makes a payment link from a Lumenia account, one you make in
             the extension or one you already have, and shows whether it was claimed. Here is everything it sends, who gets it, what it keeps on

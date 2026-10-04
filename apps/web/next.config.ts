@@ -148,6 +148,15 @@ const nextConfig: NextConfig = {
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
         ],
       },
+      {
+        // The self-hosted Firefox add-on (AMO-signed, unlisted channel), at
+        // public/extension/lumenia-firefox.xpi once it exists. Firefox offers to install a file
+        // from a link only when it arrives as application/x-xpinstall; as anything else it is just a
+        // download. Stated here rather than left to the host's MIME table. `:file+`, not `:file*`:
+        // zero-or-more would also match /extension.xpi, outside the folder.
+        source: "/extension/:file+.xpi",
+        headers: [{ key: "Content-Type", value: "application/x-xpinstall" }],
+      },
     ];
   },
 };

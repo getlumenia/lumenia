@@ -16,6 +16,7 @@
  *   2. Your accounts    — every deliberate account here, which is active, add one, remove one.
  *   3. Ways back in     — passkey / email / Google / GitHub / X, framed as finding, never signing in.
  *   4. This device      — appearance, language, and removing your keys from this phone.
+ * Then one pointer out, to /extension, the install page for the browser extension.
  *
  * Real data only: the name comes from the registry, the accounts from the local keystore, the
  * connections from a signed read. Nothing here is mocked, and an unanswerable question renders as
@@ -50,6 +51,22 @@ function ConnectionsRegion() {
   );
 }
 
+/**
+ * The way to the browser extension's install page. Shown with or without an account here, because
+ * the extension can make its own account or bring this one over from its backup.
+ */
+function BrowserCard() {
+  return (
+    <MoneyCard className="p-5">
+      <p className="font-semibold text-ink">Lumenia for your browser</p>
+      <p className="mt-1 text-sm text-ink-soft">Send money from any page on your computer.</p>
+      <Link href="/extension" className="mt-3 inline-flex text-sm font-medium text-money underline-offset-2 hover:underline">
+        Take a look
+      </Link>
+    </MoneyCard>
+  );
+}
+
 export default function SettingsPage() {
   const { status, account } = useWallet();
 
@@ -79,6 +96,7 @@ export default function SettingsPage() {
             Get started
           </Link>
         </MoneyCard>
+        <BrowserCard />
       </div>
     );
   }
@@ -138,6 +156,8 @@ export default function SettingsPage() {
           <DisconnectButton backedUp={hasBackup(account.address)} />
         </details>
       </MoneyCard>
+
+      <BrowserCard />
 
       <p className="pb-2 text-center text-sm text-ink-soft">
         Looking for your balance or your backup?{" "}
