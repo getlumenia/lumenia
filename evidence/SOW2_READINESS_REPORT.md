@@ -135,10 +135,14 @@ and a fresh browser profile restoring the account to the same address (balance 0
 
 ### D1.4 Not verified yet, stated plainly
 
-- **Firefox has not run the extension yet.** The Firefox build passes `web-ext lint`; the build
-  machine has no Firefox. The first run is the owner's, on the AMO-signed package.
-- **No store review has happened yet.** Neither the Chrome Web Store submission (Unlisted) nor the
-  AMO unlisted signing has been made; both are the owner's.
+- **Firefox has not run the extension yet.** The Firefox build passes `web-ext lint`, and AMO's
+  automated review signed it (unlisted 0.1.0 and 0.1.1, 2026-10-04; the signed 0.1.1 is hosted at
+  getlumenia.com/extension/lumenia-firefox.xpi and matches our own build byte for byte apart from the
+  signature files). No one has yet used it in Firefox; that first run is the owner's.
+- **Neither store has approved a public listing yet.** Both were submitted on 2026-10-04 and are
+  awaiting review: the Chrome Web Store item `ccdnjnckaldkmjnlpgpmdmnbajmakhmn`, and the listed
+  0.1.2 on addons.mozilla.org (same code and icons as 0.1.1; the version number moved because AMO
+  never reuses one). Until each is approved it is "submitted for review", never "published".
 - **No real-money send from the extension yet.** Metric 1 needs a mainnet link made from the
   published extension and claimed; that send is the owner's, from an approved pilot wallet.
 - **Paste on the real chat sites is untested**: it was tested on a local page and on the public
