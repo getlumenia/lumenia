@@ -16,7 +16,7 @@ stellar.expert.
 
 `apps/extension`: a Chrome MV3 / Firefox MV3 extension that makes a Lumenia payment link from the
 sender's own account and shows whether it was claimed. It reuses the website's sender code
-(`apps/web/lib`); the recipient side does not change. Version 0.1.0.
+(`apps/web/lib`); the recipient side does not change. Version 0.1.1 (0.1.0 was the first build AMO signed; 0.1.1 changes only the icons).
 
 ### D1.1 Security checklist
 
@@ -69,7 +69,7 @@ the popup `preact` 10.29.8 and `uqr` 0.1.3. `pnpm audit` lists advisories for `a
 |---|---|
 | `pnpm --filter @lumenia/extension test` (offline, no keys) | 9 suites, 1,808 assertions: url 227, links 216, send 247, session 54, restore 97, security 23, router 33, account 41, popup 870 |
 | `pnpm --filter @lumenia/extension typecheck` | clean (includes the reused `apps/web/lib` files) |
-| `pnpm --filter @lumenia/extension build` | `dist/lumenia-chrome-0.1.0.zip`, `dist/lumenia-firefox-0.1.0.zip` |
+| `pnpm --filter @lumenia/extension build` | `dist/lumenia-chrome-0.1.1.zip`, `dist/lumenia-firefox-0.1.1.zip` |
 | Rebuild from the sources archive (`pnpm --filter @lumenia/extension sources`, unpacked in an empty directory, `pnpm install --frozen-lockfile`, build) | every file of `dist/chrome` and `dist/firefox` byte-identical to the original build |
 | `pnpm --filter @lumenia/extension lint:firefox` (`web-ext lint`) | 0 errors, 0 notices, 1 warning: `UNSAFE_VAR_ASSIGNMENT` (innerHTML) in `popup.js`, which is Preact's own `dangerouslySetInnerHTML` branch, never reached (rule 5) |
 | CI | job `extension` in `.github/workflows/ci.yml` (frozen install, typecheck, the suites, build, `web-ext lint`, both zips uploaded as the artifact `lumenia-extension-zips`); the web step also runs `test:extseam`, `test:walletkit` and `test:agentmcp` |

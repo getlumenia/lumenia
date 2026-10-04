@@ -2,10 +2,10 @@ import type { MetadataRoute } from "next";
 import { copy } from "../lib/copy";
 
 /**
- * PWA manifest (Next native). The icons are the Lumenia mark: the "i"'s field (#6E5FCE = --pw-accent,
- * the exact fill the wordmark letters carry) lit by the wordmark SVG's own `lumen` gradient.
- * Colours track the landing's Periwinkle paper — the manifest is a separate file, so this does not
- * touch the claim route's HTML.
+ * PWA manifest (Next native). The icons are the messenger, the main mascot, on the periwinkle field
+ * (#6E5FCE = --pw-accent), drawn by apps/extension/store/make-assets.py together with the favicon, the
+ * Apple touch icon and the extension's icons, so every icon matches. Colours track the landing's
+ * Periwinkle paper; the manifest is a separate file, so this does not touch the claim route's HTML.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {

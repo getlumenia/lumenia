@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Regenerate the Lumenia browser-extension artwork: the toolbar and store icons and the small promo tile.
+"""Regenerate every Lumenia icon from one place: the extension's toolbar and store icons, the Chrome Web
+Store promo tile, and the website's favicon, Apple touch icon and PWA icons.
 
 Setup, once, in any scratch virtualenv (Pillow and numpy are the only dependencies):
     python3 -m venv /tmp/lumenia-art && /tmp/lumenia-art/bin/pip install pillow numpy
@@ -10,15 +11,18 @@ Writes
     apps/extension/static/icons/icon-16.png, icon-32.png, icon-48.png, icon-128.png   (manifest icons)
     apps/extension/store/icon-128.png        (the store icon: the same art as icon-128)
     apps/extension/store/promo-440x280.png   (Chrome Web Store small promo tile, 24-bit, no alpha)
+    apps/web/app/favicon.ico                 (16, 32 and 48 px, each drawn for its size)
+    apps/web/app/icon.png, apple-icon.png    (512 and 180 px, full bleed, no alpha)
+    apps/web/public/icon-192.png, icon-512.png, icon-512-maskable.png   (the PWA manifest's icons)
 
-Why drawn and not resized
-    The mark is the lit dot of the "i" in the wordmark, on the periwinkle field. It is the mark the site
-    already ships as its favicon and PWA icon (apps/web/app/manifest.ts). brand.md asks for a hand-drawn
-    mark, so the AI-rendered images in brand-kit-assets are not used. Each icon size is drawn on its own,
-    with a larger dot at 16 px, so the toolbar icon stays legible instead of being a blurred downscale of
-    the 512 px file. Colours are the Periwinkle tokens; the glow is the wordmark SVG's own `lumen` radial
-    gradient, read from the SVG. The wordmark on the promo tile is painted from
-    apps/web/public/brand-kit-assets/logo-wordmark-t.svg (it uses only the M, L, C and z path commands).
+The icon is the messenger (owner's decision, 2026-10-04: the main mascot, everywhere), on the
+periwinkle field with a soft glow behind its head, rising from the bottom edge of the tile. It is cut
+from apps/web/public/brand-kit-assets/mascot-messenger-cut.webp, the same cutout the site and the
+extension already show. Two crops, both stopping well above the feet, where that cutout carries a small
+maker's mark: head, envelope and body from 48 px up, and the face alone at 16 and 32 px, where the
+envelope would only be a smudge. Each size is composed large and reduced once. Colours are the
+Periwinkle tokens. The wordmark on the promo tile is painted from
+apps/web/public/brand-kit-assets/logo-wordmark-t.svg (it uses only the M, L, C and z path commands).
 """
 from __future__ import annotations
 
@@ -34,23 +38,24 @@ PUBLIC = EXT.parent / "web" / "public"
 WORDMARK_SVG = PUBLIC / "brand-kit-assets" / "logo-wordmark-t.svg"
 HEADLINE_FONT = PUBLIC / "fonts" / "sentient-500.woff2"
 ICON_DIR = EXT / "static" / "icons"
+WEB_APP = EXT.parent / "web" / "app"
+MASCOT = PUBLIC / "brand-kit-assets" / "mascot-messenger-cut.webp"
 
 # Periwinkle tokens (brand.md, apps/web/app/manifest.ts).
 PAPER = (245, 243, 239)  # #F5F3EF
 INK = (30, 27, 34)  # #1E1B22
 ACCENT = (110, 95, 206)  # #6E5FCE
 SOFT = (232, 227, 247)  # #E8E3F7
-DOT = (255, 249, 230)  # the lit dot, as measured on the site favicon
 
-# Output sizes: (canvas px, tile px inside the canvas, dot diameter, glow diameter), the last two as a share of
-# the tile. The dot is larger at 16 px so it still reads as a lit dot in the toolbar. The 128 px icon is 96 px
-# of art plus 16 px of transparent padding on every side, as the Chrome Web Store asks for its icon.
-ICONS = (
-    (16, 16, 0.40, 0.88),
-    (32, 32, 0.36, 0.88),
-    (48, 48, 0.32, 0.86),
-    (128, 96, 0.28, 0.84),
-)
+# Where the icons crop the 1024 px messenger cutout, as (left, top, width, height). The character sits in
+# the box (238, 187, 563, 708); its maker's mark starts at 95% of that height, so both crops end above it.
+RISE = (198, 157, 643, 643)  # head, envelope and body
+FACE = (285, 165, 470, 470)  # the face, larger, for 16 and 32 px
+GLOW = (207, 198, 245)  # a lighter periwinkle, behind the head
+
+# Extension icons: (canvas px, tile px inside the canvas). The 128 px icon is 96 px of art plus 16 px of
+# transparent padding on every side, as the Chrome Web Store asks for its icon.
+ICONS = ((16, 16), (32, 32), (48, 48), (128, 96))
 CORNER = 0.23  # corner radius as a share of the tile side
 
 SVG_TEXT = WORDMARK_SVG.read_text(encoding="utf-8")
@@ -97,21 +102,37 @@ def lumen_layer(w: int, h: int, cx: float, cy: float, radius: float) -> Image.Im
     return Image.fromarray(np.clip(np.stack([*chans, alpha], axis=-1) + 0.5, 0, 255).astype(np.uint8))
 
 
-def icon(px: int, art: int, dot: float, glow: float, ss: int = 16) -> Image.Image:
-    """One lit-dot tile, drawn at ss x and reduced. `art` is the tile side, centred in a px by px canvas."""
-    s = px * ss
-    c = s / 2
-    im = Image.new("RGBA", (s, s), ACCENT + (255,))
-    im.alpha_composite(lumen_layer(s, s, c, c, glow * art * ss / 2))
-    r = dot * art * ss / 2
-    dot_mask = Image.new("L", (s, s), 0)
-    ImageDraw.Draw(dot_mask).ellipse([c - r, c - r, c + r, c + r], fill=255)
-    im.alpha_composite(solid(DOT, dot_mask))
-    pad = (px - art) / 2 * ss
-    tile = Image.new("L", (s, s), 0)
-    ImageDraw.Draw(tile).rounded_rectangle([pad, pad, s - pad - 1, s - pad - 1], radius=art * ss * CORNER, fill=255)
-    im.putalpha(tile)
-    return im.resize((px, px), Image.Resampling.BOX)
+def glow_layer(w: int, h: int, cx: float, cy: float, radius: float) -> Image.Image:
+    """A soft disc of GLOW, strongest at (cx, cy) and gone at `radius`."""
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    t = np.clip(1 - np.hypot(xs + 0.5 - cx, ys + 0.5 - cy) / radius, 0, 1)
+    layer = Image.new("RGBA", (w, h), GLOW + (0,))
+    layer.putalpha(Image.fromarray((t**1.6 * 0.8 * 255 + 0.5).astype(np.uint8)))
+    return layer
+
+
+def icon(px: int, art: int | None = None, rounded: bool = True, scale: float = 0.96, crop: tuple | None = None) -> Image.Image:
+    """The messenger on the periwinkle field, `px` square. `art` is the tile side, centred in the canvas;
+    `rounded` clips it to the tile's rounded corners (off for icons an OS masks itself); `scale` is the
+    mascot's width as a share of the tile, bottom-anchored so the body runs off the lower edge."""
+    art = art or px
+    crop = crop or (FACE if px <= 32 else RISE)
+    a = max(art * 8, 512)  # compose large, reduce once
+    tile = Image.new("RGBA", (a, a), ACCENT + (255,))
+    tile.alpha_composite(glow_layer(a, a, a * 0.5, a * 0.34, a * 0.5))
+    with Image.open(MASCOT) as src:
+        x, y, w, h = crop
+        m = src.convert("RGBA").crop((x, y, x + w, y + h))
+    side = round(a * scale)
+    tile.alpha_composite(m.resize((side, side), Image.Resampling.LANCZOS), ((a - side) // 2, a - side))
+    if rounded:
+        mask = Image.new("L", (a, a), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, a - 1, a - 1], radius=a * CORNER, fill=255)
+        tile.putalpha(mask)
+    tile = tile.resize((art, art), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    canvas.alpha_composite(tile, ((px - art) // 2, (px - art) // 2))
+    return canvas
 
 
 def _flatten(d: str, steps: int = 20) -> list[list[tuple[float, float]]]:
@@ -197,21 +218,21 @@ def wordmark(width: int, ss: int = 3) -> Image.Image:
 
 
 def promo() -> Image.Image:
-    """440 x 280: wordmark and a three-line headline on paper, the lit-dot tile on a soft circle."""
+    """440 x 280: wordmark and a three-line headline on paper; the messenger itself on the right, rising
+    from the bottom edge in front of a soft circle and a glow, as the site's share image shows it."""
     w, h, k = 440, 280, 6
     img = Image.new("RGBA", (w * k, h * k), PAPER + (255,))
-    cx, cy, circle_r, tile_px = 352, 140, 158, 132
+    cx, cy, circle_r = 332, 150, 146
     ImageDraw.Draw(img).ellipse(
         [(cx - circle_r) * k, (cy - circle_r) * k, (cx + circle_r) * k, (cy + circle_r) * k], fill=SOFT + (255,)
     )
-    # The tile, with a soft periwinkle shadow.
-    n = tile_px * k
-    left, top = round((cx - tile_px / 2) * k), round((cy - tile_px / 2) * k)
-    blur, drop, pad = 12 * k, 9 * k, 36 * k
-    shadow = Image.new("L", (n + 2 * pad, n + 2 * pad), 0)
-    ImageDraw.Draw(shadow).rounded_rectangle([pad, pad, pad + n - 1, pad + n - 1], radius=n * CORNER, fill=85)
-    img.alpha_composite(solid(ACCENT, shadow.filter(ImageFilter.GaussianBlur(blur))), (left - pad, top + drop - pad))
-    img.alpha_composite(icon(n, n, 0.28, 0.84, ss=2), (left, top))
+    img.alpha_composite(glow_layer(w * k, h * k, cx * k, 92 * k, 120 * k))
+    # The messenger, cut above its feet (RISE) and anchored to the bottom edge, so the cut never shows.
+    with Image.open(MASCOT) as src:
+        x, y, cw, ch = RISE
+        m = src.convert("RGBA").crop((x, y, x + cw, y + ch))
+    side = 226 * k
+    img.alpha_composite(m.resize((side, side), Image.Resampling.LANCZOS), (cx * k - side // 2, h * k - side))
     # The text block on the left, centred on its ink.
     wm = wordmark(132 * k)
     font = ImageFont.truetype(str(HEADLINE_FONT), 40 * k)
@@ -230,14 +251,27 @@ def promo() -> Image.Image:
 
 def main() -> None:
     ICON_DIR.mkdir(parents=True, exist_ok=True)
-    for px, art, dot, glow in ICONS:
-        im = icon(px, art, dot, glow)
+    for px, art in ICONS:
+        im = icon(px, art)
         im.save(ICON_DIR / f"icon-{px}.png", optimize=True)
         if px == 128:
             im.save(HERE / "icon-128.png", optimize=True)
     promo().save(HERE / "promo-440x280.png", optimize=True)
+    # The website. favicon.ico carries each size drawn for itself; the rest are full bleed, no alpha,
+    # because iOS and the PWA launchers round or mask them themselves.
+    ico = [icon(16), icon(32), icon(48)]
+    ico[2].save(WEB_APP / "favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)], append_images=ico[:2])
+    icon(512, rounded=False).convert("RGB").save(WEB_APP / "icon.png", optimize=True)
+    icon(180, rounded=False).convert("RGB").save(WEB_APP / "apple-icon.png", optimize=True)
+    icon(192, rounded=False).convert("RGB").save(PUBLIC / "icon-192.png", optimize=True)
+    icon(512, rounded=False).convert("RGB").save(PUBLIC / "icon-512.png", optimize=True)
+    # Maskable: launchers may cut it to a circle 80% wide, so the messenger sits smaller and lower and
+    # its head stays inside that circle.
+    icon(512, rounded=False, scale=0.74).convert("RGB").save(PUBLIC / "icon-512-maskable.png", optimize=True)
     repo = EXT.parent.parent
-    for p in sorted([*ICON_DIR.glob("icon-*.png"), HERE / "icon-128.png", HERE / "promo-440x280.png"]):
+    outs = [*ICON_DIR.glob("icon-*.png"), HERE / "icon-128.png", HERE / "promo-440x280.png", WEB_APP / "favicon.ico",
+            WEB_APP / "icon.png", WEB_APP / "apple-icon.png", *PUBLIC.glob("icon-*.png")]
+    for p in sorted(outs):
         with Image.open(p) as im:
             print(f"{p.relative_to(repo)}  {im.size[0]}x{im.size[1]}  {im.mode}")
 
