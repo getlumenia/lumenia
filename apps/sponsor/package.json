@@ -21,6 +21,7 @@
     "spike8": "tsx src/spike8-channel-accounts.ts",
     "spike9": "tsx src/spike9-gasless-reclaim.ts",
     "spike10": "tsx src/spike10-v2-reclaim.ts",
+    "spike11": "tsx src/spike11-commitment.ts",
     "test:channels": "tsx src/test-channels.ts",
     "test:concurrency": "tsx src/test-concurrency.ts",
     "test:v2-concurrency": "tsx src/test-v2-concurrency.ts",

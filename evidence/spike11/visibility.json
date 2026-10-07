@@ -1,0 +1,485 @@
+{
+  "note": "Where the amount of the FIRST commitment deposit is public on chain. The commitment does not hide it. rpcField is the raw base64 XDR field of the RPC result and xdrType its type; path is relative to that field (empty = the field itself), in XDR field names as @stellar/stellar-sdk 16.3.0 exposes them; nodeXdr is the base64 XDR of the node at path. showsAmount is computed from the decoded value, not asserted.",
+  "contract": "CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA",
+  "sac": "CCX2B4R3UOJWUO7H2CIKEFPZP7J54ULHXKRRBQXAQSEQGWEYTSYCMWME",
+  "asset": "USDC:GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF",
+  "link": "d66b6140e8e985073425384ad1adec91c7639aa8b54190f7e70450914cc90049",
+  "amount": "1234567",
+  "commitment": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d",
+  "depositTx": "78183bfa875d264f42bdda6e92b1809bc79651cc0ef0898ca3b900cb9952ec2b",
+  "depositLedger": 5057518,
+  "explorer": {
+    "depositTx": "https://stellar.expert/explorer/testnet/tx/78183bfa875d264f42bdda6e92b1809bc79651cc0ef0898ca3b900cb9952ec2b",
+    "contract": "https://stellar.expert/explorer/testnet/contract/CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA",
+    "claimTx": "https://stellar.expert/explorer/testnet/tx/f478345c357c103e44f3e6c9e700e2dc6597bd402eccc475b71a0f9acac139a3"
+  },
+  "shownIn": "9 of 11 items",
+  "items": [
+    {
+      "source": "getTransaction",
+      "rpcField": "envelopeXdr",
+      "xdrType": "TransactionEnvelope",
+      "item": "deposit call: (from, link, commitment, amount, expiry)",
+      "path": "v1.tx.operations[0].body.invokeHostFunctionOp.hostFunction.invokeContract",
+      "nodeXdr": "AAAAAQ1kGIY035V+TyRTG2yYkQ5pZVAiiH9KnCCp4iPhVMCFAAAAB2RlcG9zaXQAAAAABQAAABIAAAAAAAAAAFV3r7s0e78vNocZgrEFqjr71CLvVRB38l08nZV06OGWAAAADQAAACDWa2FA6OmFBzQlOErRreyRx2OaqLVBkPfnBFCRTMkASQAAAA0AAAAgWLHuweL8eplTeDCDkkRee8GzdMZRbI4x/gFtPKBenC0AAAAKAAAAAAAAAAAAAAAAABLWhwAAAAUAAAAAasaOxA==",
+      "value": {
+        "contractAddress": "CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA",
+        "functionName": "deposit",
+        "args": [
+          {
+            "address": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF"
+          },
+          {
+            "bytes": "d66b6140e8e985073425384ad1adec91c7639aa8b54190f7e70450914cc90049"
+          },
+          {
+            "bytes": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d"
+          },
+          {
+            "i128": "1234567"
+          },
+          {
+            "u64": "1791397572"
+          }
+        ]
+      },
+      "showsAmount": true
+    },
+    {
+      "source": "getTransaction",
+      "rpcField": "envelopeXdr",
+      "xdrType": "TransactionEnvelope",
+      "item": "the amount argument",
+      "path": "v1.tx.operations[0].body.invokeHostFunctionOp.hostFunction.invokeContract.args[3]",
+      "nodeXdr": "AAAACgAAAAAAAAAAAAAAAAAS1oc=",
+      "value": {
+        "i128": "1234567"
+      },
+      "showsAmount": true
+    },
+    {
+      "source": "getTransaction",
+      "rpcField": "envelopeXdr",
+      "xdrType": "TransactionEnvelope",
+      "item": "auth[0] root invocation: deposit (credentials sorobanCredentialsSourceAccount)",
+      "path": "v1.tx.operations[0].body.invokeHostFunctionOp.auth[0].rootInvocation.function.contractFn",
+      "nodeXdr": "AAAAAQ1kGIY035V+TyRTG2yYkQ5pZVAiiH9KnCCp4iPhVMCFAAAAB2RlcG9zaXQAAAAABQAAABIAAAAAAAAAAFV3r7s0e78vNocZgrEFqjr71CLvVRB38l08nZV06OGWAAAADQAAACDWa2FA6OmFBzQlOErRreyRx2OaqLVBkPfnBFCRTMkASQAAAA0AAAAgWLHuweL8eplTeDCDkkRee8GzdMZRbI4x/gFtPKBenC0AAAAKAAAAAAAAAAAAAAAAABLWhwAAAAUAAAAAasaOxA==",
+      "value": {
+        "contractAddress": "CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA",
+        "functionName": "deposit",
+        "args": [
+          {
+            "address": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF"
+          },
+          {
+            "bytes": "d66b6140e8e985073425384ad1adec91c7639aa8b54190f7e70450914cc90049"
+          },
+          {
+            "bytes": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d"
+          },
+          {
+            "i128": "1234567"
+          },
+          {
+            "u64": "1791397572"
+          }
+        ]
+      },
+      "showsAmount": true
+    },
+    {
+      "source": "getTransaction",
+      "rpcField": "envelopeXdr",
+      "xdrType": "TransactionEnvelope",
+      "item": "auth[0] sub-invocation: transfer (from, to, amount)",
+      "path": "v1.tx.operations[0].body.invokeHostFunctionOp.auth[0].rootInvocation.subInvocations[0].function.contractFn",
+      "nodeXdr": "AAAAAa+g8jujk2o759CQohX5f9PeUWe6oxDC4ISJA1iYnLAmAAAACHRyYW5zZmVyAAAAAwAAABIAAAAAAAAAAFV3r7s0e78vNocZgrEFqjr71CLvVRB38l08nZV06OGWAAAAEgAAAAENZBiGNN+Vfk8kUxtsmJEOaWVQIoh/SpwgqeIj4VTAhQAAAAoAAAAAAAAAAAAAAAAAEtaH",
+      "value": {
+        "contractAddress": "CCX2B4R3UOJWUO7H2CIKEFPZP7J54ULHXKRRBQXAQSEQGWEYTSYCMWME",
+        "functionName": "transfer",
+        "args": [
+          {
+            "address": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF"
+          },
+          {
+            "address": "CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA"
+          },
+          {
+            "i128": "1234567"
+          }
+        ]
+      },
+      "showsAmount": true
+    },
+    {
+      "source": "getTransaction",
+      "rpcField": "events.contractEventsXdr[0][0]",
+      "xdrType": "ContractEvent",
+      "path": "",
+      "metaPath": "v4.operations[0].events[0]",
+      "item": "SAC \"mint\" event (mint, not transfer: the sender issues the asset, CAP-67)",
+      "nodeXdr": "AAAAAAAAAAGvoPI7o5NqO+fQkKIV+X/T3lFnuqMQwuCEiQNYmJywJgAAAAEAAAAAAAAAAwAAAA8AAAAEbWludAAAABIAAAABDWQYhjTflX5PJFMbbJiRDmllUCKIf0qcIKniI+FUwIUAAAAOAAAAPVVTREM6R0JLWFBMNTNHUjUzNkxaV1E0TVlGTUlGVkk1UFhWQkM1NUtSQTU3U0xVNkozRkxVNURRWk1TQUYAAAAAAAAKAAAAAAAAAAAAAAAAABLWhw==",
+      "value": {
+        "contractId": "CCX2B4R3UOJWUO7H2CIKEFPZP7J54ULHXKRRBQXAQSEQGWEYTSYCMWME",
+        "type": "contract",
+        "topics": [
+          {
+            "symbol": "mint"
+          },
+          {
+            "address": "CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA"
+          },
+          {
+            "string": "USDC:GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF"
+          }
+        ],
+        "data": {
+          "i128": "1234567"
+        }
+      },
+      "showsAmount": true
+    },
+    {
+      "source": "getTransaction",
+      "rpcField": "events.contractEventsXdr[0][1]",
+      "xdrType": "ContractEvent",
+      "path": "",
+      "metaPath": "v4.operations[0].events[1]",
+      "item": "escrow \"deposit\" event",
+      "nodeXdr": "AAAAAAAAAAENZBiGNN+Vfk8kUxtsmJEOaWVQIoh/SpwgqeIj4VTAhQAAAAEAAAAAAAAAAgAAAA8AAAAHZGVwb3NpdAAAAAANAAAAINZrYUDo6YUHNCU4StGt7JHHY5qotUGQ9+cEUJFMyQBJAAAAEQAAAAEAAAADAAAADwAAAApjb21taXRtZW50AAAAAAANAAAAIFix7sHi/HqZU3gwg5JEXnvBs3TGUWyOMf4BbTygXpwtAAAADwAAAAZleHBpcnkAAAAAAAUAAAAAasaOxAAAAA8AAAAGc2VuZGVyAAAAAAASAAAAAAAAAABVd6+7NHu/LzaHGYKxBao6+9Qi71UQd/JdPJ2VdOjhlg==",
+      "value": {
+        "contractId": "CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA",
+        "type": "contract",
+        "topics": [
+          {
+            "symbol": "deposit"
+          },
+          {
+            "bytes": "d66b6140e8e985073425384ad1adec91c7639aa8b54190f7e70450914cc90049"
+          }
+        ],
+        "data": {
+          "map": [
+            {
+              "key": {
+                "symbol": "commitment"
+              },
+              "val": {
+                "bytes": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d"
+              }
+            },
+            {
+              "key": {
+                "symbol": "expiry"
+              },
+              "val": {
+                "u64": "1791397572"
+              }
+            },
+            {
+              "key": {
+                "symbol": "sender"
+              },
+              "val": {
+                "address": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF"
+              }
+            }
+          ]
+        }
+      },
+      "showsAmount": false
+    },
+    {
+      "source": "getTransaction",
+      "rpcField": "resultMetaXdr",
+      "xdrType": "TransactionMeta",
+      "item": "ledger change in the meta (created): contractData:CCX2B4...MWME:Balance",
+      "path": "v4.operations[0].changes[1].created.data.contractData",
+      "nodeXdr": "AAAAAAAAAAGvoPI7o5NqO+fQkKIV+X/T3lFnuqMQwuCEiQNYmJywJgAAABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAASAAAAAQ1kGIY035V+TyRTG2yYkQ5pZVAiiH9KnCCp4iPhVMCFAAAAAQAAABEAAAABAAAAAwAAAA8AAAAGYW1vdW50AAAAAAAKAAAAAAAAAAAAAAAAABLWhwAAAA8AAAAKYXV0aG9yaXplZAAAAAAAAAAAAAEAAAAPAAAACGNsYXdiYWNrAAAAAAAAAAA=",
+      "value": {
+        "key": {
+          "vec": [
+            {
+              "symbol": "Balance"
+            },
+            {
+              "address": "CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA"
+            }
+          ]
+        },
+        "val": {
+          "map": [
+            {
+              "key": {
+                "symbol": "amount"
+              },
+              "val": {
+                "i128": "1234567"
+              }
+            },
+            {
+              "key": {
+                "symbol": "authorized"
+              },
+              "val": {
+                "bool": true
+              }
+            },
+            {
+              "key": {
+                "symbol": "clawback"
+              },
+              "val": {
+                "bool": false
+              }
+            }
+          ]
+        }
+      },
+      "showsAmount": true
+    },
+    {
+      "source": "getTransaction",
+      "rpcField": "resultMetaXdr",
+      "xdrType": "TransactionMeta",
+      "item": "ledger change in the meta (created): contractData:CAGWIG...LCXA:Drop",
+      "path": "v4.operations[0].changes[3].created.data.contractData",
+      "nodeXdr": "AAAAAAAAAAENZBiGNN+Vfk8kUxtsmJEOaWVQIoh/SpwgqeIj4VTAhQAAABAAAAABAAAAAgAAAA8AAAAERHJvcAAAAA0AAAAg1mthQOjphQc0JThK0a3skcdjmqi1QZD35wRQkUzJAEkAAAABAAAAEAAAAAEAAAACAAAADwAAAAJWMQAAAAAAEQAAAAEAAAAFAAAADwAAAAdjbGFpbWVkAAAAAAAAAAAAAAAADwAAAApjb21taXRtZW50AAAAAAANAAAAIFix7sHi/HqZU3gwg5JEXnvBs3TGUWyOMf4BbTygXpwtAAAADwAAAAhlc2Nyb3dlZAAAAAoAAAAAAAAAAAAAAAAAEtaHAAAADwAAAAZleHBpcnkAAAAAAAUAAAAAasaOxAAAAA8AAAAGc2VuZGVyAAAAAAASAAAAAAAAAABVd6+7NHu/LzaHGYKxBao6+9Qi71UQd/JdPJ2VdOjhlg==",
+      "value": {
+        "key": {
+          "vec": [
+            {
+              "symbol": "Drop"
+            },
+            {
+              "bytes": "d66b6140e8e985073425384ad1adec91c7639aa8b54190f7e70450914cc90049"
+            }
+          ]
+        },
+        "val": {
+          "vec": [
+            {
+              "symbol": "V1"
+            },
+            {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "claimed"
+                  },
+                  "val": {
+                    "bool": false
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "commitment"
+                  },
+                  "val": {
+                    "bytes": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "escrowed"
+                  },
+                  "val": {
+                    "i128": "1234567"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "expiry"
+                  },
+                  "val": {
+                    "u64": "1791397572"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "sender"
+                  },
+                  "val": {
+                    "address": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "showsAmount": true
+    },
+    {
+      "source": "getLedgerEntries",
+      "rpcField": "entries[0].xdr",
+      "xdrType": "LedgerEntryData",
+      "item": "the escrow's Drop entry (DropEntry::V1), decoded",
+      "path": "contractData.val",
+      "nodeXdr": "AAAAEAAAAAEAAAACAAAADwAAAAJWMQAAAAAAEQAAAAEAAAAFAAAADwAAAAdjbGFpbWVkAAAAAAAAAAAAAAAADwAAAApjb21taXRtZW50AAAAAAANAAAAIFix7sHi/HqZU3gwg5JEXnvBs3TGUWyOMf4BbTygXpwtAAAADwAAAAhlc2Nyb3dlZAAAAAoAAAAAAAAAAAAAAAAAEtaHAAAADwAAAAZleHBpcnkAAAAAAAUAAAAAasaOxAAAAA8AAAAGc2VuZGVyAAAAAAASAAAAAAAAAABVd6+7NHu/LzaHGYKxBao6+9Qi71UQd/JdPJ2VdOjhlg==",
+      "value": {
+        "decoded": {
+          "claimed": false,
+          "commitment": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d",
+          "escrowed": "1234567",
+          "expiry": "1791397572",
+          "sender": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF"
+        },
+        "xdrJson": {
+          "vec": [
+            {
+              "symbol": "V1"
+            },
+            {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "claimed"
+                  },
+                  "val": {
+                    "bool": false
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "commitment"
+                  },
+                  "val": {
+                    "bytes": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "escrowed"
+                  },
+                  "val": {
+                    "i128": "1234567"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "expiry"
+                  },
+                  "val": {
+                    "u64": "1791397572"
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "sender"
+                  },
+                  "val": {
+                    "address": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "showsAmount": true
+    },
+    {
+      "source": "getLedgerEntries",
+      "rpcField": "entries[0].xdr",
+      "xdrType": "LedgerEntryData",
+      "item": "Drop.commitment",
+      "path": "contractData.val.vec[1].map[1].val",
+      "nodeXdr": "AAAADQAAACBYse7B4vx6mVN4MIOSRF57wbN0xlFsjjH+AW08oF6cLQ==",
+      "value": {
+        "bytes": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d"
+      },
+      "showsAmount": false
+    },
+    {
+      "source": "getLedgerEntries",
+      "rpcField": "entries[0].xdr",
+      "xdrType": "LedgerEntryData",
+      "item": "Drop.escrowed",
+      "path": "contractData.val.vec[1].map[2].val",
+      "nodeXdr": "AAAACgAAAAAAAAAAAAAAAAAS1oc=",
+      "value": {
+        "i128": "1234567"
+      },
+      "showsAmount": true
+    }
+  ],
+  "raw": {
+    "deposit": {
+      "envelopeXdr": "AAAAAgAAAABVd6+7NHu/LzaHGYKxBao6+9Qi71UQd/JdPJ2VdOjhlgAMFogATSvkAAAABQAAAAEAAAAAAAAAAAAAAABqxT29AAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABDWQYhjTflX5PJFMbbJiRDmllUCKIf0qcIKniI+FUwIUAAAAHZGVwb3NpdAAAAAAFAAAAEgAAAAAAAAAAVXevuzR7vy82hxmCsQWqOvvUIu9VEHfyXTydlXTo4ZYAAAANAAAAINZrYUDo6YUHNCU4StGt7JHHY5qotUGQ9+cEUJFMyQBJAAAADQAAACBYse7B4vx6mVN4MIOSRF57wbN0xlFsjjH+AW08oF6cLQAAAAoAAAAAAAAAAAAAAAAAEtaHAAAABQAAAABqxo7EAAAAAQAAAAAAAAAAAAAAAQ1kGIY035V+TyRTG2yYkQ5pZVAiiH9KnCCp4iPhVMCFAAAAB2RlcG9zaXQAAAAABQAAABIAAAAAAAAAAFV3r7s0e78vNocZgrEFqjr71CLvVRB38l08nZV06OGWAAAADQAAACDWa2FA6OmFBzQlOErRreyRx2OaqLVBkPfnBFCRTMkASQAAAA0AAAAgWLHuweL8eplTeDCDkkRee8GzdMZRbI4x/gFtPKBenC0AAAAKAAAAAAAAAAAAAAAAABLWhwAAAAUAAAAAasaOxAAAAAEAAAAAAAAAAa+g8jujk2o759CQohX5f9PeUWe6oxDC4ISJA1iYnLAmAAAACHRyYW5zZmVyAAAAAwAAABIAAAAAAAAAAFV3r7s0e78vNocZgrEFqjr71CLvVRB38l08nZV06OGWAAAAEgAAAAENZBiGNN+Vfk8kUxtsmJEOaWVQIoh/SpwgqeIj4VTAhQAAAAoAAAAAAAAAAAAAAAAAEtaHAAAAAAAAAAEAAAAAAAAABAAAAAAAAAAAVXevuzR7vy82hxmCsQWqOvvUIu9VEHfyXTydlXTo4ZYAAAAGAAAAAQ1kGIY035V+TyRTG2yYkQ5pZVAiiH9KnCCp4iPhVMCFAAAAFAAAAAEAAAAGAAAAAa+g8jujk2o759CQohX5f9PeUWe6oxDC4ISJA1iYnLAmAAAAFAAAAAEAAAAHCn2+VR2s/8iJT4og16+vcr134mPCW2J9XTXkWi1+XuQAAAACAAAABgAAAAENZBiGNN+Vfk8kUxtsmJEOaWVQIoh/SpwgqeIj4VTAhQAAABAAAAABAAAAAgAAAA8AAAAERHJvcAAAAA0AAAAg1mthQOjphQc0JThK0a3skcdjmqi1QZD35wRQkUzJAEkAAAABAAAABgAAAAGvoPI7o5NqO+fQkKIV+X/T3lFnuqMQwuCEiQNYmJywJgAAABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAASAAAAAQ1kGIY035V+TyRTG2yYkQ5pZVAiiH9KnCCp4iPhVMCFAAAAAQAOsJIAAACQAAACTAAAAAAAC+94AAAAAXTo4ZYAAABAVwZe/LYYseE8BIaR4qP2Ib+/9s/TWOy+rzlPLG/Xi3Q6krj77IHm55gxIqTgJqHPjX+lkYQPYd5biyzZzXesAQ==",
+      "resultMetaXdr": "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",
+      "contractEventsXdr": [
+        [
+          "AAAAAAAAAAGvoPI7o5NqO+fQkKIV+X/T3lFnuqMQwuCEiQNYmJywJgAAAAEAAAAAAAAAAwAAAA8AAAAEbWludAAAABIAAAABDWQYhjTflX5PJFMbbJiRDmllUCKIf0qcIKniI+FUwIUAAAAOAAAAPVVTREM6R0JLWFBMNTNHUjUzNkxaV1E0TVlGTUlGVkk1UFhWQkM1NUtSQTU3U0xVNkozRkxVNURRWk1TQUYAAAAAAAAKAAAAAAAAAAAAAAAAABLWhw==",
+          "AAAAAAAAAAENZBiGNN+Vfk8kUxtsmJEOaWVQIoh/SpwgqeIj4VTAhQAAAAEAAAAAAAAAAgAAAA8AAAAHZGVwb3NpdAAAAAANAAAAINZrYUDo6YUHNCU4StGt7JHHY5qotUGQ9+cEUJFMyQBJAAAAEQAAAAEAAAADAAAADwAAAApjb21taXRtZW50AAAAAAANAAAAIFix7sHi/HqZU3gwg5JEXnvBs3TGUWyOMf4BbTygXpwtAAAADwAAAAZleHBpcnkAAAAAAAUAAAAAasaOxAAAAA8AAAAGc2VuZGVyAAAAAAASAAAAAAAAAABVd6+7NHu/LzaHGYKxBao6+9Qi71UQd/JdPJ2VdOjhlg=="
+        ]
+      ]
+    },
+    "dropEntry": {
+      "ledgerKeyXdr": "AAAABgAAAAENZBiGNN+Vfk8kUxtsmJEOaWVQIoh/SpwgqeIj4VTAhQAAABAAAAABAAAAAgAAAA8AAAAERHJvcAAAAA0AAAAg1mthQOjphQc0JThK0a3skcdjmqi1QZD35wRQkUzJAEkAAAAB",
+      "xdr": "AAAABgAAAAAAAAABDWQYhjTflX5PJFMbbJiRDmllUCKIf0qcIKniI+FUwIUAAAAQAAAAAQAAAAIAAAAPAAAABERyb3AAAAANAAAAINZrYUDo6YUHNCU4StGt7JHHY5qotUGQ9+cEUJFMyQBJAAAAAQAAABAAAAABAAAAAgAAAA8AAAACVjEAAAAAABEAAAABAAAABQAAAA8AAAAHY2xhaW1lZAAAAAAAAAAAAAAAAA8AAAAKY29tbWl0bWVudAAAAAAADQAAACBYse7B4vx6mVN4MIOSRF57wbN0xlFsjjH+AW08oF6cLQAAAA8AAAAIZXNjcm93ZWQAAAAKAAAAAAAAAAAAAAAAABLWhwAAAA8AAAAGZXhwaXJ5AAAAAAAFAAAAAGrGjsQAAAAPAAAABnNlbmRlcgAAAAAAEgAAAAAAAAAAVXevuzR7vy82hxmCsQWqOvvUIu9VEHfyXTydlXTo4ZY=",
+      "lastModifiedLedgerSeq": 5057518,
+      "liveUntilLedgerSeq": 5178477
+    },
+    "claim": {
+      "envelopeXdr": "AAAAAgAAAABVd6+7NHu/LzaHGYKxBao6+9Qi71UQd/JdPJ2VdOjhlgAAlQYATSvkAAAABgAAAAEAAAAAAAAAAAAAAABqxT3BAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABDWQYhjTflX5PJFMbbJiRDmllUCKIf0qcIKniI+FUwIUAAAAFY2xhaW0AAAAAAAAFAAAADQAAACDWa2FA6OmFBzQlOErRreyRx2OaqLVBkPfnBFCRTMkASQAAABIAAAAAAAAAAI+XHmw/ME1BUZ2yP0XNUOvYROmVC/6imWcv2kFN6xTpAAAADQAAAEBfEFUZQVGb52xsOMJGpnnFyBlO//7FxvChrVI5AEdKuWlKHChYQRZejs/fsYo0RTMUKfBxiZVGIKXMD07Jb3UCAAAACgAAAAAAAAAAAAAAAAAS1ocAAAANAAAAIDrTTuGNY5yi4J/n9jbmZMPq0CRAob5Mw3yADxL90SXMAAAAAAAAAAEAAAAAAAAAAwAAAAYAAAABDWQYhjTflX5PJFMbbJiRDmllUCKIf0qcIKniI+FUwIUAAAAUAAAAAQAAAAYAAAABr6DyO6OTajvn0JCiFfl/095RZ7qjEMLghIkDWJicsCYAAAAUAAAAAQAAAAcKfb5VHaz/yIlPiiDXr69yvXfiY8JbYn1dNeRaLX5e5AAAAAMAAAABAAAAAI+XHmw/ME1BUZ2yP0XNUOvYROmVC/6imWcv2kFN6xTpAAAAAVVTREMAAAAAVXevuzR7vy82hxmCsQWqOvvUIu9VEHfyXTydlXTo4ZYAAAAGAAAAAQ1kGIY035V+TyRTG2yYkQ5pZVAiiH9KnCCp4iPhVMCFAAAAEAAAAAEAAAACAAAADwAAAAREcm9wAAAADQAAACDWa2FA6OmFBzQlOErRreyRx2OaqLVBkPfnBFCRTMkASQAAAAEAAAAGAAAAAa+g8jujk2o759CQohX5f9PeUWe6oxDC4ISJA1iYnLAmAAAAEAAAAAEAAAACAAAADwAAAAdCYWxhbmNlAAAAABIAAAABDWQYhjTflX5PJFMbbJiRDmllUCKIf0qcIKniI+FUwIUAAAABABbuMAAAAHQAAALAAAAAAAAAbfYAAAABdOjhlgAAAEDca+4lKpEvsWjeQWKG+PaiJmEGQQd7SLj11j4XF4Vnu4L1mNWfj4ZLRuYdKJrfanWQML6bNKVhpF2wVMsnZcIJ"
+    }
+  },
+  "claimTx": "f478345c357c103e44f3e6c9e700e2dc6597bd402eccc475b71a0f9acac139a3",
+  "claimItems": [
+    {
+      "item": "claim call: (link, payout, sig, amount, salt), the reveal is public",
+      "source": "getTransaction",
+      "rpcField": "envelopeXdr",
+      "xdrType": "TransactionEnvelope",
+      "path": "v1.tx.operations[0].body.invokeHostFunctionOp.hostFunction.invokeContract",
+      "nodeXdr": "AAAAAQ1kGIY035V+TyRTG2yYkQ5pZVAiiH9KnCCp4iPhVMCFAAAABWNsYWltAAAAAAAABQAAAA0AAAAg1mthQOjphQc0JThK0a3skcdjmqi1QZD35wRQkUzJAEkAAAASAAAAAAAAAACPlx5sPzBNQVGdsj9FzVDr2ETplQv+oplnL9pBTesU6QAAAA0AAABAXxBVGUFRm+dsbDjCRqZ5xcgZTv/+xcbwoa1SOQBHSrlpShwoWEEWXo7P37GKNEUzFCnwcYmVRiClzA9OyW91AgAAAAoAAAAAAAAAAAAAAAAAEtaHAAAADQAAACA6007hjWOcouCf5/Y25mTD6tAkQKG+TMN8gA8S/dElzA==",
+      "value": {
+        "contractAddress": "CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA",
+        "functionName": "claim",
+        "args": [
+          {
+            "bytes": "d66b6140e8e985073425384ad1adec91c7639aa8b54190f7e70450914cc90049"
+          },
+          {
+            "address": "GCHZOHTMH4YE2QKRTWZD6RONKDV5QRHJSUF75IUZM4X5UQKN5MKOSJSA"
+          },
+          {
+            "bytes": "5f10551941519be76c6c38c246a679c5c8194efffec5c6f0a1ad523900474ab9694a1c285841165e8ecfdfb18a3445331429f07189954620a5cc0f4ec96f7502"
+          },
+          {
+            "i128": "1234567"
+          },
+          {
+            "bytes": "3ad34ee18d639ca2e09fe7f636e664c3ead02440a1be4cc37c800f12fdd125cc"
+          }
+        ]
+      },
+      "showsAmount": true
+    },
+    {
+      "item": "the revealed amount",
+      "source": "getTransaction",
+      "rpcField": "envelopeXdr",
+      "xdrType": "TransactionEnvelope",
+      "path": "v1.tx.operations[0].body.invokeHostFunctionOp.hostFunction.invokeContract.args[3]",
+      "nodeXdr": "AAAACgAAAAAAAAAAAAAAAAAS1oc=",
+      "value": {
+        "i128": "1234567"
+      },
+      "showsAmount": true
+    },
+    {
+      "item": "the revealed salt: with the amount, anyone can recompute the stored commitment",
+      "source": "getTransaction",
+      "rpcField": "envelopeXdr",
+      "xdrType": "TransactionEnvelope",
+      "path": "v1.tx.operations[0].body.invokeHostFunctionOp.hostFunction.invokeContract.args[4]",
+      "nodeXdr": "AAAADQAAACA6007hjWOcouCf5/Y25mTD6tAkQKG+TMN8gA8S/dElzA==",
+      "value": {
+        "bytes": "3ad34ee18d639ca2e09fe7f636e664c3ead02440a1be4cc37c800f12fdd125cc"
+      },
+      "showsAmount": false
+    }
+  ]
+}
