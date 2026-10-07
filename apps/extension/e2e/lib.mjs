@@ -78,8 +78,10 @@ export async function makeBackedUpAccount(browser, mail) {
   const res = await fetch(`${SPONSOR}/demo-link`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   const demo = await res.json();
   if (!res.ok || !demo.balanceId || !demo.bearerSecret) throw new Error(`/demo-link: ${res.status} ${JSON.stringify(demo).slice(0, 200)}`);
-  const q = new URLSearchParams({ a: demo.amount ?? "0.5", s: demo.from ?? "Lumenia", b: demo.balanceId });
-  const url = `${WEB}/c/${demo.balanceId.slice(-8)}?${q}#${demo.bearerSecret}`;
+  // The private v1 shape (apps/web/lib/link-fragment.ts): the balance id in the query, the key and
+  // then the sender's name after the '#', no amount anywhere (the claim page reads it from Horizon).
+  const q = new URLSearchParams({ b: demo.balanceId });
+  const url = `${WEB}/c/${demo.balanceId.slice(-8)}?${q}#${demo.bearerSecret}&s=${encodeURIComponent(demo.from ?? "Lumenia")}`;
   evidence.practiceDollars = demo.amount;
 
   const ctx = await browser.newContext();

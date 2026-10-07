@@ -9,9 +9,22 @@
  * mergeActivity carries the third: consolidating a per-link account into home debits one and
  * credits the other for the SAME money, which would read as "Sent $20" beside "Received $20".
  *
+ * The claimable-balance reader carries the fourth (D2 private links): the v1 claim page no longer
+ * believes an amount written in its URL, it reads the ledger, so the reader must print only the
+ * dollar the claim can actually deliver, say "gone" only on a 404, and say "unknown" for anything
+ * it could not finish, a read that hangs included. Driven through an injected fetch: no network.
+ *
  * RUN: pnpm --filter @lumenia/web test:horizon   (offline, no network)
  */
-import { isUsdcMovement, toActivityItem, mergeActivity, type ActivityItem } from "./horizon";
+import {
+  claimableAmountFrom,
+  isUsdcMovement,
+  loadClaimableAmount,
+  mergeActivity,
+  toActivityItem,
+  type ActivityItem,
+} from "./horizon";
+import { LEGACY_TESTNET_USDC_ISSUER, USDC_ISSUER, testnetConfig } from "./network";
 
 let passed = 0;
 let failed = 0;
@@ -84,5 +97,122 @@ console.log("\n[merge] several accounts, one honest list");
   );
 }
 
-console.log(`\n${failed === 0 ? "✅" : "❌"} HORIZON SELF-TEST ${passed}/${passed + failed}`);
-if (failed > 0) process.exit(1);
+console.log("\n[claimable] the v1 claim page prints only what the ledger holds for this link");
+const PINNED = USDC_ISSUER.testnet;
+const BEARER = "GCLAIMBEARERXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+const SENDER = "GSENDERRECLAIMXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+const BALANCE_ID = "00000000" + "ab".repeat(32);
+const record = (over: Partial<Record<string, unknown>> = {}) => ({
+  id: BALANCE_ID,
+  asset: `USDC:${PINNED}`,
+  amount: "0.5000000",
+  claimants: [
+    { destination: BEARER, predicate: { unconditional: true } },
+    { destination: SENDER, predicate: { not: { rel_before: "3600" } } },
+  ],
+  ...over,
+});
+{
+  const got = claimableAmountFrom(record(), PINNED, BEARER);
+  ok("the pinned dollar, claimable by this link's key, is the amount", got.state === "amount" && got.usd === "0.5000000");
+  ok("read without a key, the same balance is still the amount", claimableAmountFrom(record(), PINNED).state === "amount");
+  ok(
+    "a LOOK-ALIKE USDC from another issuer is NOT money",
+    claimableAmountFrom(record({ asset: `USDC:${IMPOSTOR}` }), PINNED, BEARER).state === "unknown",
+  );
+  ok(
+    "the RETIRED practice issuer is not money the claim can deliver",
+    claimableAmountFrom(record({ asset: `USDC:${LEGACY_TESTNET_USDC_ISSUER}` }), PINNED, BEARER).state === "unknown",
+  );
+  ok("XLM is not the dollar", claimableAmountFrom(record({ asset: "native" }), PINNED, BEARER).state === "unknown");
+  ok(
+    "a balance this link's key cannot claim is not 'verified' (somebody else's id, our key)",
+    claimableAmountFrom(record(), PINNED, "GSOMEONEELSEXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX").state === "unknown",
+  );
+  ok(
+    "the sender's time-locked RECLAIM claim does not count as the link's claim",
+    claimableAmountFrom(record(), PINNED, SENDER).state === "unknown",
+  );
+  for (const amount of ["0.0000000", "-1.0000000", "1e3", "abc", "", "0.12345678", 5]) {
+    ok(`amount ${JSON.stringify(amount)} is never printed`, claimableAmountFrom(record({ amount }), PINNED).state === "unknown");
+  }
+  ok("no record at all is unknown", claimableAmountFrom(null, PINNED).state === "unknown");
+}
+
+/** A fetch that answers once with `status` and `body`, and remembers what it was asked. */
+function fakeFetch(status: number, body: unknown, seen: string[] = []): typeof fetch {
+  return (async (input: RequestInfo | URL) => {
+    seen.push(String(input));
+    return new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
+  }) as typeof fetch;
+}
+
+async function main() {
+  console.log("\n[claimable] the read itself: amount | gone (404 only) | unknown (everything else)");
+  const NET = testnetConfig();
+  {
+    const seen: string[] = [];
+    const got = await loadClaimableAmount(BALANCE_ID, NET, { claimant: BEARER, fetchImpl: fakeFetch(200, record(), seen) });
+    ok("200 with the pinned dollar is the amount", got.state === "amount" && got.usd === "0.5000000");
+    ok(
+      "it asks the TEST network's Horizon for exactly this balance",
+      seen.length === 1 && seen[0] === `${NET.horizonUrl.replace(/\/$/, "")}/claimable_balances/${BALANCE_ID}`,
+      seen[0],
+    );
+  }
+  ok("404 is gone", (await loadClaimableAmount(BALANCE_ID, NET, { fetchImpl: fakeFetch(404, { status: 404 }) })).state === "gone");
+  for (const status of [400, 429, 500, 503]) {
+    ok(
+      `${status} is unknown, never gone`,
+      (await loadClaimableAmount(BALANCE_ID, NET, { fetchImpl: fakeFetch(status, { status }) })).state === "unknown",
+    );
+  }
+  ok(
+    "a look-alike asset over the wire is unknown",
+    (await loadClaimableAmount(BALANCE_ID, NET, { fetchImpl: fakeFetch(200, record({ asset: `USDC:${IMPOSTOR}` })) }))
+      .state === "unknown",
+  );
+  ok(
+    "a body that is not JSON is unknown",
+    (await loadClaimableAmount(BALANCE_ID, NET, { fetchImpl: fakeFetch(200, "<html>oops</html>") })).state === "unknown",
+  );
+  {
+    const offline = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch;
+    ok("offline (fetch rejects) is unknown", (await loadClaimableAmount(BALANCE_ID, NET, { fetchImpl: offline })).state === "unknown");
+  }
+  {
+    // A Horizon that never answers: the read must give up and say unknown, not spin forever.
+    const hang = ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      })) as typeof fetch;
+    const t0 = Date.now();
+    const got = await loadClaimableAmount(BALANCE_ID, NET, { fetchImpl: hang, timeoutMs: 50 });
+    const ms = Date.now() - t0;
+    ok("a read that hangs is abandoned as unknown", got.state === "unknown" && ms < 2_000, `${ms} ms`);
+  }
+  {
+    const seen: string[] = [];
+    const got = await loadClaimableAmount("", NET, { fetchImpl: fakeFetch(200, record(), seen) });
+    ok("no balance id is unknown, and nothing is asked", got.state === "unknown" && seen.length === 0);
+  }
+  {
+    const seen: string[] = [];
+    await loadClaimableAmount("../accounts/x?y", NET, { fetchImpl: fakeFetch(404, {}, seen) });
+    ok(
+      "a hostile id stays one path segment",
+      seen[0]?.endsWith("/claimable_balances/..%2Faccounts%2Fx%3Fy") === true,
+      seen[0],
+    );
+  }
+
+  console.log(`\n${failed === 0 ? "✅" : "❌"} HORIZON SELF-TEST ${passed}/${passed + failed}`);
+  if (failed > 0) process.exit(1);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

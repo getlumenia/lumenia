@@ -10,12 +10,17 @@
  *   - the balance id is truncated to its last 8 chars for the /c/[id] segment, while the FULL id
  *     goes in the `b` query param — the claim page needs both.
  *
+ * Since D2 private links the link carries no amount at all (the claim page reads it from the
+ * ledger by `b`) and the sender's name rides in the #fragment behind the key (claimFragment), so a
+ * chat preview or a server log of this URL names nobody and prices nothing.
+ *
  * The button is the only client boundary on the page; everything else stays server-rendered, so the
  * hero paints without waiting on this.
  */
 "use client";
 
 import { useEffect, useState } from "react";
+import { claimFragment } from "../../../lib/link-fragment";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const RESUME_KEY = "lumenia.try.link";
@@ -50,8 +55,8 @@ export function MintButton() {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "This isn't available right now. Please try again in a moment.");
       const d = (await res.json()) as { balanceId: string; bearerSecret: string; amount: string; issuer: string; from: string };
       const id = d.balanceId.slice(-8);
-      const q = `a=${encodeURIComponent(d.amount)}&s=${encodeURIComponent(d.from)}&b=${d.balanceId}&i=${d.issuer}`;
-      const link = `/c/${id}?${q}#${d.bearerSecret}`;
+      const q = `b=${d.balanceId}&i=${d.issuer}`;
+      const link = `/c/${id}?${q}#${claimFragment({ key: d.bearerSecret, from: d.from })}`;
       // Keep the link where a RELOAD can find it again.
       //
       // The claim route strips the #fragment from the address bar the moment it reads it, which is

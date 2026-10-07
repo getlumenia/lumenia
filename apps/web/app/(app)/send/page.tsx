@@ -143,10 +143,15 @@ export default function SendPage() {
   const [amount, setAmount] = useState("");
   const [from, setFrom] = useState("");
   const [request, setRequest] = useState<RequestCtx | null>(null);
-  // Optional claim password (lib/claim-password.ts). Off by default: the hero flow is a
-  // link you tap, and adding a step to every send would cost more than it buys.
+  // Optional claim password (lib/claim-password.ts). Off on practice money: the hero flow is a
+  // link you tap, and adding a step to every send would cost more than it buys. ON on real money,
+  // set after mount (see the effect below): there a link without one is cash in a chat.
   const [wantPassword, setWantPassword] = useState(false);
   const [password, setPassword] = useState("");
+  /* Whether chat previews may show the amount and the sender's name. Off by default: a chat app
+     fetches a pasted link to draw its card, and a private link gives that fetch "Lumenia" and
+     nothing else (lib/lumendrop.ts v2LinkUrl). On is the sender's explicit choice, never ours. */
+  const [richPreview, setRichPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   /* Whether a send is already running, readable the instant the second tap arrives. `busy` cannot
      answer that: it applies on the next render, and the reads a send does first are awaited. */
@@ -248,6 +253,16 @@ export default function SendPage() {
       // so no request_paid event fires — it's just a direct pay to a known account.
       setRequest({ nonce: "", name, to, amount: askedAmount });
     }
+  }, []);
+
+  /* REAL MONEY STARTS LOCKED. A bearer link is cash: anyone who reads it in the chat, a forward or
+     a shoulder can take the money, and on mainnet that money is not coming back from a faucet. So
+     the password is nudged on there, one tap to turn off. Practice money keeps the fast default.
+     Decided here, after mount, rather than in useState: the network is a localStorage flag the
+     server render cannot see, so a default read during render would differ between the two. The
+     form waits for the wallet, so this lands before it is on screen and never overrides a choice. */
+  useEffect(() => {
+    setWantPassword(activeNetwork().isMainnet);
   }, []);
 
   /**
@@ -530,6 +545,7 @@ export default function SendPage() {
         webOrigin: window.location.origin,
         password: lockWith || undefined,
         seeded,
+        preview: richPreview ? "rich" : "private",
       });
       const sentId = result.linkHex.slice(-8);
       // The link is kept encrypted, separately from this record — see lib/sent-links.ts.
@@ -686,7 +702,6 @@ export default function SendPage() {
         <LinkReadyCard
           link={ready.link}
           balanceId={ready.balanceId}
-          from={from.trim()}
           requestName={request?.name}
           locked={ready.locked}
           account={account?.address}
@@ -870,11 +885,17 @@ export default function SendPage() {
             </details>
           )}
           {/* Optional lock. Only for a bearer LINK — a direct pay already lands in one
-              named account, so a password there would protect nothing. Off by default;
+              named account, so a password there would protect nothing. Off by default on
+              practice money, on by default on real money (and the reason said next to it);
               the copy names the failure mode (same chat = no protection) rather than
               implying the password is strong on its own. */}
           {!request?.to && (
             <div className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface p-4">
+              {activeNetwork().isMainnet && (
+                <p className="text-sm font-medium text-ink">
+                  Real money: a password means only the person you tell can open it. A link without one is like cash.
+                </p>
+              )}
               <label className="flex items-start gap-3 text-sm">
                 <input
                   type="checkbox"
@@ -916,6 +937,26 @@ export default function SendPage() {
                 </>
               )}
             </div>
+          )}
+          {/* What the chat's preview card may say about this link. Only for a bearer LINK, the
+              only thing here that gets pasted into a chat. Off by default; the line under it
+              names what each state shows, because "preview" alone means nothing to most people. */}
+          {!request?.to && (
+            <label className="flex items-start gap-3 rounded-[14px] border border-line bg-surface p-4 text-sm">
+              <input
+                type="checkbox"
+                checked={richPreview}
+                onChange={(e) => setRichPreview(e.target.checked)}
+                className="mt-1 size-4"
+              />
+              <span>
+                <span className="font-medium text-ink">Show the amount and my name in chat previews</span>
+                <span className="block text-ink-soft">
+                  Off: the chat preview shows only Lumenia. On: anyone who sees the chat sees the
+                  amount and your name.
+                </span>
+              </span>
+            </label>
           )}
           {error && <p className="text-sm text-danger">{error}</p>}
           {/* The errand's one name, pointing at its one destination — the same words and the same

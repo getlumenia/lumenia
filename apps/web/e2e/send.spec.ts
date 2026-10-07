@@ -67,10 +67,20 @@ test("claim → send part of it onward → the onward link is claimable (loop cl
   // 3. the onward link is itself claimable
   const onward = (await page.getByTestId("money-link").textContent())?.trim() ?? "";
   expect(onward).toMatch(/\/c\/.+#S/);
+  // D2: a link is private by default. Neither the amount nor the sender's name rides in the query,
+  // which every chat preview and every server on the way gets to read, and the key is the very
+  // first thing after the '#' (lib/link-fragment.ts: the name, if any, comes after it).
+  const onwardUrl = new URL(onward);
+  expect(onwardUrl.searchParams.has("a"), "a private link carries no amount").toBe(false);
+  expect(onwardUrl.searchParams.has("s"), "a private link carries no name in its query").toBe(false);
+  expect(onwardUrl.hash, "the key comes right after the '#'").toMatch(/^#S[A-Z2-7]{55}(&|$)/);
   await page.goto(onward, { waitUntil: "domcontentloaded" });
-  // Exact: the v2 claim button repeats the figure ("Take $X.XX"), so a substring match finds two
-  // elements. The headline is the value-first promise, so that is the one asserted.
-  await expect(page.getByText(usd(ONWARD), { exact: true })).toBeVisible();
+  // The figure is read from the ESCROW in the browser now (the URL has none to offer), so it is
+  // given time to arrive: a link opened seconds after its deposit can reach an RPC that is a ledger
+  // behind. Exact: the v2 claim button repeats the figure ("Take $X.XX"), so a substring match finds
+  // two elements. The headline is the value-first promise, so that is the one asserted.
+  await expect(page.getByText(usd(ONWARD), { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("Verified on the ledger")).toBeVisible();
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await page.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(page);

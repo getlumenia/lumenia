@@ -26,7 +26,8 @@
  * created on purpose. So a record carries a `kind`:
  *
  *   "user"      — created or restored deliberately. Never swept, never merged, never auto-removed.
- *   "throwaway" — the per-link account a claim produced. Swept into the active account and closed.
+ *   "throwaway" — the per-link account a claim produced. Swept into the active account and closed,
+ *                 and never made home (adoptsHome): a v1 link's key is also its account's key.
  *
  * Records written before this existed have no `kind`, and are read as: the active account is a
  * user account, everything else is a throwaway — which is exactly the old behaviour, so the
@@ -326,6 +327,16 @@ export async function getRecordMeta(): Promise<AccountMeta | null> {
   return getActive();
 }
 
+/**
+ * Whether saving an account of this kind may make it the home account. A throwaway never may: it is
+ * the account a claim link produced, and a v1 link's key is also its account's key, which the link's
+ * sender, and for a practice link our server, already holds (lib/claim-home.ts). Everything else
+ * (a "user" account, or a record written before kinds existed) is adopted when no home exists yet.
+ */
+export function adoptsHome(kind: AccountKind | undefined): boolean {
+  return kind !== "throwaway";
+}
+
 /** If nothing is active yet, adopt `pubkey` (first-seen = active). */
 async function adoptHomeIfUnset(pubkey: string): Promise<void> {
   const ptr = await getHomePointer();
@@ -357,7 +368,7 @@ export async function savePhase1(pubkey: string, seed: Uint8Array, kind?: Accoun
     wrapKey,
     ...(resolvedKind ? { kind: resolvedKind } : {}),
   });
-  await adoptHomeIfUnset(pubkey);
+  if (adoptsHome(resolvedKind)) await adoptHomeIfUnset(pubkey);
 }
 
 export async function unlockPhase1(pubkey?: string): Promise<Uint8Array> {
@@ -405,7 +416,7 @@ export async function savePhase2(
     argon: params,
     ...(resolvedKind ? { kind: resolvedKind } : {}),
   });
-  await adoptHomeIfUnset(pubkey);
+  if (adoptsHome(resolvedKind)) await adoptHomeIfUnset(pubkey);
   return { deriveMs };
 }
 

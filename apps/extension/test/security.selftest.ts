@@ -42,7 +42,7 @@ run("SECURITY", "kept links, the paste guard, the stale pilot bound, record scop
   const seed = new Uint8Array(kp.rawSecretKey());
   const other = new Uint8Array(Keypair.random().rawSecretKey());
   const ID = "ab".repeat(32);
-  const LINK = `https://getlumenia.com/v2/c/${ID}?a=1.00&s=Ayse&src=ext#${Keypair.random().secret()}`;
+  const LINK = `https://getlumenia.com/v2/c/${ID}?src=ext#${Keypair.random().secret()}&s=Ayse`;
   const k1 = await sealed.linksKeyFromSeed(seed);
   const rec = await sealed.encryptLink(k1, ID, LINK);
   ok("the key cannot be exported (it never leaves WebCrypto)", "error" in (await outcome(crypto.subtle.exportKey("raw", k1))));

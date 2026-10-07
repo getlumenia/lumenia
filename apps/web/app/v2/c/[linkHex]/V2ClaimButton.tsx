@@ -17,12 +17,22 @@
  * cannot succeed is not free. The escrow's own answer decides what this screen says and whether a
  * retry button exists at all: a drop that has already been claimed, expired or was never there is
  * a final answer, not a failure to try again.
+ *
+ * It also renders the HEADER (who sent it, how much), because since D2 neither may come from the
+ * server: whatever the server renders is what every link-preview bot receives. The name is read
+ * here from the #fragment (or, on a legacy or rich link, from the query), and the amount from the
+ * escrow itself (one-to-one: loadDrop; a pot: loadPool, one share). Until the escrow answers the
+ * header says it is reading, and a read that fails says so in one line and shows no figure at all:
+ * a guessed amount on a page with our domain and a working Claim button is the one thing this
+ * screen must never print. The first render matches the server's (no name, no amount) so hydration
+ * never disagrees with it.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   claimV2ToSponsoredAccount,
   isTerminalClaimOutcome,
+  loadDrop,
   loadPool,
   readClaimLatch,
   readClaimProgress,
@@ -32,6 +42,8 @@ import {
   type V2ClaimOutcome,
   type V2LinkKind,
 } from "../../../../lib/lumendrop";
+import { readClaimQuery } from "../../../../lib/link-fragment";
+import { afterPatience, afterSettled, decideDrop, keepAnswer, withAnswer, type LedgerRead } from "../../../../lib/claim-ledger";
 import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../../lib/claim-error";
 import { copy } from "../../../../lib/copy";
@@ -46,6 +58,18 @@ const explorer = (hash: string, net: NetworkConfig) =>
 
 type State = "idle" | "unlocking" | "claiming" | "done" | "settled" | "error";
 
+/* What the escrow has said about the amount so far, and the rules for what the screen may say about
+   it, live in lib/claim-ledger.ts (pure, held by its self-test). */
+
+/* How often an unanswered read is asked again. A link opened seconds after it was made can reach an
+   RPC node that has not seen the deposit yet, so the screen keeps asking for about half a minute; its
+   honest line shows after LEDGER_PATIENCE_MS and a later answer still replaces it. */
+const LEDGER_ATTEMPTS = 10;
+const LEDGER_RETRY_MS = 3_000;
+/* A read with no answer at all is reported after this long, rather than "reading" forever. A late
+   answer still replaces the line. */
+const LEDGER_PATIENCE_MS = 10_000;
+
 /** A settled drop is not a failed claim, so it gets its own words and no way to try again. */
 type SettledKind = Exclude<V2ClaimOutcome["kind"], "claimed">;
 
@@ -54,6 +78,8 @@ function settledCopy(
   sender: string,
   /** Which escrow answered. A pool and a one-to-one link settle for different reasons. */
   link: V2LinkKind,
+  /** The drop's amount as the escrow reported it, when the screen read it before anyone tapped. */
+  amount?: string,
 ): { title: string; body: string; home: boolean } {
   switch (kind) {
     case "already-yours":
@@ -82,6 +108,15 @@ function settledCopy(
          would — `reclaim` is refused before expiry, so a drop settled early can only have been
          claimed — is not carried on the claim result this screen receives. So the words name both
          outcomes and /home answers which, honestly empty if the money went back. */
+      if (amount) {
+        /* Read up front, before anyone tapped: the escrow still holds the record and marks it
+           claimed, so the figure is the ledger's own. Same two outcomes, same honesty. */
+        return {
+          title: "This link has already been used",
+          body: `The ${formatUsd(amount)} on it is no longer waiting here. It was claimed, or ${sender} took it back after the link expired. If you claimed it on this phone, it's in your account.`,
+          home: true,
+        };
+      }
       return {
         title: "This link has already been used",
         body: `This money is no longer waiting here — it was claimed, or ${sender} took it back after the link expired. If you claimed it on this phone, it's in your account.`,
@@ -128,28 +163,45 @@ function settledCopy(
 
 export default function V2ClaimButton({
   linkHex,
-  amount,
-  sender,
   slots,
+  real,
 }: {
   linkHex: string;
-  amount: string;
-  sender: string;
   /**
    * What the LINK says it holds: a pot of this many shares, or null for a one-to-one link. A hint
    * and nothing more, it decides which escrow view is asked first and what this screen renders
    * while it waits. The escrow's own answer decides what gets signed.
    */
   slots: number | null;
+  /** `n=public`: the badge says real money. The claim itself resolves the network from the URL. */
+  real: boolean;
 }) {
   const [state, setState] = useState<State>("idle");
+  /* WHO SENT IT, read in the browser only (see the note at the top). "Someone" until the fragment is
+     read, and the line stays invisible until then, so a name never flickers in over a placeholder
+     and the server's HTML, which every preview bot receives, never carries one. */
+  const [sender, setSender] = useState("Someone");
+  const [mounted, setMounted] = useState(false);
+  /** The link says it is locked (`p=1` after the '#', or in a legacy/rich query). Display only. */
+  const [lockMarked, setLockMarked] = useState(false);
+  /** The rendering copy of `isGroup` below, which is a ref and so cannot re-render anything. */
+  const [group, setGroup] = useState(slots !== null);
+  /** The amount, as the escrow reports it. Never from the URL. */
+  const [ledger, setLedger] = useState<LedgerRead>({ phase: "reading" });
+  /* Set the moment a claim or an unlock is accepted. After that, a ledger answer may still fill in
+     the figure, but it must never swap the screen under the person (an "already used" read can be
+     this very claim landing). */
+  const touched = useRef(false);
+  /** The figure is read once per mount (StrictMode runs the mount effect twice in development). */
+  const readStarted = useRef(false);
+  const gone = useRef(false);
   /* The account this claim creates, captured the instant the relayer reports it. A ref, not state:
      it is read inside the same async function that sets it, and a re-render would be pointless. */
   const claimedAccount = useRef<string | null>(null);
   const [hash, setHash] = useState("");
   const [noKey, setNoKey] = useState(false);
   /** The escrow's settled answer about this drop, and which escrow gave it. Null until one does. */
-  const [settled, setSettled] = useState<{ kind: SettledKind; link: V2LinkKind } | null>(null);
+  const [settled, setSettled] = useState<{ kind: SettledKind; link: V2LinkKind; amount?: string } | null>(null);
   /**
    * Whether this link is a POT, decided before anything is spent: the `g` hint from the query, the
    * copy of it that rides in the fragment (chat apps trim queries and keep fragments), or this
@@ -203,12 +255,25 @@ export default function V2ClaimButton({
     const frag = window.location.hash.slice(1);
     /* The `g` copy in the fragment comes off BEFORE the key parser sees it. That parser treats the
        whole fragment as the key, so an unsplit `S...&g=6` is simply a bad secret and every group link
-       whose query a chat app trimmed would fail to open at all. */
+       whose query a chat app trimmed would fail to open at all. The sender's name and the lock
+       marker of a private link ride there too (`&s=`, `&p=1`), and come off the same way. */
     const carried = splitGroupHint(frag);
     const hinted = carried.slots ?? slots;
     /* A latch written by an earlier attempt records which escrow answered, so a link that arrived
        with no hint at all is still known to be a pool on the phone that already asked about it. */
     isGroup.current = hinted !== null || readClaimLatch(linkHex)?.link === "group";
+    /* The name: the fragment's (a private link), else the query's (believed only on a legacy or a
+       rich link, see readClaimQuery), else "Someone". The query's `a` is never read for anything.
+       Skipped on a second run that finds the fragment already stripped (StrictMode in development),
+       which would otherwise overwrite what the first run read with the fallback. */
+    const firstRun = !readStarted.current;
+    if (frag || firstRun) {
+      const query = readClaimQuery(window.location.search);
+      setSender(carried.from ?? query.queryName ?? "Someone");
+      setLockMarked(carried.passwordLocked || query.queryLocked);
+      setGroup(isGroup.current);
+    }
+    setMounted(true);
     if (frag) {
       const parsed = parseLinkFragment(carried.fragment);
       if (parsed?.kind === "password") {
@@ -230,12 +295,18 @@ export default function V2ClaimButton({
     } else if (!secretRef.current && !seedRef.current) {
       setNoKey(true);
     }
-    /* THE TWO READS A POT NEEDS, and only a pot: how many shares are left, and what this phone
-       already asked for. Both are read-only simulations against the escrow and Horizon, nothing
-       is created, no sponsor request is made, and neither runs on a one-to-one link, which keeps
-       the live money loop's claim screen exactly as it was. */
+    /* THE AMOUNT, for every link: a private link no longer carries it, and the escrow is the only
+       authority on it anyway. A read-only simulation (loadDrop for a one-to-one link, loadPool for a
+       pot, which also gives the live share count), nothing is created and no sponsor request is
+       made. Once per mount. */
+    if (!readStarted.current) {
+      readStarted.current = true;
+      if (resolved) void readAmount(resolved, isGroup.current);
+      else setLedger({ phase: "off" });
+    }
+    /* What this phone already asked for: a pot only. A read-only look at Horizon and the escrow, and
+       it does not run on a one-to-one link, which keeps that claim exactly as it was. */
     if (isGroup.current && resolved) {
-      void refreshPool(resolved);
       void readClaimProgress(linkHex, { net: resolved, group: true })
         .then(({ decision }) => setResume(decision))
         .catch(() => {
@@ -243,20 +314,101 @@ export default function V2ClaimButton({
              same payout this device already asked for, so opening it again cannot pay twice. */
         });
     }
+    gone.current = false;
+    return () => {
+      gone.current = true;
+    };
     // Deliberately mount-only: it reads the URL fragment, which is stripped on the first pass, so a
     // re-run would find nothing and fire nothing. `linkHex` comes from the route and cannot change
     // without a remount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** The live share count, straight from the escrow. A read we could not finish shows no count. */
-  async function refreshPool(on: NetworkConfig) {
+  /**
+   * Fill the header's figure from the escrow, asking again a few times while there is no answer.
+   * A failed or empty read shows its honest line at once; a later answer replaces it.
+   */
+  async function readAmount(on: NetworkConfig, pot: boolean) {
+    const patience = setTimeout(
+      () => setLedger(afterPatience),
+      LEDGER_PATIENCE_MS,
+    );
+    try {
+      for (let attempt = 0; attempt < LEDGER_ATTEMPTS; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, LEDGER_RETRY_MS));
+        if (gone.current) return;
+        if (pot ? await refreshPool(on) : await readDropOnce(on)) return;
+      }
+    } finally {
+      clearTimeout(patience);
+    }
+  }
+
+  /** A reading that is not an answer never replaces one that is (lib/claim-ledger.ts keepAnswer). */
+  const unlessAnswered = (next: LedgerRead) => (l: LedgerRead) => keepAnswer(l, next);
+  /** An answer, unless the claim has already settled the screen (lib/claim-ledger.ts withAnswer). */
+  const asAnswer = (next: LedgerRead) => (l: LedgerRead) => withAnswer(l, next);
+
+  /** One look at a one-to-one drop. True when the escrow gave an answer worth keeping. */
+  async function readDropOnce(on: NetworkConfig): Promise<boolean> {
+    let d: Awaited<ReturnType<typeof loadDrop>>;
+    try {
+      d = await loadDrop(linkHex, { net: on });
+    } catch {
+      setLedger(unlessAnswered(decideDrop({ kind: "error" }, touched.current).ledger));
+      return false;
+    }
+    /* No drop, and nothing ever said this link is a pot: a hand-edited link can have lost every `g`
+       hint, so the pool is asked once before the screen says the ledger shows no money. (The tap
+       already probes both; this only keeps the header honest.) */
+    if (!d && !isGroup.current) {
+      try {
+        const p = await loadPool(linkHex, { net: on });
+        if (p) {
+          isGroup.current = true;
+          setGroup(true);
+          setPool(p);
+          setLedger(asAnswer({ phase: "amount", amount: p.perShare }));
+          return true;
+        }
+      } catch {
+        /* the drop answer stands */
+      }
+    }
+    const decision = decideDrop(
+      d ? { kind: "drop", amount: d.amount, claimed: d.claimed } : { kind: "none" },
+      touched.current,
+    );
+    if (decision.settle) {
+      /* Spent before anyone here tapped: the settled screen up front, with the escrow's figure, and
+         no button that could only buy a sponsored account to be told the same thing. */
+      setLedger(decision.ledger);
+      setSettled({ kind: "already-claimed", link: "single", amount: decision.settle.amount });
+      setState((s) => (s === "idle" ? "settled" : s));
+      return true;
+    }
+    setLedger(decision.answered ? asAnswer(decision.ledger) : unlessAnswered(decision.ledger));
+    return decision.answered;
+  }
+
+  /**
+   * The live share count and the per-share figure, straight from the escrow. A read we could not
+   * finish shows no count. True when the escrow gave an answer.
+   */
+  async function refreshPool(on: NetworkConfig): Promise<boolean> {
     try {
       const p = await loadPool(linkHex, { net: on });
-      if (p) setPool(p);
+      if (p) {
+        setPool(p);
+        setLedger(asAnswer({ phase: "amount", amount: p.perShare }));
+        return true;
+      }
+      setLedger(unlessAnswered({ phase: "none" }));
     } catch {
       /* the escrow is the authority on this number, and a stale one is worse than none */
+      setLedger(unlessAnswered({ phase: "unread" }));
     }
+    return false;
   }
 
   async function claimWith(secret: string) {
@@ -302,6 +454,7 @@ export default function V2ClaimButton({
            and counting a second look at money already taken as a failure would understate the very
            funnel this route was instrumented to measure. */
         setSettled({ kind: outcome.kind, link: outcome.link });
+        setLedger(afterSettled());
         setState("settled");
         return;
       }
@@ -342,6 +495,7 @@ export default function V2ClaimButton({
            the race between the two. Same settled answer, so it gets the settled screen rather than
            a failure the recipient is invited to retry. */
         setSettled({ kind: "already-claimed", link: isGroup.current ? "group" : "single" });
+        setLedger(afterSettled());
         setState("settled");
         return;
       }
@@ -353,6 +507,7 @@ export default function V2ClaimButton({
 
   async function onClaim() {
     if (inFlight.current) return;
+    touched.current = true;
     const secret = secretRef.current;
     if (!secret) {
       setFailure({ kind: "link-invalid", detail: "missing key", retryable: false });
@@ -371,6 +526,7 @@ export default function V2ClaimButton({
     if (inFlight.current) return;
     const seed = seedRef.current;
     if (!seed || !password) return;
+    touched.current = true;
     setWrongPassword(false);
     setUnlockBroke(false);
     setState("unlocking");
@@ -420,16 +576,71 @@ export default function V2ClaimButton({
       </p>
     ) : null;
 
+  /**
+   * Who sent it and how much, above every state of the action. Nothing here comes from the server
+   * (see the note at the top): the name from the link, the figure from the escrow, and only after
+   * mount, so the server's render and the first client render are the same skeleton.
+   */
+  const header = (
+    <div className="flex flex-col items-center gap-2">
+      {/* Which network, before anything else: real dollars and practice dollars must never look
+          alike on the one screen a stranger sees (hackathon build, 2026-09-19). */}
+      <span
+        className={`mb-2 rounded-full border px-3 py-0.5 text-xs font-semibold ${real ? "border-money text-money" : "border-line text-ink-soft"}`}
+      >
+        {real ? "Real money" : "Practice money"}
+      </span>
+      {/* Invisible, not absent, until the link is read: the line keeps its height, so nothing jumps
+          when the name arrives, and "Someone" never flashes in front of the real one. */}
+      <p className={mounted ? "text-ink-soft" : "invisible text-ink-soft"}>
+        {group ? `${sender} sent money to a group` : `${sender} sent you money`}
+      </p>
+      {ledger.phase === "amount" ? (
+        <>
+          <p className="text-6xl font-bold tabular-nums text-money">{formatUsd(ledger.amount)}</p>
+          {/* On a pot, the 60px figure is ONE share, never the pot, which nobody here receives. */}
+          {group ? <p className="text-sm text-ink-soft">That&apos;s one share of this link.</p> : null}
+          <p className="text-xs font-medium text-ink-soft">Verified on the ledger</p>
+        </>
+      ) : ledger.phase === "reading" ? (
+        // The figure's own height, so the page does not jump when it lands.
+        <p className="flex min-h-[3.75rem] items-center text-sm text-ink-soft" role="status">
+          Reading the amount from the ledger
+        </p>
+      ) : ledger.phase === "unread" ? (
+        <p className="text-sm text-ink-soft">We couldn&apos;t read the amount from the ledger just now.</p>
+      ) : ledger.phase === "none" ? (
+        <p className="text-sm text-ink-soft">The ledger shows no money on this link right now.</p>
+      ) : null}
+      <p className="mt-1 text-sm font-medium text-ink">No app. No wallet. You pay nothing.</p>
+      {(lockMarked || locked) && (
+        <p className="mt-2 text-sm text-ink-soft">
+          {group
+            ? `This one is locked. You'll need the word ${sender} gave the group.`
+            : `This one is locked. You'll need the password ${sender} gave you.`}
+        </p>
+      )}
+    </div>
+  );
+  /* The header and the action are siblings, as they were when the header was server-rendered, so
+     the page's own spacing between them is unchanged. */
+  const withHeader = (action: ReactNode) => (
+    <>
+      {header}
+      {action}
+    </>
+  );
+
   if (state === "unlocking") {
-    return <p className="py-4 text-money">Checking…</p>;
+    return withHeader(<p className="py-4 text-money">{"Checking\u2026"}</p>);
   }
 
   if (state === "claiming") {
-    return <p className="py-4 text-money">Moving your money…</p>;
+    return withHeader(<p className="py-4 text-money">{"Moving your money\u2026"}</p>);
   }
 
   if (state === "done") {
-    return (
+    return withHeader(
       <div className="flex w-full flex-col items-center gap-4">
         <p className="text-lg font-semibold text-money">It&apos;s yours 🎉</p>
         {/* The receipt says what just happened on chain, in plain words: the sponsor paid the
@@ -462,8 +673,8 @@ export default function V2ClaimButton({
   }
 
   if (state === "settled" && settled) {
-    const said = settledCopy(settled.kind, sender, settled.link);
-    return (
+    const said = settledCopy(settled.kind, sender, settled.link, settled.amount);
+    return withHeader(
       <div className="flex w-full flex-col items-center gap-4">
         <div className="flex flex-col items-center gap-1 text-center">
           <p className="text-lg font-semibold text-money">{said.title}</p>
@@ -491,7 +702,7 @@ export default function V2ClaimButton({
    * the escrow, so "it's in your account on this phone" is a balance somebody read. A read that did
    * not finish answers "unsure", which offers the claim and promises nothing. */
   if (state === "idle" && resume?.say === "taken") {
-    return (
+    return withHeader(
       <div className="flex w-full flex-col items-center gap-4">
         <div className="flex flex-col items-center gap-1 text-center">
           <p className="text-lg font-semibold text-money">You already took your share</p>
@@ -511,7 +722,7 @@ export default function V2ClaimButton({
   }
 
   if (state === "idle" && resume?.say === "missed") {
-    return (
+    return withHeader(
       <div className="flex w-full flex-col items-center gap-3 text-center">
         <p className="text-lg font-semibold text-money">Your share didn&apos;t land</p>
         <p className="text-ink-soft">
@@ -532,18 +743,19 @@ export default function V2ClaimButton({
    *
    * A pot names the share ("Take my share") rather than the figure: the amount on screen is one
    * share, and "Take $15.00" next to a $90 pot invites the reading that the pot is what moves. The
-   * one-to-one label is untouched, it is the live money loop's, and the claim end-to-end test
-   * matches on it.
+   * one-to-one label is the live money loop's, and the claim end-to-end tests match on both of its
+   * forms: "Take <figure>" once the ESCROW has named the figure (never the URL), and "Claim my
+   * money" until it has, or when it could not.
    */
   const claimLabel =
     state === "error"
       ? copy.claim.retry
       : resume?.say === "resume"
         ? "Finish taking my share"
-        : slots !== null || isGroup.current
+        : group
           ? "Take my share"
-          : amount
-            ? `Take ${formatUsd(amount)}`
+          : ledger.phase === "amount"
+            ? `Take ${formatUsd(ledger.amount)}`
             : "Claim my money";
 
   /** A resume is one tap that presents the SAME payout, so it cannot pay this person twice. */
@@ -597,7 +809,7 @@ export default function V2ClaimButton({
     }
   })();
 
-  return (
+  return withHeader(
     <div className="flex w-full flex-col items-center gap-3">
       {/* The live count sits above the action, where the decision is made. Absent until a real read
           lands, and absent again once the pool is no longer open. */}
@@ -611,7 +823,7 @@ export default function V2ClaimButton({
         <p className="text-sm text-ink-soft">Open your original link to claim this money.</p>
       ) : !canRetry ? null : locked ? (
         <>
-          {slots !== null || isGroup.current ? (
+          {group ? (
             /* A pot's secret is one word the whole group was told out loud, not a password for one
                person. Built as a single string so the spacing cannot break the way the one below
                once did. */
@@ -660,7 +872,7 @@ export default function V2ClaimButton({
             className="h-14 w-full rounded-full bg-money px-8 text-base font-semibold text-primary-foreground transition-colors hover:bg-money/90 active:bg-money-pressed disabled:opacity-50"
           >
             {/* The locked one-to-one label is left exactly as it was; only a pot renames it. */}
-            {slots !== null || isGroup.current ? "Take my share" : "Claim my money"}
+            {group ? "Take my share" : "Claim my money"}
           </button>
         </>
       ) : (

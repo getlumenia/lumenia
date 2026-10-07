@@ -25,6 +25,7 @@ import {
 } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
 import { activeNetwork } from "./network";
+import { claimFragment } from "./link-fragment";
 import { assertHealthMatchesPin, pinnedUsdcIssuer } from "./tx-guard";
 
 const RECLAIM_AFTER_SECONDS = (7 * 24 * 60 * 60).toString(); // money comes back after 7 days
@@ -114,8 +115,10 @@ export async function createSendLink(opts: {
   });
 
   const id = res.balanceId.slice(-8);
-  const query = `a=${encodeURIComponent(opts.amount)}&s=${encodeURIComponent(opts.from)}&b=${res.balanceId}&i=${res.usdcIssuer}`;
-  const link = `${opts.webOrigin.replace(/\/$/, "")}/c/${id}?${query}#${bearer.secret()}`;
+  // Private shape (D2): the claim page reads the amount from the ledger by `b`, so the URL carries
+  // none, and the name rides behind the key in the fragment, which no request ever sends.
+  const query = `b=${res.balanceId}&i=${res.usdcIssuer}`;
+  const link = `${opts.webOrigin.replace(/\/$/, "")}/c/${id}?${query}#${claimFragment({ key: bearer.secret(), from: opts.from })}`;
   return { link, balanceId: res.balanceId, hash: res.hash };
 }
 

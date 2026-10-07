@@ -3,11 +3,14 @@
  * exactly as the extension calls it (through runSend, on a network chosen by the settings), with only
  * the Soroban RPC and the sponsor's POST faked. For practice money and for real money:
  *
- *   - the link is  https://getlumenia.com/v2/c/<linkHex>?a=..&s=..[&p=1][&n=public]&src=ext#<key>
+ *   - the link is the private one (D2, apps/web/lib/lumendrop.ts v2LinkUrl):
+ *       https://getlumenia.com/v2/c/<linkHex>?[n=public&]src=ext#<key>&s=<name>[&p=1]
+ *     with no amount anywhere in it, and the sender's name and the lock marker only after the '#'
  *   - `src=ext` is the last query parameter and appears once, whatever the sender's name contains
  *   - `n=public` is in the query if and only if the link is real money
  *   - the key (the S... secret, or the p1. seed of a password-locked link) is only ever after the '#',
- *     never in the path or the query, and the password is nowhere at all
+ *     first there, never in the path or the query, and the password is nowhere at all
+ *   - the name rides after the key exactly as typed, and cannot add a parameter however it is spelled
  *   - the POST goes to that network's sponsor at /v2-deposit, every RPC call goes to that network's RPC
  *     node, and the deposit invokes that network's escrow, signed for that network's passphrase
  *   - the website's own claim reader resolves the link to the same escrow the deposit went to
@@ -82,6 +85,7 @@ async function main() {
   const { ExtError } = await import("../src/lib/errors");
   const claimPw = await import("../../web/lib/claim-password");
   const lumendrop = await import("../../web/lib/lumendrop");
+  const linkFragment = await import("../../web/lib/link-fragment");
   const network = await import("../../web/lib/network");
 
   /* ---------------------------------------- [a] ---------------------------------------- */
@@ -210,15 +214,18 @@ async function main() {
     label: string;
     net: NetId;
     from: string;
+    /** the name the claim screen prints for it: the website's sanitiser cuts it at 24 characters */
+    shown: string;
     password?: string;
   }
+  const HOSTILE_SHOWN = "Ay\u015fe&n=public&src=web&p=";
   const runs: RunCfg[] = [
-    { label: "practice money", net: "testnet", from: "Ayse" },
-    { label: "practice money, password-locked", net: "testnet", from: "Ayse", password: PASSWORD },
-    { label: "practice money, hostile sender name", net: "testnet", from: HOSTILE },
-    { label: "real money", net: "public", from: "Ayse" },
-    { label: "real money, password-locked", net: "public", from: "Ayse", password: PASSWORD },
-    { label: "real money, hostile sender name", net: "public", from: HOSTILE },
+    { label: "practice money", net: "testnet", from: "Ayse", shown: "Ayse" },
+    { label: "practice money, password-locked", net: "testnet", from: "Ayse", shown: "Ayse", password: PASSWORD },
+    { label: "practice money, hostile sender name", net: "testnet", from: HOSTILE, shown: HOSTILE_SHOWN },
+    { label: "real money", net: "public", from: "Ayse", shown: "Ayse" },
+    { label: "real money, password-locked", net: "public", from: "Ayse", shown: "Ayse", password: PASSWORD },
+    { label: "real money, hostile sender name", net: "public", from: HOSTILE, shown: HOSTILE_SHOWN },
   ];
 
   for (const cfg of runs) {
@@ -263,23 +270,38 @@ async function main() {
     const url = new URL(link);
     const sp = url.searchParams;
     const lock = Boolean(cfg.password);
+    // The key is the fragment's first segment; the sender's name and the lock marker ride behind it.
+    const carried = linkFragment.parseClaimFragment(fragment);
+    const key = carried.key;
+    const sentName = fragment.split("&").find((part) => part.startsWith("s="))?.slice(2);
     ok("the link starts with https://getlumenia.com/v2/c/<linkHex>? and the id is 64 lowercase hex", link.startsWith(`${WEB}/v2/c/${linkHex}?`) && /^[0-9a-f]{64}$/.test(linkHex) && url.pathname === `/v2/c/${linkHex}`);
     ok("exactly one '#', with something after it (a sender name cannot start a second fragment)", link.split("#").length === 2 && fragment.length > 0);
-    ok("the query ends with &src=ext, and src is there exactly once", beforeHash.endsWith("&src=ext") && sp.getAll("src").length === 1 && sp.get("src") === "ext" && (beforeHash.match(/[?&]src=/g) ?? []).length === 1);
-    ok("the query is a, s, then p (if locked), n (if real money), then src: in that order and nothing else", same([...sp.keys()], ["a", "s", ...(lock ? ["p"] : []), ...(e.mainnet ? ["n"] : []), "src"]), [...sp.keys()].join(","));
-    ok("a is the amount as typed to two places, s is the sender's name, read back exactly", sp.get("a") === "2.50" && sp.get("s") === cfg.from);
+    ok("the query ends with src=ext, and src is there exactly once", /[?&]src=ext$/.test(beforeHash) && sp.getAll("src").length === 1 && sp.get("src") === "ext" && (beforeHash.match(/[?&]src=/g) ?? []).length === 1);
+    ok("the query is n (if real money), then src: in that order and nothing else", same([...sp.keys()], [...(e.mainnet ? ["n"] : []), "src"]), [...sp.keys()].join(","));
+    ok(
+      "no amount anywhere in the link (no a=, no 2.50), and the sender's name nowhere before the '#'",
+      !link.includes("a=") && !link.includes("2.50") && !beforeHash.includes("s=") && !beforeHash.includes(encodeURIComponent(cfg.from)),
+    );
+    ok(
+      "after the key, s= carries the sender's name exactly as typed, and the claim reader prints it as the screen will",
+      sentName !== undefined && decodeURIComponent(sentName) === cfg.from && carried.from === cfg.shown,
+      JSON.stringify(carried.from),
+    );
     ok(`n=public is ${e.mainnet ? "present, once" : "absent"} (real money only)`, same(sp.getAll("n"), e.mainnet ? ["public"] : []));
-    ok(`p=1 is ${lock ? "present" : "absent"} (only a password-locked link)`, lock ? sp.get("p") === "1" && sp.getAll("p").length === 1 : !sp.has("p"));
-    ok("no seeded marker and no group marker (an extension link is a plain one-to-one link)", !sp.has("seeded") && !sp.has("g") && !fragment.includes("&g="));
+    ok(
+      `p=1 is ${lock ? "after the '#', once" : "absent"} (only a password-locked link), and never in the query`,
+      !sp.has("p") && carried.passwordLocked === lock && (lock ? fragment.endsWith("&p=1") && fragment.split("&p=").length === 2 : !fragment.includes("&p=")),
+    );
+    ok("no seeded marker and no group marker (an extension link is a plain one-to-one link)", !sp.has("seeded") && !sp.has("g") && !fragment.includes("&g=") && carried.slots === null);
 
     // The key.
     if (!lock) {
-      ok("the fragment is an S... secret", /^S[A-Z2-7]{55}$/.test(fragment));
-      ok("  ...and it is the secret of the key that was escrowed (its public half is the link id)", S.Keypair.fromSecret(fragment).rawPublicKey().toString("hex") === linkHex);
-      ok("  ...and no S... string appears in the path or the query", !/S[A-Z2-7]{55}/.test(beforeHash) && !(url.pathname + url.search).includes(fragment));
+      ok("the fragment starts with an S... secret, and the name rides behind it", /^S[A-Z2-7]{55}$/.test(key) && fragment.startsWith(`${key}&s=`));
+      ok("  ...and it is the secret of the key that was escrowed (its public half is the link id)", S.Keypair.fromSecret(key).rawPublicKey().toString("hex") === linkHex);
+      ok("  ...and no S... string appears in the path or the query", !/S[A-Z2-7]{55}/.test(beforeHash) && !(url.pathname + url.search).includes(key));
     } else {
-      ok("the fragment is the p1. seed, not a key", fragment.startsWith("p1.") && !/S[A-Z2-7]{55}/.test(link));
-      const parsed = claimPw.parseLinkFragment(fragment);
+      ok("the fragment starts with the p1. seed, not a key", key.startsWith("p1.") && fragment.startsWith(`${key}&s=`) && !/S[A-Z2-7]{55}/.test(link));
+      const parsed = claimPw.parseLinkFragment(key);
       ok("  ...the right password opens exactly the escrowed link id", parsed?.kind === "password" && (await claimPw.unlockLink(parsed.seed, PASSWORD, linkHex)).ok === true);
       ok("  ...a wrong password does not", parsed?.kind === "password" && (await claimPw.unlockLink(parsed.seed, "not the password", linkHex)).ok === false);
       ok("  ...the password appears nowhere in the link, in any encoding", !link.includes(PASSWORD) && !link.includes(encodeURIComponent(PASSWORD)) && !link.includes(PASSWORD.replace(/ /g, "+")));
@@ -287,7 +309,10 @@ async function main() {
 
     // The claim page reads it back.
     const split = lumendrop.splitGroupHint(url.hash);
-    ok("the website's claim reader finds the key where it was put, and no group hint", split.slots === null && split.fragment === fragment);
+    ok(
+      "the website's claim reader finds the key where it was put, the name and the lock behind it, and no group hint",
+      split.slots === null && split.fragment === key && split.from === cfg.shown && split.passwordLocked === lock,
+    );
     const resolved = network.resolveNetwork(sp.get("n"));
     ok("  ...and the claim page's own network resolution (n) lands on the same escrow and sponsor the deposit went to", resolved.contract === net.contract && resolved.sponsorUrl === net.sponsorUrl && resolved.id === cfg.net);
 
@@ -296,7 +321,7 @@ async function main() {
     const post = world.posts[0]!;
     const body = JSON.parse(post.body) as { xdr: string; senderPublicKey: string };
     ok("  ...a JSON POST of the signed transaction and the sender, and nothing else", post.method === "POST" && same(Object.keys(body).sort(), ["senderPublicKey", "xdr"]) && body.senderPublicKey === PUB);
-    ok("  ...it carries neither the link's key nor the password", !post.body.includes(fragment) && !(cfg.password && post.body.includes(cfg.password)) && !post.body.includes(linkHex.toUpperCase()));
+    ok("  ...it carries neither the link's key nor the password", !post.body.includes(key) && !(cfg.password && post.body.includes(cfg.password)) && !post.body.includes(linkHex.toUpperCase()));
     ok("every RPC call went to this network's node, and none anywhere else", world.rpcCalls.length >= 2 && world.rpcCalls.every((c) => c.url === e.rpc), world.rpcCalls.map((c) => c.url).join(" "));
     ok("  ...no request left for anything but the sponsor's /v2-deposit", world.stray.length === 0, world.stray.join(" "));
     ok(`  ...and none of this network's traffic touched the ${cfg.net === "testnet" ? "real-money" : "practice"} hosts`, [...world.posts.map((p) => p.url), ...world.rpcCalls.map((c) => c.url)].every((u) => !u.startsWith(other.sponsorUrl) && !u.startsWith(new URL(other.rpcUrl).origin)));
@@ -325,7 +350,7 @@ async function main() {
     ok("  ...the link was sealed under its own id exactly as returned", sealed.length === 1 && sealed[0]![0] === linkHex && sealed[0]![1] === link);
     // The sender's own display name is stored as typed (it may legitimately hold a '#'), so it is set aside.
     const stored = JSON.stringify(puts.map((r) => ({ ...r, from: "" })));
-    ok("  ...and no record holds the link, its key, a URL or the password (the typed sender name aside)", !stored.includes(fragment) && !stored.includes("https://") && !stored.includes("#") && !(cfg.password && stored.includes(cfg.password)) && puts.every((r) => r.from === cfg.from));
+    ok("  ...and no record holds the link, its key, a URL or the password (the typed sender name aside)", !stored.includes(key) && !stored.includes("https://") && !stored.includes("#") && !(cfg.password && stored.includes(cfg.password)) && puts.every((r) => r.from === cfg.from));
   }
 
   /* ---------------------------------------- [c] ---------------------------------------- */

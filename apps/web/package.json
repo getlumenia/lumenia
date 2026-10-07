@@ -23,6 +23,10 @@
     "test:walletkit": "tsx lib/wallets-kit.selftest.ts",
     "test:agentmcp": "tsx lib/agent-mcp.selftest.ts",
     "test:extseam": "tsx lib/ext-seam.selftest.ts",
+    "test:linkprivacy": "tsx lib/link-privacy.selftest.ts",
+    "test:claimmeta": "tsx lib/claim-metadata.selftest.ts",
+    "test:claimledger": "tsx lib/claim-ledger.selftest.ts",
+    "test:claimhome": "tsx lib/claim-home.selftest.ts",
     "test:agentmcp-live": "tsx lib/agent-mcp.livetest.ts",
     "lint": "eslint .",
     "agent-mcp": "tsx lib/agent-mcp.ts"

@@ -36,6 +36,18 @@ import { assertSponsoredOnboarding } from "./tx-guard";
 import { classifyClaimError } from "./claim-error";
 
 import { netKey } from "./scoped-store";
+/* What a link carries besides its id is read and written in lib/link-fragment.ts, a pure module the
+   v1 claim route can load without this SDK. The pool bounds and the `g` reader moved there with it,
+   and are re-exported here so every existing import keeps working. */
+import {
+  MIN_POOL_SLOTS,
+  MAX_POOL_SLOTS,
+  RICH_PREVIEW_PARAM,
+  RICH_PREVIEW_VALUE,
+  claimFragment,
+  parseClaimFragment,
+} from "./link-fragment";
+export { MIN_POOL_SLOTS, MAX_POOL_SLOTS, parseSlots } from "./link-fragment";
 /**
  * Every v2 call takes an optional network; omitting it means THE NETWORK THIS DEVICE IS ON.
  *
@@ -91,11 +103,10 @@ const stroopsToUsdc = (s: bigint): string => {
  *
  * Pool and Drop are SEPARATE storage maps under the same link key, so the claim path asks the escrow
  * which one holds a link rather than believing the `g` hint in the URL (see readClaimState).
+ *
+ * MIN_POOL_SLOTS, MAX_POOL_SLOTS and parseSlots (the `g` reader) live in lib/link-fragment.ts.
  */
 
-/** Pool bounds, mirroring the sponsor relay's own refusal (apps/sponsor/src/lib/soroban-relay.ts). */
-export const MIN_POOL_SLOTS = 2;
-export const MAX_POOL_SLOTS = 30;
 /* REAL MONEY: mainnet pools are bounded far tighter than practice ones, because every share
    claimed opens a sponsored account out of a float measured in tens of onboardings. The sponsor
    enforces the same six and refuses to read anything above eight, whatever its configuration says;
@@ -111,39 +122,26 @@ export function maxPoolSlots(isMainnet: boolean): number {
 export type V2LinkKind = "single" | "group";
 
 /**
- * Read the `g` hint - how many shares the link SAYS it holds.
- *
- * Anything that is not a whole number inside the bounds is ignored rather than clamped: the query is
- * writable by anyone who forwards the link, and a clamped value would print a share count the escrow
- * never agreed to. The hint only decides which view is probed first and what the page renders while
- * it waits; it never decides what gets signed.
- */
-export function parseSlots(raw: string | string[] | null | undefined): number | null {
-  const one = Array.isArray(raw) ? raw[0] : raw;
-  if (typeof one !== "string") return null;
-  const trimmed = one.trim();
-  // Digits only. `Number()` alone would read "0x3" and "3e0" as 3, and a share count that depends on
-  // how JavaScript parses a string is not a share count.
-  if (!/^\d{1,3}$/.test(trimmed)) return null;
-  const n = Number(trimmed);
-  return n >= MIN_POOL_SLOTS && n <= MAX_POOL_SLOTS ? n : null;
-}
-
-/**
- * Split the `g` copy that rides in the #fragment off the key material.
+ * Split everything that rides behind the key in the #fragment off the key material: the `g` copy of
+ * the share count, and on a private link the sender's name (`&s=`) and the lock marker (`&p=1`).
+ * `fragment` comes back as the key alone.
  *
  * The count travels twice on purpose: chat apps trim query strings and leave fragments intact, and a
  * claimant whose `?g` was trimmed would otherwise be told by the get_drop probe that the link is
  * empty. `g` is not a secret - it is the share count already printed on the page.
  *
- * EVERY reader of a claim fragment must pass it through here BEFORE lib/claim-password.ts sees it:
- * that parser treats the whole fragment as the key, so an unsplit `S...&g=6` is simply a bad secret.
+ * EVERY reader of a claim fragment must pass it through here (or lib/link-fragment.ts
+ * parseClaimFragment, which this is) BEFORE lib/claim-password.ts sees it: that parser treats the
+ * whole fragment as the key, so an unsplit `S...&g=6` or `S...&s=Ayse` is simply a bad secret.
  */
-export function splitGroupHint(fragment: string): { slots: number | null; fragment: string } {
-  const frag = fragment.replace(/^#/, "");
-  const m = frag.match(/&g=(\d{1,3})(?![0-9])/);
-  if (!m) return { slots: null, fragment: frag };
-  return { slots: parseSlots(m[1]), fragment: frag.replace(m[0], "") };
+export function splitGroupHint(fragment: string): {
+  slots: number | null;
+  fragment: string;
+  from: string | null;
+  passwordLocked: boolean;
+} {
+  const c = parseClaimFragment(fragment);
+  return { slots: c.slots, fragment: c.key, from: c.from, passwordLocked: c.passwordLocked };
 }
 
 /**
@@ -158,7 +156,7 @@ export function groupTotal(perShare: string, slots: number): string {
 }
 
 export interface V2Link {
-  /** The share link — link id in the path, metadata in the query, the secret in the #fragment. */
+  /** The share link: the link id in the path, public markers in the query, the key in the #fragment. See `v2LinkUrl`. */
   link: string;
   /** The link id (the ephemeral key's 32-byte public key, hex) — the drop's on-chain key. */
   linkHex: string;
@@ -198,15 +196,15 @@ export interface V2LinkParts {
   webOrigin: string;
   /** The link id: the link key's public half, hex. */
   linkHex: string;
-  /** `a=`. The whole amount of a one-to-one link, ONE share of a group link. */
+  /** `a=`, on a rich link only: the whole amount of a one-to-one link, ONE share of a group link. A private link never carries it. */
   amount: string;
-  /** `s=`. The sender's display name. */
+  /** The sender's display name: `&s=` after the '#' of a private link, `s=` in the query of a rich one. */
   from: string;
-  /** The fragment's key material: the S... secret, or `p1.<seed>` for a password-locked link. Never the password. */
+  /** The key material, first in the fragment: the S... secret, or `p1.<seed>` for a password-locked link. Never the password. */
   fragment: string;
   /** Group links only: the share count, as `g=` in the query and as the `&g=` copy in the fragment. */
   slots?: number;
-  /** `p=1`: the key is derived from a password the recipient has to know. */
+  /** The key is derived from a password the recipient has to know: `&p=1` after the '#' (private), `p=1` in the query (rich). */
   passwordLocked?: boolean;
   /** `n=public`. */
   mainnet?: boolean;
@@ -214,6 +212,12 @@ export interface V2LinkParts {
   seeded?: boolean;
   /** `src=`, last in the query. One to eight lowercase letters; anything else throws. */
   src?: string;
+  /**
+   * What chat previews may show. Omitted or "private" (anything but "rich" is private): no amount
+   * anywhere in the link and the name after the '#'. "rich" is the sender's explicit choice to show
+   * their name and the amount: the pre-D2 link plus `preview=rich`.
+   */
+  preview?: "private" | "rich";
 }
 
 /* `src` is written by code (the extension passes "ext"), never typed by a person, so a bad one is a
@@ -228,39 +232,74 @@ function assertLinkSrc(src: unknown): void {
 }
 
 /**
- * The claim URL for a deposit, as ONE pure function: the link id in the path, what the claim screen
- * shows in the query, the key material in the #fragment. createV2Link and createV2GroupLink both
- * build their link here, and lib/ext-seam.selftest.ts holds it byte for byte to the templates they
- * carried inline before.
+ * The claim URL for a deposit, as ONE pure function: the link id in the path, public markers in the
+ * query, the key material in the #fragment. createV2Link and createV2GroupLink both build their link
+ * here, lib/ext-seam.selftest.ts holds the rich shape byte for byte to the templates they carried
+ * inline before, and lib/link-privacy.selftest.ts holds the private one to the contract below.
  *
- * Where each piece goes, and why:
- *   - `a=` is what ONE person takes. A group claimant never receives the pot, so it is the figure
- *     the claim screen puts at 60px.
+ * PRIVATE, the default for every link (D2):
+ *
+ *   <origin>/v2/c/<linkHex>[?<query>]#<key>[&s=<name>][&g=N][&p=1]
+ *
+ * where the query is `g=N` (group), `n=public` (mainnet), `seeded=1`, `src=..` (always last), in that
+ * order and each only when it applies, with no "?" at all when none does.
+ *
+ * Why it changed: every chat app fetches a pasted link to draw its preview, and the old query handed
+ * that fetch the amount and the sender's name for EVERY link, so both were printed on the card and
+ * written into the request line of every server on the way, whether or not the sender wanted them
+ * shown.
+ *   - The AMOUNT leaves the URL entirely. The claim page reads it from the escrow, which is the only
+ *     authority on it anyway: a figure in a URL anyone can edit never proved anything.
+ *   - The NAME moves after the '#', next to the key (lib/link-fragment.ts claimFragment). A fragment
+ *     is never sent in an HTTP request, so no server on the way to the claim page sees it and no
+ *     preview is built from it. Anyone who holds the whole link still reads it: this keeps the name
+ *     out of previews and logs, not out of the chat.
+ *   - `p=1` moves after the '#' too. It still lets the claim screen ask for the password before it
+ *     touches the key, so a recipient sees "this one needs the password" rather than a button that
+ *     quietly fails.
+ *
+ * RICH, only when the sender explicitly chose it (`preview: "rich"`): the pre-D2 link byte for byte
+ * (`a=`, `s=`, then `g`, `p`, `n`, `seeded` in the query, and `<key>[&g=N]` after the '#'), with
+ * `preview=rich` inserted before `src`. That flag is what licenses a preview card to name the sender,
+ * and the amount on that card is still read from the ledger, never from `a=`.
+ *
+ * What stays where it was, and why:
  *   - `g=` (group only) is the share count, and it rides in the fragment as well as the query: chat
  *     apps trim queries and keep fragments, and a claimant who arrives with neither hint would have
  *     the pool probed second.
- *   - `p=1` lets the claim screen ask for the password BEFORE it reads the fragment, so a recipient
- *     sees "this one needs the password" rather than a button that quietly fails.
  *   - `n=public` is what tells the RECIPIENT's device this is real money. resolveNetwork() treats a
  *     missing `n` as testnet, so a mainnet link without it sent the claimer looking for the drop in
  *     the testnet escrow, where it does not exist, and the claim failed for a reason neither side
  *     could see. The recipient arrives with no prior state (that is the whole point of the product),
  *     so the network cannot come from their device; it has to travel in the link. A pool needs it
  *     as much as a one-to-one link does.
- *   - `s=` is the sender's display name, so the seeded marker is spelled out as `seeded=1`.
  *   - `seeded=1` and `src=` are public markers, never secrets. `src` goes at the very END of the
- *     query so every link without one is unchanged. The claim page ignores params it does not know.
- *   - The key material is only ever in the fragment: nothing in the path or the query can carry it.
+ *     query. The claim page ignores params it does not know.
+ *   - The key material is only ever in the fragment, and always FIRST in it: nothing in the path or
+ *     the query can carry it, and a key that is not base32 or base64url throws rather than build a
+ *     link that could not be read back.
  */
 export function v2LinkUrl(p: V2LinkParts): string {
   if (p.src !== undefined) assertLinkSrc(p.src);
+  const origin = p.webOrigin.replace(/\/$/, "");
   const group = p.slots !== undefined;
-  const q =
-    `a=${encodeURIComponent(p.amount)}&s=${encodeURIComponent(p.from)}` +
-    `${group ? `&g=${p.slots}` : ""}${p.passwordLocked ? "&p=1" : ""}${p.mainnet ? "&n=public" : ""}` +
-    `${p.seeded ? "&seeded=1" : ""}${p.src !== undefined ? `&src=${p.src}` : ""}`;
-  const fragment = group ? `${p.fragment}&g=${p.slots}` : p.fragment;
-  return `${p.webOrigin.replace(/\/$/, "")}/v2/c/${p.linkHex}?${q}#${fragment}`;
+  if (p.preview === "rich") {
+    const q =
+      `a=${encodeURIComponent(p.amount)}&s=${encodeURIComponent(p.from)}` +
+      `${group ? `&g=${p.slots}` : ""}${p.passwordLocked ? "&p=1" : ""}${p.mainnet ? "&n=public" : ""}` +
+      `${p.seeded ? "&seeded=1" : ""}&${RICH_PREVIEW_PARAM}=${RICH_PREVIEW_VALUE}` +
+      `${p.src !== undefined ? `&src=${p.src}` : ""}`;
+    // The pre-D2 fragment: the key and the `g` copy, nothing else.
+    return `${origin}/v2/c/${p.linkHex}?${q}#${claimFragment({ key: p.fragment, slots: p.slots })}`;
+  }
+  const q = [
+    ...(group ? [`g=${p.slots}`] : []),
+    ...(p.mainnet ? ["n=public"] : []),
+    ...(p.seeded ? ["seeded=1"] : []),
+    ...(p.src !== undefined ? [`src=${p.src}`] : []),
+  ].join("&");
+  const fragment = claimFragment({ key: p.fragment, from: p.from, slots: p.slots, passwordLocked: p.passwordLocked });
+  return `${origin}/v2/c/${p.linkHex}${q ? `?${q}` : ""}#${fragment}`;
 }
 
 /**
@@ -276,10 +315,16 @@ export function v2LinkUrl(p: V2LinkParts): string {
 export async function createV2Link(opts: {
   signer: Signer;
   amount: string;
-  /** display name shown as "<from> sent you money" on the claim screen */
+  /** display name shown as "<from> sent you money" on the claim screen (it rides after the '#', see `v2LinkUrl`) */
   from: string;
   webOrigin: string;
   sponsorUrl: string;
+  /**
+   * What chat previews may show about this link. Omitted (the default) or "private": nothing
+   * personal, no amount anywhere in the link and the name after the '#'. "rich" only when the sender
+   * chose to show their name and the amount. See `v2LinkUrl`.
+   */
+  preview?: "private" | "rich";
   /** unix seconds; default now + 7 days (the reclaim window) */
   expiry?: number;
   /** optional claim password — the recipient must know it before the money will move */
@@ -367,6 +412,7 @@ export async function createV2Link(opts: {
     mainnet: net.isMainnet,
     seeded: opts.seeded,
     src: opts.src,
+    preview: opts.preview,
   });
 
   /* The caller keeps this BEFORE the request leaves, because the request is the point of no return:
@@ -446,10 +492,12 @@ export async function createV2GroupLink(opts: {
   perShare: string;
   /** how many equal shares, 2..MAX_POOL_SLOTS */
   slots: number;
-  /** display name shown as "<from> sent you money" on the claim screen */
+  /** display name shown as "<from> sent you money" on the claim screen (it rides after the '#', see `v2LinkUrl`) */
   from: string;
   webOrigin: string;
   sponsorUrl: string;
+  /** What chat previews may show; private unless the sender chose "rich". See `createV2Link`. */
+  preview?: "private" | "rich";
   /** unix seconds the link closes; after it, only the sender can take the leftover back */
   expiry?: number;
   /** optional shared word - everyone claiming has to know it before the money will move */
@@ -505,7 +553,7 @@ export async function createV2GroupLink(opts: {
   const prepared = await opts.signer.sign(rpc.assembleTransaction(tx, sim).build());
   const retrySafeAfter = Number(prepared.timeBounds?.maxTime ?? 0) * 1000 || Number.POSITIVE_INFINITY;
 
-  // `a=` is ONE share here, and `g=` rides in the fragment too (see v2LinkUrl).
+  // A rich link's `a=` is ONE share here, and `g=` rides in the fragment too (see v2LinkUrl).
   const url = v2LinkUrl({
     webOrigin: opts.webOrigin,
     linkHex,
@@ -517,6 +565,7 @@ export async function createV2GroupLink(opts: {
     mainnet: net.isMainnet,
     seeded: opts.seeded,
     src: opts.src,
+    preview: opts.preview,
   });
   const made = { link: url, linkHex, perShare: opts.perShare, slots: opts.slots, total };
 
@@ -1064,6 +1113,49 @@ export async function loadPool(
   return null;
 }
 
+/* ------------------------------- reading a drop ------------------------------- */
+
+/** A one-to-one drop as the escrow stores it. */
+export interface DropState {
+  linkHex: string;
+  /** what the link pays, 7dp USDC as the contract stores it, e.g. "0.2000000" */
+  amount: string;
+  /** unix seconds the sender's take-back opens */
+  expiry: number;
+  /** true once it was claimed OR taken back by the sender: the contract keeps one flag for both */
+  claimed: boolean;
+  sender: string;
+  /** the escrow that holds it (a link minted before an upgrade lives in a superseded one) */
+  contract: string;
+}
+
+/**
+ * Read a one-to-one drop from whichever escrow holds it - the amount a private link no longer
+ * carries, from the only place that can vouch for it.
+ *
+ * Same three answers as `loadPool`: a malformed id is null, every escrow answered and none holds it
+ * is null, and an escrow that could not be asked THROWS, because "there is nothing behind this link"
+ * must never be a guess. With no `sourceAccount` the read simulates from a null source, which is what
+ * a recipient's phone has: no account yet.
+ */
+export async function loadDrop(
+  linkHex: string,
+  opts?: { net?: NetworkConfig; sourceAccount?: string },
+): Promise<DropState | null> {
+  if (!isLinkHex(linkHex)) return null;
+  const net = opts?.net ?? defaultNet();
+  const d = await readDrop(new rpc.Server(net.rpcUrl), linkHex, net, opts?.sourceAccount);
+  if (!d) return null;
+  return {
+    linkHex,
+    amount: stroopsToUsdc(d.amount),
+    expiry: d.expiry,
+    claimed: d.claimed,
+    sender: d.sender,
+    contract: d.contract,
+  };
+}
+
 /* ------------------- what a device that already asked may honestly say -------------------- */
 
 /**
@@ -1156,15 +1248,18 @@ async function loadPayoutUsd(address: string, net: NetworkConfig): Promise<strin
   }
 }
 
-/** Read a drop's on-chain state from ONE contract via its get_drop view (read-only simulation). */
+/**
+ * Read a drop's on-chain state from ONE contract via its get_drop view (read-only simulation).
+ * `sourceAccount` is an existing account to simulate from; omitted, the null source (see `readView`).
+ */
 async function readDropFrom(
   server: rpc.Server,
-  sourceAccount: string,
   linkHex: string,
   contract: string,
   net: NetworkConfig,
-): Promise<{ amount: bigint; expiry: number; claimed: boolean } | null> {
-  const d = await readView<{ amount?: bigint; expiry?: bigint | number; claimed?: boolean }>(
+  sourceAccount?: string,
+): Promise<{ amount: bigint; expiry: number; claimed: boolean; sender: string } | null> {
+  const d = await readView<{ sender?: string; amount?: bigint; expiry?: bigint | number; claimed?: boolean }>(
     server,
     contract,
     "get_drop",
@@ -1173,7 +1268,7 @@ async function readDropFrom(
     sourceAccount,
   );
   if (!d) return null; // None ⇒ this contract doesn't hold the drop (or it's already gone)
-  return { amount: BigInt(d.amount ?? 0n), expiry: Number(d.expiry ?? 0), claimed: !!d.claimed };
+  return { amount: BigInt(d.amount ?? 0n), expiry: Number(d.expiry ?? 0), claimed: !!d.claimed, sender: String(d.sender ?? "") };
 }
 
 /**
@@ -1185,14 +1280,14 @@ async function readDropFrom(
  */
 async function readDrop(
   server: rpc.Server,
-  sourceAccount: string,
   linkHex: string,
   net: NetworkConfig,
-): Promise<({ amount: bigint; expiry: number; claimed: boolean } & { contract: string }) | null> {
+  sourceAccount?: string,
+): Promise<({ amount: bigint; expiry: number; claimed: boolean; sender: string } & { contract: string }) | null> {
   let unread = false;
   for (const contract of dropContracts(net)) {
     try {
-      const d = await readDropFrom(server, sourceAccount, linkHex, contract, net);
+      const d = await readDropFrom(server, linkHex, contract, net, sourceAccount);
       if (d) return { ...d, contract };
     } catch {
       unread = true; // unreachable contract => try the next one
@@ -1298,7 +1393,7 @@ export async function loadV2DropStatus(
       return pool.status === "open" || pool.status === "expired" ? "pending" : "settled";
     }
     const server = new rpc.Server(net.rpcUrl);
-    const drop = await readDrop(server, sourceAccount, linkHex, net);
+    const drop = await readDrop(server, linkHex, net, sourceAccount);
     // No escrow holds it ⇒ it has been claimed or reclaimed and cleared — the same conclusion the
     // classic path draws from a 404.
     if (!drop) return "settled";
@@ -1393,7 +1488,7 @@ export async function loadReclaimableV2(sender: string, opts?: { net?: NetworkCo
           }
           return null;
         }
-        const drop = await readDrop(server, sender, linkHex, net);
+        const drop = await readDrop(server, linkHex, net, sender);
         if (drop && !drop.claimed && nowSec >= drop.expiry && drop.amount > 0n) {
           return { linkHex, usd: stroopsToUsdc(drop.amount), expiry: drop.expiry };
         }

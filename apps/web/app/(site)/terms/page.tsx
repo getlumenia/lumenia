@@ -9,6 +9,7 @@
  * no custody, we touch no cash, and the step into local currency is theirs at a licensed provider.
  */
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Footer } from "../../../components/site/sections/Footer";
 import "../../../components/site/page.css";
 import "../../../components/site/editorial.css";
@@ -70,6 +71,11 @@ export default function Terms() {
           <p>
             <strong>Your password is yours alone.</strong> If you lock your money with a password and
             forget it, nobody can recover it, Lumenia included.
+          </p>
+          <p>
+            <strong>What we can see has its own page.</strong> The{" "}
+            <Link href="/privacy">privacy page</Link> says plainly what a link carries, what the public
+            ledger shows, and what our servers see and keep.
           </p>
           <p>
             <strong>Getting dollars out is your own step.</strong> Turning dollars into your local

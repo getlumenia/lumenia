@@ -142,6 +142,7 @@ async function main() {
         passwordLocked: Boolean(opts.password),
         mainnet: opts.net?.isMainnet,
         src: opts.src,
+        preview: opts.preview,
       });
       const p: PreparedDeposit = {
         link,
@@ -265,7 +266,7 @@ async function main() {
   /* ---------------------------------------- [b] ---------------------------------------- */
   section("b", "failures AFTER the link was kept: failed only when provably nothing moved, otherwise uncertain");
   const HEX = hexId(7);
-  const URL_ = `${WEB}/v2/c/${HEX}?a=2.50&s=Ayse&src=ext#${KP.secret()}`;
+  const URL_ = `${WEB}/v2/c/${HEX}?src=ext#${KP.secret()}&s=Ayse`;
   type Row = { name: string; err: unknown; code: string; phase: "failed" | "uncertain"; text?: RegExp; cfg?: Cfg };
   const rows: Row[] = [
     { name: "DepositUncertainError (a 202 not yet seen, or a dropped connection)", err: new core.DepositUncertainError(HEX, URL_, T0 + 120_000), code: "uncertain", phase: "uncertain" },
@@ -719,7 +720,13 @@ async function main() {
   const sweep = everyPut.join("\n");
   ok(`${everyPut.length} stored records, across every scenario above, hold no '#', no URL, no /v2/c/ path and no S... key`, everyPut.length > 50 && !sweep.includes("#") && !sweep.includes("https://") && !sweep.includes("/v2/c/") && !/S[A-Z2-7]{55}/.test(sweep), `${everyPut.length} records`);
   ok("  ...and not the link password", !sweep.includes(PASSWORD));
-  ok("  ...while every sealed link does carry its fragment (the link is kept where it can be read back)", everySealedLinks.length > 50 && everySealedLinks.every((l) => /#S[A-Z2-7]{55}$/.test(l)), `${everySealedLinks.length} sealed`);
+  // The private fragment is the key, then the sender's name, then the lock marker when there is one
+  // (apps/web/lib/lumendrop.ts v2LinkUrl), and nothing else.
+  ok(
+    "  ...while every sealed link does carry its fragment (the link is kept where it can be read back)",
+    everySealedLinks.length > 50 && everySealedLinks.every((l) => /#S[A-Z2-7]{55}&s=[A-Za-z0-9%._~!*'()-]+(&p=1)?$/.test(l)),
+    `${everySealedLinks.length} sealed`,
+  );
   ok("the whole suite made no network request outside its own fake", strayFetches === 0, `${strayFetches} stray fetches`);
 
   globalThis.fetch = realFetch;

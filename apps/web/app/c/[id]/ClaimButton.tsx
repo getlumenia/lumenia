@@ -4,11 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Keypair } from "@stellar/stellar-sdk";
 import { copy } from "../../../lib/copy";
-import { runClaim } from "../../../lib/sponsor";
+import { prepareAccount, runClaim } from "../../../lib/sponsor";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../lib/claim-error";
-import { resolveNetwork } from "../../../lib/network";
+import { activeNetwork, resolveNetwork } from "../../../lib/network";
 import { isSeededLink, sendEvent } from "../../../lib/events";
-import { savePhase1 } from "../../../lib/keystore";
+import { getHome, removeAccount, savePhase1 } from "../../../lib/keystore";
+import { loadBalance } from "../../../lib/horizon";
+import { sweepIntoHome } from "../../../lib/sweep";
+import { localSignerFromSeed } from "../../../lib/signer";
+import { settleLinkAccount, type SettleDeps } from "../../../lib/claim-home";
+import { parseClaimFragment } from "../../../lib/link-fragment";
 import { MoneyMovingAnimation } from "../../../components/brand/MoneyMovingAnimation";
 import { Confetti } from "../../../components/brand/Confetti";
 
@@ -18,6 +23,11 @@ import { Confetti } from "../../../components/brand/Confetti";
  * is stripped from the URL immediately (owner caveat C3: read → memory → strip →
  * use-from-memory-on-click). The sponsor creates a 0-XLM account + trustline, then
  * fee-bumps the claim; the recipient holds 0 XLM and pays no gas.
+ *
+ * Since D2 private links the fragment can carry the sender's name behind the key
+ * (`#<key>&s=<name>`), so the key is the fragment's FIRST segment, through
+ * parseClaimFragment, never the whole fragment. A pre-D2 fragment is the key alone and
+ * reads back the same. The name is ClaimView's to read; this component only holds the key.
  *
  * NO Motion/animation library on this route — the morph (button → money-moving
  * pulse → success bloom + confetti) is CSS-only. runClaim is unchanged.
@@ -29,6 +39,29 @@ const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-spon
  * otherwise build against one chain while the money sits on the other. */
 const CLAIM_NETWORK = resolveNetwork(null);
 const explorer = (hash: string) => `https://stellar.expert/explorer/testnet/tx/${hash}`;
+
+/* The longest the success screen waits for the settle step below; ten seconds is usual. */
+const SETTLE_WAIT_MS = 45_000;
+
+/* Keeps a v1 link's account out of this device's home (lib/claim-home.ts): the link's key is also
+   that account's key, and for a practice link our server made it. These are the real steps. */
+const settleDeps: SettleDeps = {
+  getHome,
+  saveAccount: (pubkey, seed, kind) => savePhase1(pubkey, seed, kind),
+  removeAccount: (pubkey) => removeAccount(pubkey),
+  openAccount: async (seed) => {
+    // A home is only made on the network this route pays on; a device switched elsewhere keeps the
+    // money in the link's account until its own /home gathers it.
+    if (activeNetwork().id !== CLAIM_NETWORK.id) throw new Error("not on the practice network");
+    await prepareAccount({ sponsorUrl: SPONSOR_URL, signer: localSignerFromSeed(seed), net: CLAIM_NETWORK });
+  },
+  balanceOf: async (pubkey) => (await loadBalance(pubkey))?.usd ?? null,
+  sweep: async (throwawaySeed, homePublicKey, amount) => {
+    await sweepIntoHome({ sponsorUrl: SPONSOR_URL, throwawaySeed, homePublicKey, amount });
+  },
+  newKeypair: () => Keypair.random(),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
 
 type State = "idle" | "claiming" | "done" | "error";
 
@@ -67,7 +100,7 @@ export default function ClaimButton({
   useEffect(() => {
     const frag = window.location.hash.slice(1);
     if (frag) {
-      secretRef.current = frag;
+      secretRef.current = parseClaimFragment(frag).key;
       try {
         sessionStorage.setItem(seenKey, "1");
       } catch {
@@ -109,18 +142,18 @@ export default function ClaimButton({
         balanceId,
         network: CLAIM_NETWORK,
       });
+      /* BEFORE the success screen: keep the link's account out of this device's home, and on a
+         device with no home yet make one here and move the money into it (lib/claim-home.ts), so
+         whatever the person opens next already finds their money in an account whose key this
+         device made. Bounded: past SETTLE_WAIT_MS the success screen shows and the rest carries
+         on. Every step that does not finish leaves the money safe in the link's account, which is
+         saved first, as a throwaway, for /home to gather. */
+      const settled = settleLinkAccount(Keypair.fromSecret(bearerSecret), settleDeps).catch(() => "no-home" as const);
+      await Promise.race([settled, new Promise((r) => setTimeout(r, SETTLE_WAIT_MS))]);
       setHash(result.hash);
       setState("done");
       void sendEvent("claim_succeeded", claimId, Keypair.fromSecret(bearerSecret).publicKey(), { seeded: seededRef.current });
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
-      // Phase 1 — persist the claimed account locally (WebCrypto-wrapped seed in
-      // IndexedDB) so /home has it. Best-effort: never block the success screen.
-      try {
-        const kp = Keypair.fromSecret(bearerSecret);
-        await savePhase1(kp.publicKey(), new Uint8Array(kp.rawSecretKey()));
-      } catch {
-        /* the money still landed; /home just won't show it on this device */
-      }
     } catch (err) {
       // Bind it. The old `catch {}` discarded the cause, so every failure — already claimed, rate
       // limited, offline — rendered the same "your money is still safe, try again", which is false
@@ -162,9 +195,8 @@ export default function ClaimButton({
         >
           {copy.claim.receipt} ↗
         </a>
-        {/* Post-claim next action. "See my money" → /home is live (the claimed
-            account is persisted locally). Send/Ask go live in Stage 5; honest
-            "soon" until then, never a dead link. */}
+        {/* Post-claim next action. The money is already in an account this device made (see the
+            settle step in onClaim), so "send" and "ask" start from money that is really there. */}
         <div className="mt-2 flex w-full flex-col gap-2">
           <Link
             href="/home"

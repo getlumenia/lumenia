@@ -148,6 +148,11 @@ export interface RelayClaimResult {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* A refusal's message reaches the error log on both networks (worker.ts logs it before the mainnet
+   response is redacted), and a log is no place for somebody's full account address. Four characters
+   are enough to tell two refusals apart; the whole address is never needed to read a log (SOW 2, D2). */
+const shortKey = (k: string): string => `${k.slice(0, 4)}...`;
+
 /** First ScError anywhere in an ScVal (a host error event nests its own inside a vec). */
 function findScError(v: xdr.ScVal): xdr.ScError | null {
   if (v.switch().name === "scvError") return v.error();
@@ -310,7 +315,7 @@ export async function relayDepositHandler(
   if (!config.lumendropContract) throw new Error("v2 relayer not configured (LUMENDROP_CONTRACT unset)");
   const inner = TransactionBuilder.fromXDR(input.xdr, config.networkPassphrase) as Transaction;
 
-  if (inner.source !== input.senderPublicKey) throw new Error(`unexpected inner source ${inner.source}`);
+  if (inner.source !== input.senderPublicKey) throw new Error(`unexpected inner source ${shortKey(inner.source)}`);
   if (inner.operations.length !== 1) throw new Error("deposit tx must have exactly 1 op");
   const op = inner.operations[0] as { type: string; func?: xdr.HostFunction };
   if (op.type !== "invokeHostFunction" || !op.func) throw new Error("not a contract invoke");
@@ -456,7 +461,7 @@ export async function relayReclaimHandler(
   if (!config.lumendropContract) throw new Error("v2 relayer not configured (LUMENDROP_CONTRACT unset)");
   const inner = TransactionBuilder.fromXDR(input.xdr, config.networkPassphrase) as Transaction;
 
-  if (inner.source !== input.senderPublicKey) throw new Error(`unexpected inner source ${inner.source}`);
+  if (inner.source !== input.senderPublicKey) throw new Error(`unexpected inner source ${shortKey(inner.source)}`);
   if (inner.operations.length !== 1) throw new Error("reclaim tx must have exactly 1 op");
   const op = inner.operations[0] as { type: string; func?: xdr.HostFunction };
   if (op.type !== "invokeHostFunction" || !op.func) throw new Error("not a contract invoke");

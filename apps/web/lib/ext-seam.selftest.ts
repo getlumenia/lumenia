@@ -7,13 +7,15 @@
  *
  *   [a] the modules LOAD with none of the browser globals present. A module that touches
  *       `window` or `localStorage` at import time would crash the worker before it does anything.
- *   [b] v2LinkUrl is byte for byte what createV2Link and createV2GroupLink used to build inline.
- *       The link is the product: a drifting character here is a link that claims the wrong thing.
+ *   [b] v2LinkUrl, byte for byte: a PRIVATE link (the default since D2) is the contract written out
+ *       by hand, and a RICH one (the sender's explicit choice) is what createV2Link and
+ *       createV2GroupLink used to build inline plus `&preview=rich` before `src`. The link is the
+ *       product: a drifting character here is a link that claims the wrong thing.
  *   [c] what the URL is allowed to carry: the network label iff mainnet, the key material only
- *       after the '#', the group count in the fragment too, and the claim reader getting back
- *       exactly what the builder wrote.
+ *       after the '#', no amount and no name before it on a private link, the group count in the
+ *       fragment too, and the claim readers getting back exactly what the builder wrote.
  *   [d] `src` is one to eight lowercase letters or it throws, so it can never smuggle a second
- *       parameter or a fragment into a link.
+ *       parameter or a fragment into a link; and a key that could not be read back throws too.
  *   [e] createV2Link and createV2GroupLink end to end, with the RPC and the sponsor faked: the
  *       hook runs before the POST and is handed the link that comes back, a failing hook means
  *       nothing is posted, the network that was named is the one every read goes to, and a 202
@@ -70,12 +72,18 @@ function threw(fn: () => unknown): boolean {
 
 const hex = (b: Uint8Array): string => Buffer.from(b).toString("hex");
 
-/* ---------------------------------- [b] the reference ----------------------------------
- * The template literals createV2Link and createV2GroupLink carried INLINE before v2LinkUrl existed,
- * pasted from `git show 61f351b:apps/web/lib/lumendrop.ts`, the last commit before the builder was
- * extracted (the one-to-one link is lines 241-243 of that file, the group link 376-378). They are
- * the spec. If this test and v2LinkUrl ever disagree, v2LinkUrl is the one that is wrong; do not
- * edit these to follow it.
+/* ---------------------------------- [b] the references ----------------------------------
+ * RICH. The template literals createV2Link and createV2GroupLink carried INLINE before v2LinkUrl
+ * existed, pasted from `git show 61f351b:apps/web/lib/lumendrop.ts`, the last commit before the
+ * builder was extracted (the one-to-one link is lines 241-243 of that file, the group link 376-378).
+ * A rich link is exactly that link with `&preview=rich` at the end of its query, before any `&src=`.
+ *
+ * PRIVATE. The default since D2, written out by hand from the contract in v2LinkUrl's doc comment:
+ * no amount anywhere, the public markers in the query, the key then the name, the `g` copy and the
+ * lock marker after the '#'.
+ *
+ * Both are the spec. If this test and v2LinkUrl ever disagree, v2LinkUrl is the one that is wrong; do
+ * not edit these to follow it.
  */
 type RefNet = { isMainnet: boolean };
 
@@ -107,11 +115,45 @@ function oldGroupUrl(
   return url;
 }
 
-/** Inputs that exercise the encoding, not just the happy path. Non-ASCII is spelled as escapes. */
+/** The rich link: the old one with the flag at the end of its query, then `src` if there is one. */
+function richUrl(oldUrl: string, src?: string): string {
+  const [query, fragment] = oldUrl.split("#");
+  return `${query}&preview=rich${src !== undefined ? `&src=${src}` : ""}#${fragment}`;
+}
+
+/** The private link, as the D2 contract spells it. */
+function privateUrl(o: {
+  webOrigin: string;
+  linkHex: string;
+  from: string;
+  key: string;
+  slots?: number;
+  locked: boolean;
+  mainnet: boolean;
+  seeded: boolean;
+  src?: string;
+}): string {
+  const q = [
+    o.slots !== undefined ? `g=${o.slots}` : "",
+    o.mainnet ? "n=public" : "",
+    o.seeded ? "seeded=1" : "",
+    o.src !== undefined ? `src=${o.src}` : "",
+  ]
+    .filter(Boolean)
+    .join("&");
+  const name = o.from.trim();
+  const fragment = `${o.key}${name ? `&s=${encodeURIComponent(name)}` : ""}${o.slots !== undefined ? `&g=${o.slots}` : ""}${o.locked ? "&p=1" : ""}`;
+  return `${o.webOrigin.replace(/\/$/, "")}/v2/c/${o.linkHex}${q ? `?${q}` : ""}#${fragment}`;
+}
+
+/**
+ * Inputs that exercise the encoding, not just the happy path. Non-ASCII is spelled as escapes.
+ * `shown` is the name a claim screen prints from it: no controls, trimmed, at most 24 characters.
+ */
 const FLAVORS = [
-  { webOrigin: "https://getlumenia.com", amount: "2.50", from: "Ayse" },
-  { webOrigin: "https://getlumenia.com/", amount: "0.01", from: "Ayse's translation & tips = 100% #1" },
-  { webOrigin: "http://localhost:3000", amount: "1234.5678", from: "M\u00fcge \u2615 \u00e7\u015f?x=1&y=2" },
+  { webOrigin: "https://getlumenia.com", amount: "2.50", from: "Ayse", shown: "Ayse" },
+  { webOrigin: "https://getlumenia.com/", amount: "0.01", from: "Ayse's translation & tips = 100% #1", shown: "Ayse's translation & tip" },
+  { webOrigin: "http://localhost:3000", amount: "1234.5678", from: "M\u00fcge \u2615 \u00e7\u015f?x=1&y=2", shown: "M\u00fcge \u2615 \u00e7\u015f?x=1&y=2" },
 ];
 
 /* ------------------------------------- the faked world ------------------------------------- */
@@ -202,6 +244,7 @@ async function main() {
   }
   // Dynamic on purpose: a static import would run BEFORE the globals above were removed.
   const lumendrop = await attempt("lumendrop", () => import("./lumendrop"));
+  const linkFragment = await attempt("link-fragment", () => import("./link-fragment"));
   const network = await attempt("network", () => import("./network"));
   const events = await attempt("events", () => import("./events"));
   const signer = await attempt("signer", () => import("./signer"));
@@ -212,7 +255,7 @@ async function main() {
   await attempt("argon", () => import("./argon"));
   await attempt("money", () => import("./money"));
   await attempt("handles", () => import("./handles"));
-  if (!lumendrop || !network || !events || !signer || !claimPassword) {
+  if (!lumendrop || !linkFragment || !network || !events || !signer || !claimPassword) {
     console.log("\nFAIL a module the rest of this test needs did not load");
     process.exit(1);
   }
@@ -220,20 +263,22 @@ async function main() {
   const testnet = network.testnetConfig();
 
   /* ---------------------------------------- [b] ---------------------------------------- */
-  console.log("\n[b] v2LinkUrl against the templates it replaced (single and group x password x network x seeded x src)");
+  console.log("\n[b] v2LinkUrl against the contract (single and group x password x network x seeded x src x private / rich)");
   interface Case {
     group: boolean;
     password: boolean;
     mainnet: boolean;
     seeded: boolean;
     src: boolean;
+    rich: boolean;
   }
   const cases: Case[] = [];
   for (const group of [false, true])
     for (const password of [false, true])
       for (const mainnet of [false, true])
         for (const seeded of [false, true])
-          for (const src of [false, true]) cases.push({ group, password, mainnet, seeded, src });
+          for (const src of [false, true])
+            for (const rich of [false, true]) cases.push({ group, password, mainnet, seeded, src, rich });
 
   const SLOTS = 3;
   interface Built {
@@ -242,8 +287,12 @@ async function main() {
     link: Keypair;
     linkHex: string;
     seed: Uint8Array | null;
+    /** the pre-D2 link for the same inputs, without src: what a rich link is built from */
+    old: string;
     reference: string;
+    parts: V2LinkParts;
     url: string;
+    /** the key material, the S... secret or the p1. seed */
     fragment: string;
   }
   const built: Built[] = [];
@@ -252,10 +301,23 @@ async function main() {
       const link = Keypair.random();
       const linkHex = hex(link.rawPublicKey());
       const seed = c.password ? makeLinkSeed() : null;
-      const reference = c.group
+      const old = c.group
         ? oldGroupUrl({ perShare: flavor.amount, from: flavor.from, slots: SLOTS, webOrigin: flavor.webOrigin, seeded: c.seeded }, seed, { isMainnet: c.mainnet }, link, linkHex, passwordFragment)
         : oldSingleUrl({ amount: flavor.amount, from: flavor.from, webOrigin: flavor.webOrigin, seeded: c.seeded }, seed, { isMainnet: c.mainnet }, link, linkHex, passwordFragment);
       const fragment = seed ? passwordFragment(seed) : link.secret();
+      const reference = c.rich
+        ? richUrl(old, c.src ? "ext" : undefined)
+        : privateUrl({
+            webOrigin: flavor.webOrigin,
+            linkHex,
+            from: flavor.from,
+            key: fragment,
+            ...(c.group ? { slots: SLOTS } : {}),
+            locked: Boolean(seed),
+            mainnet: c.mainnet,
+            seeded: c.seeded,
+            ...(c.src ? { src: "ext" } : {}),
+          });
       const parts: V2LinkParts = {
         webOrigin: flavor.webOrigin,
         linkHex,
@@ -267,47 +329,76 @@ async function main() {
         mainnet: c.mainnet,
         seeded: c.seeded,
         ...(c.src ? { src: "ext" } : {}),
+        ...(c.rich ? { preview: "rich" as const } : {}),
       };
-      built.push({ c, flavor, link, linkHex, seed, reference, url: lumendrop.v2LinkUrl(parts), fragment });
+      built.push({ c, flavor, link, linkHex, seed, old, reference, parts, url: lumendrop.v2LinkUrl(parts), fragment });
     }
   }
+  const rich = built.filter((b) => b.c.rich);
+  const priv = built.filter((b) => !b.c.rich);
 
-  const without = built.filter((b) => !b.c.src);
-  const mismatched = without.filter((b) => b.url !== b.reference);
-  ok(
-    `src absent: ${without.length} links are byte-identical to the old inline templates`,
-    mismatched.length === 0,
-    mismatched[0] ? `${mismatched[0].url}  vs  ${mismatched[0].reference}` : "",
-  );
-
-  const withSrc = built.filter((b) => b.c.src);
-  const srcWrong = withSrc.filter((b) => {
-    const [oldQuery, oldFrag] = b.reference.split("#");
-    return b.url !== `${oldQuery}&src=ext#${oldFrag}`;
+  const richPlain = rich.filter((b) => !b.c.src);
+  const richPlainWrong = richPlain.filter((b) => {
+    const [oldQuery, oldFrag] = b.old.split("#");
+    return b.url !== `${oldQuery}&preview=rich#${oldFrag}`;
   });
   ok(
-    `src "ext": ${withSrc.length} links are the old link plus exactly one &src=ext at the end of the query`,
-    srcWrong.length === 0,
-    srcWrong[0] ? srcWrong[0].url : "",
+    `rich, src absent: ${richPlain.length} links are the old inline templates plus exactly &preview=rich at the end of the query`,
+    richPlainWrong.length === 0,
+    richPlainWrong[0] ? `${richPlainWrong[0].url}  vs  ${richPlainWrong[0].old}` : "",
+  );
+  const richSrc = rich.filter((b) => b.c.src);
+  const richSrcWrong = richSrc.filter((b) => {
+    const [oldQuery, oldFrag] = b.old.split("#");
+    return b.url !== `${oldQuery}&preview=rich&src=ext#${oldFrag}`;
+  });
+  ok(
+    `rich, src "ext": ${richSrc.length} links are the old link plus exactly &preview=rich&src=ext at the end of the query`,
+    richSrcWrong.length === 0,
+    richSrcWrong[0] ? richSrcWrong[0].url : "",
   );
   ok(
-    "  ...the fragment does not change, and src is the LAST query parameter",
-    withSrc.every((b) => {
+    "  ...the old fragment does not change, and src is the LAST query parameter",
+    richSrc.every((b) => {
       const u = new URL(b.url);
       const keys = [...u.searchParams.keys()];
-      return u.hash === new URL(b.reference).hash && keys[keys.length - 1] === "src" && keys.filter((k) => k === "src").length === 1 && b.url.split("&src=ext").length === 2;
+      return u.hash === new URL(b.old).hash && keys[keys.length - 1] === "src" && keys.filter((k) => k === "src").length === 1 && b.url.split("&src=ext").length === 2;
     }),
   );
   ok(
-    "  ...it follows seeded=1 when both are present",
-    withSrc.filter((b) => b.c.seeded).every((b) => b.url.includes("&seeded=1&src=ext#")),
+    "  ...preview=rich follows seeded=1 when both are present, and src follows preview=rich",
+    rich.filter((b) => b.c.seeded).every((b) => b.url.includes(`&seeded=1&preview=rich${b.c.src ? "&src=ext" : ""}#`)),
+  );
+
+  const privWrong = priv.filter((b) => b.url !== b.reference);
+  ok(
+    `private: ${priv.length} links are byte-identical to the contract written out by hand`,
+    privWrong.length === 0,
+    privWrong[0] ? `${privWrong[0].url}  vs  ${privWrong[0].reference}` : "",
   );
   ok(
-    "src undefined is src absent",
-    (() => {
-      const b = built[0]!;
-      return lumendrop.v2LinkUrl({ webOrigin: b.flavor.webOrigin, linkHex: b.linkHex, amount: b.flavor.amount, from: b.flavor.from, fragment: b.fragment, src: undefined }) === b.reference;
-    })(),
+    "  ...src is the LAST query parameter, exactly once, and follows seeded=1 when both are present",
+    priv
+      .filter((b) => b.c.src)
+      .every((b) => {
+        const keys = [...new URL(b.url).searchParams.keys()];
+        return keys[keys.length - 1] === "src" && keys.filter((k) => k === "src").length === 1 && (!b.c.seeded || /[?&]seeded=1&src=ext#/.test(b.url));
+      }),
+  );
+  ok(
+    "  ...with no group, network, seeded or src marker there is no query at all, not even the '?'",
+    priv
+      .filter((b) => !b.c.group && !b.c.mainnet && !b.c.seeded && !b.c.src)
+      .every((b) => !b.url.includes("?") && b.url.startsWith(`${b.flavor.webOrigin.replace(/\/$/, "")}/v2/c/${b.linkHex}#`)),
+  );
+  ok('  ...preview "private" is the default, byte for byte', priv.every((b) => lumendrop.v2LinkUrl({ ...b.parts, preview: "private" }) === b.url));
+  ok(
+    '  ...and anything but "rich" is private',
+    priv.every((b) => lumendrop.v2LinkUrl({ ...b.parts, preview: "RICH" as unknown as "rich" }) === b.url && lumendrop.v2LinkUrl({ ...b.parts, preview: undefined }) === b.url),
+  );
+  ok(
+    "src undefined is src absent, in both shapes",
+    built.filter((b) => !b.c.src).every((b) => lumendrop.v2LinkUrl({ ...b.parts, src: undefined }) === b.url),
   );
 
   /* ---------------------------------------- [c] ---------------------------------------- */
@@ -318,14 +409,16 @@ async function main() {
   });
   ok("n=public is in the query iff the link is mainnet", networkWrong.length === 0, networkWrong[0]?.url ?? "");
   ok(
-    "p=1 is in the query iff the key is password-locked, seeded=1 iff seeded",
+    "seeded=1 is in the query iff seeded; p=1 iff the key is password-locked, in the query of a rich link and only after the '#' of a private one",
     built.every((b) => {
       const sp = new URL(b.url).searchParams;
-      return (sp.get("p") === "1") === b.c.password && (sp.get("seeded") === "1") === b.c.seeded;
+      const after = lumendrop.splitGroupHint(new URL(b.url).hash);
+      if ((sp.get("seeded") === "1") !== b.c.seeded) return false;
+      return b.c.rich ? (sp.get("p") === "1") === b.c.password && !after.passwordLocked : !sp.has("p") && after.passwordLocked === b.c.password;
     }),
   );
   ok(
-    "the key material (the S... secret or the p1. seed) is only ever after the #",
+    "the key material (the S... secret or the p1. seed) is only ever after the #, and first there",
     built.every((b) => {
       const u = new URL(b.url);
       const at = b.url.indexOf("#");
@@ -342,10 +435,11 @@ async function main() {
   );
   const groups = built.filter((b) => b.c.group);
   ok(
-    "a group link carries g=N in the query AND the &g=N copy at the end of the fragment",
+    "a group link carries g=N in the query AND the &g=N copy in the fragment (at its very end on a rich link)",
     groups.every((b) => {
       const u = new URL(b.url);
-      return u.searchParams.get("g") === String(SLOTS) && u.hash.slice(1) === `${b.fragment}&g=${SLOTS}`;
+      if (u.searchParams.get("g") !== String(SLOTS)) return false;
+      return b.c.rich ? u.hash.slice(1) === `${b.fragment}&g=${SLOTS}` : u.hash.slice(1).split("&").includes(`g=${SLOTS}`);
     }),
   );
   ok(
@@ -353,34 +447,80 @@ async function main() {
     built.filter((b) => !b.c.group).every((b) => !new URL(b.url).searchParams.has("g") && !new URL(b.url).hash.includes("&g=")),
   );
   ok(
-    "the claim reader (splitGroupHint, parseLinkFragment, Keypair) gets back exactly what was written",
+    "the claim reader (splitGroupHint, parseLinkFragment, Keypair) gets back exactly what was written, the name included",
     built.every((b) => {
       const split = lumendrop.splitGroupHint(new URL(b.url).hash);
       if (split.slots !== (b.c.group ? SLOTS : null) || split.fragment !== b.fragment) return false;
+      // A private fragment carries the name the claim screen prints; a rich one carries none.
+      if (split.from !== (b.c.rich ? null : b.flavor.shown)) return false;
       const parsed = parseLinkFragment(split.fragment);
       if (b.seed) return parsed?.kind === "password" && hex(parsed.seed) === hex(b.seed);
       return parsed?.kind === "key" && Keypair.fromSecret(parsed.secret).publicKey() === b.link.publicKey();
     }),
   );
   ok(
+    "the query reader (readClaimQuery): n, g and seeded from both shapes, the name and the lock only from a rich one",
+    built.every((b) => {
+      const q = linkFragment.readClaimQuery(new URL(b.url).search);
+      const markers = q.mainnet === b.c.mainnet && q.slots === (b.c.group ? SLOTS : null) && q.seeded === b.c.seeded && q.rich === b.c.rich && q.legacy === b.c.rich;
+      return markers && (b.c.rich ? q.queryName === b.flavor.shown && q.queryLocked === b.c.password : q.queryName === null && !q.queryLocked);
+    }),
+  );
+  ok(
     "query parameters come in the documented order and no others",
     built.every((b) => {
-      const want = ["a", "s", ...(b.c.group ? ["g"] : []), ...(b.c.password ? ["p"] : []), ...(b.c.mainnet ? ["n"] : []), ...(b.c.seeded ? ["seeded"] : []), ...(b.c.src ? ["src"] : [])];
+      const want = b.c.rich
+        ? ["a", "s", ...(b.c.group ? ["g"] : []), ...(b.c.password ? ["p"] : []), ...(b.c.mainnet ? ["n"] : []), ...(b.c.seeded ? ["seeded"] : []), "preview", ...(b.c.src ? ["src"] : [])]
+        : [...(b.c.group ? ["g"] : []), ...(b.c.mainnet ? ["n"] : []), ...(b.c.seeded ? ["seeded"] : []), ...(b.c.src ? ["src"] : [])];
       return [...new URL(b.url).searchParams.keys()].join(",") === want.join(",");
+    }),
+  );
+  ok(
+    "a private link carries no amount anywhere and no a=, s= or preview= at all; its name only after the '#'",
+    priv.every((b) => {
+      const at = b.url.indexOf("#");
+      return (
+        !b.url.includes(b.flavor.amount) &&
+        !b.url.includes("a=") &&
+        !b.url.includes("preview=") &&
+        !b.url.slice(0, at).includes("s=") &&
+        b.url.indexOf(`&s=${encodeURIComponent(b.flavor.from.trim())}`) > at
+      );
+    }),
+  );
+  ok(
+    "a rich link carries the amount as a= and the name as s=, exactly as typed, and preview=rich once",
+    rich.every((b) => {
+      const sp = new URL(b.url).searchParams;
+      return sp.get("a") === b.flavor.amount && sp.get("s") === b.flavor.from && sp.getAll("preview").join(",") === "rich";
     }),
   );
 
   /* ---------------------------------------- [d] ---------------------------------------- */
-  console.log("\n[d] src is one to eight lowercase letters, or it throws");
+  console.log("\n[d] src is one to eight lowercase letters, and the key is base32 or base64url, or it throws");
   const base: V2LinkParts = { webOrigin: WEB, linkHex: "ab".repeat(32), amount: "2.00", from: "Ayse", fragment: Keypair.random().secret() };
+  const richBase: V2LinkParts = { ...base, preview: "rich" };
   for (const bad of ["EXT", "e x t", "toolongvalue", "", "ext1", "ext\n", "e-t", "\u00e9xt", "ext&n=public", "ext#x", "Ext", " ext"]) {
-    ok(`v2LinkUrl refuses src ${JSON.stringify(bad)}`, threw(() => lumendrop.v2LinkUrl({ ...base, src: bad })));
+    ok(`v2LinkUrl refuses src ${JSON.stringify(bad)}, private and rich`, threw(() => lumendrop.v2LinkUrl({ ...base, src: bad })) && threw(() => lumendrop.v2LinkUrl({ ...richBase, src: bad })));
   }
   ok("  ...and null, which a loose regexp would read as the word null", threw(() => lumendrop.v2LinkUrl({ ...base, src: null as unknown as string })));
   for (const good of ["ext", "a", "abcdefgh"]) {
-    ok(`v2LinkUrl accepts src ${JSON.stringify(good)}`, lumendrop.v2LinkUrl({ ...base, src: good }).includes(`&src=${good}#`));
+    ok(
+      `v2LinkUrl accepts src ${JSON.stringify(good)}: the whole query of a plain private link, the end of a rich one`,
+      lumendrop.v2LinkUrl({ ...base, src: good }).includes(`/v2/c/${base.linkHex}?src=${good}#`) && lumendrop.v2LinkUrl({ ...richBase, src: good }).includes(`&preview=rich&src=${good}#`),
+    );
   }
-  ok("an accepted src can never add a second parameter or a fragment", !threw(() => lumendrop.v2LinkUrl({ ...base, src: "abcdefgh" })) && lumendrop.v2LinkUrl({ ...base, src: "abcdefgh" }).split("#").length === 2);
+  ok(
+    "an accepted src can never add a second parameter or a fragment",
+    [base, richBase].every((p) => !threw(() => lumendrop.v2LinkUrl({ ...p, src: "abcdefgh" })) && lumendrop.v2LinkUrl({ ...p, src: "abcdefgh" }).split("#").length === 2),
+  );
+  // The key goes into the link as written, first after the '#'. One that could be read back as a
+  // parameter, a second fragment or nothing at all is a bug in the caller, refused before a link exists.
+  const badKeys = ["", "S&p=1", "S=1", "S#x", "S x", `${base.fragment}&s=Mallory`];
+  ok(
+    `v2LinkUrl refuses ${badKeys.length} keys that could not be read back (empty, '&', '=', '#', a space), private and rich`,
+    badKeys.every((k) => threw(() => lumendrop.v2LinkUrl({ ...base, fragment: k })) && threw(() => lumendrop.v2LinkUrl({ ...richBase, fragment: k }))),
+  );
 
   /* ---------------------------------------- [e] ---------------------------------------- */
   console.log("\n[e] createV2Link and createV2GroupLink end to end, offline");
@@ -439,7 +579,8 @@ async function main() {
     reset();
     const plain = await lumendrop.createV2Link({ ...common, expiry: EXPIRY });
     const plainUrl = new URL(plain.link);
-    ok("no hook, no net, no src: the call returns the link, its id and the sponsor's hash", plain.hash === HASH && plain.link.startsWith(`${WEB}/v2/c/${plain.linkHex}?`));
+    const plainKey = linkFragment.parseClaimFragment(plainUrl.hash).key;
+    ok("no hook, no net, no src: the call returns the link, its id and the sponsor's hash", plain.hash === HASH && plain.link.startsWith(`${WEB}/v2/c/${plain.linkHex}#`));
     ok(
       "  ...built against the network this device is on (the testnet default), and no other",
       rpcCalls.length >= 2 && rpcCalls.every((c) => c.url === rpcUrl(testnet)),
@@ -451,8 +592,12 @@ async function main() {
       sent.length === 1 && sent[0]!.url === `${SPONSOR}/v2-deposit` && sent[0]!.init.method === "POST" && posted().senderPublicKey === kp.publicKey(),
     );
     ok(
-      "  ...and the link is the plain one: no n, p, seeded or src",
-      plainUrl.searchParams.get("a") === "2.50" && plainUrl.searchParams.get("s") === "Ayse" && ![...plainUrl.searchParams.keys()].some((k) => ["n", "p", "seeded", "src", "g"].includes(k)),
+      "  ...and the link is the plain private one: no query at all, and after the '#' the key, then &s=Ayse, and nothing else",
+      plainUrl.search === "" &&
+        plain.link === `${WEB}/v2/c/${plain.linkHex}#${plainKey}&s=Ayse` &&
+        /^S[A-Z2-7]{55}$/.test(plainKey) &&
+        hex(Keypair.fromSecret(plainKey).rawPublicKey()) === plain.linkHex,
+      plain.link.replace(plainKey, "<key>"),
     );
 
     // --- the persist-before-submit hook ----------------------------------------------------------
@@ -600,8 +745,17 @@ async function main() {
     const keptSrc: PreparedDeposit[] = [];
     const withExt = await lumendrop.createV2Link({ ...common, seeded: true, src: "ext", onPrepared: (p) => void keptSrc.push(p) });
     ok(
-      "src: the link ends its query with &src=ext, after seeded=1, and the hook saw the same link",
-      /\?a=2\.50&s=Ayse&seeded=1&src=ext#/.test(withExt.link) && keptSrc[0]!.link === withExt.link,
+      "src: the link's query is seeded=1 then src=ext, the name rides after the key, and the hook saw the same link",
+      /\/v2\/c\/[0-9a-f]{64}\?seeded=1&src=ext#S[A-Z2-7]{55}&s=Ayse$/.test(withExt.link) && keptSrc[0]!.link === withExt.link,
+      withExt.link.split("#")[0],
+    );
+    reset();
+    const keptRich: PreparedDeposit[] = [];
+    const richExt = await lumendrop.createV2Link({ ...common, seeded: true, src: "ext", preview: "rich", onPrepared: (p) => void keptRich.push(p) });
+    ok(
+      'preview "rich" passes through createV2Link: the old query, then preview=rich, then src=ext, the bare key after the #, and the hook saw the same link',
+      /\/v2\/c\/[0-9a-f]{64}\?a=2\.50&s=Ayse&seeded=1&preview=rich&src=ext#S[A-Z2-7]{55}$/.test(richExt.link) && keptRich[0]!.link === richExt.link,
+      richExt.link.split("#")[0],
     );
     for (const bad of ["EXT", "e x t", "toolongvalue", ""]) {
       reset();
@@ -617,8 +771,19 @@ async function main() {
     const keptPw: PreparedDeposit[] = [];
     const locked = await lumendrop.createV2Link({ ...common, password: "correct horse battery", onPrepared: (p) => void keptPw.push(p) });
     const lockedUrl = new URL(locked.link);
-    const lockedFragment = parseLinkFragment(lockedUrl.hash);
-    ok("a password link: p=1 in the query, the seed (p1.) in the fragment, and the hook saw it", lockedUrl.searchParams.get("p") === "1" && lockedUrl.hash.startsWith("#p1.") && lockedFragment?.kind === "password" && keptPw[0]!.link === locked.link);
+    const lockedSplit = lumendrop.splitGroupHint(lockedUrl.hash);
+    const lockedFragment = parseLinkFragment(lockedSplit.fragment);
+    ok(
+      "a password link: the seed (p1.) first in the fragment, then &s=Ayse&p=1, no p in the query, and the hook saw it",
+      !lockedUrl.searchParams.has("p") &&
+        lockedUrl.search === "" &&
+        lockedUrl.hash.startsWith("#p1.") &&
+        lockedUrl.hash.endsWith("&s=Ayse&p=1") &&
+        lockedSplit.passwordLocked &&
+        lockedSplit.from === "Ayse" &&
+        lockedFragment?.kind === "password" &&
+        keptPw[0]!.link === locked.link,
+    );
     ok(
       "  ...and the password opens exactly the link id that was escrowed",
       lockedFragment?.kind === "password" && (await unlockLink(lockedFragment.seed, "correct horse battery", locked.linkHex)).ok === true,
@@ -656,8 +821,14 @@ async function main() {
     );
     const gu = new URL(group.link);
     ok(
-      "  ...the link: n=public, g=3 in the query, &g=3 in the fragment, src=ext last",
-      gu.searchParams.get("n") === "public" && gu.searchParams.get("g") === "3" && gu.hash.endsWith("&g=3") && [...gu.searchParams.keys()].pop() === "src",
+      "  ...the link: g=3, n=public and src=ext (last) in the query and nothing else, the name then &g=3 after the key",
+      [...gu.searchParams.keys()].join(",") === "g,n,src" &&
+        gu.searchParams.get("n") === "public" &&
+        gu.searchParams.get("g") === "3" &&
+        gu.hash.endsWith("&s=Ayse&g=3") &&
+        !group.link.includes("2.50") &&
+        !group.link.includes("7.5"),
+      group.link.split("#")[0],
     );
 
     reset();
@@ -711,18 +882,21 @@ async function main() {
       onPrepared: (p) => void keptPlainGroup.push(p),
     });
     const pg = new URL(plainGroup.link);
+    const pgSplit = lumendrop.splitGroupHint(pg.hash);
     ok(
-      "group on the device's network (testnet): no n=public, and p=1 and seeded=1 where asked, no src",
-      !pg.searchParams.has("n") && pg.searchParams.get("p") === "1" && pg.searchParams.get("seeded") === "1" && !pg.searchParams.has("src"),
+      "group on the device's network (testnet): no n=public, seeded=1 in the query and p=1 after the '#' where asked, no src",
+      !pg.searchParams.has("n") && !pg.searchParams.has("p") && pgSplit.passwordLocked && pg.searchParams.get("seeded") === "1" && !pg.searchParams.has("src"),
       plainGroup.link.split("#")[0],
     );
     ok(
-      "  ...a= is ONE share, s= the sender, the path is the returned id, g=3 in the query and at the end of the fragment",
-      pg.searchParams.get("a") === "2.50" &&
-        pg.searchParams.get("s") === "Ayse" &&
+      "  ...no a= and no s= anywhere in the query, the path is the returned id, g=3 in the query, and the name, &g=3 and &p=1 after the key",
+      !pg.searchParams.has("a") &&
+        !pg.searchParams.has("s") &&
         pg.pathname === `/v2/c/${plainGroup.linkHex}` &&
         pg.searchParams.get("g") === "3" &&
-        pg.hash.endsWith("&g=3"),
+        pg.hash.endsWith("&s=Ayse&g=3&p=1") &&
+        pgSplit.slots === 3 &&
+        pgSplit.from === "Ayse",
     );
     ok("  ...the fragment carries the password seed (p1.), never a raw S... key", pg.hash.startsWith("#p1.") && !/#S[A-Z2-7]{55}/.test(plainGroup.link));
     ok(
@@ -738,6 +912,32 @@ async function main() {
     ok(
       "  ...and the password opens exactly the pool id that was escrowed",
       pgFrag?.kind === "password" && (await unlockLink(pgFrag.seed, "correct horse battery", plainGroup.linkHex)).ok === true,
+    );
+
+    // The same pot, rich by the sender's choice: the pre-D2 group link plus the flag.
+    reset();
+    const richGroup = await lumendrop.createV2GroupLink({
+      ...common,
+      perShare: "2.50",
+      slots: 3,
+      seeded: true,
+      password: "correct horse battery",
+      preview: "rich",
+    });
+    const rg = new URL(richGroup.link);
+    ok(
+      'preview "rich" passes through createV2GroupLink: a= is ONE share, s= the sender, then g=3, p=1, seeded=1 and preview=rich in the query',
+      [...rg.searchParams.keys()].join(",") === "a,s,g,p,seeded,preview" &&
+        rg.searchParams.get("a") === "2.50" &&
+        rg.searchParams.get("s") === "Ayse" &&
+        rg.searchParams.get("g") === "3" &&
+        rg.searchParams.get("p") === "1" &&
+        rg.searchParams.get("preview") === "rich",
+      richGroup.link.split("#")[0],
+    );
+    ok(
+      "  ...and the old fragment: the p1. seed, then &g=3 at the very end, no name and no lock marker",
+      /^#p1\.[A-Za-z0-9_-]{43}&g=3$/.test(rg.hash) && lumendrop.splitGroupHint(rg.hash).from === null && rg.pathname === `/v2/c/${richGroup.linkHex}`,
     );
 
     // The seat ceiling follows the network NAMED: six on real money, thirty on practice money.
@@ -786,6 +986,54 @@ async function main() {
     viewAnswer = "held";
     viewRecord = { sender: kp.publicKey(), amount_per: 25_000_000n, remaining: 50_000_000n, slots: 3, claimed: 1, expiry: BigInt(Math.floor(Date.now() / 1000) + 3600) };
     ok("  ...group: an open pool is pending, read through get_pool on the named network", (await lumendrop.loadV2DropStatus(LINK, kp.publicKey(), { group: true, net: EXT_NET })) === "pending" && named(EXT_NET) && rpcCalls.some((c) => c.fn === "get_pool"));
+
+    // loadDrop: the amount a private link no longer carries, read from the escrow with no account at
+    // all (a recipient's phone has none yet), and the same three answers loadPool gives.
+    reset();
+    viewAnswer = "held";
+    viewRecord = drop({ sender: kp.publicKey() });
+    const heldDrop = await lumendrop.loadDrop(LINK, { net: EXT_NET });
+    ok(
+      "loadDrop({ net }): a held drop comes back with its amount in 7dp USDC, its expiry, its flag, its sender and its escrow",
+      heldDrop !== null &&
+        heldDrop.linkHex === LINK &&
+        heldDrop.amount === "2.5000000" &&
+        heldDrop.expiry === EXPIRY &&
+        heldDrop.claimed === false &&
+        heldDrop.sender === kp.publicKey() &&
+        heldDrop.contract === EXT_NET.contract,
+      JSON.stringify(heldDrop),
+    );
+    ok(
+      "  ...read through get_drop on the named network, simulated from no account at all (no getAccount)",
+      named(EXT_NET) && rpcCalls.some((c) => c.fn === "get_drop" && c.contract === EXT_NET.contract) && !rpcCalls.some((c) => c.call === "getAccount"),
+    );
+    reset();
+    viewAnswer = "held";
+    viewRecord = drop({ claimed: true });
+    ok("  ...claimed, or taken back (the contract keeps one flag for both), comes through as claimed", (await lumendrop.loadDrop(LINK, { net: EXT_NET }))?.claimed === true);
+    reset();
+    ok("  ...every escrow answered and none holds it: null", (await lumendrop.loadDrop(LINK, { net: EXT_NET })) === null && named(EXT_NET));
+    reset();
+    viewAnswer = "unreadable";
+    const blindDrop = await outcome(lumendrop.loadDrop(LINK, { net: EXT_NET }));
+    ok("  ...an escrow that could not be asked THROWS, never null", "error" in blindDrop);
+    reset();
+    ok(
+      "  ...a malformed id is null, and nothing is asked",
+      (await lumendrop.loadDrop("not-a-link", { net: EXT_NET })) === null && (await lumendrop.loadDrop("ab".repeat(31), { net: EXT_NET })) === null && rpcCalls.length === 0,
+    );
+    reset();
+    viewAnswer = "held";
+    viewRecord = drop();
+    viewOn = LEGACY;
+    const superseded = await lumendrop.loadDrop(LINK, { net: NET_WITH_LEGACY });
+    ok("  ...a drop only a SUPERSEDED escrow holds is found there, and says which", superseded?.contract === LEGACY && superseded.amount === "2.5000000" && named(NET_WITH_LEGACY));
+    reset();
+    viewAnswer = "held";
+    viewRecord = drop();
+    await lumendrop.loadDrop(LINK, { net: EXT_NET, sourceAccount: kp.publicKey() });
+    ok("  ...with a sourceAccount it simulates from that account instead", rpcCalls.some((c) => c.call === "getAccount") && named(EXT_NET));
 
     // Reclaim: the old code resolved the escrow against the DEVICE's network (and its superseded
     // contracts) whatever was named. A drop that only the named network's legacy escrow holds proves it.

@@ -158,9 +158,11 @@ async function links(count: number, perDrop: string) {
     if (!res.ok) throw new Error(`/v2-deposit → ${res.status}: ${text}`);
     const { hash } = JSON.parse(text) as { hash: string };
 
-    // `n=public` is what tells the claim page this link lives on mainnet.
-    const q = `a=${encodeURIComponent(perDrop)}&s=${encodeURIComponent("Lumenia")}&n=public`;
-    const url = `${WEB}/v2/c/${linkHex}?${q}#${link.secret()}`;
+    // The private link shape, built by hand because the sponsor does not import web code; the
+    // contract is apps/web/lib/lumendrop.ts v2LinkUrl. No amount anywhere (the claim page reads it
+    // from the escrow), the sender's name after the key, and `n=public`, which is what tells the
+    // claim page this link lives on mainnet.
+    const url = `${WEB}/v2/c/${linkHex}?n=public#${link.secret()}&s=Lumenia`;
     out.push({ link: url, hash });
     // Print the link IMMEDIATELY. The secret exists only in this process, so batching the
     // output means a later failure strands the escrow behind a key nobody has.

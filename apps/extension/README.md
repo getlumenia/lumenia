@@ -88,7 +88,7 @@ restore the account again.
 | Showing balances and statuses | Public reads of your account and of the escrow | `horizon-testnet.stellar.org`, `horizon.stellar.org`, `soroban-testnet.stellar.org`, `mainnet.sorobanrpc.com` |
 
 Our servers see the IP address of each request and use it for rate limiting. Every link made here
-carries the public marker `&src=ext` in its query (never in the fragment), so a link from the
+carries the public marker `src=ext` in its query (never in the fragment), so a link from the
 extension can be told apart; it identifies nobody.
 
 ## Permissions
@@ -165,8 +165,11 @@ packaged.
 - Take an unclaimed link back within three weeks of its expiry. After that the ledger archives the
   untouched entry (about 30 days after sending on practice money, longer on real money), and this
   version cannot restore it to take the money back.
-- The amount and the optional "from" name are in the link's query, visible to anyone who sees the
-  link (and to the page you paste it into); only the secret is in the `#fragment`.
+- The amount is not in the link at all: the claim page reads it from the escrow. The optional
+  "from" name rides in the `#fragment` next to the secret, which a browser never sends to the claim
+  page's server, so the name stays out of its logs and out of a chat app's link preview. Anyone who
+  sees the whole link (the chat service it travels through, and the page you paste it into) can
+  still read it, just as they can read the secret.
 - The link is pasted into whichever box has focus, on the page and in the frame you picked, at the
   moment the link is ready; if that page has since moved to another site, nothing is pasted.
   Pasting was tested on a plain text box, a text area, a one-line field and the Lexical editor

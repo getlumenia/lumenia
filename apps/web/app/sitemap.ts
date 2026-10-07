@@ -34,8 +34,8 @@ const MODIFIED: Record<string, string> = {
   "/cash-out": "2026-07-16",
   "/waitlist": "2026-07-16",
   "/brand": "2026-07-16",
-  "/privacy": "2026-07-16",
-  "/terms": "2026-07-16",
+  "/privacy": "2026-10-07", // T-D2-07 rewrite
+  "/terms": "2026-10-04", // privacy cross-link
 };
 
 export default function sitemap(): MetadataRoute.Sitemap {

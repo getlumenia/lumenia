@@ -21,6 +21,7 @@
 "use client";
 
 import { useRef } from "react";
+import Link from "next/link";
 import { useInView } from "motion/react";
 
 const BEATS = [
@@ -86,7 +87,9 @@ const BEATS = [
         operation, not just its type: the sponsor may only source the sponsorship and
         account-creation operations, a created account must start at zero, and anything that would
         move value is rejected outright. A constraint it cannot verify is a rejection, not an
-        exception. The sponsor is never a signer on a user&apos;s account.
+        exception. The sponsor is never a signer on a user&apos;s account. What it can{" "}
+        <strong>see</strong> is the other question, and the{" "}
+        <Link href="/privacy#sponsor">privacy page</Link> answers it plainly.
       </>
     ),
     chips: [

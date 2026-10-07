@@ -3,8 +3,9 @@
  *
  * Bootstraps a sender, mints USDC (from the sponsor's configured issuer), creates
  * a dual-predicate Claimable Balance for a fresh bearer key, and prints a claim
- * URL pointing at the web app: public metadata in the query (amount/sender/balance
- * so the page can render value-first), the bearer key in the #fragment (client-only).
+ * URL pointing at the web app in the private shape (D2): only the balance id (and
+ * issuer) in the query, the claim page reads the amount from the ledger by it; the
+ * bearer key, then the sender's name, in the #fragment (client-only, never sent).
  *
  *   RUN:  USDC_ISSUER_SECRET=S... pnpm --filter @lumenia/sponsor link -- \
  *           --sponsor https://lumenia-sponsor.avakit.workers.dev \
@@ -77,8 +78,13 @@ async function main() {
   if (!balanceId) throw new Error("Claimable Balance id not found");
 
   const id = balanceId.slice(-8);
-  const query = `a=${encodeURIComponent(amount)}&s=${encodeURIComponent(from)}&b=${balanceId}&i=${health.usdcIssuer}`;
-  const url = `${webUrl}/c/${id}?${query}#${claimKey.secret()}`;
+  const query = `b=${balanceId}&i=${health.usdcIssuer}`;
+  // The private fragment, `<key>[&s=<encodeURIComponent(name)>]`, hand-rolled because this package
+  // cannot import the web app: the contract (and the reader the claim page parses it with) is
+  // apps/web/lib/link-fragment.ts (claimFragment / parseClaimFragment). Keep the two in step.
+  const name = from.trim();
+  const fragment = `${claimKey.secret()}${name ? `&s=${encodeURIComponent(name)}` : ""}`;
+  const url = `${webUrl}/c/${id}?${query}#${fragment}`;
 
   console.log("\n============================================================");
   console.log(" ✅ CLAIM LINK READY — open it in a browser / phone to claim");

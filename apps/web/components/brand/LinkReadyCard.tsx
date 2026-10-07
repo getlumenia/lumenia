@@ -12,6 +12,11 @@
  *   - a QR of the link, so a person standing next to the sender can claim on their own phone
  *     without any chat in between. Opened by default on a team-funded (seeded) link, because that
  *     is the one that gets scanned at a table; a tap away on every other link.
+ *
+ * The share text names nobody and no amount (D2, 2026-10). It goes into the chat beside the link,
+ * where the chat app, a forward and anyone reading over a shoulder all see it, and the claim page
+ * already shows the sender's name and the amount read from the ledger to the person who opens it.
+ * The message arrives from the sender's own chat account anyway, so "I" is already a name.
  */
 import { useState } from "react";
 import Link from "next/link";
@@ -25,7 +30,6 @@ import { shareMoneyLink } from "../../lib/share";
 export function LinkReadyCard({
   link,
   balanceId,
-  from,
   requestName,
   locked = false,
   account,
@@ -33,7 +37,6 @@ export function LinkReadyCard({
 }: {
   link: string;
   balanceId: string;
-  from: string;
   /** set when this link answers an ask — the share text sends it BACK to the asker. */
   requestName?: string;
   /** the sender put a claim password on this link (lib/claim-password.ts). */
@@ -50,7 +53,7 @@ export function LinkReadyCard({
   // The link is appended by the share sheet itself (as `url`), so the message must not repeat it.
   const shareText = requestName
     ? uiCopy.pay.sendBackWaText("").trim()
-    : `${from} sent you money 💸 Tap to receive it:`;
+    : "I sent you money \u{1F4B8} Tap to receive it:";
 
   /* Fired once per gesture, never with the link itself: the beacon carries the hashed link id and
      the hashed account, and nothing that could rebuild the URL (owner caveat C2). */

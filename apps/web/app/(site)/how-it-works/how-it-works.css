@@ -113,6 +113,10 @@
 }
 .hw-beat-p { font-size: clamp(15.5px, 1.6vw, 17.5px); line-height: 1.6; color: var(--pw-muted); max-width: 62ch }
 .hw-beat-p strong { color: var(--pw-ink); font-weight: 600 }
+/* Same link treatment as the editorial pages (editorial.css .ed-prose a), so a cross-link reads the
+   same on every page of the site. */
+.hw-beat-p a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
+.hw-beat-p a:hover { text-decoration: underline; text-underline-offset: 3px }
 .hw-beat-p + .hw-beat-p { margin-top: 12px }
 /* The parameter chips — the page's one technical flourish. They restate the mechanism in the
    ledger's own vocabulary for a reader who wants the exact shape, not a paraphrase. */

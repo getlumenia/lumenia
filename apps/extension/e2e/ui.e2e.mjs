@@ -127,7 +127,8 @@ async function main() {
   await p.getByText("Your link is ready").waitFor({ timeout: 120_000 });
   const pastedAfterMs = Date.now() - t1;
   const linkA = ((await chatPage.locator("#chat").textContent()) ?? "").trim();
-  log(`popup: link A made, the chat box holds it after ${pastedAfterMs} ms (${linkA.includes("&src=ext#") ? "src=ext present" : "NO src"})`);
+  // src=ext is the last query parameter, and on practice money the only one (`?src=ext#...`).
+  log(`popup: link A made, the chat box holds it after ${pastedAfterMs} ms (${/[?&]src=ext#/.test(linkA) ? "src=ext present" : "NO src"})`);
   await p.getByText("Pasted into the page").waitFor({ timeout: 10_000 });
   await shot("ready-pasted");
   await chatPage.locator("#chat").screenshot({ path: path.join(RAW, "raw-chatbox.png") });

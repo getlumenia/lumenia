@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { claimFragment } from "../lib/link-fragment";
 
 const execFileAsync = promisify(execFile);
 
@@ -82,13 +83,15 @@ async function mintViaDemoLink(opts: { sponsor: string; web: string }): Promise<
     throw new Error(`/demo-link did not return a claim link (HTTP ${res.status}): ${body.error ?? "no body"}`);
   }
 
-  // Same shape the product builds: the bearer key lives in the fragment and is never sent anywhere.
+  // Same shape the product builds (/try, /event), through the same builder: the private link (D2).
+  // The query carries only the balance id, so the claim page has to read the amount from the
+  // ledger; the bearer key and then the sender's name live in the fragment, never sent anywhere.
   const web = opts.web.replace(/\/$/, "");
   const amount = body.amount ?? "0.5";
   const from = body.from ?? "Lumenia";
-  const q = new URLSearchParams({ a: amount, s: from, b: body.balanceId });
+  const q = new URLSearchParams({ b: body.balanceId });
   return {
-    url: `${web}/c/${body.balanceId.slice(-8)}?${q.toString()}#${body.bearerSecret}`,
+    url: `${web}/c/${body.balanceId.slice(-8)}?${q.toString()}#${claimFragment({ key: body.bearerSecret, from })}`,
     amount,
     from,
     balanceId: body.balanceId,

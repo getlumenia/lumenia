@@ -317,6 +317,41 @@ await recordEvent({ event: "send_link_created", cid: "e2e2e2e2e2e2e2e2", aid: "e
 check("a team account's extension event is dropped before x:ext is touched", extState() === extBeforeTeam);
 delete process.env.EVENTS_EXCLUDE_AIDS;
 
+console.log("\n[17] fields the allowlist does not name are dropped: an amount, a URL or a name never reaches a log or a counter");
+/* The web never sends these (lib/events.ts builds the body from a fixed key set), but the route parses whatever arrives,
+   so the guarantee has to hold on this side too: a beacon is an event name and hashed ids, whatever a caller adds. */
+const LEAKY = {
+  event: "claim_opened",
+  cid: "1eaf0001",
+  amount: "4.20",
+  usd: 999,
+  url: "https://getlumenia.com/v2/c/abc?a=4.20#SECRET",
+  link: "SBADSECRETKEY",
+  from: "Mallory",
+  s: "Mallory",
+  a: "4.20",
+} as unknown as Parameters<typeof handleEvent>[0];
+const leakLines: string[] = [];
+const logBeforeLeak = kv.log.length;
+const realLog2 = console.log;
+console.log = (...a: unknown[]) => {
+  leakLines.push(a.map(String).join(" "));
+};
+try {
+  handleEvent(LEAKY);
+} finally {
+  console.log = realLog2;
+}
+await recordEvent(LEAKY);
+const leakIssued = JSON.stringify(kv.log.slice(logBeforeLeak));
+const leakMarkers = ["4.20", "999", "http", "#", "SECRET", "Mallory", "amount", "usd"];
+check(
+  "handleEvent drops an unknown field such as amount: the log line is the event and its hashed id only",
+  leakLines.length === 1 && leakLines[0] === '[event] {"event":"claim_opened","cid":"1eaf0001","aid":null}',
+  leakLines.join(" | "),
+);
+check("...and no counter command recordEvent issues carries the amount, the URL, the key or the name", leakMarkers.every((m) => !leakIssued.includes(m)), leakIssued);
+
 console.log("\n[8] the store being absent is survivable");
 delete process.env.KV_REST_API_URL;
 delete process.env.KV_REST_API_TOKEN;

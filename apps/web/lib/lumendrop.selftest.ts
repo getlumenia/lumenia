@@ -2,8 +2,8 @@
  * Group-link self-test - the pure decisions behind a link that holds a pot of shares
  * (lib/lumendrop.ts). No network, no keys, no escrow: everything here is a function of its inputs.
  *
- * Why these four, and not the happy path: each one is a place where a plausible line of code tells a
- * room of people something the ledger never said.
+ * Why these five, and not the happy path: each one is a place where a plausible line of code tells a
+ * room of people something the ledger never said, or hands a key parser something that is not a key.
  *
  *   - the `g` hint. It rides in a query anyone can rewrite, and a clamped or float-parsed value
  *     would print a share count the escrow never agreed to.
@@ -16,10 +16,14 @@
  *   - what a phone that already asked may say. "You already took your share, it's in your account on
  *     this phone" is unfalsifiable to the person reading it, so it may only be printed after
  *     somebody looked, and never off a read that failed.
+ *   - what rides behind the key. A private link carries the sender's name and the lock marker after
+ *     the '#', and a reader that does not split them off hands lib/claim-password.ts `S...&s=Ayse`,
+ *     which is a bad secret: every private link would fail to open.
  *
  * RUN: pnpm --filter @lumenia/web exec tsx lib/lumendrop.selftest.ts   (offline, no keys, no network)
  */
 import { Keypair } from "@stellar/stellar-sdk";
+import { makeLinkSeed, parseLinkFragment, passwordFragment } from "./claim-password";
 import {
   groupTotal,
   isTerminalClaimOutcome,
@@ -29,6 +33,7 @@ import {
   poolStatusOf,
   resumeDecision,
   splitGroupHint,
+  v2LinkUrl,
   type ClaimLatch,
 } from "./lumendrop";
 
@@ -186,6 +191,48 @@ function main() {
     isTerminalClaimOutcome(kind === "already-yours" ? { kind, publicKey: "G", link: "group" } : { kind, link: "group" }),
   );
   ok("every settled answer is final - no tap changes it", settled.every(Boolean));
+
+  // --- what rides behind the key in a private link ---------------------------------------------------
+  // D2 moved the sender's name and the lock marker out of the query and in behind the key. Each has to
+  // come off before lib/claim-password.ts sees the fragment or the link does not open, so this is
+  // asserted, again, against a REAL keypair and a REAL p1. seed rather than look-alike strings.
+  console.log("\n[7] the name and the lock marker that ride behind the key");
+  const named = splitGroupHint(`${kp.secret()}&s=Ayse`);
+  ok("the sender's name comes out of the fragment", named.from === "Ayse");
+  ok("  ...and the key comes out byte-identical, and still opens the same link", named.fragment === kp.secret() && Keypair.fromSecret(named.fragment).publicKey() === kp.publicKey());
+  ok("  ...with no share count and no lock", named.slots === null && named.passwordLocked === false);
+
+  const seed = makeLinkSeed();
+  const lockedPrivate = splitGroupHint(`#${passwordFragment(seed)}&s=Ayse&g=3&p=1`);
+  ok(
+    "a locked group link: the seed, the name, three shares and the lock all come apart",
+    lockedPrivate.fragment === passwordFragment(seed) && lockedPrivate.from === "Ayse" && lockedPrivate.slots === 3 && lockedPrivate.passwordLocked,
+  );
+  const seedBack = parseLinkFragment(lockedPrivate.fragment);
+  ok("  ...and the seed is still exactly the seed", seedBack?.kind === "password" && Buffer.from(seedBack.seed).equals(Buffer.from(seed)));
+
+  const hostile = splitGroupHint(`${kp.secret()}&s=${encodeURIComponent("Ay&p=1#S")}`);
+  ok('a name like "Ay&p=1#S" comes back as that literal name', hostile.from === "Ay&p=1#S");
+  ok("  ...and locks nothing, and leaves the key untouched", hostile.passwordLocked === false && hostile.fragment === kp.secret());
+  const smuggled = splitGroupHint(`${kp.secret()}&s=${encodeURIComponent("x&g=6")}`);
+  ok('a name like "x&g=6" adds no share count', smuggled.slots === null && smuggled.from === "x&g=6");
+
+  const reordered = splitGroupHint(`${kp.secret()}&p=1&g=6&s=Ayse&x=1`);
+  ok(
+    "the order behind the key does not matter, and an unknown parameter is ignored",
+    reordered.fragment === kp.secret() && reordered.slots === 6 && reordered.passwordLocked && reordered.from === "Ayse",
+  );
+  const twice = splitGroupHint(`${kp.secret()}&s=Ayse&s=Mallory&p=0&p=1`);
+  ok("the first of a repeated parameter wins", twice.from === "Ayse" && twice.passwordLocked === false);
+  ok("a pre-D2 fragment (the key and the g copy) carries no name and no lock", carried.from === null && carried.passwordLocked === false);
+
+  const linkHex = Buffer.from(kp.rawPublicKey()).toString("hex");
+  const privateGroup = v2LinkUrl({ webOrigin: "https://getlumenia.com", linkHex, amount: "2.50", from: "Ayse", fragment: kp.secret(), slots: 6 });
+  const readBack = splitGroupHint(new URL(privateGroup).hash);
+  ok(
+    "a private group link built by v2LinkUrl reads back: the key, six shares, the name, no lock",
+    readBack.fragment === kp.secret() && readBack.slots === 6 && readBack.from === "Ayse" && !readBack.passwordLocked,
+  );
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} GROUP-LINK SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

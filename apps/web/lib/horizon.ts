@@ -5,7 +5,8 @@
  * account that doesn't exist yet returns an honest null / empty list.
  */
 import { Horizon } from "@stellar/stellar-sdk";
-import { activeNetwork, LEGACY_TESTNET_USDC_ISSUER, USDC_ISSUER } from "./network";
+import { activeNetwork, LEGACY_TESTNET_USDC_ISSUER, USDC_ISSUER, type NetworkConfig } from "./network";
+import { pinnedUsdcIssuer } from "./tx-guard";
 
 export interface Balance {
   /** USDC balance the recipient holds, as a decimal string. Only the pinned issuer's dollars count. */
@@ -251,6 +252,83 @@ export async function loadLinkStatus(balanceId: string): Promise<"pending" | "se
     // to throw, and callers turned that into "pending" — reporting an unfinished read as an
     // outstanding payment. Say we don't know instead.
     return "unknown";
+  }
+}
+
+/**
+ * What the v1 claim page (/c/[id]) may print about the money behind its link. Three values and no
+ * fourth: the amount the ledger holds, "gone" (Horizon answered 404: claimed, returned to the
+ * sender, or never there), or "unknown" (anything else). Unknown is never rounded to either of the
+ * other two: an unfinished read shown as money would be a guess, and shown as gone it would tell
+ * someone their money had vanished when we simply could not ask.
+ */
+export type ClaimableAmount = { state: "amount"; usd: string } | { state: "gone" } | { state: "unknown" };
+
+const UNKNOWN: ClaimableAmount = { state: "unknown" };
+
+/* A Stellar amount as Horizon renders it: digits, at most 7 decimals. Anything else is not printed. */
+const LEDGER_AMOUNT = /^\d{1,12}(\.\d{1,7})?$/;
+
+/**
+ * Map one Horizon claimable-balance record to what the claim page may print. Pure, so the
+ * self-test drives it with no network.
+ *
+ * `issuer` pins the asset by code AND issuer, to the dollar the v1 claim itself accepts: runClaim
+ * opens a trustline to exactly that asset (tx-guard's pinnedUsdcIssuer), so a balance of anything
+ * else, a look-alike "USDC" or the retired practice issuer included, is money this link cannot
+ * deliver and is never shown as money. `claimant`, when given, must hold an UNCONDITIONAL claim on
+ * the balance (the bearer key of the link being read), so a link that pairs somebody else's
+ * balance id with its own key cannot print that balance as "verified".
+ */
+export function claimableAmountFrom(record: unknown, issuer: string, claimant?: string): ClaimableAmount {
+  const cb = record as { asset?: unknown; amount?: unknown; claimants?: unknown } | null;
+  if (!cb || cb.asset !== `USDC:${issuer}`) return UNKNOWN;
+  if (claimant !== undefined) {
+    const list = Array.isArray(cb.claimants) ? (cb.claimants as { destination?: unknown; predicate?: unknown }[]) : [];
+    const bound = list.some(
+      (c) => c?.destination === claimant && (c.predicate as { unconditional?: unknown } | undefined)?.unconditional === true,
+    );
+    if (!bound) return UNKNOWN;
+  }
+  if (typeof cb.amount !== "string" || !LEDGER_AMOUNT.test(cb.amount) || !(Number.parseFloat(cb.amount) > 0)) {
+    return UNKNOWN;
+  }
+  return { state: "amount", usd: cb.amount };
+}
+
+/**
+ * Read a claim link's amount from the ledger by its claimable balance id.
+ *
+ * The network is PASSED, never read off the device (activeNetwork): a v1 link lives on the test
+ * network whatever this phone is switched to, exactly as runClaim is told. Plain fetch rather than
+ * Horizon.Server, so the 404 that means "gone" is read off the response itself, and so a read that
+ * hangs can be abandoned: after `timeoutMs` it is "unknown", never an endless skeleton.
+ * `fetchImpl` exists for the self-test; the page never passes it.
+ */
+export async function loadClaimableAmount(
+  balanceId: string,
+  net: Pick<NetworkConfig, "id" | "horizonUrl">,
+  opts: { claimant?: string; timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<ClaimableAmount> {
+  // Destructured, never called as `opts.fetchImpl(...)`: a browser's fetch invoked as a method of
+  // another object throws "Illegal invocation".
+  const { claimant, timeoutMs = 10_000, fetchImpl = fetch } = opts;
+  if (!balanceId) return UNKNOWN;
+  // AbortController + setTimeout rather than AbortSignal.timeout, which older in-app browsers lack.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(
+      `${net.horizonUrl.replace(/\/$/, "")}/claimable_balances/${encodeURIComponent(balanceId)}`,
+      { signal: abort.signal, headers: { accept: "application/json" } },
+    );
+    if (res.status === 404) return { state: "gone" };
+    if (!res.ok) return UNKNOWN;
+    return claimableAmountFrom(await res.json(), pinnedUsdcIssuer(net.id), claimant);
+  } catch {
+    return UNKNOWN; // offline, aborted, refused, or a body that is not JSON
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -150,8 +150,11 @@ export default function GroupPage() {
   const [slots, setSlots] = useState(6);
   const [closing, setClosing] = useState<Closing>("day");
   const [from, setFrom] = useState("");
+  /** Off on practice money, ON on real money: set after mount, with `now`, see the effect below. */
   const [wantWord, setWantWord] = useState(false);
   const [word, setWord] = useState("");
+  /** Chat previews may show the share and the sender's name. Off unless the sender turns it on. */
+  const [richPreview, setRichPreview] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -191,6 +194,11 @@ export default function GroupPage() {
   const [now, setNow] = useState(0);
 
   useEffect(() => {
+    /* REAL MONEY STARTS LOCKED, as on /send: without the word, anyone the link reaches can take a
+       share of money that is not coming back. One tap to turn off. Here, after mount, for the
+       same reason `now` is: the network is this device's localStorage flag, invisible to the
+       server render, and the form is not on screen yet, so this never overrides a choice. */
+    setWantWord(activeNetwork().isMainnet);
     setNow(Date.now());
     // "Tonight" moves as the evening does, and a deadline printed an hour ago is not the one that
     // would be signed now.
@@ -335,6 +343,7 @@ export default function GroupPage() {
            tool, and a pot the team funded must never be read as somebody adopting the product. The
            marker is in the query where anyone can see it, and the sponsor counts that cohort apart. */
         seeded: true,
+        preview: richPreview ? "rich" : "private",
       });
 
       const sentId = result.linkHex.slice(-8);
@@ -480,7 +489,6 @@ export default function GroupPage() {
         <LinkReadyCard
           link={ready.link}
           balanceId={ready.linkHex}
-          from={from.trim()}
           locked={ready.locked}
           account={account.address}
           seeded
@@ -604,10 +612,16 @@ export default function GroupPage() {
         )}
       </fieldset>
 
-      {/* The shared word is OPT-IN. It keeps the link inside the group; it is not a headcount, and
-          the label must never suggest it is. Off by default because the hero flow is a link you
-          tap, and the word is a second thing to say out loud to everyone. */}
+      {/* The shared word is OPT-IN on practice money. It keeps the link inside the group; it is not
+          a headcount, and the label must never suggest it is. Off by default there because the hero
+          flow is a link you tap, and the word is a second thing to say out loud to everyone. On real
+          money it starts ticked, with the reason next to it, and stays one tap to turn off. */}
       <div className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface p-4">
+        {mainnet && (
+          <p className="text-sm font-medium text-ink">
+            Real money: a password means only the person you tell can open it. A link without one is like cash.
+          </p>
+        )}
         <label className="flex items-start gap-3 text-sm">
           <input
             type="checkbox"
@@ -642,6 +656,25 @@ export default function GroupPage() {
           </>
         )}
       </div>
+
+      {/* What the chat's preview card may say about this link, the same switch /send has. Off by
+          default; the line under it names what each state shows. On, the card names you and ONE
+          share, read from the ledger, never the pot. */}
+      <label className="flex items-start gap-3 rounded-[14px] border border-line bg-surface p-4 text-sm">
+        <input
+          type="checkbox"
+          checked={richPreview}
+          onChange={(e) => setRichPreview(e.target.checked)}
+          className="mt-1 size-4"
+        />
+        <span>
+          <span className="font-medium text-ink">Show the amount and my name in chat previews</span>
+          <span className="block text-ink-soft">
+            Off: the chat preview shows only Lumenia. On: anyone who sees the chat sees the amount
+            and your name.
+          </span>
+        </span>
+      </label>
 
       {overCap && (
         <p className="text-sm text-ink-soft">

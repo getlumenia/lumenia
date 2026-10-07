@@ -1,8 +1,9 @@
 # SOW 2 readiness report (DRAFT)
 
-Status: **draft, 2026-10-03.** This file collects the evidence for the follow-on SOW deliverables
+Status: **draft, 2026-10-06.** This file collects the evidence for the follow-on SOW deliverables
 as each one lands. Today it holds D1 (the sender-side browser extension): its security checklist,
-the tests behind it, the live testnet proof, and what is not verified yet. The D3 sections (the
+the tests behind it, the live testnet proof, and what is not verified yet; and D2 (private links and
+the commitment spike), whose mainnet run is still the owner's. The D3 sections (the
 hardening suite and the scripted adversarial run against the mainnet sponsor) are added when that
 work is done.
 
@@ -139,10 +140,15 @@ and a fresh browser profile restoring the account to the same address (balance 0
   automated review signed it (unlisted 0.1.0 and 0.1.1, 2026-10-04; the signed 0.1.1 is hosted at
   getlumenia.com/extension/lumenia-firefox.xpi and matches our own build byte for byte apart from the
   signature files). No one has yet used it in Firefox; that first run is the owner's.
-- **Neither store has approved a public listing yet.** Both were submitted on 2026-10-04 and are
-  awaiting review: the Chrome Web Store item `ccdnjnckaldkmjnlpgpmdmnbajmakhmn`, and the listed
-  0.1.2 on addons.mozilla.org (same code and icons as 0.1.1; the version number moved because AMO
-  never reuses one). Until each is approved it is "submitted for review", never "published".
+- **Chrome Web Store: published, public, version 0.1.2** (item `ccdnjnckaldkmjnlpgpmdmnbajmakhmn`,
+  https://chromewebstore.google.com/detail/lumenia-send-dollars-by-l/ccdnjnckaldkmjnlpgpmdmnbajmakhmn ;
+  the store's "published" email was forwarded by the owner on 2026-10-06). The listed 0.1.2 on
+  addons.mozilla.org (same code and icons as 0.1.1; the version number moved because AMO never
+  reuses one) is still "submitted for review", never "published", until AMO approves it. Brave
+  installs it from the Chrome Web Store with its standard notice that Brave does not review
+  extensions; that notice is Brave's for every extension outside its own vetted list.
+- **The published 0.1.2 makes links in the pre-D2 shape** (amount and name in the query). The D2
+  private shape reaches the extension at its next build; see the D2 section.
 - **No real-money send from the extension yet.** Metric 1 needs a mainnet link made from the
   published extension and claimed; that send is the owner's, from an approved pilot wallet.
 - **Paste on the real chat sites is untested**: it was tested on a local page and on the public
@@ -155,3 +161,85 @@ and a fresh browser profile restoring the account to the same address (balance 0
 - **A link left untouched for about 30 days on testnet** (longer on mainnet) is archived by the
   ledger, and neither the extension nor the website can restore it to take the money back yet;
   the list tells the sender to take a link back within three weeks of its expiry.
+
+---
+
+## D2. Private links and the commitment spike
+
+Status: **code done and tested, 2026-10-06; the mainnet run below is the owner's, after the deploy.**
+
+### D2.1 What a link carries now
+
+| | Before D2 | Now (default) |
+|---|---|---|
+| A one-to-one link | `/v2/c/<id>?a=5.00&s=Ayse[&p=1][&n=public]#<key>` | `/v2/c/<id>[?n=public]#<key>&s=Ayse[&p=1]` |
+| A group link | `...?a=<share>&s=Ayse&g=6...#<key>&g=6` | `/v2/c/<id>?g=6[&n=public]#<key>&s=Ayse&g=6` |
+| The chat preview | "Ayse sent you $5.00", a card painted from the query | "Lumenia" and "Someone sent you dollars by link. Open it to see the amount. No app, no sign-up, and the recipient pays no gas.", a static brand image |
+| The amount on the claim page | read from `?a=` (an edited `?a=999` showed $999.00) | read from the escrow, with "Verified on the ledger" |
+| A password for real money | off by default | on by default on mainnet, with one line on why; the extension already did this |
+
+The amount appears nowhere in the link; the sender's name and the lock marker sit after the `#`, which
+no browser or preview bot sends to a server. Showing the amount and the name in the preview is an
+explicit choice on /send and /group ("Show the amount and my name in chat previews", off by default);
+even then the card's amount is read from the ledger. Links made before D2 keep claiming.
+
+### D2.2 Tests
+
+| Suite | What it holds | Count |
+|---|---|---|
+| `apps/web` `test:linkprivacy` (CI) | every link shape, round-tripped; the beacon body; the claim-route headers | 51/51 |
+| `apps/web` `test:claimmeta` (CI) | private metadata for every link; rich metadata and the OG card read the ledger, never `a=` | 55/55 |
+| `apps/web` `test:group` (CI) | the group-link parser, incl. the name and lock marker in the fragment | 57/57 (was 45) |
+| `apps/web` `test:horizon` (CI) | the v1 page's claimable-balance read, three-valued and pinned to USDC | 45/45 (was 17) |
+| `apps/web` `test:claimledger` (CI) | what the v2 claim screen may say about the amount: errors, empty reads, spent records, late reads after a tap | 17/17 |
+| `apps/sponsor` `test:events` (CI) | [17] an unknown field such as `amount` is dropped from the log and the counters | 80/80 (was 78) |
+| `apps/extension` `test:url` (CI) | the extension's links, private by default | 233/233 (was 227) |
+| `apps/web/e2e/preview.spec.ts` (nightly, e2e.yml) | four bot user agents, an edited `?a=999`, the ledger amount on the page, clean beacons, a real claim, the claimed link reopened | passed 2026-10-06 against a local production build on testnet |
+| `apps/web/e2e/private-variants.spec.ts` (on demand) | a password-locked link and a group link made on /send and /group, opened on a fresh device, read from the ledger, claimed | passed 2026-10-06, same setup |
+
+### D2.3 The leak audit and the privacy page
+
+- [`LEAK_AUDIT.md`](LEAK_AUDIT.md): one row per channel (URL, fragment, page body, spoofed amount,
+  metadata, OG image, referrer, host logs, web analytics, beacons, sponsor logs, pilot status,
+  recovery, third parties, service worker, the sender's device, share text, request links, the store
+  packages, a practice link's key, the sponsor and the amount), each with a file and line or
+  production output.
+- The privacy page: https://getlumenia.com/privacy (sections: what a link carries; what the ledger
+  shows, forever; what our sponsor sees; fresh accounts; the browser extension; our website), linked
+  from /how-it-works and /terms. Last updated 4 October 2026.
+
+### D2.4 The commitment spike (testnet)
+
+[`ZK_SPIKE_REPORT.md`](ZK_SPIKE_REPORT.md). The escrow variant `contracts/lumen-drop-commit` stores a
+sha256 commitment next to the escrowed amount and checks the reveal at claim; 21 tests including the
+wrong-reveal cases and the solvency property. Testnet contract
+[`CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA`](https://stellar.expert/explorer/testnet/contract/CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA),
+one deposit [`78183bfa...2ec2b`](https://stellar.expert/explorer/testnet/tx/78183bfa875d264f42bdda6e92b1809bc79651cc0ef0898ca3b900cb9952ec2b)
+and its claim [`f478345c...139a3`](https://stellar.expert/explorer/testnet/tx/f478345c357c103e44f3e6c9e700e2dc6597bd402eccc475b71a0f9acac139a3).
+It does not hide the amount: the deposit moves it through a public SAC transfer, and the report lists
+every place it stays public.
+
+### D2.5 Metric 2: a private link claimed on mainnet
+
+| | |
+|---|---|
+| The link, key redacted | _owner's run after the deploy_ |
+| Deposit (mainnet) | _hash_ |
+| Claim (mainnet) | _hash_ |
+| WhatsApp and Telegram preview cards | _two screenshots_ |
+| What a preview bot got (`curl -A`) | _pasted output_ |
+
+### D2.6 Not verified yet, stated plainly
+
+- The mainnet run above is not done yet; until it is, metric 2 is not met.
+- The extension's store packages (Chrome Web Store 0.1.2, AMO 0.1.0/0.1.1/0.1.2) were built before
+  D2 and make links in the old shape until the next build.
+- Previews were checked with the chat apps' user agents, not inside every chat app; the cards on a
+  real phone are the owner's screenshots.
+- A v1 practice link's key (from /try or /event) is also the key of the account it opens. Until
+  2026-10-07 that account became the device's home account on a first claim; since then the link's
+  account is only ever a throwaway and the money moves into a home made on the device (leak audit row
+  20). A device that adopted a link's account as home before the fix keeps it; /privacy says so.
+- For a link made before D2 (or edited by hand), Next.js copies the request's own query into the
+  page's script data. Nothing new is revealed (a bot already sent those bytes), but those bytes are
+  in the HTML.

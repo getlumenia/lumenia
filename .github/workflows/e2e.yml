@@ -55,6 +55,14 @@ jobs:
         env:
           WEB_URL: ${{ inputs.web || 'https://getlumenia.com' }}
         run: pnpm --filter @lumenia/web exec playwright test e2e/claim.spec.ts --reporter=line
+      # SOW 2, D2: what a chat preview bot sees of a link (four real bot user agents), that an edited
+      # ?a= never reaches the page, and that the claim page's counters carry no amount, URL or name.
+      # It claims a practice link, sends part of it on as a private link with a sender name, and
+      # claims that too: two practice claims a night, the same budget as send.spec.
+      - name: Private link preview (D2 leak audit, live half)
+        env:
+          WEB_URL: ${{ inputs.web || 'https://getlumenia.com' }}
+        run: pnpm --filter @lumenia/web exec playwright test e2e/preview.spec.ts --reporter=line
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

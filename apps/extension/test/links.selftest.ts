@@ -46,7 +46,8 @@ const LINK_HEX = "ab12".repeat(16);
 
 function prepared(over: Partial<PreparedDeposit> = {}): PreparedDeposit {
   return {
-    link: `https://getlumenia.com/v2/c/${LINK_HEX}?a=2.50&s=Ayse&src=ext#${SECRET}`,
+    // The private shape the extension makes (apps/web/lib/lumendrop.ts v2LinkUrl): the name after the key.
+    link: `https://getlumenia.com/v2/c/${LINK_HEX}?src=ext#${SECRET}&s=Ayse`,
     linkHex: LINK_HEX.toUpperCase(),
     retrySafeAfter: DEADLINE,
     innerHash: INNER,

@@ -63,7 +63,7 @@ jobs:
           pnpm --filter @lumenia/sponsor test:identity
           pnpm --filter @lumenia/sponsor test:identity-routes
           pnpm --filter @lumenia/sponsor test:soroban-relay
-      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + cctp-web + group + swap + extseam + walletkit + agentmcp)
+      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + cctp-web + group + swap + extseam + walletkit + agentmcp + linkprivacy + claimmeta + claimledger + claimhome)
         run: |
           pnpm --filter @lumenia/web test:recovery
           pnpm --filter @lumenia/web test:claimpw
@@ -79,6 +79,11 @@ jobs:
           pnpm --filter @lumenia/web test:extseam
           pnpm --filter @lumenia/web test:walletkit
           pnpm --filter @lumenia/web test:agentmcp
+          # SOW 2 D2: what a claim link, its beacon and the claim routes' headers may reveal (the leak audit's offline half).
+          pnpm --filter @lumenia/web test:linkprivacy
+          pnpm --filter @lumenia/web test:claimmeta
+          pnpm --filter @lumenia/web test:claimledger
+          pnpm --filter @lumenia/web test:claimhome
 
   build:
     name: Build web
@@ -131,6 +136,32 @@ jobs:
       - name: Coverage gate (lines ≥ 90%)
         run: cargo llvm-cov --fail-under-lines 90 --summary-only
 
+  # The testnet commitment spike (SOW 2, D2): a separate crate that is never deployed to mainnet. Its
+  # tests are the wrong-reveal cases and the solvency property, so they run where anyone can see them.
+  spike-contract:
+    name: "Spike contract (testnet only): lumen-drop-commit tests + clippy"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/lumen-drop-commit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts/lumen-drop-commit
+      - name: Clippy (strict, same flags as the escrow)
+        run: >
+          cargo clippy --all-targets --
+          -D warnings
+          -W clippy::arithmetic_side_effects
+          -W clippy::unwrap_used
+          -W clippy::panic
+      - name: Tests (reveal, wrong reveals, solvency property)
+        run: cargo test
+
   # The browser extension (SOW 2, D1). Everything here is offline: the self-tests fake the Soroban
   # RPC, the sponsor and the recovery server, and need no keys. The zips are kept so a reviewer can
   # install exactly what CI built.
@@ -166,6 +197,6 @@ jobs:
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: [quality, build, contract, extension]
+    needs: [quality, build, contract, spike-contract, extension]
     steps:
       - run: echo "All CI checks passed."

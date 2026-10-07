@@ -1,46 +1,47 @@
 /**
  * /v2/c/[linkHex] — the v2 (Soroban LumenDrop) claim page. Value-first: the money is shown
- * before any action. The recipient claims walletless + gasless — a fresh sponsored account is
- * created for them and the drop is paid straight into it via the /v2-claim relayer (proven live).
- * The link secret rides in the #fragment (client-only); the query carries the display metadata.
+ * before any action. The recipient claims walletless, and the recipient pays no gas: a fresh
+ * sponsored account is created for them and the drop is paid straight into it via the /v2-claim
+ * relayer (proven live).
  *
- * This is a NEW route (the frozen v1 /c/[id] is untouched). It reuses the brand tokens.
+ * WHAT THE SERVER MAY SAY, AND WHY IT IS SO LITTLE (D2 private links). Every chat app fetches a
+ * pasted link, and so does every bot that follows one, and what they get is this page's server
+ * render: its metadata, its HTML and the RSC payload inside it. Until D2 all three named the sender
+ * and printed the amount, taken from the query, for every link. Now:
+ *   - the metadata is lib/claim-metadata.ts v2ClaimMetadata: the fixed private card unless the
+ *     sender chose `preview=rich`, and then the amount comes from the ledger, never from `a=`;
+ *   - the body carries no name and no amount for ANY link. The client component gets the link id,
+ *     the `g` share-count hint and the network marker, and nothing else, because every prop handed
+ *     to it is serialised into the HTML. It reads the name from the #fragment (or, on a legacy or
+ *     rich link, the query) and the amount from the escrow, in the browser.
+ *
+ * This is a NEW route (the v1 /c/[id] is a separate one). It reuses the brand tokens.
  */
 import type { Metadata, Viewport } from "next";
-import { formatUsd } from "../../../../lib/money";
-import { parseSlots } from "../../../../lib/lumendrop";
+import { parseSlots } from "../../../../lib/link-fragment";
+import { v2ClaimMetadata } from "../../../../lib/claim-metadata";
 import V2ClaimButton from "./V2ClaimButton";
 
-
 /**
- * Without these the link arrives in WhatsApp as a bare https://getlumenia.com/v2/c/3f9a8c… with a
- * generic grey card — the visual signature of a phishing message, on the one link we are asking 20
- * people to trust. The v1 route has had this since launch; the v2 rewrite dropped it. Nothing
- * private is exposed: the amount and name are already query params, not fragment.
+ * Without a card the link arrives in WhatsApp as a bare https://getlumenia.com/v2/c/3f9a8c... with a
+ * generic grey box, the visual signature of a phishing message. A private link gets the fixed
+ * Lumenia card (it says money is waiting, not whose or how much); a rich one names the sender and
+ * the ledger amount.
  *
- * Those same query params are why `robots` is declared here. This route sits at the top level, not
- * inside the (app) group whose layout carries the noindex, so nothing else says it for it — and a
- * URL naming a stranger's amount and sender has no business in an index even when the crawler can
- * only see the URL. robots.ts Disallows the path too; a Disallow alone can still leave a
+ * `robots` is declared on both: this route sits at the top level, not inside the (app) group whose
+ * layout carries the noindex, so nothing else says it for it. robots.ts Disallows the path too, and
+ * next.config.ts adds the X-Robots-Tag and no-referrer headers; a Disallow alone can still leave a
  * link-discovered URL listed.
  */
 export async function generateMetadata({
+  params,
   searchParams,
 }: {
+  params: Promise<{ linkHex: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<Metadata> {
-  const sp = await searchParams;
-  const a = typeof sp.a === "string" ? Number.parseFloat(sp.a) : Number.NaN;
-  const ok = Number.isFinite(a) && a > 0 && a <= 10_000;
-  const who = (typeof sp.s === "string" ? sp.s : "").trim().slice(0, 24) || "Someone";
-  const title = ok ? `${who} sent you ${formatUsd(sp.a as string)}` : `${who} sent you money`;
-  const images = [`/c/x/og?${new URLSearchParams({ a: ok ? (sp.a as string) : "", s: who })}`];
-  return {
-    title,
-    robots: { index: false, follow: false },
-    openGraph: { title, images },
-    twitter: { card: "summary_large_image", title, images },
-  };
+  const { linkHex } = await params;
+  return v2ClaimMetadata(linkHex, await searchParams);
 }
 
 /**
@@ -59,26 +60,11 @@ export default async function V2ClaimPage({
 }) {
   const { linkHex } = await params;
   const sp = await searchParams;
-  /* Everything below comes from the query string, which anyone can write. It is rendered at 60px
-     on a page carrying our domain and a working Claim button, so it gets checked first: an
-     unchecked `a` renders "$NaN" or "-$2.00", and an unchecked `s` can be 300 characters or
-     reverse the line with a bidi override. */
-  const rawAmount = typeof sp.a === "string" ? Number.parseFloat(sp.a) : Number.NaN;
-  const amount =
-    Number.isFinite(rawAmount) && rawAmount > 0 && rawAmount <= 10_000 ? sp.a as string : "";
-  const sender =
-    (typeof sp.s === "string" ? sp.s : "")
-      .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
-      .trim()
-      .slice(0, 24) || "Someone";
-  // `p=1` marks a password-locked link, so the page can say so up front instead of
-  // letting someone tap a button that then asks for something they weren't expecting.
-  const locked = sp.p === "1";
-  /* `g` says this link holds a POT of shares rather than one payment. Sanitised the same way `a`
-     and `s` are, and by the same reader the escrow's bounds come from: anything that is not a whole
-     number inside those bounds is IGNORED rather than clamped, because a clamped count would print
-     a number the escrow never agreed to. It only decides what this page says while it waits, the
-     live count under the amount comes from the escrow, and so does everything that gets signed. */
+  /* `g` says this link holds a POT of shares rather than one payment. Anything that is not a whole
+     number inside the escrow's bounds is IGNORED rather than clamped, because a clamped count would
+     print a number the escrow never agreed to. It only decides which view is read first and what the
+     page says while it waits; the per-share amount comes from the escrow, and so does everything that
+     gets signed. It is a count, never a name or an amount, so it may cross into the client props. */
   const slots = parseSlots(sp.g);
   // `n=public` means this link carries REAL money. The honesty note below was unconditional, so a
   // friend opening a real transfer was told by the app itself that the money isn't real — on the
@@ -90,32 +76,8 @@ export default async function V2ClaimPage({
        green :root tokens, so the live claim screen — the only screen a recipient ever sees — was a
        different product from the one they land on right after. */
     <main className="claim-pw mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-8 bg-paper px-6 py-12 text-center text-ink">
-      <div className="flex flex-col items-center gap-2">
-        {/* Which network, before anything else: real dollars and practice dollars must never look
-            alike on the one screen a stranger sees (hackathon build, 2026-09-19). */}
-        <span
-          className={`mb-2 rounded-full border px-3 py-0.5 text-xs font-semibold ${real ? "border-money text-money" : "border-line text-ink-soft"}`}
-        >
-          {real ? "Real money" : "Practice money"}
-        </span>
-        <p className="text-ink-soft">{slots ? `${sender} sent money to a group` : `${sender} sent you money`}</p>
-        {amount ? (
-          <p className="text-6xl font-bold tabular-nums text-money">{formatUsd(amount)}</p>
-        ) : (
-          <p className="text-2xl font-semibold text-ink">You have money to claim</p>
-        )}
-        {/* On a pot, the 60px figure is ONE share, never the pot, which nobody here receives. */}
-        {slots && amount ? <p className="text-sm text-ink-soft">That&apos;s one share of this link.</p> : null}
-        <p className="mt-1 text-sm font-medium text-ink">No app. No wallet. You pay nothing.</p>
-        {locked && (
-          <p className="mt-2 text-sm text-ink-soft">
-            {slots
-              ? `This one is locked. You'll need the word ${sender} gave the group.`
-              : `This one is locked. You'll need the password ${sender} gave you.`}
-          </p>
-        )}
-      </div>
-      <V2ClaimButton linkHex={linkHex} amount={amount} sender={sender} slots={slots} />
+      {/* The header (who, how much) and the action, both client-side: see the note at the top. */}
+      <V2ClaimButton linkHex={linkHex} slots={slots} real={real} />
       {real ? (
         <p className="text-xs text-ink-soft">Real money, on the public Stellar record.</p>
       ) : (

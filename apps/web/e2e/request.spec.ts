@@ -163,8 +163,9 @@ test("first-time asker: request with no account → payer sends the link back �
   // 3. The asker taps the link that came back — the normal walletless claim.
   await askerPage.goto(claimLink, { waitUntil: "domcontentloaded" });
   // Exact: the v2 claim button repeats the figure ("Take $X.XX"), so a substring match finds two
-  // elements. The headline is the value-first promise, so that is the one asserted.
-  await expect(askerPage.getByText(usd(ASK), { exact: true })).toBeVisible();
+  // elements. The headline is the value-first promise, so that is the one asserted. The figure is
+  // read from the ledger after the page loads (a link no longer carries it), hence the wait.
+  await expect(askerPage.getByText(usd(ASK), { exact: true })).toBeVisible({ timeout: 30_000 });
   await askerPage.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await askerPage.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(askerPage);

@@ -26,6 +26,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import QRCode from "react-qr-code";
+import { claimFragment } from "../../../lib/link-fragment";
 import { explorerTxOn, mainnetConfig, testnetConfig, type NetworkConfig } from "../../../lib/network";
 import { walletsKitEnabled } from "../../../lib/wallets-kit";
 
@@ -83,11 +84,17 @@ function under30(d: Record<string, number>): string | null {
  * replaced by an ellipsis: that is where the balance id sits, and the bearer key sits after it in
  * the fragment, and this board goes on a projector in front of a room holding phones. What is left
  * is enough to recognise the link; the href stays whole, so opening it still claims.
+ *
+ * The tail is the end of the KEY, as it always was. A private link (D2) carries the sender's name
+ * behind the key (`#<key>&s=Lumenia%20team`), and that tail would read the same on every link.
  */
 function shortLink(url: string): string {
   if (url.length <= 54) return url;
   const query = url.indexOf("?");
-  return `${query > 0 ? url.slice(0, query) : url.slice(0, 38)}...${url.slice(-8)}`;
+  const hash = url.indexOf("#");
+  const keyEnd = hash >= 0 ? url.indexOf("&", hash) : -1;
+  const tail = (keyEnd > 0 ? url.slice(0, keyEnd) : url).slice(-8);
+  return `${query > 0 ? url.slice(0, query) : url.slice(0, 38)}...${tail}`;
 }
 
 function PeopleTiles({ load, real }: { load: Load; real: boolean }) {
@@ -151,8 +158,11 @@ export function EventBoard() {
       if (!res) throw new Error("The practice sponsor could not be reached.");
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `It answered ${res.status}.`);
       const d = (await res.json()) as { balanceId: string; bearerSecret: string; amount: string; issuer: string; from: string };
-      const q = `a=${encodeURIComponent(d.amount)}&s=${encodeURIComponent("Lumenia team")}&b=${d.balanceId}&i=${d.issuer}&seeded=1`;
-      setLink(`${window.location.origin}/c/${d.balanceId.slice(-8)}?${q}#${d.bearerSecret}`);
+      // Private shape (D2): no amount anywhere (the claim page reads it from the ledger by `b`), the
+      // name behind the key in the fragment. `seeded=1` stays in the query: a public marker the
+      // claim page's beacon reads, nothing about a person.
+      const q = `b=${d.balanceId}&i=${d.issuer}&seeded=1`;
+      setLink(`${window.location.origin}/c/${d.balanceId.slice(-8)}?${q}#${claimFragment({ key: d.bearerSecret, from: "Lumenia team" })}`);
     } catch (e) {
       setMintError(e instanceof Error ? e.message : "Could not make a link just now.");
     } finally {

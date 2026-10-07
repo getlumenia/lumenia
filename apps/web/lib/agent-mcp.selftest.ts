@@ -28,7 +28,8 @@ const deps: AgentDeps = {
   networkLabel: "testnet (practice money)",
   createLink: async (o) => {
     calls.createLink.push(o);
-    return { link: `${o.webOrigin}/v2/c/${"ab".repeat(32)}?a=${o.amount}&s=${encodeURIComponent(o.from)}#SECRETFRAGMENT`, linkHex: "ab".repeat(32), hash: "deadbeef" };
+    // The private shape (lib/lumendrop.ts v2LinkUrl): no amount in the link, the name after the key.
+    return { link: `${o.webOrigin}/v2/c/${"ab".repeat(32)}#SECRETFRAGMENT&s=${encodeURIComponent(o.from)}`, linkHex: "ab".repeat(32), hash: "deadbeef" };
   },
   listReclaimable: async () => [{ linkHex: "cd".repeat(32), usd: "2.00", expiry: 1_700_000_000 }],
   reclaim: async (o) => {
