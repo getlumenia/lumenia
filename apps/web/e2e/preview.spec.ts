@@ -91,11 +91,18 @@ async function assertPrivateToBots(url: string, forbidden: string[]): Promise<vo
   }
 }
 
-/** Every beacon the page sends, by body, so the test can say what left the device. */
-function collectBeacons(page: Page): string[] {
+/**
+ * Every beacon the page sends, by body, so the test can say what left the device. Read through a
+ * route: a `navigator.sendBeacon` body is a Blob, which the plain request event does not expose
+ * (it reads as empty against production, where nothing else intercepts the call). `fallback` hands
+ * the request on unchanged, to the local-run proxy when there is one, else to the network.
+ */
+async function collectBeacons(page: Page): Promise<string[]> {
   const bodies: string[] = [];
-  page.on("request", (req) => {
-    if (req.method() === "POST" && new URL(req.url()).pathname === "/events") bodies.push(req.postData() ?? "");
+  await page.route("**/events", async (route) => {
+    const req = route.request();
+    if (req.method() === "POST") bodies.push(req.postDataBuffer()?.toString("utf8") ?? "");
+    await route.fallback();
   });
   return bodies;
 }
@@ -148,7 +155,7 @@ test("a private link: bots see no amount and no name, the page shows the ledger'
   const recipient = await browser.newContext();
   await proxySponsorForLocalRuns(recipient);
   const claim = await recipient.newPage();
-  const beacons = collectBeacons(claim);
+  const beacons = await collectBeacons(claim);
   await claim.goto(spoofed, { waitUntil: "domcontentloaded" });
   await expect(claim.getByText(usd(ONWARD), { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(claim.getByText(/verified on the ledger/i)).toBeVisible();
@@ -162,6 +169,7 @@ test("a private link: bots see no amount and no name, the page shows the ledger'
   // 5. The counters that left the recipient's device.
   expect(beacons.length, "the claim page sent its counters").toBeGreaterThan(0);
   for (const body of beacons) {
+    expect(body.length, "a beacon body the test could read").toBeGreaterThan(0);
     const parsed = JSON.parse(body) as Record<string, unknown>;
     expect(Object.keys(parsed).every((k) => BEACON_KEYS.has(k)), `beacon keys: ${body}`).toBe(true);
     for (const leak of ["http", "#", NAME, "Mallory", "999", ONWARD, "0.2"]) {
