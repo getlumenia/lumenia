@@ -36,7 +36,8 @@ import { feebumpHandler } from "./lib/feebump.js";
 import { sendLinkHandler } from "./lib/send.js";
 import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
-import { relayClaimHandler, relayDepositHandler, relayReclaimHandler } from "./lib/soroban-relay.js";
+import { relayClaimHandler, relayDepositHandler, relayReclaimHandler, isRelayBusy } from "./lib/soroban-relay.js";
+import { isSubmitUnconfirmed } from "./lib/stellar.js";
 import { faucetHandler } from "./lib/faucet.js";
 import { demoLinkHandler } from "./lib/demo-link.js";
 import { saveContact } from "./lib/waitlist.js";
@@ -90,7 +91,7 @@ const httpServer = createServer(async (req, res) => {
       ok: true,
       service: "lumenia-sponsor",
       network: config.network,
-      sponsorPublicKey: signer.publicKey(),
+      sponsorPublicKey: config.sponsorAccountId,
       usdcCode: config.usdc.getCode(),
       usdcIssuer: config.usdc.getIssuer(),
     });
@@ -215,7 +216,8 @@ const httpServer = createServer(async (req, res) => {
         },
         channels,
       );
-      return send(res, 200, result);
+      // Same answers as the Worker (src/worker.ts): an accepted but unobserved claim is a 202.
+      return send(res, result.confirmed === false ? 202 : 200, result);
     }
 
     if (method === "POST" && url === "/v2-deposit") {
@@ -224,7 +226,7 @@ const httpServer = createServer(async (req, res) => {
       const rl = await enforceRateLimit(clientIp(req), body.senderPublicKey);
       if (rl.limited) return send(res, 429, { error: rl.reason });
       const result = await relayDepositHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey });
-      return send(res, 200, result);
+      return send(res, result.confirmed === false ? 202 : 200, result);
     }
 
     if (method === "POST" && url === "/v2-reclaim") {
@@ -233,7 +235,7 @@ const httpServer = createServer(async (req, res) => {
       const rl = await enforceRateLimit(clientIp(req), body.senderPublicKey);
       if (rl.limited) return send(res, 429, { error: rl.reason });
       const result = await relayReclaimHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey });
-      return send(res, 200, result);
+      return send(res, result.confirmed === false ? 202 : 200, result);
     }
 
     if (method === "POST" && url === "/faucet") {
@@ -338,10 +340,17 @@ const httpServer = createServer(async (req, res) => {
 
     return send(res, 404, { error: "not found" });
   } catch (e) {
+    /* The Worker's answers, so a local or integration run sees what production sends (SOW 2 D3
+     * item g): an undecided submission is a 202 with its hash (it may still land), and an RPC that
+     * declined to queue is a 503 (nothing moved, retry shortly). Everything else stays a 400. */
+    if (isSubmitUnconfirmed(e)) {
+      return send(res, 202, { error: "submit unconfirmed", hash: (e as { hash?: string }).hash });
+    }
+    if (isRelayBusy(e)) return send(res, 503, { error: (e as Error).message });
     return send(res, 400, { error: (e as Error).message });
   }
 });
 
 httpServer.listen(config.port, () => {
-  console.log(`lumenia-sponsor listening on :${config.port} (${config.network}, sponsor ${signer.publicKey()})`);
+  console.log(`lumenia-sponsor listening on :${config.port} (${config.network}, sponsor ${config.sponsorAccountId}, signer ${signer.publicKey()})`);
 });

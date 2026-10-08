@@ -49,11 +49,45 @@ export const ALLOWED_SEND_OP_TYPES = new Set<string>([
   "endSponsoringFutureReserves",
 ]);
 
+/**
+ * The address the sponsor SIGNS with, when it is not the sponsor account itself: since SOW 2 D3
+ * item h the signer can be a KMS key added to the account as a signer (lib/kms-signer.ts). That key
+ * is also its OWN address's master key, so a sponsor signature over a transaction that has an
+ * operation sourced by that address authorizes the operation too. A review showed what that buys
+ * once the key is public (on /health and in the account's signer list): a /send-link naming the
+ * KMS address as sender moved any USDC held there, and a /create-account naming it opened an
+ * account whose only signer is the sponsor's key. So the signing address is sponsor-controlled
+ * exactly like the account: it may source nothing and stand in for nobody. Omitted, or equal to the
+ * sponsor account (the env hot key today), it adds nothing.
+ */
+interface SignerAware {
+  sponsor: string;
+  sponsorSigner?: string;
+}
+
+/** Refuse a transaction that names the sponsor's separate signing address anywhere it could act. */
+function signerRefusal(tx: Transaction, policy: SignerAware, roles: Array<[string, string | undefined]>): ValidationResult | null {
+  const key = policy.sponsorSigner;
+  if (!key || key === policy.sponsor) return null;
+  for (const [label, value] of roles) {
+    if (value === key) return { ok: false, reason: `${label} is the sponsor's signing key (drain attempt)` };
+  }
+  if (tx.source === key) return { ok: false, reason: "tx source is the sponsor's signing key (drain attempt)" };
+  for (const op of tx.operations) {
+    if (opSource(op as { source?: string }, tx.source) === key) {
+      return { ok: false, reason: `op '${op.type}' sourced from the sponsor's signing key (drain attempt)` };
+    }
+  }
+  return null;
+}
+
 export interface InnerTxPolicy {
   /** Expected tx source (the recipient account). */
   expectedSource: string;
   /** Sponsor account — pays the fee and may ONLY source begin/createAccount. */
   sponsor: string;
+  /** The sponsor's signing address when it differs from `sponsor` (see `SignerAware`). */
+  sponsorSigner?: string;
   /**
    * The exact asset `changeTrust` is allowed to add (e.g. USDC).
    * STRICT DEFAULT: if a `changeTrust` op is present and this is omitted, the tx
@@ -157,6 +191,8 @@ export function validateInnerTransaction(
     const bad = assertPlainAccount(label, value);
     if (bad) return bad;
   }
+  const signerBad = signerRefusal(tx, policy, [["expectedSource", policy.expectedSource]]);
+  if (signerBad) return signerBad;
 
   // Exact op-sequence match (when pinned): the tx must be its known ORDERED shape, not
   // just a bag of individually-allowed ops. Defense-in-depth on top of the per-op checks
@@ -333,6 +369,8 @@ export interface PayoutPolicy {
   sender: string;
   /** Sponsor account — sources NOTHING here (it only fee-bumps). */
   sponsor: string;
+  /** The sponsor's signing address when it differs from `sponsor` (see `SignerAware`). */
+  sponsorSigner?: string;
   /** The one asset a payout may move (the configured USDC). */
   usdc: Asset;
   /** The destination the client declared — a G… account or a muxed M… address. */
@@ -358,6 +396,8 @@ export function validatePayoutTransaction(tx: Transaction, policy: PayoutPolicy)
   if (tx.source !== policy.sender) {
     return { ok: false, reason: `unexpected tx source ${tx.source}` };
   }
+  const signerBad = signerRefusal(tx, policy, [["sender", policy.sender]]);
+  if (signerBad) return signerBad;
   const src = opSource(op as { source?: string }, tx.source);
   if (src === policy.sponsor) {
     return { ok: false, reason: "payout payment sourced from sponsor (drain attempt)" };
@@ -422,6 +462,8 @@ export interface SweepPolicy {
   throwaway: string;
   /** Sponsor account — must source NOTHING here (it only fee-bumps). */
   sponsor: string;
+  /** The sponsor's signing address when it differs from `sponsor` (see `SignerAware`). */
+  sponsorSigner?: string;
   /** The user's persistent home account: the payment + accountMerge destination. */
   home: string;
   /** The one USDC asset (the payment asset + the trustline being removed). */
@@ -453,6 +495,18 @@ export function validateSweepTransaction(tx: Transaction, policy: SweepPolicy): 
   }
   if (tx.source !== policy.throwaway) {
     return { ok: false, reason: `unexpected tx source ${tx.source}` };
+  }
+  const signerBad = signerRefusal(tx, policy, [
+    ["throwaway", policy.throwaway],
+    ["home", policy.home],
+  ]);
+  if (signerBad) return signerBad;
+  /* A sweep into ITSELF is malformed (an account cannot merge into itself), and stellar-core refuses
+     it while validating with txFAILED, a code it also gives a transaction that was included and
+     failed. The fee is then settled only after asking the ledger (lib/stellar.ts), but a shape that
+     can never succeed has no business reaching the signer at all: refused here. */
+  if (policy.home === policy.throwaway) {
+    return { ok: false, reason: "sweep home must differ from the throwaway (a merge into itself is malformed)" };
   }
 
   for (let i = 0; i < ops.length; i++) {
@@ -488,6 +542,10 @@ export function validateSweepTransaction(tx: Transaction, policy: SweepPolicy): 
   }
   if (!pay.asset || typeof (pay.asset as Asset).equals !== "function" || !policy.usdc.equals(pay.asset as Asset)) {
     return { ok: false, reason: "sweep payment asset is not the expected USDC" };
+  }
+  // A zero payment is malformed too (core refuses it while validating), whatever the client declared.
+  if (!(Number.parseFloat(pay.amount ?? "0") > 0)) {
+    return { ok: false, reason: `sweep payment amount must be positive, got ${pay.amount}` };
   }
   if (Number.parseFloat(pay.amount ?? "0") !== Number.parseFloat(policy.expectedAmount)) {
     return { ok: false, reason: `sweep payment amount ${pay.amount} != expected ${policy.expectedAmount}` };

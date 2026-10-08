@@ -3,7 +3,9 @@
  * and the same switch in Settings. Both run the logic below, so the two can never disagree.
  *
  * Practice money is one tap. Real money keeps its ceremony, because it is the one switch with
- * consequences: the pilot is asked first (forced, so the answer is fresh), an account that is not on
+ * consequences: an account that lives only in this browser is sent to back it up first (the pilot's
+ * approval no longer stands between such an account and real money once the pilot is retired), the
+ * pilot is asked first (forced, so the answer is fresh), an account that is not on
  * the list hears "invite-only", the early-preview note is shown once and waits for "I understand",
  * and only then does the worker change the money. The worker checks all of it again (router.ts,
  * network.set), so a popup that skipped a step still could not switch.
@@ -15,7 +17,7 @@ import type { NetId, PilotInfo } from "../lib/types";
 import { ask } from "./api";
 import { useApp } from "./context";
 import { useEscape } from "./escape";
-import { plainSentence } from "./format";
+import { plainSentence, realMoneyTitle } from "./format";
 import { useAlive } from "./hooks";
 import { Button, ExtLink, Notice, TopBar } from "./ui";
 
@@ -23,6 +25,8 @@ export type NetUi =
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "invite-only" }
+  /** the account lives only in this browser: real money waits for the backup */
+  | { kind: "backup-first" }
   | { kind: "warning" }
   | { kind: "switching"; to: NetId }
   | { kind: "error"; text: string; web?: boolean };
@@ -37,13 +41,17 @@ export interface NetSwitchState {
   busy: boolean;
   /** the pilot answer the last real-money check got, for the "sends left" line */
   checked: PilotInfo | null;
+  /** the header's description of real money, from the last pilot answer (format.ts realMoneyTitle) */
+  realTitle: string;
   pick: (target: NetId) => void;
+  /** open the backup steps (the "back it up first" answer) */
+  backUp: () => void;
   understand: () => void;
   dismiss: () => void;
 }
 
 export function useNetSwitch(): NetSwitchState {
-  const { ws, refresh } = useApp();
+  const { ws, refresh, go } = useApp();
   const alive = useAlive();
   const [ui, setUi] = useState<NetUi>({ kind: "idle" });
   const [checked, setChecked] = useState<PilotInfo | null>(null);
@@ -54,6 +62,10 @@ export function useNetSwitch(): NetSwitchState {
     setUi({ kind: "switching", to: target });
     const r = await ask("network.set", { net: target });
     if (!alive.current) return;
+    if (!r.ok && r.code === "needs-backup") {
+      setUi({ kind: "backup-first" });
+      return;
+    }
     if (!r.ok) {
       setUi({
         kind: "error",
@@ -67,6 +79,12 @@ export function useNetSwitch(): NetSwitchState {
   }
 
   async function chooseReal(): Promise<void> {
+    /* Said first, and without asking anyone: an account that lives only in this browser does not
+       move real money, whatever the pilot says (the worker refuses it again, router.ts). */
+    if (ws.backup.needed) {
+      setUi({ kind: "backup-first" });
+      return;
+    }
     setUi({ kind: "checking" });
     const p = await ask("pilot.status", { force: true });
     if (!alive.current) return;
@@ -106,9 +124,14 @@ export function useNetSwitch(): NetSwitchState {
     ui,
     busy,
     checked,
+    realTitle: realMoneyTitle(ws.pilot),
     pick: (target) => {
       if (busy || target === net) return;
       void (target === "public" ? chooseReal() : switchTo("testnet"));
+    },
+    backUp: () => {
+      setUi({ kind: "idle" });
+      go("backup");
     },
     understand: () => void understandNote(),
     dismiss: () => setUi({ kind: "idle" }),
@@ -141,6 +164,23 @@ export function NetPanel({ sw }: { sw: NetSwitchState }) {
             </ExtLink>
           </Notice>
           <div class="row">
+            <Button small variant="secondary" onClick={sw.dismiss}>
+              Not now
+            </Button>
+          </div>
+        </>
+      );
+    case "backup-first":
+      return (
+        <>
+          <Notice>
+            <strong>Back it up first.</strong> This account lives only in this browser, and real money
+            waits until it is backed up.
+          </Notice>
+          <div class="row">
+            <Button small onClick={sw.backUp}>
+              Back it up
+            </Button>
             <Button small variant="secondary" onClick={sw.dismiss}>
               Not now
             </Button>
@@ -206,7 +246,7 @@ export function NetHeader({ busy, onLinks, onSettings }: { busy: boolean; onLink
   });
   return (
     <>
-      <TopBar net={sw.net} switchDisabled={busy || sw.busy} onPick={sw.pick} onLinks={onLinks} onSettings={onSettings} />
+      <TopBar net={sw.net} switchDisabled={busy || sw.busy} realTitle={sw.realTitle} onPick={sw.pick} onLinks={onLinks} onSettings={onSettings} />
       {open ? (
         <div
           class="netsheet"

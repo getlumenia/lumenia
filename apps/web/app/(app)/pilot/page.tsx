@@ -41,7 +41,7 @@ const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-spon
 const PILOT_TX_CAP_USD = process.env.NEXT_PUBLIC_PILOT_TX_CAP_USD ?? "5";
 
 export default function PilotPage() {
-  const { status, account } = useWallet();
+  const { status, account, pilotState } = useWallet();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
@@ -84,6 +84,39 @@ export default function PilotPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /* The pilot is retired (SOW 2, D3 item i): the mainnet sponsor admits every wallet. The ask
+     would go nowhere, so this screen turns into the switch, with the same honest sentences, and
+     keeps the pilot's one precondition: locked with a password and backed up, first. */
+  if (pilotState === "open") {
+    return (
+      <div className="flex flex-col gap-4 py-8">
+        <h1 className="text-xl font-bold text-ink">Real money is open to everyone</h1>
+        <p className="text-ink-soft">
+          No invite needed any more. It is still an early preview, not yet reviewed by an outside
+          security firm, so keep amounts small. Every transfer is capped at ${PILOT_TX_CAP_USD}.
+        </p>
+        {lockedToYou ? (
+          <PilotStatusBadge />
+        ) : (
+          <MoneyCard className="p-5">
+            <p className="font-semibold text-ink">First, secure your account</p>
+            <p className="mt-1 text-sm text-ink-soft">
+              Real money never sits under a key that anyone holding this phone could use. Lock it
+              with a password (and Face ID, if your phone offers it); the same step backs it up, so a
+              new phone can bring it back with your email and password.
+            </p>
+            <div className="mt-4">
+              <RecoveryFlow mode="secure" />
+            </div>
+          </MoneyCard>
+        )}
+        <Link href="/home" className="text-sm text-money underline-offset-2 hover:underline">
+          Back home
+        </Link>
+      </div>
+    );
   }
 
   if (view === "already") {

@@ -241,6 +241,20 @@ export async function startPilotRequest(
   return { created: true, state: "pending" };
 }
 
+/**
+ * Is this wallet on the allowlist right now? Reads the allowlist flag itself, the one thing
+ * `enforcePilot` admits on, and THROWS on a store error instead of guessing. The approve link uses
+ * it to decide "already approved": the status key is not the allowlist (a revoked wallet kept
+ * status "approved" until 2026-10-08), and a failed read treated as "not approved" let a re-tap
+ * fall through to `approvePilot`.
+ */
+export async function isPilotApproved(pubkey: string): Promise<boolean> {
+  const kv = kvConfigFromEnv();
+  if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
+  const [appr] = await pipe(kv, [["GET", apprKey(pubkey)]]);
+  return appr === "1";
+}
+
 /** A wallet's application state (none/pending/approved/rejected). */
 export async function getPilotState(pubkey: string): Promise<PilotState> {
   const kv = kvConfigFromEnv();
@@ -249,15 +263,35 @@ export async function getPilotState(pubkey: string): Promise<PilotState> {
   return (typeof st === "string" ? st : "none") as PilotState;
 }
 
-/** Owner-only: add a wallet to the pilot allowlist with a fresh (zero) budget; marks state approved. */
+/**
+ * Owner-only: add a wallet to the pilot allowlist and mark its state approved.
+ *
+ * The used-slot counter is created at 0 only when it does not exist yet (SET ... NX). No approval
+ * path refills slots a wallet already spent: a second tap on the emailed link, a re-approval after
+ * a revoke, and a re-run of `pilot approve --file` over wallets already in all used to SET it back
+ * to 0 and hand out a fresh allowance silently.
+ */
 export async function approvePilot(pubkey: string): Promise<void> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
   await pipe(kv, [
     ["SET", apprKey(pubkey), "1"],
-    ["SET", txKey(pubkey), "0"],
+    ["SET", txKey(pubkey), "0", "NX"],
     ["SET", statusKey(pubkey), "approved"],
   ]);
+}
+
+/**
+ * Owner-only: put a wallet's used-slot counter back to 0, and say what it was. Approval no longer
+ * refills spent slots (approvePilot writes the counter with NX), so refilling is now a deliberate act
+ * of its own: for the owner's own wallet after a rehearsal or a demo, never as a side effect.
+ */
+export async function resetPilotBudget(pubkey: string): Promise<number> {
+  const kv = kvConfigFromEnv();
+  if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
+  const [old] = await pipe(kv, [["GET", txKey(pubkey)]]);
+  await pipe(kv, [["SET", txKey(pubkey), "0"]]);
+  return Number(old ?? 0);
 }
 
 /** Owner-only: decline a wallet (state rejected, allowlist flag removed). They can be re-approved later. */
@@ -309,9 +343,13 @@ export async function getPilotEmail(pubkey: string): Promise<string | null> {
 export async function revokePilot(pubkey: string): Promise<void> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
+  // The status follows the allowlist: a revoked wallet reads as declined, never as "approved"
+  // with no allowlist flag behind it (which told the web "you're approved" for a wallet the value
+  // routes refuse). Declined is also a state a fresh request does not reopen by itself.
   await pipe(kv, [
     ["DEL", apprKey(pubkey)],
     ["DEL", emailKey(pubkey)],
+    ["SET", statusKey(pubkey), "rejected"],
   ]);
 }
 

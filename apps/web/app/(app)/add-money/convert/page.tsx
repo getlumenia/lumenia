@@ -29,7 +29,7 @@ import { ArrowLeft } from "lucide-react";
 import { useWallet } from "../../../../lib/wallet";
 import { loadBalance, loadXlmBalance, type XlmBalance } from "../../../../lib/horizon";
 import { prepareAccount } from "../../../../lib/sponsor";
-import { isNeedsPassword } from "../../../../lib/signer-error";
+import { isNeedsBackup, isNeedsPassword } from "../../../../lib/signer-error";
 import { formatUsd, sanitizeAmountInput } from "../../../../lib/money";
 import { activeNetwork, explorerTx } from "../../../../lib/network";
 import {
@@ -216,7 +216,8 @@ export default function ConvertPage() {
     try {
       let signer: Signer;
       try {
-        signer = await getSigner();
+        // Opening this account's own dollar line moves no money (lib/wallet.tsx getSigner).
+        signer = await getSigner({ movesMoney: false });
       } catch (e) {
         if (isNeedsPassword(e)) throw e;
         router.push(`/unlock?next=${encodeURIComponent("/add-money/convert")}`);
@@ -328,7 +329,8 @@ export default function ConvertPage() {
       try {
         signer = await getSigner();
       } catch (e) {
-        if (isNeedsPassword(e)) throw e;
+        // Errands /unlock cannot run: shown as they are, never a detour that loops back here.
+        if (isNeedsPassword(e) || isNeedsBackup(e)) throw e;
         try {
           sessionStorage.setItem(DRAFT_KEY, amount);
         } catch {

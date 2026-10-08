@@ -636,7 +636,7 @@ export async function claimV2(opts: {
    * reject, after a sponsored account has already been paid for.
    */
   group?: boolean;
-}): Promise<{ hash: string }> {
+}): Promise<{ hash: string; confirmed: boolean }> {
   const net = opts.net ?? defaultNet();
   const server = new rpc.Server(net.rpcUrl);
   const link = Keypair.fromSecret(opts.linkSecret);
@@ -676,8 +676,122 @@ export async function claimV2(opts: {
     body: JSON.stringify({ method, linkHex, payout: opts.payout, sigHex, contract }),
   });
   const text = await res.text();
+  /* 202: the relayer accepted the claim and the ledger had not shown it landing when the relayer's
+   * window closed (apps/sponsor/src/lib/soroban-relay.ts). It is not a refusal and not a success,
+   * and it used to arrive as a 400 the screen could only read as "failed, try again", which minted
+   * another sponsored payout account for a claim that then landed. The caller settles it against
+   * the ledger before it says anything (settleUnconfirmedClaim). See readRelayReply. */
+  const undecided = readRelayReply(res.status, text);
+  if (undecided) return undecided;
   if (!res.ok) throw new Error(`/v2-claim → ${res.status}: ${text}`);
-  return JSON.parse(text) as { hash: string };
+  return { hash: (JSON.parse(text) as { hash: string }).hash, confirmed: true };
+}
+
+/**
+ * A relay's "accepted, undecided" reply, or null for anything else (the caller handles those as it
+ * always has). Two bodies mean it: `{hash, confirmed:false}`, and `{error:"submit unconfirmed", hash}`
+ * when the RPC stopped answering, or the send itself failed undecided, inside the relay. Read off
+ * the 202 or off `confirmed:false` itself, since a server that sends the body with a 200 means the
+ * same thing. A body that is not JSON still says "undecided" on a 202; it just carries no hash.
+ */
+export function readRelayReply(status: number, text: string): { hash: string; confirmed: false } | null {
+  let body: { hash?: unknown; confirmed?: unknown; error?: unknown } | null = null;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === "object") body = parsed as { hash?: unknown; confirmed?: unknown; error?: unknown };
+  } catch {
+    /* not JSON */
+  }
+  const said = body?.confirmed === false || (typeof body?.error === "string" && /submit unconfirmed/i.test(body.error));
+  if (status !== 202 && !(status >= 200 && status < 300 && said)) return null;
+  const hash = typeof body?.hash === "string" && /^[0-9a-f]{64}$/i.test(body.hash) ? body.hash.toLowerCase() : "";
+  return { hash, confirmed: false };
+}
+
+/** What settleUnconfirmedClaim reads, behind one seam so the self-test can play the ledger. */
+export interface ClaimSettleReaders {
+  /** the RPC's getTransaction for the relayed claim: SUCCESS, FAILED or NOT_FOUND (anything else is not an answer) */
+  transaction(hash: string): Promise<{ status: string }>;
+  /** the payout account's USDC in stroops; null when it could not be read */
+  payoutStroops(): Promise<bigint | null>;
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
+
+/** How long a claim the relayer stopped watching can still land: its 60 s time bound, plus a margin. */
+export const CLAIM_SETTLE = { timeboundMs: 60_000, marginMs: 20_000, stepMs: 2_000 } as const;
+
+/**
+ * Settle a claim the relayer accepted but could not watch to the end (its 202), by READING.
+ *
+ * Nothing is signed or sent here. The claim transaction itself decides: the RPC's getTransaction
+ * says SUCCESS (claimed) or FAILED (this claim did not go through: nothing left the escrow for it).
+ * NOT_FOUND is "not yet" until no ledger can include it any more: the relayer built it with a 60 s
+ * time bound before it answered, so a NOT_FOUND read at least that long after the answer, plus a
+ * margin for ledger close and RPC lag, is "did not land". The payout account's USDC balance is a
+ * second signal for "claimed", but only for a payout made in THIS attempt (`useBalance`): a resumed
+ * claim presents the latch's payout, and a first claimant's payout becomes their home account,
+ * which other links' money is swept into, so its balance proves nothing about this claim. A review
+ * found that resume reading money swept in from elsewhere as "claimed" while the link sat in escrow.
+ *
+ * NEVER the escrow's own `claimed` flag. LumenDrop sets it on ANY exit of the drop: this claim, a
+ * claim of the same link on another device, and the sender's take-back after expiry
+ * (contracts/lumen-drop/src/lib.rs). Reading it as "this claim landed" told a recipient whose claim
+ * FAILED behind a sender's take-back that the money was theirs, with an empty account.
+ *
+ * "not-landed" is safe to answer with a retry: a retry asks the escrow first (readClaimState) and
+ * presents the SAME payout from the latch, so it either lands, or the escrow names what happened.
+ * "unknown" (no answer before the window closed) is not: the caller reports "uncertain", offers no
+ * button, and reopening the link resumes against the same payout (readClaimProgress).
+ * `acceptedAt` is when the relayer's 202 arrived, on this device's clock: only durations are taken
+ * from it, so a device clock that is minutes off does not move the deadline.
+ */
+export async function settleUnconfirmedClaim(
+  hash: string,
+  readers: ClaimSettleReaders,
+  opts: { acceptedAt: number; timeboundMs?: number; marginMs?: number; stepMs?: number; useBalance?: boolean },
+): Promise<"claimed" | "not-landed" | "unknown"> {
+  const useBalance = opts.useBalance ?? true;
+  const deadline = opts.acceptedAt + (opts.timeboundMs ?? CLAIM_SETTLE.timeboundMs) + (opts.marginMs ?? CLAIM_SETTLE.marginMs);
+  const named = /^[0-9a-f]{64}$/i.test(hash);
+  for (;;) {
+    // Taken BEFORE the reads: only a NOT_FOUND asked for at or past the deadline is final.
+    const at = readers.now();
+    let notFound = false;
+    if (named) {
+      try {
+        const t = await readers.transaction(hash);
+        if (t.status === "SUCCESS") return "claimed";
+        if (t.status === "FAILED") return "not-landed";
+        notFound = t.status === "NOT_FOUND";
+      } catch {
+        /* the RPC did not answer: the account below still can */
+      }
+    }
+    if (useBalance) {
+      try {
+        const held = await readers.payoutStroops();
+        if (held !== null && held > 0n) return "claimed";
+      } catch {
+        /* unreadable is not empty */
+      }
+    }
+    if (at >= deadline) return notFound ? "not-landed" : "unknown";
+    await readers.sleep(opts.stepMs ?? CLAIM_SETTLE.stepMs);
+  }
+}
+
+/** The real readers: this link's network's RPC and Horizon. */
+function claimSettleReaders(server: rpc.Server, payout: string, net: NetworkConfig): ClaimSettleReaders {
+  return {
+    transaction: async (hash) => ({ status: String((await server.getTransaction(hash)).status) }),
+    payoutStroops: async () => {
+      const usd = await loadPayoutUsd(payout, net);
+      return usd === null ? null : usdcStroops(usd);
+    },
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  };
 }
 
 
@@ -973,15 +1087,33 @@ export async function claimV2ToSponsoredAccount(opts: {
   // 2. claim the v2 drop into the new account via the relayer (walletless + gasless).
   let hash = "";
   try {
-    hash = (
-      await claimV2({
-        linkSecret: opts.linkSecret,
-        payout: payoutPublic,
-        sponsorUrl: base,
-        net,
-        group: kind === "group",
-      })
-    ).hash;
+    const relayed = await claimV2({
+      linkSecret: opts.linkSecret,
+      payout: payoutPublic,
+      sponsorUrl: base,
+      net,
+      group: kind === "group",
+    });
+    hash = relayed.hash;
+    if (!relayed.confirmed) {
+      /* The relayer's 202 (SOW 2, D3 item g): accepted, undecided. The claim transaction decides,
+         not a guess (settleUnconfirmedClaim). Silent for the whole window: the error carries the
+         words the classifier files as "uncertain" (lib/claim-error.ts), no retry button, and the
+         latch written above makes a reopen resume against this same payout. Refused, or past the
+         point where it could land: a plain failure with a retry, which is safe because a retry asks
+         the escrow first and presents this same payout. */
+      const verdict = await settleUnconfirmedClaim(hash, claimSettleReaders(server, payoutPublic, net), {
+        acceptedAt: Date.now(),
+        // The balance means something only for a payout made in this attempt (see the settle).
+        useBalance: payout !== null,
+      });
+      if (verdict === "not-landed") {
+        throw new Error(`v2-claim did not go through (tx ${hash}): the network refused it or its window closed`);
+      }
+      if (verdict === "unknown") {
+        throw new Error(`v2-claim tx NOT_FOUND: the relayer accepted this claim (${hash}) but the ledger has not shown it yet`);
+      }
+    }
   } catch (e) {
     /* The pool says this exact payout already holds a share. Only this device has that address, so
        this is not a guess: the earlier attempt landed and its answer was lost. */
@@ -1524,7 +1656,7 @@ export async function reclaimV2(opts: {
    * so the caller can say "nothing moved" for certain; a failure after it may have been relayed.
    */
   onPosting?: () => void;
-}): Promise<{ hash: string }> {
+}): Promise<{ hash: string; confirmed?: boolean }> {
   const net = opts.net ?? defaultNet();
   const server = new rpc.Server(net.rpcUrl);
   const sender = opts.signer.publicKey();
@@ -1558,6 +1690,13 @@ export async function reclaimV2(opts: {
     body: JSON.stringify({ xdr: prepared.toXDR(), senderPublicKey: sender }),
   });
   const text = await res.text();
+  /* 202 (SOW 2, D3 item g): the relayer accepted the take-back and the ledger had not shown it
+   * landing when its window closed. `confirmed: false` says exactly that, and callers must not
+   * report the money as back on it. Asking again later is SAFE here, unlike a claim or a deposit:
+   * the contract releases a drop once, so a second take-back of one that already landed is refused
+   * by its own simulation with nothing moved. */
+  const undecided = readRelayReply(res.status, text);
+  if (undecided) return undecided;
   if (!res.ok) throw new Error(`/v2-reclaim → ${res.status}: ${text}`);
-  return JSON.parse(text) as { hash: string };
+  return { hash: (JSON.parse(text) as { hash: string }).hash, confirmed: true };
 }

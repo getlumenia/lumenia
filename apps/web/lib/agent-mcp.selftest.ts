@@ -21,6 +21,8 @@ function ok(name: string, cond: boolean, detail = "") {
 
 const kp = Keypair.random();
 const calls: { createLink: unknown[]; reclaim: unknown[] } = { createLink: [], reclaim: [] };
+/** When true, the stub answers a take-back the way /v2-reclaim's 202 reaches reclaimV2. */
+let unconfirmedReclaim = false;
 const deps: AgentDeps = {
   signer: localSignerFromSeed(kp.rawSecretKey()),
   sponsorUrl: "https://sponsor.invalid",
@@ -34,7 +36,7 @@ const deps: AgentDeps = {
   listReclaimable: async () => [{ linkHex: "cd".repeat(32), usd: "2.00", expiry: 1_700_000_000 }],
   reclaim: async (o) => {
     calls.reclaim.push(o);
-    return { hash: "feedface" };
+    return unconfirmedReclaim ? { hash: "feedface", confirmed: false } : { hash: "feedface", confirmed: true };
   },
   usdcBalance: async () => "12.34",
   sponsorHealth: async () => ({ ok: true, network: "testnet" }),
@@ -99,6 +101,17 @@ async function main() {
     ok("...for that drop, signed by the agent's key, through the sponsor", (calls.reclaim[0] as { linkHex: string; sponsorUrl: string; signer: { publicKey(): string } }).linkHex === "cd".repeat(32) && (calls.reclaim[0] as { signer: { publicKey(): string } }).signer.publicKey() === kp.publicKey());
     const bad = await client.callTool({ name: "reclaim_link", arguments: { linkHex: "nope" } });
     ok("a malformed link id is refused by the schema", bad.isError === true);
+
+    // The relay's 202: the take-back is on the network and not yet seen landing. Not "Reclaimed".
+    unconfirmedReclaim = true;
+    const pending = await client.callTool({ name: "reclaim_link", arguments: { linkHex: "cd".repeat(32) } });
+    unconfirmedReclaim = false;
+    const pendingText = ((pending.content as { type: string; text?: string }[]).find((c) => c.type === "text")?.text ?? "");
+    ok("a 202 take-back says 'accepted, not yet confirmed (tx ...)'", /accepted, not yet confirmed \(tx feedface\)/.test(pendingText), pendingText.slice(0, 80));
+    ok("  ...and never 'Reclaimed'", !/Reclaimed/.test(pendingText));
+    ok("  ...and carries confirmed:false for an agent that reads the structure", (pending.structuredContent as { confirmed?: boolean }).confirmed === false);
+    const done = await client.callTool({ name: "reclaim_link", arguments: { linkHex: "cd".repeat(32) } });
+    ok("a 200 take-back is reported as reclaimed, confirmed:true", (done.structuredContent as { confirmed?: boolean }).confirmed === true);
   }
 
   console.log("\n[status] the agent can see where it stands");

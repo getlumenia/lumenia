@@ -135,7 +135,8 @@ export function RecoveryFlow({
                moment in the flow where the account can sign for itself. No signer available right
                now (a device that still refuses to unlock) → store unbound rather than refuse: an
                unbound row is replaceable, a missing one is unrecoverable. */
-            const signer = await getSigner().catch(() => undefined);
+            // A proof, not a money movement: it must work for the very account this step is backing up.
+            const signer = await getSigner({ movesMoney: false }).catch(() => undefined);
             await storeRecoveryBox(email.trim(), code.trim(), sealed, alias, signer);
           },
           rekey ? newPassword : undefined,

@@ -52,7 +52,7 @@ import { FeedbackDialog } from "../../../components/FeedbackDialog";
 import { ThemeToggle } from "../../../components/site/ThemeToggle";
 import { sendEvent } from "../../../lib/events";
 import { copy } from "../../../lib/copy";
-import { explorerAccount, setActiveNetwork } from "../../../lib/network";
+import { explorerAccount } from "../../../lib/network";
 
 const explorer = explorerAccount;
 
@@ -69,6 +69,7 @@ const explorer = explorerAccount;
 function MainnetSwitchOnApproval({ approved }: { approved: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { switchNetwork } = useWallet();
 
   useEffect(() => {
     if (searchParams.get("switch") !== "mainnet") return; // not the deep link → nothing to do
@@ -86,9 +87,12 @@ function MainnetSwitchOnApproval({ approved }: { approved: boolean }) {
     // activate-mainnet step, and displayed a stale testnet balance. That desync is precisely the
     // "I tapped switch and everything stayed on testnet" report. window.location.replace also strips
     // the param, so it does the job router.replace was here for.
-    setActiveNetwork("public");
-    window.location.replace("/account");
-  }, [approved, searchParams, router]);
+    /* Through the wallet's own switch, so the deep link gets the same once-only real-money
+       warning and the same locked-and-backed-up rule as every other way in (lib/pilot-access.ts).
+       The param is stripped first, so the reload the switch performs lands on a clean /account. */
+    window.history.replaceState({}, "", "/account");
+    switchNetwork("public");
+  }, [approved, searchParams, router, switchNetwork]);
 
   return null;
 }

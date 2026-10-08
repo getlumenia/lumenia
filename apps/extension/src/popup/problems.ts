@@ -20,7 +20,8 @@ export type ProblemAction =
   | "practice" // ask for practice dollars, then back to the form
   | "use-practice" // switch to practice money, then back to the form
   | "web-settings" // open Lumenia settings on the web
-  | "settings"; // open Settings here
+  | "settings" // open Settings here
+  | "backup"; // open the backup steps here
 
 export interface Problem {
   code: ErrorCode;
@@ -49,6 +50,26 @@ export function describeProblem(code: ErrorCode, message: string, net: NetId): P
       return make("We couldn't confirm it yet", UNCERTAIN, "links", "See links", true);
     case "halted":
       return make("Paused for now", "Sending is paused right now. Your money hasn't moved. Try again later.", "back", "Back");
+    /* Two waits that used to read as the pause above: a congested network is not Lumenia pausing,
+       and a spent day limit is not "later", it is tomorrow. */
+    case "network-busy":
+      return make("The network is busy", "The network is busy right now. Your money hasn't moved. Try again in a moment.", "back", "Back", true);
+    case "day-limit":
+      return make(
+        "That's all for today",
+        "Lumenia has reached today's limit on what it can cover. Your money hasn't moved. Try again tomorrow, after midnight UTC.",
+        "back",
+        "Back",
+        true,
+      );
+    case "needs-backup":
+      return make(
+        "Back it up first",
+        "Real money needs this account backed up first. Until then it lives only in this browser, and losing the browser would lose the money.",
+        "backup",
+        "Back it up",
+        true,
+      );
     case "not-approved":
       // The same code is used when the real-money note was never accepted; that one is fixed in Settings.
       if (/settings|accept/i.test(message)) {

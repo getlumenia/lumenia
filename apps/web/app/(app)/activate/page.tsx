@@ -31,6 +31,8 @@ import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { loadBalance } from "../../../lib/horizon";
 import { MAINNET_CONFIGURED } from "../../../lib/network";
+import { backupBlocksRealMoney } from "../../../lib/pilot-access";
+import { hasBackup } from "../../../lib/recovery-api";
 
 type StepState = "done" | "current" | "later";
 
@@ -47,7 +49,7 @@ interface Step {
 }
 
 export default function ActivatePage() {
-  const { status, account, network, pilotState, mainnetApproved, switchNetwork } = useWallet();
+  const { status, account, network, pilotState, pilotKnown, mainnetApproved, switchNetwork } = useWallet();
   const [usdc, setUsdc] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
@@ -81,9 +83,20 @@ export default function ActivatePage() {
   }
 
   const hasAccount = Boolean(account);
-  const isLocked = account?.phase === 2;
   const onMainnet = network === "public";
-  const isApproved = pilotState === "approved";
+  /* With the pilot retired the lock step is the lock AND the backup: the wallet refuses to move real
+     money from an account with no backup (lib/wallet.tsx getSigner), so a step that counted the
+     password alone as done told people "You're ready to send" when they were not. /pilot holds the
+     one step that does both. In pilot mode the backup was part of the ask, and nothing changes. */
+  const needsBackupToo = backupBlocksRealMoney({
+    onMainnet,
+    pilotState,
+    pilotKnown,
+    backedUp: account ? hasBackup(account.address) : false,
+  });
+  const isLocked = account?.phase === 2 && !needsBackupToo;
+  // "open" = the pilot is retired and real money is open to everyone: nothing left to ask for.
+  const isApproved = pilotState === "approved" || pilotState === "open";
   const hasMoney = usdc !== null && parseFloat(usdc) > 0;
 
   /* The order is not cosmetic — each step is genuinely blocked by the one above it, and getting it
@@ -108,22 +121,33 @@ export default function ActivatePage() {
       cta: "Open my account",
       state: stateFor(0),
     },
-    {
-      id: "lock",
-      title: "Lock it with a password",
-      body:
-        "Real money never sits on an unlocked phone here. Pick a password and only you can spend this money.",
-      doneNote: "Locked to you.",
-      href: "/home",
-      cta: "Lock my money",
-      state: stateFor(1),
-    },
+    needsBackupToo
+      ? {
+          id: "lock",
+          title: "Lock it and back it up",
+          body:
+            "Real money never sits on an unlocked phone, or on one phone only. Pick a password; the same step backs it up, so a new phone can bring it back with your email.",
+          doneNote: "Locked to you and backed up.",
+          href: "/pilot",
+          cta: "Lock and back up",
+          state: stateFor(1),
+        }
+      : {
+          id: "lock",
+          title: "Lock it with a password",
+          body:
+            "Real money never sits on an unlocked phone here. Pick a password and only you can spend this money.",
+          doneNote: "Locked to you.",
+          href: "/home",
+          cta: "Lock my money",
+          state: stateFor(1),
+        },
     {
       id: "pilot",
       title: "Ask to join the pilot",
       body:
         "Real sending is invite-only for now, so we can help every early user personally. Ask here and we approve by hand, usually quickly.",
-      doneNote: "You are in the pilot.",
+      doneNote: pilotState === "open" ? "Real money is open to everyone; nothing to ask for." : "You are in the pilot.",
       href: "/pilot",
       cta: "Ask to join",
       state: stateFor(2),

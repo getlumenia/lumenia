@@ -23,6 +23,7 @@
  */
 import { TransactionBuilder, type Transaction, type Horizon } from "@stellar/stellar-sdk";
 import { validatePayoutTransaction, type PayoutPolicy } from "./anti-drain.js";
+import { chargeSponsorFee, signCharged } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { submit } from "./stellar.js";
@@ -56,7 +57,8 @@ export async function payoutHandler(
 
   const policy: PayoutPolicy = {
     sender: input.senderPublicKey,
-    sponsor: signer.publicKey(),
+    sponsor: config.sponsorAccountId,
+    sponsorSigner: signer.publicKey(), // a KMS key's own address is sponsor-controlled too (lib/anti-drain.ts)
     usdc: config.usdc,
     expectedDestination: input.destination,
     expectedAmount: input.amount,
@@ -70,12 +72,23 @@ export async function payoutHandler(
   }
 
   const feeBump = TransactionBuilder.buildFeeBumpTransaction(
-    signer.publicKey(),
+    config.sponsorAccountId,
     String(FEEBUMP_PER_OP_STROOPS),
     inner,
     config.networkPassphrase,
   );
-  await signer.sign(feeBump);
-  const { hash, ledger } = await submit(server, feeBump);
+  /* The bid must be exactly the route's own: the SDK adds any resource fee the inner DECLARES
+     (its Soroban data) to the fee-bump, and nothing above reads that field, so a client could
+     declare 14 XLM on a claim and have the sponsor bid it (a review did). A classic inner carries
+     no Soroban data; a bid other than the nominal one is refused before the charge. */
+  if (BigInt(feeBump.fee) !== BigInt(totalFee)) {
+    throw new Error(`fee-bump fee ${feeBump.fee} differs from the ${totalFee} this route bids (the inner declares Soroban resources)`);
+  }
+  // The sponsor's whole exposure on this route is the fee, and this is where it is bounded: the
+  // bid joins the day's fee budget after every guard and before the signature, and the network's
+  // answer settles it (lib/caps.ts).
+  const charge = await chargeSponsorFee(feeBump.fee);
+  await signCharged(charge, () => signer.sign(feeBump));
+  const { hash, ledger } = await submit(server, feeBump, charge);
   return { hash, ledger };
 }

@@ -7,14 +7,15 @@
  * mainnet Worker uses, or you'll write to the testnet namespace by mistake (the output names
  * the network so you can catch that).
  *
- *   RUN:  STELLAR_NETWORK=mainnet KV_REST_API_URL=… KV_REST_API_TOKEN=… \
+ *   RUN:  STELLAR_NETWORK=mainnet KV_REST_API_URL=... KV_REST_API_TOKEN=... \
  *           pnpm --filter @lumenia/sponsor pilot approve G...
- *         …pilot approve G... G... G...        several at once
- *         …pilot approve --file wallets.txt    one G... per line, # comments allowed
- *         …pilot list [pending|approved|rejected|none|all]   (default: pending)
- *         …pilot notify G...                   re-send the "you're in" mail (needs RESEND_API_KEY,
- *                                              RESEND_FROM and MAX_DROP_USDC = the Worker's cap)
- *         …pilot reject G...    |    …pilot revoke G...    |    …pilot status G...
+ *         ...pilot approve G... G... G...        several at once
+ *         ...pilot approve --file wallets.txt    one G... per line, # comments allowed
+ *         ...pilot list [pending|approved|rejected|none|all]   (default: pending)
+ *         ...pilot notify G...                   re-send the "you're in" mail (needs RESEND_API_KEY,
+ *                                                RESEND_FROM and MAX_DROP_USDC = the Worker's cap)
+ *         ...pilot reject G...    |    ...pilot revoke G...    |    ...pilot status G...
+ *         ...pilot reset G...                    put the wallet's used slots back to 0 (approval never does)
  *   NEEDS: KV_REST_API_URL / KV_REST_API_TOKEN (Upstash). No signing keys — this only writes
  *          an allowlist flag, it never touches money. The approval mail goes out only when
  *          RESEND_API_KEY (+ RESEND_FROM) are ALSO in this shell's env; otherwise the wallet is
@@ -26,6 +27,7 @@ import {
   approvePilot,
   rejectPilot,
   revokePilot,
+  resetPilotBudget,
   pilotStatus,
   getPilotEmail,
   listPilot,
@@ -33,7 +35,7 @@ import {
 } from "../lib/pilot.js";
 import { notifyPilotApproved, notifyPilotRejected } from "../lib/pilot-request.js";
 
-const COMMANDS = ["approve", "reject", "revoke", "status", "list", "notify"] as const;
+const COMMANDS = ["approve", "reject", "revoke", "status", "list", "notify", "reset"] as const;
 type Command = (typeof COMMANDS)[number];
 const STATES = ["pending", "approved", "rejected", "none", "all"] as const;
 
@@ -41,7 +43,7 @@ function usage(): never {
   console.error(
     [
       "usage: pilot approve <G...> [<G...> ...] | approve --file <path>",
-      "       pilot reject|revoke|status|notify <G...>",
+      "       pilot reject|revoke|status|notify|reset <G...>",
       "       pilot list [pending|approved|rejected|none|all]",
     ].join("\n"),
   );
@@ -87,7 +89,8 @@ async function approveOne(pubkey: string, net: string): Promise<void> {
   await approvePilot(pubkey);
   const s = await pilotStatus(pubkey);
   console.log(`approved for the ${net} pilot: ${pubkey}`);
-  console.log(`  budget: ${s.limit} transactions`);
+  // Approval never refills spent slots (lib/pilot.ts, approvePilot), so say how many are left.
+  console.log(`  budget: ${s.limit} transactions, ${s.used} already used`);
   const email = await getPilotEmail(pubkey);
   if (!email) {
     console.log(`  (no stored email — approved silently; they'll see it on /account)`);
@@ -191,6 +194,12 @@ async function main(): Promise<void> {
       const [pubkey] = walletsFrom(rest.slice(0, 1));
       await revokePilot(pubkey!);
       console.log(`revoked from the ${net} pilot: ${pubkey}`);
+      break;
+    }
+    case "reset": {
+      const [pubkey] = walletsFrom(rest.slice(0, 1));
+      const was = await resetPilotBudget(pubkey!);
+      console.log(`reset the ${net} pilot budget of ${pubkey}: ${was} used -> 0`);
       break;
     }
     case "status": {

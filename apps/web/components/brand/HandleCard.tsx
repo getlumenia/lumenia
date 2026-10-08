@@ -82,7 +82,7 @@ export function HandleCard() {
     setBusy(true);
     setError(null);
     try {
-      const signer = await getSigner();
+      const signer = await getSigner({ movesMoney: false }); // a signed name proof, not a money movement
       const claimed = await claimHandle(signer, draft);
       setName(claimed.name);
       setDraft("");
@@ -100,7 +100,7 @@ export function HandleCard() {
     setBusy(true);
     setError(null);
     try {
-      const signer = await getSigner();
+      const signer = await getSigner({ movesMoney: false }); // a signed name proof, not a money movement
       await releaseHandle(signer, name);
       setName(null);
       setConfirmRelease(false);

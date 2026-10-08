@@ -41,7 +41,7 @@ import {
   PayoutUncertainError,
   type DestinationCheck,
   type MemoKind, payoutRecord } from "../../../lib/payout";
-import { isNeedsPassword } from "../../../lib/signer-error";
+import { isNeedsBackup, isNeedsPassword } from "../../../lib/signer-error";
 import { pinnedUsdcIssuer } from "../../../lib/tx-guard";
 import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
 import { sendEvent } from "../../../lib/events";
@@ -112,6 +112,8 @@ export default function SendOutPage() {
   const [error, setError] = useState("");
   /** The account has no password yet — a different errand from a locked one, and /unlock can't do it. */
   const [needsPassword, setNeedsPassword] = useState(false);
+  /** Real money with the pilot retired and no backup yet: /pilot's secure step (lib/wallet.tsx getSigner). */
+  const [needsBackup, setNeedsBackup] = useState(false);
   /** Handed to the network, never confirmed. Its own screen, because it is not an error. */
   const [pending, setPending] = useState<PendingPayout | null>(null);
   const [checkingPending, setCheckingPending] = useState(false);
@@ -273,6 +275,11 @@ export default function SendOutPage() {
           Set a password
         </Link>
       )}
+      {needsBackup && (
+        <Link href="/pilot" className="mt-1 inline-block font-semibold text-money underline-offset-2 hover:underline">
+          Lock it and back it up
+        </Link>
+      )}
     </div>
   ) : null;
 
@@ -369,6 +376,7 @@ export default function SendOutPage() {
     if (!destination) return;
     setError("");
     setNeedsPassword(false);
+    setNeedsBackup(false);
     setBusy(true);
     try {
       let signer;
@@ -378,6 +386,12 @@ export default function SendOutPage() {
         /* An account with NO password is a different errand from a locked one, and /unlock cannot
            run it: with nothing to decrypt it turns straight back to /home, so the send could never
            finish and no screen ever said why. Name the errand instead of restarting the loop. */
+        // The backup errand the same way, and first: /pilot's step sets the password as well.
+        if (isNeedsBackup(e)) {
+          setError("Lock this account and back it up first. Real money needs both, and nothing has been sent.");
+          setNeedsBackup(true);
+          return;
+        }
         if (isNeedsPassword(e)) {
           setError(
             (e as Error).message ||

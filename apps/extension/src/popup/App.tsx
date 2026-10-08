@@ -331,6 +331,10 @@ export function App() {
           back();
           setView("settings");
           return;
+        case "backup":
+          back();
+          setView("backup");
+          return;
         case "refresh":
           back();
           await refresh();

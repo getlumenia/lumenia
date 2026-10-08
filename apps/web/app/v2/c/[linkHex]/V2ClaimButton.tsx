@@ -774,6 +774,10 @@ export default function V2ClaimButton({
     switch (failure?.kind) {
       case "busy":
         return copy.claim.errBusyBody;
+      case "network-busy":
+        return copy.claim.errNetworkBusyBody;
+      case "day-limit":
+        return copy.claim.errDayLimitBody;
       case "paused":
         return copy.claim.errPausedBody;
       case "offline":
@@ -797,7 +801,7 @@ export default function V2ClaimButton({
       case "uncertain":
         // The relayer stopped watching; the claim may still be landing. Reopening the link reads the
         // account and the escrow before it says anything, which is the only honest next step.
-        return "The network hasn't confirmed this yet. Open the link again in a moment and this screen will check before it says anything.";
+        return copy.claim.errUncertainBody;
       case "refused":
         // We stopped before putting a signature on anything, so "try again" would be false advice:
         // the same answer refuses the same way. Nothing about the money changed.

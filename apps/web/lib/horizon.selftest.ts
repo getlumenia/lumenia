@@ -20,6 +20,7 @@ import {
   claimableAmountFrom,
   isUsdcMovement,
   loadClaimableAmount,
+  loadSubmitOutcome,
   mergeActivity,
   toActivityItem,
   type ActivityItem,
@@ -147,6 +148,99 @@ function fakeFetch(status: number, body: unknown, seen: string[] = []): typeof f
   }) as typeof fetch;
 }
 
+/* ------------------------------ an unconfirmed submission ------------------------------
+ * loadSubmitOutcome is what decides whether a payment the sponsor answered 202 for may be made
+ * again ("failed") or must not be ("pending", "unknown"). A wrong "failed" is a second payment, so
+ * every path to it is pinned here, against a Horizon played by a fake fetch. */
+async function submitOutcomes(): Promise<void> {
+  console.log("\n[unconfirmed] what the ledger did with a submission nobody saw decided");
+  const SOURCE = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  const OUTER = "ab".repeat(32);
+  const INNER = "cd".repeat(32);
+  const MAX_TIME = 1_800_000_000; // the transaction's own upper time bound, unix seconds
+  const iso = (unix: number) => new Date(unix * 1000).toISOString();
+
+  /** Horizon, answered per path: the latest ledger's close time, each hash, the source account. */
+  const horizon = (o: {
+    closedAt?: number | "error";
+    tx?: Record<string, { status: number; successful?: boolean } | "throw">;
+    account?: { status: number; sequence?: string } | "throw";
+  }) => {
+    const seen: string[] = [];
+    const impl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.includes("/ledgers?")) {
+        if (o.closedAt === "error" || o.closedAt === undefined) return new Response("down", { status: 503 });
+        return new Response(JSON.stringify({ _embedded: { records: [{ closed_at: iso(o.closedAt) }] } }), { status: 200 });
+      }
+      const tx = url.match(/\/transactions\/([0-9a-f]+)$/);
+      if (tx) {
+        const a = o.tx?.[tx[1]!];
+        if (a === "throw") throw new TypeError("Failed to fetch");
+        if (!a) return new Response(JSON.stringify({ status: 404 }), { status: 404 });
+        return new Response(JSON.stringify({ successful: a.successful }), { status: a.status });
+      }
+      if (url.includes("/accounts/")) {
+        const a = o.account;
+        if (a === "throw") throw new TypeError("Failed to fetch");
+        if (!a) return new Response("{}", { status: 500 });
+        return new Response(JSON.stringify(a.sequence !== undefined ? { sequence: a.sequence } : {}), { status: a.status });
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    return { impl, seen };
+  };
+  const check = { hashes: [OUTER, INNER], source: SOURCE, sequence: "101", maxTime: MAX_TIME };
+  const NET = { horizonUrl: "https://horizon.invalid/" };
+  const outcome = (h: ReturnType<typeof horizon>, c: Partial<typeof check> & { closesSource?: boolean } = {}) =>
+    loadSubmitOutcome({ ...check, ...c }, NET, { fetchImpl: h.impl });
+
+  ok("in a ledger and successful: landed", (await outcome(horizon({ closedAt: MAX_TIME, tx: { [OUTER]: { status: 200, successful: true } } }))) === "landed");
+  ok("found by OUR hash when the sponsor's is unknown: landed", (await outcome(horizon({ closedAt: MAX_TIME, tx: { [INNER]: { status: 200, successful: true } } }), { hashes: [INNER] })) === "landed");
+  ok("in a ledger and failed: failed (nothing it carried moved)", (await outcome(horizon({ tx: { [OUTER]: { status: 200, successful: false } } }))) === "failed");
+  ok(
+    "not seen, sequence unused, and the ledger is past the time bound plus the margin: failed (it can never land)",
+    (await outcome(horizon({ closedAt: MAX_TIME + 61, account: { status: 200, sequence: "100" } }))) === "failed",
+  );
+  ok(
+    "...but NOT inside the margin: a lagging Horizon instance may not have it yet",
+    (await outcome(horizon({ closedAt: MAX_TIME + 30, account: { status: 200, sequence: "100" } }))) === "pending",
+  );
+  ok("not seen and still inside its time bound: pending", (await outcome(horizon({ closedAt: MAX_TIME - 100, account: { status: 200, sequence: "100" } }))) === "pending");
+  ok(
+    "no ledger time at all: never 'failed' on a guess",
+    (await outcome(horizon({ closedAt: "error", account: { status: 200, sequence: "100" } }))) === "pending",
+  );
+  ok(
+    "no upper time bound: never 'failed' by time",
+    (await outcome(horizon({ closedAt: MAX_TIME * 2, account: { status: 200, sequence: "100" } }), { maxTime: 0 })) === "pending",
+  );
+  ok(
+    "its sequence number was used and neither hash is known: unknown, never a guess about whose it was",
+    (await outcome(horizon({ closedAt: MAX_TIME + 999, account: { status: 200, sequence: "101" } }))) === "unknown",
+  );
+  ok("the source account unreadable: unknown", (await outcome(horizon({ closedAt: MAX_TIME + 999, account: "throw" }))) === "unknown");
+  ok("the source account answering 500: unknown", (await outcome(horizon({ closedAt: MAX_TIME + 999, account: { status: 500 } }))) === "unknown");
+  ok("a payer's account that is gone: unknown (a payment does not close its source)", (await outcome(horizon({ closedAt: MAX_TIME + 999, account: { status: 404 } }))) === "unknown");
+  ok(
+    "a transaction read that fails does not stop the account from answering",
+    (await outcome(horizon({ closedAt: MAX_TIME + 61, tx: { [OUTER]: "throw" }, account: { status: 200, sequence: "100" } }))) === "failed",
+  );
+  // The sweep merges its own source away (closesSource).
+  ok("a sweep whose account is gone: landed (that is the merge)", (await outcome(horizon({ account: { status: 404 } }), { closesSource: true })) === "landed");
+  ok(
+    "a sweep whose account is still there with its sequence used: failed (it did not land)",
+    (await outcome(horizon({ closedAt: MAX_TIME - 100, account: { status: 200, sequence: "101" } }), { closesSource: true })) === "failed",
+  );
+  {
+    const h = horizon({ closedAt: MAX_TIME, account: { status: 200, sequence: "100" } });
+    await outcome(h);
+    ok("the ledger is read FIRST, then the hashes, then the account", h.seen[0]?.includes("/ledgers?order=desc&limit=1") === true && h.seen[h.seen.length - 1]?.includes(`/accounts/${SOURCE}`) === true, h.seen.join(" | "));
+    ok("...against the network it was given, with no double slash", h.seen.every((u) => u.startsWith("https://horizon.invalid/") && !u.includes(".invalid//")));
+  }
+}
+
 async function main() {
   console.log("\n[claimable] the read itself: amount | gone (404 only) | unknown (everything else)");
   const NET = testnetConfig();
@@ -207,6 +301,8 @@ async function main() {
       seen[0],
     );
   }
+
+  await submitOutcomes();
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} HORIZON SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

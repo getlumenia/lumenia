@@ -12,7 +12,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { getHome, listAccounts, unlockPhase1, unlockPhase2, savePhase1, savePhase2, setHome, setActive, removeAccount, isPublished, type Phase, type AccountKind } from "./keystore";
 import { createUserAccount } from "./new-account";
 import { localSignerFromSeed, type Signer } from "./signer";
-import { NeedsPasswordError } from "./signer-error";
+import { NeedsBackupError, NeedsPasswordError } from "./signer-error";
 import { passwordStrength } from "./password-strength";
 import { activeNetwork, setActiveNetwork, mainnetConfig, type NetworkId } from "./network";
 import { DEFAULT_ARGON } from "./argon";
@@ -21,6 +21,17 @@ import { enrollPasskeyPrf, derivePasskeyPrf, assertPasskeyPrf } from "./passkey-
 import { fetchRecoveryBoxByPrfId } from "./recovery-api";
 import { migrateLegacySentLinks } from "./sent-links";
 import { toast, toastAfterReload } from "../components/brand/Toast";
+import { MainnetWarningDialog, mainnetWarningSeen, markMainnetWarningSeen } from "../components/brand/MainnetWarningDialog";
+import {
+  arrivalDismissTarget,
+  askPilotStatus,
+  backupBlocksRealMoney,
+  mainnetSwitchBlock,
+  mainnetWarningPlan,
+  type MainnetWarning,
+  type PilotState,
+} from "./pilot-access";
+import { hasBackup } from "./recovery-api";
 import { StrKey } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
 
@@ -35,13 +46,12 @@ export interface WalletAccount {
   kind: AccountKind;
 }
 
-/** This account's standing in the mainnet pilot — the sponsor's /pilot-status `state`. */
-export type PilotState = "none" | "pending" | "approved" | "rejected";
-
-/** Narrow an untrusted /pilot-status `state` to a known value; anything else fails soft to 'none'. */
-function isPilotState(s: unknown): s is PilotState {
-  return s === "none" || s === "pending" || s === "approved" || s === "rejected";
-}
+/**
+ * This account's standing in the mainnet pilot: the sponsor's /pilot-status `state`. "open" is
+ * the retirement switch (SOW 2, D3 item i): the mainnet sponsor runs without PILOT_MODE, admits
+ * every wallet, and answers `pilot:false`. The reading and the switch rule live in lib/pilot-access.ts.
+ */
+export type { PilotState } from "./pilot-access";
 
 interface WalletState {
   status: "loading" | "ready";
@@ -62,8 +72,15 @@ interface WalletState {
    * A ready-to-use signer for the local account. Phase 1 unwraps the device key
    * inline; Phase 2 uses the session seed (throws if not yet unlocked — the caller
    * routes to /unlock). The seed never leaves this module.
+   *
+   * By default the signer is for MOVING MONEY, and on real money with the pilot retired it is
+   * refused with NeedsBackupError until the account is backed up (lib/pilot-access.ts
+   * backupBlocksRealMoney); every money screen routes that to /pilot's secure step. A caller that
+   * signs nothing that moves money (a proof for the backup store, a name, a way back in, opening the
+   * account's own dollar line) says so with `{ movesMoney: false }` and is not held to it: the backup
+   * step itself signs one of those, and must work for an account that has no backup yet.
    */
-  getSigner: () => Promise<Signer>;
+  getSigner: (opts?: { movesMoney?: boolean }) => Promise<Signer>;
   /**
    * Back up the home seed into a portable, server-storable box (RECOVERY_ARCHITECTURE
    * §12): the same `password` locks the account locally (Phase 2) AND wraps the seed for
@@ -109,7 +126,10 @@ interface WalletState {
   restoreWithFaceId: (box: RecoveryBox) => Promise<void>;
   /** The network the classic value path uses right now on this device (testnet unless switched). */
   network: NetworkId;
-  /** true when THIS account is on the mainnet pilot allowlist — the only case mainnet may be picked. */
+  /**
+   * true when THIS account may switch to mainnet: on the pilot allowlist, or the pilot is retired
+   * and real money is open to everyone (pilotState "open").
+   */
   mainnetApproved: boolean;
   /**
    * This account's standing in the mainnet pilot, straight from the sponsor's /pilot-status `state`:
@@ -118,6 +138,12 @@ interface WalletState {
    * or the status call fails, so the UI degrades to "practice money" cleanly.
    */
   pilotState: PilotState;
+  /**
+   * true once the sponsor has answered for the current account (or this build has no mainnet). Until
+   * then `pilotState` is the "none" default, not an answer, and the backup rule fails closed on real
+   * money (lib/pilot-access.ts backupBlocksRealMoney).
+   */
+  pilotKnown: boolean;
   /** Switch this device's active network (mainnet only sticks if approved + configured); reloads. */
   switchNetwork: (id: NetworkId) => void;
   /**
@@ -150,6 +176,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [network, setNetworkState] = useState<NetworkId>("testnet");
   const [mainnetApproved, setMainnetApproved] = useState(false);
   const [pilotState, setPilotState] = useState<PilotState>("none");
+  const [pilotKnown, setPilotKnown] = useState(false);
+  /* Read by getSigner through a ref, so the signer's identity does not change when an answer
+     arrives: screens key effects on getSigner, and a new identity would re-run their signed reads. */
+  const pilotRef = useRef<{ state: PilotState; known: boolean }>({ state: "none", known: false });
+  useEffect(() => {
+    pilotRef.current = { state: pilotState, known: pilotKnown };
+  }, [pilotState, pilotKnown]);
+  /**
+   * The real-money warning sheet, and what its two buttons do (lib/pilot-access.ts
+   * mainnetWarningPlan): before a switch, or on arriving on real money unacknowledged.
+   */
+  const [warning, setWarning] = useState<Extract<MainnetWarning, { show: true }> | null>(null);
   const sessionSeed = useRef<Uint8Array | null>(null);
 
   const refresh = useCallback(async () => {
@@ -173,33 +211,57 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   // Reflect the device's chosen network once mounted (localStorage is client-only, not at SSR).
   useEffect(() => {
-    setNetworkState(activeNetwork().id);
+    const id = activeNetwork().id;
+    setNetworkState(id);
+    /* ARRIVING on real money unacknowledged gets the warning too. The switch below was the only
+       place it showed, and two ways onto real money never pass through it: a mainnet claim (the
+       claim page lives outside this provider and sets the network itself) and a device that was
+       already on real money. "Not now" there means practice money only when the way back is open
+       to this account (mainnetWarningPlan "mount", arrivalDismissTarget). */
+    const plan = mainnetWarningPlan({ trigger: "mount", network: id, seen: mainnetWarningSeen() });
+    if (plan.show) setWarning(plan);
   }, []);
 
-  // Ask the mainnet sponsor whether THIS account is on the pilot allowlist. Only an approved
-  // account may switch to mainnet; the sponsor enforces it regardless — this just gates the UI.
+  /* Ask the mainnet sponsor where real money stands for this device (lib/pilot-access.ts
+     askPilotStatus): with an account, whether THIS wallet may; without one, only whether the pilot
+     is retired, which a device with no account used never to learn, so after the switch was flipped
+     it went on saying "invite-only". The sponsor enforces it regardless; this gates the UI and, with
+     the pilot retired, the backup rule in getSigner. */
+  const address = account?.address ?? null;
+  const askedFor = useRef<string | null | undefined>(undefined);
   useEffect(() => {
+    // Not before the keystore has been read: the first answer would be for "no account" and be
+    // thrown away a moment later.
+    if (status === "loading") return;
     const mainnet = mainnetConfig();
-    if (!account || !mainnet) {
+    if (!mainnet) {
       setMainnetApproved(false);
       setPilotState("none");
+      setPilotKnown(true); // no real money in this build: there is nothing left to learn
       return;
+    }
+    /* A different account is a different question: its answer must not inherit the previous one's,
+       and until it arrives nothing is known (getSigner fails closed on real money meanwhile). */
+    if (askedFor.current !== address) {
+      askedFor.current = address;
+      setMainnetApproved(false);
+      setPilotState("none");
+      setPilotKnown(false);
     }
     let alive = true;
     const ask = () =>
-      fetch(`${mainnet.sponsorUrl.replace(/\/$/, "")}/pilot-status?pubkey=${account.address}`)
-        .then((r) => r.json() as Promise<{ approved?: boolean; state?: string }>)
-        .then((d) => {
-          if (!alive) return;
-          setMainnetApproved(Boolean(d.approved));
-          setPilotState(isPilotState(d.state) ? d.state : "none");
-        })
-        .catch(() => {
-          /* A failed ASK is not a rejection. This used to demote the caller to "none" +
-             not-approved, so one flaky request turned an approved pilot user back into a stranger:
-             the switch-to-real-money button vanished, and switchNetwork() silently refused. Keep
-             the last known answer and try again on the next tick. */
-        });
+      askPilotStatus({ sponsorUrl: mainnet.sponsorUrl, pubkey: address }).then((read) => {
+        /* null is a FAILED ask (a 429, an error page, no connection), and a failed ask is not a
+           rejection. It used to be read as one twice over: a thrown fetch demoted an approved pilot
+           user to "none", and later any JSON error body did, so a rate-limited open-mode user was
+           told "invite-only". Keep the last known answer and try again on the next tick. */
+        if (!alive || read === null) return;
+        /* `pilot:false` is the sponsor saying the allowlist is retired: it admits every wallet,
+           never "not approved" (lib/pilot-access.ts readPilotStatus, test:pilotaccess). */
+        setMainnetApproved(read.mainnetApproved);
+        setPilotState(read.pilotState);
+        setPilotKnown(true);
+      });
 
     void ask();
 
@@ -207,9 +269,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
        here. The status was read exactly once per hard page load, and `account` does not change in
        normal use — so on an installed PWA an approved user could sit on "You're on the list,
        nothing to do right now" for days, with no button anywhere to check. Poll while the answer is
-       still pending, only when the tab is visible, and stop as soon as it lands. */
+       still pending, only when the tab is visible, and stop as soon as it lands. (Without an
+       account there is no approval to wait for: the answer is re-read when the tab comes back.) */
     const poll = window.setInterval(() => {
-      if (document.visibilityState === "visible") void ask();
+      if (address && document.visibilityState === "visible") void ask();
     }, 60_000);
     const onShow = () => {
       if (document.visibilityState === "visible") void ask();
@@ -221,26 +284,53 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       window.clearInterval(poll);
       document.removeEventListener("visibilitychange", onShow);
     };
-  }, [account]);
+  }, [address, status]);
 
   // A network switch changes which chain every value call builds for. Reload so every module
   // re-reads it cleanly and a stale unlocked session never carries across networks.
+  const performSwitch = useCallback((id: NetworkId) => {
+    // AFTER the reload, not now: the switch throws this page away, so a toast lit here would be
+    // destroyed by the very event it announces (components/brand/Toast.tsx).
+    toastAfterReload(id === "public" ? "You're on real money now." : "You're on practice money now.");
+    setActiveNetwork(id);
+    window.location.reload();
+  }, []);
+
   const switchNetwork = useCallback(
     (id: NetworkId) => {
-      if (id === "public" && !mainnetApproved) {
+      const block = mainnetSwitchBlock({
+        to: id === "public" ? "public" : "testnet",
+        mainnetApproved,
+        pilotState,
+        account: account ? { phase: account.phase } : null,
+        backedUp: account ? hasBackup(account.address) : false,
+      });
+      if (block === "invite-only") {
         // The sponsor is the real gate, so refusing here is only a UI courtesy — but refusing
         // SILENTLY was its own small bug: the button did nothing and said nothing, which reads as
         // a broken app rather than as an answer.
         toast("Real money is invite-only for now — you're still on practice money.");
         return;
       }
-      // AFTER the reload, not now: the switch throws this page away, so a toast lit here would be
-      // destroyed by the very event it announces (components/brand/Toast.tsx).
-      toastAfterReload(id === "public" ? "You're on real money now." : "You're on practice money now.");
-      setActiveNetwork(id);
-      window.location.reload();
+      if (block === "secure-first") {
+        /* The pilot retired, its precondition did not: real money only for an account that is
+           locked with a password and backed up. /pilot is where that one step lives. */
+        toastAfterReload("Lock your money with a password and back it up first: real money needs both.");
+        window.location.assign("/pilot");
+        return;
+      }
+      /* Everyone reads the real-money warning once per device before the first switch, whichever
+         screen asked and whether the pilot is on or retired (SOW 2, D3 item i): an early pilot,
+         not reviewed by an outside security firm, keep amounts small. The sheet below finishes
+         the switch on "I understand". */
+      const plan = mainnetWarningPlan({ trigger: "switch", network: id === "public" ? "public" : "testnet", seen: mainnetWarningSeen() });
+      if (plan.show) {
+        setWarning(plan);
+        return;
+      }
+      performSwitch(id);
     },
-    [mainnetApproved],
+    [mainnetApproved, pilotState, account, performSwitch],
   );
 
   const setSessionSeed = useCallback((seed: Uint8Array) => {
@@ -248,8 +338,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setUnlocked(true);
   }, []);
 
-  const getSigner = useCallback(async (): Promise<Signer> => {
+  const getSigner = useCallback(async (opts?: { movesMoney?: boolean }): Promise<Signer> => {
     if (!account) throw new Error("no local account");
+    const onMainnet = activeNetwork().id === "public";
+    /* THE PILOT'S PRECONDITION, WHERE MONEY LEAVES. With the pilot retired the sponsor admits every
+       wallet, and the lock-AND-backup rule used to run only inside switchNetwork(): a mainnet claim,
+       a new account made on real money, or "Use this" on another account put a never-backed-up
+       account on real money with no check at all, and nothing before a send asked. So the rule sits
+       here, where every money movement gets its key (lib/pilot-access.ts backupBlocksRealMoney).
+       First, before the password check below, because /pilot's one secure step sets the password
+       AND writes the backup, which "set a password" alone would not. */
+    if (
+      opts?.movesMoney !== false &&
+      onMainnet &&
+      backupBlocksRealMoney({
+        onMainnet,
+        pilotState: pilotRef.current.state,
+        pilotKnown: pilotRef.current.known,
+        backedUp: hasBackup(account.address),
+      })
+    ) {
+      throw new NeedsBackupError();
+    }
     // Real money must never sit under a Phase-1 account — a device key with no password, which
     // anyone holding the unlocked phone can spend.
     //
@@ -259,7 +369,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // testnet demo — the thing we hand strangers to try — grew a password wall. So the rule follows
     // the NETWORK instead: mainnet always requires the password, testnet never does. The env var
     // survives as an override for forcing Phase 2 on a testnet build too.
-    const onMainnet = activeNetwork().id === "public";
     if (account.phase === 1 && (onMainnet || process.env.NEXT_PUBLIC_REQUIRE_PHASE2 === "1")) {
       // Typed, not generic: every money screen sends a signer failure to /unlock, and /unlock sends
       // an account without a password back to /home. Undistinguished, this branch is that loop.
@@ -535,11 +644,41 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [account, refresh],
   );
 
+  // Where "Not now" on the arrival sheet may leave this device: back to practice money only when the
+  // switch back to real money is open to this account right now (lib/pilot-access.ts).
+  const arrivalTarget = arrivalDismissTarget(
+    mainnetSwitchBlock({
+      to: "public",
+      mainnetApproved,
+      pilotState,
+      account: account ? { phase: account.phase } : null,
+      backedUp: account ? hasBackup(account.address) : false,
+    }),
+  );
+
   return (
     <WalletContext.Provider
-      value={{ status, account, accounts, unlocked, network, mainnetApproved, pilotState, switchNetwork, switchAccount, createAccount, forgetAccount, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
+      value={{ status, account, accounts, unlocked, network, mainnetApproved, pilotState, pilotKnown, switchNetwork, switchAccount, createAccount, forgetAccount, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
     >
       {children}
+      {/* What each button does was decided by mainnetWarningPlan when the sheet was opened; where
+          "Not now" on the arrival sheet leaves the device is decided now (arrivalDismissTarget). */}
+      <MainnetWarningDialog
+        open={warning !== null}
+        arrived={warning?.onDismiss === "back-to-practice"}
+        backToPractice={warning?.onDismiss === "back-to-practice" && arrivalTarget === "practice"}
+        onClose={() => {
+          const plan = warning;
+          setWarning(null);
+          if (plan?.onDismiss === "back-to-practice" && arrivalTarget === "practice") performSwitch("testnet");
+        }}
+        onConfirm={() => {
+          const plan = warning;
+          markMainnetWarningSeen();
+          setWarning(null);
+          if (plan?.onConfirm === "mark-seen-and-switch") performSwitch("public");
+        }}
+      />
     </WalletContext.Provider>
   );
 }

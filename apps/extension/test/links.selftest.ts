@@ -655,7 +655,7 @@ async function main() {
   /** `prePost`: the fake fails before the take-back is posted (it never calls onPosting). */
   function rrig(
     rec: LinkRecord | null,
-    o: { drop?: "pending" | "settled" | "unknown"; reclaim?: () => Promise<{ hash: string }>; signerError?: Error; now?: number; prePost?: boolean } = {},
+    o: { drop?: "pending" | "settled" | "unknown"; reclaim?: () => Promise<{ hash: string; confirmed?: boolean }>; signerError?: Error; now?: number; prePost?: boolean } = {},
   ): RRig {
     const store = new Map<string, LinkRecord>(rec ? [[rec.linkHex, structuredClone(rec)]] : []);
     const log: string[] = [];
@@ -742,7 +742,11 @@ async function main() {
     ["the key could not sign it (nothing posted)", "the signer refused", "internal", true, true],
     ["a 403 from the pilot gate", `/v2-reclaim ${ARROW} 403: {"error":"this wallet is not on the pilot allowlist yet"}`, "sponsor-refused", true],
     ["a 429", `/v2-reclaim ${ARROW} 429: {"error":"rate limit"}`, "rate-limited", true],
-    ["a 503", `/v2-reclaim ${ARROW} 503: {"error":"paused"}`, "halted", true],
+    // A 503 is read by the sponsor's own sentence, never by the status (D3).
+    ["a 503 halt (the Worker's own words)", `/v2-reclaim ${ARROW} 503: {"error":"sponsor temporarily halted"}`, "halted", true],
+    ["a 503 busy network (nothing was queued)", `/v2-reclaim ${ARROW} 503: {"error":"the network is busy; try again shortly"}`, "network-busy", true],
+    ["a 503 in words the sponsor does not refuse with", `/v2-reclaim ${ARROW} 503: {"error":"paused"}`, "uncertain", false],
+    ["the day's fee budget (a 400 raised before the sponsor signs)", `/v2-reclaim ${ARROW} 400: {"error":"today's sponsor fee budget is spent; try again tomorrow"}`, "day-limit", true],
     // The status alone proves nothing: a platform page in place of the sponsor's JSON may come after the submit.
     ["a 503 platform page (not the sponsor's JSON)", `/v2-reclaim ${ARROW} 503: <html>Error 1102</html>`, "uncertain", false],
     ["a 429 with no body", `/v2-reclaim ${ARROW} 429: `, "uncertain", false],
@@ -774,6 +778,20 @@ async function main() {
   const unsureOut = await outcome(runReclaim(unsure.deps, [...unsure.store.keys()][0]!));
   ok("an uncertain take-back tells the person it keeps checking, and does not claim to have failed", "error" in unsureOut && /keep checking/.test((unsureOut.error as Error).message) && !/Nothing moved/.test((unsureOut.error as Error).message));
   ok("an uncertain take-back is asked for once: one reclaim call, no retry", unsure.log.filter((l) => l === "reclaim").length === 1);
+
+  // The sponsor's 202 (SOW 2, D3): accepted by the network, not yet seen landing. It is NOT a landed
+  // take-back: the record stays open for the settle pass, exactly like an uncertain failure.
+  const accepted = rrig(expired(), { reclaim: async () => ({ hash: HASH, confirmed: false }) });
+  const acceptedId = [...accepted.store.keys()][0]!;
+  const acceptedOut = await outcome(runReclaim(accepted.deps, acceptedId));
+  const acceptedRec = accepted.store.get(acceptedId)!;
+  ok(
+    "a 202 take-back (confirmed:false) is uncertain, keeps the record open and is not marked reclaimed",
+    codeOf(acceptedOut) === "uncertain" && acceptedRec.status === "pending" && acceptedRec.reclaimOpenAt !== undefined && acceptedRec.reclaimHash === undefined,
+    `${codeOf(acceptedOut)} status=${String(acceptedRec.status)}`,
+  );
+  ok("  ...and says it keeps checking", "error" in acceptedOut && /keep checking/.test((acceptedOut.error as Error).message));
+  ok("  ...and if the escrow then says settled, it reads Closed (claimed or taken back), never Reclaimed on the sponsor's word", L.onDropRead(acceptedRec, "settled", E + DAY).status === "closed");
 
   globalThis.fetch = realFetch;
 }

@@ -22,7 +22,9 @@ export function NetworkSwitcher() {
   // One honest sub-line + action per state (the header keeps the existing "practice vs real" framing).
   const sub = onMainnet
     ? "Every amount is real."
-    : pilotState === "approved"
+    : pilotState === "open"
+      ? "Real money is open to everyone, capped per transfer."
+      : pilotState === "approved"
       ? "You're approved for real money."
       : pilotState === "pending"
         ? "You're on the list — we'll email you when your spot opens."
@@ -44,7 +46,7 @@ export function NetworkSwitcher() {
           >
             Switch back to practice
           </button>
-        ) : pilotState === "approved" ? (
+        ) : pilotState === "approved" || pilotState === "open" ? (
           <button
             onClick={() => switchNetwork("public")}
             className="h-10 rounded-full border border-money bg-money px-4 text-sm font-medium text-primary-foreground"

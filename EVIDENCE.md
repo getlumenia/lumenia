@@ -5,6 +5,20 @@
 > independently verifiable: click the explorer links or re-run the commands.
 > One-page summary for a reader in a hurry: [`evidence/lumenia-evidence-pack.pdf`](evidence/lumenia-evidence-pack.pdf).
 
+## SOW 2 (the follow-on): where its evidence lives
+
+This file is the first SOW's package. The follow-on SOW's evidence is collected separately, one
+document per kind, each verifiable from the repository and the public ledger:
+
+| Deliverable | Document | What it holds |
+|---|---|---|
+| D1, the sender-side browser extension | [`evidence/SOW2_READINESS_REPORT.md`](evidence/SOW2_READINESS_REPORT.md) section D1 | the security checklist, the tests, the live testnet proof, what is not verified yet |
+| D2, private links and the commitment spike | [`evidence/SOW2_READINESS_REPORT.md`](evidence/SOW2_READINESS_REPORT.md) section D2, [`evidence/LEAK_AUDIT.md`](evidence/LEAK_AUDIT.md), [`evidence/ZK_SPIKE_REPORT.md`](evidence/ZK_SPIKE_REPORT.md) | what a link carries now, the leak audit, the testnet spike |
+| D3, open-mainnet readiness | [`evidence/SOW2_READINESS_REPORT.md`](evidence/SOW2_READINESS_REPORT.md) section D3, [`evidence/SOW2_OPS_NOTE.md`](evidence/SOW2_OPS_NOTE.md) | each hardening item before and after with the test that holds it, the CI step "Hardening suite (D3 a-k)", the scripted adversarial runs, the operations note for the KMS signer, the watchdog heartbeat and the rehearsed retirement switch, and what is still open before opening |
+
+Mainnet stays a hand-approved, capped pilot (`PILOT_MODE=1`) until the written legal opinion the
+Customer Development Plan names is in hand; D3 builds and rehearses the switch, it does not flip it.
+
 ## The binary success metric — MET
 
 > *"At least one verifiable end-to-end testnet claim: a link tap that lands USDC in a

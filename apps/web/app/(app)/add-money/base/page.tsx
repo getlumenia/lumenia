@@ -67,6 +67,8 @@ export default function BringFromBasePage() {
   const [error, setError] = useState("");
   const [burnHash, setBurnHash] = useState<Hex | null>(null);
   const [mintHash, setMintHash] = useState<string | null>(null);
+  /** false when the relay answered 202 with the mint's hash: submitted, not yet seen landing. */
+  const [mintConfirmed, setMintConfirmed] = useState(true);
   const [seconds, setSeconds] = useState<number | null>(null);
   const clients = useRef<{ wallet: WalletClient; pub: PublicClient } | null>(null);
 
@@ -151,6 +153,7 @@ export default function BringFromBasePage() {
         }
         if (r.status === "minted") {
           setMintHash(r.hash);
+          setMintConfirmed(r.confirmed !== false);
           setSeconds(Math.round((Date.now() - started) / 1000));
           setStage("done");
           void sendEvent("cctp_funded", burn, account!.address);
@@ -185,7 +188,8 @@ export default function BringFromBasePage() {
       if (!bal || !bal.issuer) {
         let signer;
         try {
-          signer = await getSigner();
+          // Opening this account's own dollar line moves no money (lib/wallet.tsx getSigner).
+          signer = await getSigner({ movesMoney: false });
         } catch (e) {
           if (isNeedsPassword(e)) throw e;
           router.push(`/unlock?next=${encodeURIComponent("/add-money/base")}`);
@@ -231,11 +235,21 @@ export default function BringFromBasePage() {
     );
   }
 
-  if (stage === "done" && mintHash) {
+  /* "done" with no mint hash is a submitted mint whose reply named none (askRelay: the relay's
+     "submit unconfirmed" without a hash). Still the done screen, minus the link it cannot show. */
+  if (stage === "done") {
     return (
       <div className="flex flex-col gap-4 py-6">
         <p className="text-xs font-semibold uppercase tracking-wide text-ink-soft">Test network</p>
-        <h1 className="text-xl font-bold text-ink">Your USDC arrived from Base</h1>
+        <h1 className="text-xl font-bold text-ink">
+          {mintConfirmed ? "Your USDC arrived from Base" : "Your USDC is on its way from Base"}
+        </h1>
+        {!mintConfirmed && (
+          <p className="text-sm text-ink-soft">
+            The network accepted the mint and is confirming it. It can take a minute to show in your
+            balance; the link below shows its state.
+          </p>
+        )}
         <p className="text-sm text-ink-soft">
           {seconds !== null ? `${seconds} s after the burn. ` : ""}Circle took its small Fast-transfer fee on Base; the Stellar side was paid by
           Lumenia, so you paid nothing there.
@@ -246,9 +260,13 @@ export default function BringFromBasePage() {
             {burnHash}
           </a>
           <p className="mt-3 text-sm text-ink">Mint on Stellar, into your account</p>
-          <a href={explorerTx(mintHash)} target="_blank" rel="noreferrer" className="mt-1 block break-all font-mono text-xs text-money">
-            {mintHash}
-          </a>
+          {mintHash ? (
+            <a href={explorerTx(mintHash)} target="_blank" rel="noreferrer" className="mt-1 block break-all font-mono text-xs text-money">
+              {mintHash}
+            </a>
+          ) : (
+            <p className="mt-1 text-xs text-ink-soft">Submitted. Its record shows in your balance once it lands.</p>
+          )}
         </MoneyCard>
         <PrimaryButton onClick={() => router.push("/send")}>Send it as a link</PrimaryButton>
         <Link href="/home" className="text-center text-sm text-ink-soft underline-offset-2 hover:underline">

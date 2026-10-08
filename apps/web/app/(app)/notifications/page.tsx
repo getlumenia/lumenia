@@ -15,7 +15,8 @@ import { loadNotices, markAllSeen, type Notice } from "../../../lib/notification
 import { loadLinkStatus } from "../../../lib/horizon";
 import { collectIncoming } from "../../../lib/claim";
 import { reclaimV2 } from "../../../lib/lumendrop";
-import { isNeedsPassword } from "../../../lib/signer-error";
+import { isNeedsBackup, isNeedsPassword } from "../../../lib/signer-error";
+import { isUnconfirmedSubmit } from "../../../lib/unconfirmed";
 import { formatUsd } from "../../../lib/money";
 import { netKey } from "../../../lib/scoped-store";
 import { copy } from "../../../lib/copy";
@@ -107,6 +108,8 @@ export default function NotificationsPage() {
   const [error, setError] = useState("");
   /** The account has no password yet — a different errand from a locked one, and /unlock can't do it. */
   const [needsPassword, setNeedsPassword] = useState(false);
+  /** Real money with the pilot retired and no backup yet: /pilot's secure step (lib/wallet.tsx getSigner). */
+  const [needsBackup, setNeedsBackup] = useState(false);
   /** This device's own group links, so a pool's row can say what a pool's row should say. */
   const [pools, setPools] = useState<Set<string>>(new Set());
   /** What just came back from a group link, kept after the row itself has gone. */
@@ -153,12 +156,19 @@ export default function NotificationsPage() {
     if (!n.balanceId) return;
     setError("");
     setNeedsPassword(false);
+    setNeedsBackup(false);
     setCollectingId(n.id);
     try {
       let signer;
       try {
         signer = await getSigner();
       } catch (e) {
+        // First: raised for a Phase-1 account too, and /pilot's step sets the password as well.
+        if (isNeedsBackup(e)) {
+          setError("Lock this account and back it up first. Real money needs both. Nothing has moved.");
+          setNeedsBackup(true);
+          return;
+        }
         /* An account with no password has nothing to unlock, and /unlock turns it straight back
            here. Setting one lives on /account — the same name and the same place the account menu
            and the money screens send this errand to. It is offered rather than jumped to: a tap
@@ -179,8 +189,12 @@ export default function NotificationsPage() {
            of the escrow when it does not, never guessed, because the wrong entrypoint reverts
            with nothing moved and no sentence this screen could offer to explain it. */
         const pool = pools.has(n.balanceId);
-        await reclaimV2({ signer, linkHex: n.balanceId, sponsorUrl: sponsorUrl(), group: pool || undefined });
-        if (pool) {
+        const back = await reclaimV2({ signer, linkHex: n.balanceId, sponsorUrl: sponsorUrl(), group: pool || undefined });
+        if (back.confirmed === false) {
+          /* Accepted, not yet seen landing (the sponsor's 202). Nothing is marked as back; the
+             reload below shows the truth once the ledger has it, and asking again is safe. */
+          setError(copy.errors.takeBackUnconfirmed);
+        } else if (pool) {
           markTakenBack(n.balanceId, n.usd);
           setTookBack(n.usd);
         }
@@ -192,6 +206,14 @@ export default function NotificationsPage() {
       // The UI stays calm and codeless, but a swallowed error is undiagnosable: without this the
       // only signal a failed take-back leaves anywhere is "Please try again".
       console.error("[recover]", n.kind, n.via ?? "classic", n.balanceId, e);
+      /* The sponsor's 202 for the claim (lib/claim.ts): asked, not yet confirmed. Not a failure and
+         not money back: say so and re-read the list, which drops the row once the ledger has it.
+         Asking again is safe, a balance is claimed once. */
+      if (isUnconfirmedSubmit(e)) {
+        setError(copy.errors.collectUnconfirmed);
+        await reload();
+        return;
+      }
       // Terminal (already collected / reclaimed) vs. transient — never leak a result code.
       // For a classic CB, re-read existence for calm "it's gone" copy; a v2 drop just refreshes.
       if (n.via === "v2") {
@@ -288,6 +310,10 @@ export default function NotificationsPage() {
           {needsPassword ? (
             <Link href="/account" className="font-semibold text-money underline-offset-2 hover:underline">
               Set a password
+            </Link>
+          ) : needsBackup ? (
+            <Link href="/pilot" className="font-semibold text-money underline-offset-2 hover:underline">
+              Lock it and back it up
             </Link>
           ) : (
             <FeedbackDialog trigger={copy.feedback.somethingWrong} triggerClassName="fb-trigger-inline" defaultCategory="money" />

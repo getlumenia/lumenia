@@ -19,6 +19,22 @@ import { useWallet } from "../../lib/wallet";
 export function PilotStatusBadge() {
   const { pilotState, switchNetwork } = useWallet();
 
+  if (pilotState === "open") {
+    // The pilot is retired: real money is open to everyone, capped per transfer; the once-only
+    // warning sheet shows on the switch itself (lib/wallet.tsx).
+    return (
+      <div className="flex flex-col items-start gap-3">
+        <p className="text-sm font-semibold text-ink">Real money is open to everyone</p>
+        <button
+          onClick={() => switchNetwork("public")}
+          className="inline-flex h-10 items-center justify-center rounded-full border border-money bg-money px-4 text-sm font-medium text-primary-foreground"
+        >
+          Switch to real money
+        </button>
+      </div>
+    );
+  }
+
   if (pilotState === "approved") {
     return (
       <div className="flex flex-col items-start gap-3">

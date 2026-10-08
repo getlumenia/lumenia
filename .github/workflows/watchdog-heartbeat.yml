@@ -1,0 +1,234 @@
+# The sponsor watchdog's dead-man switch (SOW 2, D3 item f).
+#
+# WHY THIS EXISTS. The watchdog (apps/sponsor/src/lib/watchdog.ts) runs as a Cloudflare Cron
+# Trigger every 15 minutes on each Worker and pages on what it finds. The one thing it cannot
+# report is that it stopped running: a cron that was never fired, a Worker whose scheduled handler
+# throws before it starts, a deploy that dropped the trigger. From the outside that looks exactly
+# like a healthy, quiet sponsor. So every run writes a heartbeat stamp (`watchdog:<net>:lastrun`),
+# and a second one (`watchdog:<net>:lastfull`) only when every check in the run completed; /health
+# reports both, and this workflow reads /health from OUTSIDE Cloudflare on a 30-minute schedule
+# (GitHub can start a scheduled run late or skip it, so detection can take longer) and raises
+# ONE issue when, on either Worker:
+#   - /health cannot be fetched, or answers with something that is not a JSON object;
+#   - the run stamp is missing, unreadable, older than 45 minutes (three missed runs), or more than
+#     5 minutes in the FUTURE (a skewed clock or a stamp no run wrote is not a fresh run);
+#   - the full-run stamp is missing or older than 3 hours: the cron fires, but some check has failed
+#     on every run since, so part of the sponsor is unobserved while the stamp looks alive;
+#   - on MAINNET, /health says alerting is not configured: no page can leave that Worker, so a fresh
+#     stamp proves nothing to a person. Testnet reports the same field and passes.
+#
+# Schedules run on the default branch only, and GitHub runs them at most every 5 minutes with no
+# guarantee of punctuality (docs.github.com/en/actions/reference/workflows-and-actions/events-that-
+# trigger-workflows#schedule), which is why the threshold is 45 minutes and not 16.
+#
+# One issue, updated by comment, rather than a new one every half hour: the pattern of
+# contract-security.yml and e2e.yml. The issue is closed again by this workflow when both
+# Workers are healthy.
+name: Watchdog heartbeat
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: watchdog-heartbeat
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  heartbeat:
+    name: Read /health on both Workers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      report: ${{ steps.probe.outputs.report }}
+    steps:
+      - name: Probe the two public /health endpoints
+        id: probe
+        shell: bash
+        # GitHub runs this with `bash -eo pipefail`: every command that may fail on a bad answer is
+        # guarded, so one Worker's broken /health is a failure LINE and the other Worker is still
+        # probed and the report still written. Stamps are parsed by jq, which accepts only the
+        # ISO-8601 UTC shape the Worker writes (GNU date would also take words like "yesterday").
+        run: |
+          set -u
+          MAX_AGE=2700        # 45 minutes: three missed 15-minute runs
+          MAX_FULL_AGE=10800  # 3 hours since a run in which every check completed
+          MAX_AHEAD=300       # a stamp more than 5 minutes in the future is a failure, not a fresh run
+          failed=0
+          report=""
+          add() { report="$report$1"$'\n'; }
+          bad() { echo "::error::$1"; add "$1"; failed=1; }
+          ok() { echo "$1"; add "$1"; }
+          err=$(mktemp)
+          now_s=$(date -u +%s)
+          # One line per field, in this order: network, lastRun, lastRun as epoch seconds (empty when
+          # unreadable), lastFullRun ("absent" when /health lacks the field), lastFullRun as epoch,
+          # halted, alerting.configured. Booleans print as true/false/unknown: `//` would turn a false
+          # into its fallback, which is how an un-halted Worker used to read "halted=unknown".
+          read_fields='
+            def str: if . == null then "" else (tostring | gsub("[\\r\\n\\t]"; " ")) end;
+            def epoch: if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?Z$")
+              then (try (sub("[.][0-9]+Z$"; "Z") | fromdateiso8601) catch null) else null end;
+            def flag: if . == null then "unknown" else tostring end;
+            if type != "object" then error("not a JSON object") else . end
+            | (.watchdog | if type == "object" then . else {} end) as $w
+            | ((.network // "?") | str),
+              ($w.lastRun | str),
+              ($w.lastRun | epoch | str),
+              (if ($w | has("lastFullRun")) then ($w.lastFullRun | str) else "absent" end),
+              ($w.lastFullRun | epoch | str),
+              ([.halt.halted?][0] | flag),
+              ([.alerting.configured?][0] | flag)'
+          for target in \
+            "testnet https://lumenia-sponsor.avakit.workers.dev/health" \
+            "mainnet https://lumenia-sponsor-mainnet.avakit.workers.dev/health"; do
+            expect=${target%% *}
+            url=${target#* }
+            label="$expect ($url)"
+            if ! body=$(curl -sS --max-time 20 --fail "$url" 2>"$err"); then
+              bad "$label: fetch FAILED ($(tr -d '\r\n%' < "$err" | cut -c1-120))"
+              continue
+            fi
+            # A body that is not a JSON object (a gateway page served with 200, an empty body) makes
+            # jq fail; that is this Worker's failure line, never an abort of the step.
+            if ! fields=$(printf '%s' "$body" | jq -e -r "$read_fields" 2>/dev/null); then
+              bad "$label: /health is not a JSON object: $(printf '%s' "$body" | tr -d '\r\n%' | cut -c1-80)"
+              continue
+            fi
+            network="" last="" last_s="" full="" full_s="" halted="" alerting=""
+            { read -r network; read -r last; read -r last_s; read -r full; read -r full_s; read -r halted; read -r alerting; } <<< "$fields" || true
+            if [ -z "$last" ]; then
+              bad "$label: no watchdog stamp in /health (deploy the D3 Worker, or the watchdog has never completed a run)"
+              continue
+            fi
+            if [ -z "$last_s" ]; then
+              bad "$label: watchdog stamp '$last' is not an ISO-8601 UTC time"
+              continue
+            fi
+            problems=""
+            addp() { if [ -z "$problems" ]; then problems="$1"; else problems="$problems; $1"; fi; }
+            age=$(( now_s - last_s ))
+            if [ "$age" -gt "$MAX_AGE" ]; then
+              addp "watchdog stamp $last is ${age}s old (limit ${MAX_AGE}s)"
+            fi
+            if [ "$age" -lt "-$MAX_AHEAD" ]; then
+              addp "watchdog stamp $last is $(( -age ))s in the FUTURE (limit ${MAX_AHEAD}s): a skewed clock or a stamp no run wrote"
+            fi
+            full_note="none"
+            case "$full" in
+              absent)
+                addp "/health has no watchdog.lastFullRun (deploy the Worker that reports it)" ;;
+              "")
+                addp "no run has completed every check yet (watchdog.lastFullRun is null)" ;;
+              *)
+                if [ -z "$full_s" ]; then
+                  addp "full-run stamp '$full' is not an ISO-8601 UTC time"
+                else
+                  fage=$(( now_s - full_s ))
+                  full_note="${fage}s ago"
+                  if [ "$fage" -gt "$MAX_FULL_AGE" ]; then
+                    addp "no run has completed every check for ${fage}s (last $full, limit ${MAX_FULL_AGE}s): a check fails on every run"
+                  fi
+                  if [ "$fage" -lt "-$MAX_AHEAD" ]; then
+                    addp "full-run stamp $full is $(( -fage ))s in the FUTURE (limit ${MAX_AHEAD}s)"
+                  fi
+                fi ;;
+            esac
+            if [ "$expect" = mainnet ] && [ "$alerting" != true ]; then
+              addp "alerting.configured is $alerting: no page can leave the mainnet Worker (set RESEND_API_KEY and ALERT_NOTIFY_TO)"
+            fi
+            summary="network=$network, watchdog ran ${age}s ago, last full run $full_note, halted=$halted, alerting=$alerting"
+            if [ -n "$problems" ]; then
+              bad "$label: $problems [$summary]"
+            else
+              ok "$label: $summary"
+            fi
+          done
+          delim="HEARTBEAT_REPORT_$(date -u +%s)_$RANDOM"
+          {
+            echo "report<<$delim"
+            printf '%s' "$report"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+          exit $failed
+
+  notify:
+    name: Open or update the heartbeat issue
+    needs: [heartbeat]
+    if: always() && needs.heartbeat.result == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          REPORT: ${{ needs.heartbeat.outputs.report }}
+        with:
+          script: |
+            const title = "Sponsor watchdog heartbeat check is failing";
+            const body = [
+              `The sponsor watchdog heartbeat check failed on ${new Date().toISOString()}.`,
+              "",
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              "",
+              "What the probe saw:",
+              "```",
+              (process.env.REPORT || "(no report)").trim(),
+              "```",
+              "",
+              "A missing or stale stamp (older than 45 minutes) means the Cron Trigger on that Worker has not",
+              "completed a run: the float, the forbidden-operation scan, the escrow wasm hash and the state",
+              "expiry are unobserved until it runs again. A stale full-run stamp (3 hours) means it runs but a",
+              "check fails every time. A stamp in the future means the stamp is not one a healthy run wrote.",
+              "Alerting not configured on mainnet means no page can reach a person. Check `wrangler tail`, the",
+              "Worker's cron trigger and secrets, and the store it writes to (ops/RUNBOOK_SPONSOR_KEY.md",
+              "section 4). While this is open the project may not describe the sponsor as monitored.",
+            ].join("\n");
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "watchdog-heartbeat",
+            });
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ["watchdog-heartbeat"],
+              });
+            }
+
+  resolve:
+    name: Close the heartbeat issue when both Workers are healthy
+    needs: [heartbeat]
+    if: needs.heartbeat.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          REPORT: ${{ needs.heartbeat.outputs.report }}
+        with:
+          script: |
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "watchdog-heartbeat",
+            });
+            for (const issue of existing.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Both Workers pass the heartbeat check again (${new Date().toISOString()}):\n\n\`\`\`\n${(process.env.REPORT || "").trim()}\n\`\`\``,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, state: "closed",
+              });
+            }

@@ -19,12 +19,22 @@
  *   - what rides behind the key. A private link carries the sender's name and the lock marker after
  *     the '#', and a reader that does not split them off hands lib/claim-password.ts `S...&s=Ayse`,
  *     which is a bad secret: every private link would fail to open.
+ *   - a claim the relayer stopped watching (its 202): settled from the claim transaction and the
+ *     payout account on a fake clock, never from the escrow's `claimed` flag, which a take-back sets
+ *     too; and claimV2 itself, with the RPC and the sponsor faked, hands the 202 back as
+ *     confirmed:false whatever body it carries.
  *
  * RUN: pnpm --filter @lumenia/web exec tsx lib/lumendrop.selftest.ts   (offline, no keys, no network)
  */
-import { Keypair } from "@stellar/stellar-sdk";
+import { Account, Keypair, rpc, xdr } from "@stellar/stellar-sdk";
 import { makeLinkSeed, parseLinkFragment, passwordFragment } from "./claim-password";
+import { testnetConfig, type NetworkConfig } from "./network";
 import {
+  CLAIM_SETTLE,
+  claimV2,
+  readRelayReply,
+  settleUnconfirmedClaim,
+  type ClaimSettleReaders,
   groupTotal,
   isTerminalClaimOutcome,
   MAX_POOL_SLOTS,
@@ -63,7 +73,7 @@ function floatTotal(perShare: string, slots: number): string {
 const HOUR = 3600;
 const now = 1_760_000_000; // a fixed "now" so nothing here depends on when it runs
 
-function main() {
+async function main() {
   console.log("============================================================");
   console.log(" SELF-TEST - group links");
   console.log("============================================================\n");
@@ -234,8 +244,137 @@ function main() {
     readBack.fragment === kp.secret() && readBack.slots === 6 && readBack.from === "Ayse" && !readBack.passwordLocked,
   );
 
+  await unconfirmedClaims();
+
   console.log(`\n${failed === 0 ? "✅" : "❌"} GROUP-LINK SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);
 }
 
-main();
+/* ------------------------- a claim the relayer stopped watching -------------------------
+ * The relayer's 202 (confirmed:false) is settled by READING, and what it reads decides whether a
+ * recipient is told "it's yours", "try again" or "check back". The escrow's `claimed` flag is not
+ * among the readers on purpose: LumenDrop sets it on the sender's take-back and on a claim from
+ * another device too, so a claim that FAILED behind a take-back read as landed. These pin each
+ * verdict to the transaction and the payout account, on a fake clock. */
+async function unconfirmedClaims(): Promise<void> {
+  console.log("\n[7] a claim the relayer accepted and never saw decided (settleUnconfirmedClaim)");
+  const HASH = "ab".repeat(32);
+  const DEADLINE = CLAIM_SETTLE.timeboundMs + CLAIM_SETTLE.marginMs; // after the 202 arrived
+
+  /** A ledger in a script: what getTransaction and the payout's balance say at each moment. */
+  const ledger = (o: {
+    tx?: (t: number) => { status: string } | "throw";
+    payout?: (t: number) => bigint | null | "throw";
+  }) => {
+    let t = 0;
+    let txReads = 0;
+    const readers: ClaimSettleReaders = {
+      transaction: async () => {
+        txReads++;
+        const a = (o.tx ?? (() => ({ status: "NOT_FOUND" })))(t);
+        if (a === "throw") throw new Error("rpc unreachable");
+        return a;
+      },
+      payoutStroops: async () => {
+        const a = (o.payout ?? (() => 0n))(t);
+        if (a === "throw") throw new Error("horizon unreachable");
+        return a;
+      },
+      now: () => t,
+      sleep: async (ms) => void (t += ms),
+    };
+    return { readers, clock: () => t, reads: () => txReads };
+  };
+  const settle = (l: ReturnType<typeof ledger>, hash = HASH) => settleUnconfirmedClaim(hash, l.readers, { acceptedAt: 0 });
+
+  const success = ledger({ tx: () => ({ status: "SUCCESS" }) });
+  ok("the claim transaction succeeded: claimed, at the first read", (await settle(success)) === "claimed" && success.clock() === 0);
+  const refused = ledger({ tx: () => ({ status: "FAILED" }) });
+  ok("the claim transaction FAILED (a take-back landed first, say): not-landed, never claimed", (await settle(refused)) === "not-landed");
+  const late = ledger({ tx: (t) => (t >= 30_000 ? { status: "SUCCESS" } : { status: "NOT_FOUND" }) });
+  ok("not found, then found successful 30 s later: claimed", (await settle(late)) === "claimed" && late.clock() === 30_000);
+
+  const never = ledger({});
+  const neverVerdict = await settle(never);
+  ok(`never found: not-landed, but only once a read at or past the deadline says so (t=${never.clock()}, deadline=${DEADLINE})`, neverVerdict === "not-landed" && never.clock() >= DEADLINE);
+  ok("  ...and not a read earlier: no verdict inside the 60 s time bound plus the margin", never.clock() - CLAIM_SETTLE.stepMs < DEADLINE);
+
+  const arrived = ledger({ payout: (t) => (t >= 10_000 ? 50_000_000n : 0n) });
+  ok("not found, but the payout account holds the money: claimed (the second signal)", (await settle(arrived)) === "claimed" && arrived.clock() === 10_000);
+  const dark = ledger({ tx: () => "throw", payout: () => "throw" });
+  ok("the RPC and Horizon both unreachable for the whole window: unknown, never not-landed", (await settle(dark)) === "unknown");
+  const rpcDown = ledger({ tx: () => "throw", payout: (t) => (t >= 4_000 ? 1n : 0n) });
+  ok("the RPC down, the money in the payout: claimed", (await settle(rpcDown)) === "claimed");
+  const lastReadFailed = ledger({ tx: (t) => (t >= DEADLINE ? "throw" : { status: "NOT_FOUND" }) });
+  ok("not found until the deadline, then the read at the deadline fails: unknown (no final answer)", (await settle(lastReadFailed)) === "unknown");
+  const odd = ledger({ tx: () => ({ status: "PENDING" }) });
+  ok("a status that is not one of the three is not an answer: unknown at the deadline", (await settle(odd)) === "unknown");
+  const noHash = ledger({});
+  ok("a 202 that named no hash can never be 'not-landed' (nothing to look for): unknown", (await settle(noHash, "")) === "unknown" && noHash.reads() === 0);
+  const noHashPaid = ledger({ payout: () => 3n });
+  ok("...but the payout's balance can still say claimed", (await settle(noHashPaid, "")) === "claimed");
+  /* A RESUMED claim presents the latch's payout, which may be the home account other links' money
+     was swept into: its balance says nothing about this claim, so the transaction alone decides. */
+  const resumedHome = ledger({ payout: () => 80_000_000n });
+  const resumed = await settleUnconfirmedClaim(HASH, resumedHome.readers, { acceptedAt: 0, useBalance: false });
+  ok(`a resumed claim whose payout already holds money from elsewhere: not 'claimed' on the balance (the transaction decides; got ${resumed})`, resumed === "not-landed");
+  const resumedLanded = ledger({ tx: (t) => (t >= 6_000 ? { status: "SUCCESS" } : { status: "NOT_FOUND" }), payout: () => 80_000_000n });
+  ok("...and when its transaction does land, it is claimed", (await settleUnconfirmedClaim(HASH, resumedLanded.readers, { acceptedAt: 0, useBalance: false })) === "claimed");
+
+  console.log("\n[8] what a relay's reply means (readRelayReply, claimV2)");
+  ok("202 {hash, confirmed:false}: undecided, with the hash", readRelayReply(202, JSON.stringify({ hash: HASH, confirmed: false }))?.hash === HASH);
+  ok("202 {error:'submit unconfirmed', hash}: undecided, with the hash", readRelayReply(202, JSON.stringify({ error: "submit unconfirmed", hash: HASH }))?.hash === HASH);
+  ok("202 that is not JSON: undecided, no hash, no crash", readRelayReply(202, "<html>accepted</html>")?.hash === "");
+  ok("200 {hash, confirmed:false}: undecided too (the body says so)", readRelayReply(200, JSON.stringify({ hash: HASH, confirmed: false }))?.confirmed === false);
+  ok("200 {hash}: not undecided", readRelayReply(200, JSON.stringify({ hash: HASH })) === null);
+  ok("400: not undecided (the caller throws its refusal)", readRelayReply(400, JSON.stringify({ error: "group-claim-failed: drop-empty" })) === null);
+  ok("a hash that is not 64 hex is not carried", readRelayReply(202, JSON.stringify({ hash: "nope", confirmed: false }))?.hash === "");
+
+  // claimV2 itself, with the RPC and the sponsor faked: the 202 reaches the caller as confirmed:false.
+  const proto = rpc.Server.prototype as unknown as {
+    getAccount: (id: string) => Promise<Account>;
+    simulateTransaction: (tx: unknown) => Promise<unknown>;
+  };
+  const realGet = proto.getAccount;
+  const realSim = proto.simulateTransaction;
+  const realFetch = globalThis.fetch;
+  proto.getAccount = async (id: string) => new Account(id, "1");
+  proto.simulateTransaction = async () => ({ result: { auth: [], retval: xdr.ScVal.scvBytes(Buffer.from("claim message")) } });
+  const NET: NetworkConfig = { ...testnetConfig(), legacyContracts: [] };
+  const payout = Keypair.random().publicKey();
+  const linkKey = Keypair.random();
+  const answer = async (status: number, body: string) => {
+    const posted: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      posted.push(String(input));
+      return new Response(body, { status });
+    }) as typeof fetch;
+    try {
+      return { value: await claimV2({ linkSecret: linkKey.secret(), payout, sponsorUrl: "https://sponsor.invalid", net: NET }), posted };
+    } catch (e) {
+      return { error: e as Error, posted };
+    }
+  };
+  try {
+    const r202 = await answer(202, JSON.stringify({ hash: HASH, confirmed: false }));
+    ok("claimV2: a 202 is {hash, confirmed:false}, not a throw", "value" in r202 && r202.value?.confirmed === false && r202.value.hash === HASH);
+    ok("  ...posted once, to /v2-claim", r202.posted.length === 1 && r202.posted[0]!.endsWith("/v2-claim"));
+    const rSaid = await answer(202, JSON.stringify({ error: "submit unconfirmed", hash: HASH }));
+    ok("claimV2: the relay's 'submit unconfirmed' 202 is confirmed:false too", "value" in rSaid && rSaid.value?.confirmed === false && rSaid.value.hash === HASH);
+    const rJunk = await answer(202, "accepted");
+    ok("claimV2: a 202 that is not JSON is still confirmed:false, and does not crash", "value" in rJunk && rJunk.value?.confirmed === false && rJunk.value.hash === "");
+    const r200 = await answer(200, JSON.stringify({ hash: HASH }));
+    ok("claimV2: a 200 is confirmed", "value" in r200 && r200.value?.confirmed === true);
+    const r400 = await answer(400, JSON.stringify({ error: "group-claim-failed: drop-empty" }));
+    ok("claimV2: a 400 is thrown with its body, for the classifier", "error" in r400 && /v2-claim .* 400: .*drop-empty/.test(r400.error!.message));
+  } finally {
+    proto.getAccount = realGet;
+    proto.simulateTransaction = realSim;
+    globalThis.fetch = realFetch;
+  }
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

@@ -58,6 +58,11 @@ MAX_POOL_SLOTS = "30"
 # spend most of the room's day and lock everyone else out until UTC midnight.
 MAX_DAY_ACCOUNTS = "600"
 MAX_DAY_ACCOUNTS_PER_SOURCE = "120"
+# Sponsor fee budget (lib/caps.ts): the XLM the sponsor may spend in fees across every value route in
+# one UTC day. Testnet is play money and a demo must never be refused over fees, so this is the code
+# default made explicit; mainnet declares its own, tight value below. The per-sender escrow cap
+# (MAX_DAY_USDC_PER_SENDER) is left unset here on purpose: unset, it equals MAX_DAY_USDC.
+MAX_DAY_FEE_XLM = "2000"
 # Watchdog: alert when the sponsor's float drops under this many XLM (see lib/watchdog.ts).
 SPONSOR_MIN_XLM = "50"
 # Watchdog: page when fewer than this many recipients can still be onboarded (1.5 XLM each: two
@@ -68,9 +73,12 @@ SPONSOR_MIN_TTL_DAYS = "21"
 # EVENT 19-20 Sept 2026: the venue is one NAT address and one claim costs three sponsor requests
 # (/create-account, /feebump, /v2-claim), so the 30/min default 429s a crowd. The per-account cap
 # is raised with it, because all three calls key on the SAME fresh recipient key and at 5 a single
-# retry inside a minute 429s a real claimer. The daily onboarding budget is untouched (lib/caps.ts:
-# 500/day, 100 per source), so the sponsor's reserve exposure is unchanged. Optional revert after
-# the event: testnet is play money. The mainnet block below declares its own RATE_CAP.
+# retry inside a minute 429s a real claimer. The daily onboarding budget is the pair declared
+# above (600 a day, 120 per source), so the sponsor's reserve exposure is unchanged by this.
+# These event-day values (300/15) are KEPT on purpose after the event: the live claim e2e drives
+# all three sponsor calls per claim from one runner address and would 429 on the defaults.
+# The mainnet block below declares NO RATE_CAP: mainnet runs the code defaults, 30 a minute per
+# IP and 5 a minute per account (lib/rate-limit.ts). Do not add one there without a reason.
 RATE_CAP = "300"
 ACCOUNT_RATE_CAP = "15"
 # The wasm the escrow is EXPECTED to run. An upgrade emits no event, so a mismatch here is the
@@ -141,6 +149,19 @@ EVENTS_EXCLUDE_AIDS = "b8336d21766a3493"
 MAX_DROP_USDC = "5"
 MAX_DAY_USDC = "50"
 CAPS_FAIL_CLOSED = "1"
+# One SENDER's share of that day (lib/caps.ts, keyed on the sender's public key, reserved with the
+# day counter): half the day, so no single wallet or looping client closes the day for everyone.
+# The owner may change the number, never the shape (it is clamped to MAX_DAY_USDC).
+MAX_DAY_USDC_PER_SENDER = "25"
+# Sponsor fee budget (lib/caps.ts): the XLM the sponsor may spend in fees across every value route in
+# one UTC day. Each request counts its BID from before its signature until the network decides it:
+# a fee-bump bids base x (inner ops + 1) + the Soroban resource fee, so a relayed deposit bids about
+# 0.42-0.57 XLM and a relayed claim about 0.2 XLM plus its resource fee. Then a transaction that
+# never reached a ledger gives its bid back, and an included one counts what the ledger charged
+# (about 0.02 XLM for a testnet deposit, 2026-10-08). So 15 XLM, about a tenth of the float, holds
+# roughly 26-35 relays in flight at once, and several hundred settled ones a day. The owner may
+# change the number, never the shape (the count stays at or above the real spend).
+MAX_DAY_FEE_XLM = "15"
 # Group links are OPEN on mainnet (owner decision, 2026-09-20) and this is the bound that makes it
 # safe: the $5 per-transfer cap above already binds the whole POT, and this binds how many ways it
 # is cut, which is what the sponsor actually pays for at ~1.5 XLM of reserve per share claimed. Six
@@ -148,15 +169,20 @@ CAPS_FAIL_CLOSED = "1"
 # treats this variable's ABSENCE as 6 rather than as the testnet default.
 MAX_POOL_SLOTS = "6"
 # Onboarding reserve budget (lib/caps.ts). /create-account moves no dollars, so the caps above
-# cannot see it, yet every account it hands out permanently locks ~1 XLM of sponsor reserve. The
+# cannot see it, yet every account it hands out permanently locks 1.5 XLM of sponsor reserve. The
 # route is open by design — a recipient is not a pilot wallet — so these two are its only ceilings,
 # and the 500/day fallback is testnet-shaped: this pilot's whole run has opened fewer than that.
-# Keep both well clear of an honest day (a claim retry re-calls the route, so one recipient can
-# spend more than one) — a recipient refused here is holding real money they cannot reach.
-# The share bounds ONE connection (IPv6 /64, IPv4 as-is), so a caller that exhausts its own cannot
-# refuse everybody else's claim until UTC midnight.
-MAX_DAY_ACCOUNTS = "40"
-MAX_DAY_ACCOUNTS_PER_SOURCE = "20"
+# Keep both well clear of an honest day: a recipient refused here is holding real money they
+# cannot reach. A claim retry re-calls the route with the SAME recipient key and is free (one slot
+# per key per day, lib/caps.ts), so a flaky recipient no longer spends more than one.
+# The day: sixty sponsored accounts is about 90 XLM of reserve at 1.5 each, the float's working
+# bound. The share below is a literal and does NOT follow this number: change both together, or
+# delete MAX_DAY_ACCOUNTS_PER_SOURCE and the code derives an eighth of the day (lib/caps.ts).
+MAX_DAY_ACCOUNTS = "60"
+# The share bounds ONE connection (IPv6 /64, IPv4 as-is) to an eighth of the day, so a caller that
+# exhausts its own cannot refuse everybody else's claim until UTC midnight; eight connections are
+# needed to spend a day. Clamped to the day.
+MAX_DAY_ACCOUNTS_PER_SOURCE = "8"
 # The float is meant to be tiny; alert well before it runs out.
 SPONSOR_MIN_XLM = "3"
 # Same two watchdog floors as testnet. Measured 2026-09-06 on the live account: 33.18 XLM

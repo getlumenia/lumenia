@@ -40,7 +40,8 @@ interface Row {
   n: number;
   linkHex: string;
   before: "pending" | "settled" | "unknown";
-  action: "reclaimed" | "skipped" | "failed" | "dry-run";
+  /** "accepted": the relay's 202, a take-back on the network and not yet seen landing; never "reclaimed". */
+  action: "reclaimed" | "accepted" | "skipped" | "failed" | "dry-run";
   hash?: string;
   error?: string;
 }
@@ -75,10 +76,16 @@ async function main() {
         console.log(`${file} #${l.n} ${l.linkHex.slice(0, 8)} pending -> would reclaim`);
       } else {
         try {
-          const { hash } = await reclaimV2({ signer, linkHex: l.linkHex, sponsorUrl: SPONSOR, group: false });
-          row.action = "reclaimed";
+          const { hash, confirmed } = await reclaimV2({ signer, linkHex: l.linkHex, sponsorUrl: SPONSOR, group: false });
           row.hash = hash;
-          console.log(`${file} #${l.n} ${l.linkHex.slice(0, 8)} pending -> reclaimed ${hash.slice(0, 8)}`);
+          if (confirmed === false) {
+            // Accepted, not yet confirmed: a re-run reads the escrow again and settles it.
+            row.action = "accepted";
+            console.log(`${file} #${l.n} ${l.linkHex.slice(0, 8)} pending -> accepted, not yet confirmed (tx ${hash.slice(0, 8) || "unknown"})`);
+          } else {
+            row.action = "reclaimed";
+            console.log(`${file} #${l.n} ${l.linkHex.slice(0, 8)} pending -> reclaimed ${hash.slice(0, 8)}`);
+          }
         } catch (e) {
           row.action = "failed";
           row.error = (e as Error).message.slice(0, 160);
@@ -94,7 +101,8 @@ async function main() {
   writeFileSync(out, JSON.stringify({ network: "testnet", sponsor: SPONSOR, dry: DRY, at: new Date().toISOString(), rows }, null, 2));
   const count = (a: Row["action"]) => rows.filter((r) => r.action === a).length;
   console.log(
-    `\n${rows.length} links read, ${open} were open: reclaimed ${count("reclaimed")}, failed ${count("failed")}, ` +
+    `\n${rows.length} links read, ${open} were open: reclaimed ${count("reclaimed")}, ` +
+      `accepted and not yet confirmed ${count("accepted")} (run again to settle them), failed ${count("failed")}, ` +
       `dry-run ${count("dry-run")}, skipped ${count("skipped")} (already claimed or reclaimed)`,
   );
   console.log(`report: ${out}`);

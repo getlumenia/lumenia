@@ -39,6 +39,7 @@ import {
   type Transaction,
   type Horizon,
 } from "@stellar/stellar-sdk";
+import { chargeSponsorFee, isPublicRefusal, signCharged, type FeeCharge } from "./caps.js";
 import type { SponsorConfig } from "./config";
 import type { SponsorSigner } from "./signer";
 import { CHANNEL_TX_TIMEOUT_SECONDS, type ChannelManager } from "./channels";
@@ -168,7 +169,12 @@ export async function createAccountHandler(
   channels?: ChannelManager,
 ): Promise<CreateAccountResult> {
   assertValidRecipient(input.recipientPublicKey);
-  if (input.recipientPublicKey === signer.publicKey()) {
+  /* Neither of the sponsor's own addresses may be a recipient. The account was always refused; the
+     signing key's address joined it with the KMS split (SOW 2 D3 item h). A sandwich for the KMS
+     address carries one signature, the KMS one, which is ALSO that address's master signature, so
+     the caller could submit it unchanged and the ledger would gain an account whose only signer is
+     the sponsor's key: a sponsor signer on a user account, which this service never is. */
+  if (input.recipientPublicKey === config.sponsorAccountId || input.recipientPublicKey === signer.publicKey()) {
     throw new Error("recipient must differ from the sponsor");
   }
 
@@ -178,7 +184,7 @@ export async function createAccountHandler(
   const exists = await accountExists(server, input.recipientPublicKey);
 
   const base = {
-    sponsorPublicKey: signer.publicKey(),
+    sponsorPublicKey: config.sponsorAccountId,
     network: config.network,
     usdcCode: config.usdc.getCode(),
     // USDC is always a credit asset (constructed with an issuer), never native.
@@ -191,31 +197,46 @@ export async function createAccountHandler(
   // CHANNEL path — an independent sequence per concurrent onboarding (C1 fix).
   const lease = channels?.enabled ? await channels.lease() : null;
   if (lease) {
+    let charge: FeeCharge | null = null;
     try {
       const channelAccount = await server.loadAccount(lease.publicKey);
       const tx = assembleSandwich(
         channelAccount,
         config,
-        signer.publicKey(),
+        config.sponsorAccountId,
         input.recipientPublicKey,
         CHANNEL_TX_TIMEOUT_SECONDS,
         exists,
       );
+      // The channel pays this fee, and the channel is sponsor money: the bid joins the day's fee
+      // budget before ANY signature. A sandwich handed out and never submitted is counted all the
+      // same, because this service never sees the client's submission, which keeps the budget an
+      // upper bound (lib/caps.ts, the fee budget header).
+      charge = await chargeSponsorFee(tx.fee);
       tx.sign(lease.keypair); // channel = tx source (lends its sequence, pays the fee)
       await signer.sign(tx); // sponsor = begin + createAccount (the reserves)
       // Do NOT release the lease: the CLIENT submits this tx later. The lease TTL guards
       // the channel from reuse until the handout is submitted or dead (tx_too_late).
       return { xdr: tx.toXDR(), via: "channel", ...base };
     } catch (e) {
+      // Nothing was handed out, so this sandwich can never be submitted: its bid comes back before
+      // the sponsor path charges its own (until 2026-10-08 a fallback counted the onboarding twice).
+      await charge?.notIncluded();
       // A channel-path failure must never strand the onboarding — release + fall back.
       await lease.release();
+      // A spent fee budget is a refusal, not a channel fault: falling back would charge the same
+      // sandwich on the sponsor path, be refused again, and log a channel failure that never was.
+      if (isPublicRefusal(e)) throw e;
       console.warn(`[create-account] channel path failed, falling back to sponsor: ${(e as Error).message}`);
     }
   }
 
   // SPONSOR path — the original behavior (tx.source = sponsor). Serializes on the
   // sponsor's single sequence; used only when no channel is configured/free.
-  const tx = await buildCreateAccountSandwich(server, config, signer.publicKey(), input.recipientPublicKey, exists);
-  await signer.sign(tx);
+  const tx = await buildCreateAccountSandwich(server, config, config.sponsorAccountId, input.recipientPublicKey, exists);
+  // The sponsor's own fee is small, but it is the sponsor's: same charge, same place (before signing),
+  // given back only if the signer produced nothing to hand out.
+  const charge = await chargeSponsorFee(tx.fee);
+  await signCharged(charge, () => signer.sign(tx));
   return { xdr: tx.toXDR(), via: "sponsor", ...base };
 }

@@ -159,6 +159,13 @@ export default function ClaimButton({
       // limited, offline — rendered the same "your money is still safe, try again", which is false
       // advice for the commonest case and left us nothing to debug from a bug report.
       const info = classifyClaimError(err);
+      /* Undecided (the sponsor's 202): the claim may still land in the link's account, and that
+         account's key is the link's own. Keep it on this device now, as the throwaway the success
+         path makes of it (lib/claim-home.ts), so /home gathers the money if it lands. Best-effort and
+         in the background: the screen's answer does not wait on it. */
+      if (info.kind === "uncertain" && secretRef.current) {
+        void settleLinkAccount(Keypair.fromSecret(secretRef.current), settleDeps).catch(() => undefined);
+      }
       setFailure(info);
       setState("error");
       // Safe to log: classifyClaimError never carries the bearer key, and this is the only place a
@@ -250,8 +257,16 @@ export default function ClaimButton({
     switch (failure?.kind) {
       case "busy":
         return copy.claim.errBusyBody;
+      case "network-busy":
+        return copy.claim.errNetworkBusyBody;
+      case "day-limit":
+        return copy.claim.errDayLimitBody;
       case "paused":
         return copy.claim.errPausedBody;
+      case "uncertain":
+        /* The sponsor's 202 for /feebump: the claim is on the network and undecided. No button (the
+           classifier says so), and reopening the link reads the balance before it says anything. */
+        return copy.claim.errUncertainBody;
       case "offline":
         return copy.claim.errOfflineBody;
       case "link-invalid":

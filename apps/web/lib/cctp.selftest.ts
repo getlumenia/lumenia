@@ -65,7 +65,20 @@ async function main() {
   ok("202 is pending with Circle's words", p.status === "pending" && p.detail.includes("pending_confirmations"));
   const m = await askRelay("https://s.test", "0x" + "ab".repeat(32), fake(200, { status: "minted", hash: "f8c2" }));
   ok("200 minted returns the Stellar hash", m.status === "minted" && m.hash === "f8c2");
+  const u = await askRelay("https://s.test", "0x" + "ab".repeat(32), fake(202, { status: "minted", hash: "a1b2", nonce: "0x01", confirmed: false }));
+  ok("202 WITH a mint hash is minted-but-confirming, never 'Circle still attesting' (a re-ask would be refused as a replay)", u.status === "minted" && u.hash === "a1b2" && u.confirmed === false);
+  // The OTHER 202 a submitted mint can come back as: the RPC stopped answering while the relay
+  // watched it (apps/sponsor/src/lib/cctp-relay.ts), and the worker answers {error, hash}.
+  const said = await askRelay("https://s.test", "0x" + "ab".repeat(32), fake(202, { error: "submit unconfirmed", hash: "cd".repeat(32) }));
+  ok("202 'submit unconfirmed' with a hash is minted-but-confirming, never 'pending'", said.status === "minted" && said.hash === "cd".repeat(32) && said.confirmed === false);
+  const saidNoHash = await askRelay("https://s.test", "0x" + "ab".repeat(32), fake(202, { error: "submit unconfirmed" }));
+  ok("202 'submit unconfirmed' with no hash is still a submitted mint (asking again would relay it twice)", saidNoHash.status === "minted" && saidNoHash.hash === "" && saidNoHash.confirmed === false);
+  const hashOnly = await askRelay("https://s.test", "0x" + "ab".repeat(32), fake(202, { hash: "ef".repeat(32) }));
+  ok("202 carrying a hash and nothing else is a submitted mint", hashOnly.status === "minted" && hashOnly.confirmed === false);
+  const pendingWithJunk = await askRelay("https://s.test", "0x" + "ab".repeat(32), fake(202, { status: "pending", detail: "attesting", hash: "x" }));
+  ok("an explicit 'pending' stays pending, whatever else rides along", pendingWithJunk.status === "pending");
   await throws("a refusal carries the sponsor's reason", () => askRelay("https://s.test", "0x" + "ab".repeat(32), fake(503, { error: "cctp relay not configured" })), "not configured");
+  await throws("the busy network is a refusal in its own words, not a wait for Circle", () => askRelay("https://s.test", "0x" + "ab".repeat(32), fake(503, { error: "the network is busy; try again shortly" })), "network is busy");
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} CCTP WEB SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

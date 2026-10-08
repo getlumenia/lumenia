@@ -44,7 +44,8 @@ export interface AgentDeps {
   networkLabel: string;
   createLink: (o: { signer: Signer; amount: string; from: string; webOrigin: string; sponsorUrl: string; expiry?: number }) => Promise<V2Link>;
   listReclaimable: (sender: string) => Promise<ReclaimableV2[]>;
-  reclaim: (o: { signer: Signer; linkHex: string; sponsorUrl: string }) => Promise<{ hash: string }>;
+  /** `confirmed: false` is the relay's 202: the take-back was accepted and not yet seen landing. */
+  reclaim: (o: { signer: Signer; linkHex: string; sponsorUrl: string }) => Promise<{ hash: string; confirmed?: boolean }>;
   usdcBalance: (address: string) => Promise<string | null>;
   sponsorHealth: () => Promise<{ ok: boolean; network?: string } | null>;
 }
@@ -148,8 +149,26 @@ export function buildAgentServer(deps: AgentDeps): McpServer {
       inputSchema: { linkHex: z.string().regex(/^[0-9a-f]{64}$/).describe("The link id from create_payment_link or list_reclaimable") },
     },
     async ({ linkHex }) => {
-      const { hash } = await deps.reclaim({ signer: deps.signer, linkHex, sponsorUrl: deps.sponsorUrl });
-      return { content: [{ type: "text", text: `Reclaimed ${linkHex}: tx ${hash}` }], structuredContent: { linkHex, hash } };
+      const { hash, confirmed } = await deps.reclaim({ signer: deps.signer, linkHex, sponsorUrl: deps.sponsorUrl });
+      /* The relay's 202 is not money back: the take-back was accepted and the ledger had not shown
+         it landing when the relay stopped watching. Saying "Reclaimed" on it told the agent, and
+         whoever it reports to, that the money was back when the take-back might not land. Asking
+         again is safe: the escrow releases a drop once, so a second take-back of one that landed is
+         refused by its own simulation with nothing moved. */
+      if (confirmed === false) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Take-back of ${linkHex} accepted, not yet confirmed (tx ${hash || "unknown"}). ` +
+                "It may still land; check list_reclaimable in a minute, and call reclaim_link again only if the link is still listed.",
+            },
+          ],
+          structuredContent: { linkHex, hash, confirmed: false },
+        };
+      }
+      return { content: [{ type: "text", text: `Reclaimed ${linkHex}: tx ${hash}` }], structuredContent: { linkHex, hash, confirmed: true } };
     },
   );
 

@@ -39,7 +39,7 @@ export function ActivateMainnet() {
   useEffect(() => {
     if (network !== "public" || !account) return;
     let alive = true;
-    void ensureCanReceive(account.address, getSigner).then((r) => alive && setResult(r));
+    void ensureCanReceive(account.address, () => getSigner({ movesMoney: false })).then((r) => alive && setResult(r));
     return () => {
       alive = false;
     };

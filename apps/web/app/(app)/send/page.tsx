@@ -23,11 +23,12 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
-import { isNeedsPassword } from "../../../lib/signer-error";
-import { loadBalance, loadTotalUsd } from "../../../lib/horizon";
+import { isNeedsBackup, isNeedsPassword } from "../../../lib/signer-error";
+import { loadBalance, loadSubmitOutcome, loadTotalUsd } from "../../../lib/horizon";
 import { connectExternalWallet, disconnectExternalWallet, externalWalletSigner, walletsKitEnabled } from "../../../lib/wallets-kit";
 import type { Signer } from "../../../lib/signer";
-import { payToAddress } from "../../../lib/send";
+import { payToAddress, SendUnconfirmedError } from "../../../lib/send";
+import { submitHashes, type SignedFacts } from "../../../lib/unconfirmed";
 import { createV2Link, DepositUncertainError, v2DepositLanded } from "../../../lib/lumendrop";
 import { claimPasswordProblem } from "../../../lib/claim-password";
 import { isValidAddress } from "../../../lib/request";
@@ -91,6 +92,23 @@ function sponsorUrl(): string {
 }
 
 /**
+ * A direct payment the sponsor accepted and never saw decided (its 202, or a reply that never came).
+ * Everything the re-check needs travels here; the payment itself is already signed and may land.
+ */
+interface PayUncertain {
+  amount: string;
+  toName: string;
+  toAddress: string;
+  /** the claimable balance this payment creates, if it lands (lib/send.ts SendUnconfirmedError) */
+  balanceId: string;
+  hashes: string[];
+  signed: SignedFacts;
+}
+
+/** The ledger-time margin lib/horizon.ts loadSubmitOutcome waits past a time bound, as a device-clock hint. */
+const PAY_SETTLE_MARGIN_MS = 60_000;
+
+/**
  * The metadata half of a sent link. The LINK ITSELF is deliberately absent: its #fragment is a
  * bearer key, and this record lives in plain localStorage. The link goes to `sent-links.ts`,
  * encrypted under a non-extractable device key, and `hasLink` is the flag this record keeps so
@@ -137,7 +155,7 @@ function shortName(name: string): string {
 }
 
 export default function SendPage() {
-  const { status, account, accounts, getSigner, createAccount } = useWallet();
+  const { status, account, accounts, getSigner, createAccount, pilotState } = useWallet();
   const router = useRouter();
   const [balance, setBalance] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
@@ -161,6 +179,11 @@ export default function SendPage() {
   const [refusedByPilot, setRefusedByPilot] = useState(false);
   /** The account has no password yet — a different errand from a locked one, and /unlock can't do it. */
   const [needsPassword, setNeedsPassword] = useState(false);
+  /** Real money with the pilot retired, and no backup yet: /pilot's one secure step (lib/wallet.tsx getSigner). */
+  const [needsBackup, setNeedsBackup] = useState(false);
+  /* A direct payment we submitted but could not confirm. Its own state for the same reason as
+     `uncertain` below: an error screen invites a retry, and a retry here is a second payment. */
+  const [payUncertain, setPayUncertain] = useState<PayUncertain | null>(null);
   /* A deposit we submitted but could not confirm. Distinct from `error` on purpose: an error screen
      invites a retry, and retrying this is the failure mode. */
   const [uncertain, setUncertain] = useState<{
@@ -411,6 +434,7 @@ export default function SendPage() {
     setError("");
     setRefusedByPilot(false);
     setNeedsPassword(false);
+    setNeedsBackup(false);
     // Validate the ROUNDED amount — "0.001" parses > 0 but formats to "0.00",
     // which the ledger (and /r's parser) rejects. The guard must see what ships.
     const amt = Math.round(Number.parseFloat(amount) * 100) / 100;
@@ -494,6 +518,13 @@ export default function SendPage() {
 
            Offered, not jumped to: a sentence set on the way out of a page is a sentence nobody
            reads, and being moved off the amount you just typed reads as the send having failed. */
+        /* Checked first: the wallet raises it for a Phase-1 account too, and /pilot's secure step
+           sets the password AND writes the backup, which "Set a password" alone would not. */
+        if (isNeedsBackup(e)) {
+          setError("Lock this account and back it up to finish. Real money needs both, and nothing has been sent.");
+          setNeedsBackup(true);
+          return;
+        }
         if (isNeedsPassword(e) || account!.phase === 1) {
           setError("Set a password to finish — until then, this money can't be sent.");
           setNeedsPassword(true);
@@ -599,6 +630,23 @@ export default function SendPage() {
         return; // deliberately skips setError — this is not an error screen
       }
 
+      /* The direct payment's own undecided outcome (lib/send.ts). It used to crash on the 202's
+         missing balance id and fall into "Your money hasn't moved. Try again.", and paying again
+         could make both payments land. Same treatment as a deposit: the truth, a re-check against
+         the ledger, and no way to pay again until the ledger has answered. */
+      if (e instanceof SendUnconfirmedError && e.signed && request?.to) {
+        setNotYet("");
+        setPayUncertain({
+          amount: amt.toFixed(2),
+          toName: request.name,
+          toAddress: request.to,
+          balanceId: e.balanceId,
+          hashes: submitHashes(e),
+          signed: e.signed,
+        });
+        return;
+      }
+
       const msg = (e as Error).message ?? "";
       const pilotReason = /403/.test(msg) ? msg.slice(msg.indexOf("{")) : "";
       const reason = pilotReason.match(/"error"\s*:\s*"([^"]+)"/)?.[1];
@@ -669,6 +717,76 @@ export default function SendPage() {
           {notYet && <p className="mt-3 text-sm font-medium text-ink">{notYet}</p>}
           <div className="mt-4">
             <PrimaryButton loading={rechecking} loadingLabel="Checking…" onClick={recheck}>
+              Check again
+            </PrimaryButton>
+          </div>
+        </MoneyCard>
+        <Link href="/activity" className="text-sm text-ink-soft underline-offset-2 hover:underline">
+          See my activity
+        </Link>
+      </div>
+    );
+  }
+
+  /* A direct payment submitted and not confirmed. The ledger decides (lib/horizon.ts
+     loadSubmitOutcome): landed, and this becomes the ordinary "paid" screen; can no longer land,
+     and it says so and lets them pay again; anything else, and it stays here, with no path that
+     pays a second time. */
+  if (payUncertain) {
+    async function recheckPay() {
+      const p = payUncertain!;
+      setRechecking(true);
+      setNotYet("");
+      try {
+        const outcome = await loadSubmitOutcome(
+          { hashes: p.hashes, source: p.signed.source, sequence: p.signed.sequence, maxTime: p.signed.maxTime },
+          activeNetwork(),
+        );
+        if (outcome === "landed") {
+          saveSent(p.balanceId.slice(-8), {
+            balanceId: p.balanceId,
+            hasLink: false,
+            amount: p.amount,
+            from: "",
+            toName: p.toName,
+            toAddress: p.toAddress,
+            at: new Date().toISOString(),
+          });
+          if (request?.nonce) void sendEvent("request_paid", request.nonce);
+          setReady({ kind: "direct", balanceId: p.balanceId, toName: p.toName });
+          setPayUncertain(null);
+        } else if (outcome === "failed") {
+          // Applied and refused, or past the point any ledger could include it: nothing moved.
+          setPayUncertain(null);
+          setError("That one didn't go through. Nothing left your account, so you can pay again.");
+        } else {
+          setNotYet(
+            outcome === "unknown"
+              ? "We couldn't check just now. Nothing has changed. Try again in a moment."
+              : `It hasn't arrived yet, and it can still get there. ${waitHint(p.signed.maxTime * 1000 + PAY_SETTLE_MARGIN_MS)}`,
+          );
+        }
+      } finally {
+        setRechecking(false);
+      }
+    }
+
+    return (
+      <div className="flex flex-col gap-4 py-4">
+        <h1 className="text-xl font-bold text-ink">We couldn&apos;t confirm this one</h1>
+        <MoneyCard className="p-5">
+          <p className="text-sm text-ink">
+            Your {formatUsd(payUncertain.amount)} to {payUncertain.toName} was handed to the network, but we
+            didn&apos;t get confirmation back in time. It may well have gone through.
+          </p>
+          <p className="mt-2 text-sm font-semibold text-ink">Don&apos;t pay it again yet. You could pay twice.</p>
+          <p className="mt-2 text-sm text-ink-soft">
+            Check again in a moment. If it went through, this turns into the receipt. If it didn&apos;t,
+            we&apos;ll say so, and nothing will have left your account.
+          </p>
+          {notYet && <p className="mt-3 text-sm font-medium text-ink">{notYet}</p>}
+          <div className="mt-4">
+            <PrimaryButton loading={rechecking} loadingLabel="Checking..." onClick={recheckPay}>
               Check again
             </PrimaryButton>
           </div>
@@ -756,15 +874,25 @@ export default function SendPage() {
             but skips the screen that used to say real money exists at all. Somebody could send
             practice links for a week without learning there was anything else. One line, no
             interruption, and it says what it costs: it is invite-only. */}
-        {!activeNetwork().isMainnet && (
-          <p className="mt-2 text-sm text-ink-soft">
-            This is practice money.{" "}
-            <Link href="/pilot" className="underline underline-offset-2 hover:text-ink">
-              Ask to send real money
-            </Link>{" "}
-            — it&apos;s invite-only while the pilot is small.
-          </p>
-        )}
+        {!activeNetwork().isMainnet &&
+          (pilotState === "open" ? (
+            /* The pilot is retired: "invite-only" would be false, and /pilot is the switch now. */
+            <p className="mt-2 text-sm text-ink-soft">
+              This is practice money. Real money is open to everyone:{" "}
+              <Link href="/pilot" className="underline underline-offset-2 hover:text-ink">
+                switch to real money
+              </Link>
+              .
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-ink-soft">
+              This is practice money.{" "}
+              <Link href="/pilot" className="underline underline-offset-2 hover:text-ink">
+                Ask to send real money
+              </Link>
+              : it&apos;s invite-only while the pilot is small.
+            </p>
+          ))}
       </header>
 
       {zeroBalance ? (
@@ -964,6 +1092,12 @@ export default function SendPage() {
           {needsPassword && (
             <Link href="/account" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
               Set a password
+            </Link>
+          )}
+          {/* /pilot's secure step locks AND backs up in one go (lib/wallet.tsx getSigner). */}
+          {needsBackup && (
+            <Link href="/pilot" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
+              Lock it and back it up
             </Link>
           )}
           {refusedByPilot && (

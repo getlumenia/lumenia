@@ -29,6 +29,8 @@
 import { rpc, Contract, StrKey, TransactionBuilder, xdr, type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
+import { isSubmitUnconfirmed } from "./stellar.js";
+import { feeBumpBase, payAndSubmit, type RelayDeps, type RelayRpc } from "./soroban-relay.js";
 import { CHANNEL_LEASE_TTL_SECONDS, type ChannelManager } from "./channels.js";
 
 /** Circle's CctpForwarder on Stellar testnet (developers.circle.com, CCTP on Stellar). */
@@ -126,15 +128,16 @@ export interface CctpRelayInput {
   sourceDomain?: number;
 }
 
-export type CctpRelayResult = { status: "pending"; detail: string } | { status: "minted"; hash: string; nonce: string };
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export type CctpRelayResult =
+  | { status: "pending"; detail: string }
+  /** `confirmed: false` = accepted by the RPC, not observed to land before the poll window closed (202). */
+  | { status: "minted"; hash: string; nonce: string; confirmed: boolean };
 
 export async function relayCctpHandler(
   config: SponsorConfig,
   signer: SponsorSigner,
   input: CctpRelayInput,
-  opts: { forwarder?: string; irisUrl?: string; fetchImpl?: typeof fetch; channels?: ChannelManager } = {},
+  opts: { forwarder?: string; irisUrl?: string; fetchImpl?: typeof fetch; channels?: ChannelManager; relay?: RelayDeps } = {},
 ): Promise<CctpRelayResult> {
   if (config.network !== "testnet") throw new Error("the CCTP relay is testnet-only");
   const forwarder = opts.forwarder ?? "";
@@ -147,10 +150,14 @@ export async function relayCctpHandler(
   if (found.status === "pending") return found;
   const header = checkCctpMessage(found.message, found.attestation, forwarder);
 
-  const server = new rpc.Server(config.sorobanRpcUrl);
+  const relay = opts.relay ?? {};
+  const server: RelayRpc = relay.rpc ? relay.rpc(config.sorobanRpcUrl) : new rpc.Server(config.sorobanRpcUrl);
   const lease = opts.channels?.enabled ? await opts.channels.lease() : null;
+  // An undecided mint may still land on this channel's sequence within its timebound: keep the
+  // lease and let its TTL lapse, exactly as the claim relay does (soroban-relay.ts).
+  let keepLease = false;
   try {
-    const source = await server.getAccount(lease ? lease.publicKey : signer.publicKey());
+    const source = await server.getAccount(lease ? lease.publicKey : config.sponsorAccountId);
     const tx = new TransactionBuilder(source, { fee: "1000000", networkPassphrase: config.networkPassphrase })
       .addOperation(new Contract(forwarder).call(CCTP_METHOD, xdr.ScVal.scvBytes(Buffer.from(found.message)), xdr.ScVal.scvBytes(Buffer.from(found.attestation))))
       .setTimeout(TIMEOUT_SECONDS)
@@ -164,26 +171,36 @@ export async function relayCctpHandler(
 
     let submitTx: Transaction | FeeBumpTransaction;
     if (lease) {
-      prepared.sign(lease.keypair);
-      const bump = TransactionBuilder.buildFeeBumpTransaction(signer.publicKey(), prepared.fee, prepared, config.networkPassphrase);
-      await signer.sign(bump);
-      submitTx = bump;
+      prepared.sign(lease.keypair); // the channel lends its sequence; the inner leaves only fee-bumped
+      submitTx = TransactionBuilder.buildFeeBumpTransaction(config.sponsorAccountId, feeBumpBase(prepared), prepared, config.networkPassphrase);
     } else {
-      await signer.sign(prepared);
       submitTx = prepared;
     }
 
-    const sent = await server.sendTransaction(submitTx);
-    if (sent.status === "ERROR") throw new Error(`cctp-relay send failed: ${JSON.stringify(sent.errorResult)}`);
-    const maxPolls = Math.ceil((TIMEOUT_SECONDS * 1000) / POLL_MS);
-    let got = await server.getTransaction(sent.hash);
-    for (let i = 0; i < maxPolls && got.status === "NOT_FOUND"; i++) {
-      await sleep(POLL_MS);
-      got = await server.getTransaction(sent.hash);
+    // Charge the bid, sign, send and watch: the same single step as the LumenDrop relays, so the
+    // fee budget, the busy answer and the undecided answer cannot drift between them.
+    const { hash, got } = await payAndSubmit(server, signer, submitTx, "cctp-relay", relay, {
+      pollMs: POLL_MS,
+      maxPolls: Math.ceil((TIMEOUT_SECONDS * 1000) / POLL_MS),
+    });
+    if (got.status === rpc.Api.GetTransactionStatus.FAILED) throw new Error(`cctp-relay tx ${got.status}`);
+    /* NOT_FOUND after the window is "accepted, undecided", not "failed": a mint reported as failed
+     * would be relayed again by the client and refused by the forwarder as a replayed nonce, with
+     * the first one landing anyway. The worker answers 202 for confirmed:false. */
+    return { status: "minted", hash, nonce: header.nonce, confirmed: got.status === rpc.Api.GetTransactionStatus.SUCCESS };
+  } catch (e) {
+    /* An undecided mint (the send went unanswered, or the RPC died while it was watched) is the
+     * same "submitted, not yet confirmed" as NOT_FOUND above, and gets the same body. It used to
+     * surface as the generic {error: "submit unconfirmed"}, which the add-money page read as
+     * Circle still attesting; it then asked again, and a second mint was signed and charged for a
+     * burn already minting. One 202 body for "submitted" is what lets the page say the truth. */
+    if (isSubmitUnconfirmed(e)) {
+      keepLease = true;
+      const hash = (e as { hash?: string }).hash;
+      if (hash) return { status: "minted", hash, nonce: header.nonce, confirmed: false };
     }
-    if (got.status !== "SUCCESS") throw new Error(`cctp-relay tx ${got.status}`);
-    return { status: "minted", hash: sent.hash, nonce: header.nonce };
+    throw e;
   } finally {
-    if (lease) await lease.release();
+    if (lease && !keepLease) await lease.release();
   }
 }

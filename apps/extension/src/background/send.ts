@@ -20,9 +20,9 @@
  * worker restart, where the in-memory "busy" guard does not.
  *
  * The real-money gate mirrors apps/web/lib/wallet.tsx (getSigner): a mainnet send needs a
- * password-locked (Phase-2) account. The sponsor does not check that; this does, exactly as the
- * website does. The pilot allowlist and the caps are the sponsor's to enforce; they are checked
- * here only to say so before anything is signed.
+ * password-locked (Phase-2) account that is backed up. The sponsor does not check either; this
+ * does, exactly as the website does. The pilot allowlist and the caps are the sponsor's to enforce;
+ * they are checked here only to say so before anything is signed.
  */
 import { claimPasswordProblem, type NetworkConfig, type PreparedDeposit, type Signer, type createV2Link } from "../core";
 import { LINK_TTL_S, SRC, WEB_ORIGIN } from "../config";
@@ -44,6 +44,8 @@ export interface SendDeps {
   now(): number;
   settings(): Promise<Settings>;
   account(): Promise<{ pubkey: string; phase: 1 | 2 } | null>;
+  /** this account was made here and has no backup yet (account.ts backupView().needed) */
+  backupNeeded(): Promise<boolean>;
   signer(pubkey: string): Promise<Signer>;
   pilot(pubkey: string): Promise<PilotInfo>;
   balance(pubkey: string, net: NetworkConfig): Promise<BalanceInfo>;
@@ -76,6 +78,9 @@ export async function runSend(deps: SendDeps, req: SendRequest): Promise<SendOut
   if (net.isMainnet) {
     // Real money never sits under a key that opens without a password (wallet.tsx getSigner).
     if (acct.phase !== 2) throw fail("needs-password");
+    /* ...nor under a key that exists in this browser only. With the pilot retired the sponsor admits
+       every wallet, so the backup rule holds here, as wallet.tsx getSigner holds it on the web. */
+    if (await deps.backupNeeded()) throw fail("needs-backup");
     if (!settings.mainnetAck) throw new ExtError("not-approved", "Read the real-money note in Settings and accept it first.");
     const p = await deps.pilot(acct.pubkey);
     if (!p.approved) throw fail("not-approved");

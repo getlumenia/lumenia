@@ -32,7 +32,7 @@ import { PrimaryButton } from "./PrimaryButton";
 type View = "form" | "sent" | "already";
 
 export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { account, pilotState } = useWallet();
+  const { account, pilotState, switchNetwork } = useWallet();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -125,8 +125,32 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
      backup and then be told they had one (the same trap /pilot documents). */
   const readyToAsk = !account || (account.phase === 2 && hasBackup(account.address));
   const asked = pilotState === "pending";
+  // The pilot is retired: there is nothing to ask for, and the switch is one tap away (the
+  // once-only warning sheet shows on the switch itself).
+  const retired = pilotState === "open";
 
-  const body = asked ? (
+  const body = retired ? (
+    <>
+      <h2 className="app-modal-t">Real money is open to everyone</h2>
+      <p className="app-modal-s">
+        No invite needed any more. Transfers are capped, and the first switch shows you the one
+        thing to know before you use real money here.
+      </p>
+      <button
+        type="button"
+        className="app-modal-cta"
+        onClick={() => {
+          onClose();
+          switchNetwork("public");
+        }}
+      >
+        Switch to real money
+      </button>
+      <button type="button" className="app-modal-ghost" onClick={onClose}>
+        Not now
+      </button>
+    </>
+  ) : asked ? (
     <>
       <h2 className="app-modal-t">You&apos;re already on the list</h2>
       <p className="app-modal-s">

@@ -111,7 +111,7 @@ export function WaysBackIn({ connectedTicket, ticketProvider }: { connectedTicke
     if (!account) return;
     let signer: Signer;
     try {
-      signer = await getSigner();
+      signer = await getSigner({ movesMoney: false }); // a signed proof, not a money movement
     } catch (e) {
       setSealed(sealedBy(e, account.phase));
       setLinked(null);
@@ -137,7 +137,7 @@ export function WaysBackIn({ connectedTicket, ticketProvider }: { connectedTicke
   const accountSigner = useCallback(async (): Promise<Signer | null> => {
     if (!account) return null;
     try {
-      const signer = await getSigner();
+      const signer = await getSigner({ movesMoney: false }); // a signed proof, not a money movement
       setSealed(null);
       return signer;
     } catch (e) {

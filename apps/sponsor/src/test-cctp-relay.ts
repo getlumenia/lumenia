@@ -7,14 +7,19 @@
  *  (burn 0xddf8f16a...08fc on Base Sepolia, minted on Stellar testnet as 617908c7...1261). So the
  *  header offsets below are checked against bytes Circle actually produced, not a hand-made guess.
  *
- *  Nothing here signs, simulates or submits. The route checks run through `worker.fetch` with a
- *  throwaway sponsor key and no KV (the rate limiter and caps fall back to memory), and Circle is a
- *  fake `fetch`.
+ *  Nothing here reaches a network. The route checks run through `worker.fetch` with a throwaway
+ *  sponsor key and no KV (the rate limiter and caps fall back to memory), and Circle is a fake
+ *  `fetch`. The [submit] section drives the handler PAST the attestation with the real fixture, a
+ *  fake Soroban RPC (`opts.relay`) and a fake caps store: the fee charge before the signature, the
+ *  busy answer, and the one 202 body for a mint that was submitted but not yet seen to land.
  *
  *  RUN: pnpm --filter @lumenia/sponsor test:cctp   (no network, no live keys)
  * ============================================================================
  */
-import { Keypair, StrKey } from "@stellar/stellar-sdk";
+import { Account, Keypair, SorobanDataBuilder, StrKey, rpc, xdr, type FeeBumpTransaction, type Transaction } from "@stellar/stellar-sdk";
+import { FEE_BUDGET_REFUSAL, isPublicRefusal } from "./lib/caps.js";
+import type { ChannelManager } from "./lib/channels.js";
+import { isRelayBusy, type RelayRpc } from "./lib/soroban-relay.js";
 import {
   CCTP_FEE_CAP,
   CCTP_FORWARDERS,
@@ -164,6 +169,189 @@ async function main(): Promise<void> {
     globalThis.fetch = realFetch;
   });
   ok("a burn Circle has not attested yet answers 202 pending", waiting.status === 202 && waiting.json.status === "pending");
+
+  console.log("\n[submit] past the attestation: the fee is charged before the signature, and a submitted mint is one 202 body");
+  {
+    type Send = "PENDING" | "TRY_AGAIN_LATER" | "THROW_UNANSWERED";
+    type Get = "SUCCESS" | "NOT_FOUND" | "THROW";
+    const complete = irisFake({ status: 200, body: { messages: [{ status: "complete", message: MESSAGE_HEX, attestation: ATTESTATION_HEX }] } });
+    /** Every address the relay asked the RPC to load, so the account/signer split can be checked. */
+    const accountsAsked: string[] = [];
+    const fakeRpc = (send: Send, get: Get[]) => (_url: string): RelayRpc => {
+      let reads = 0;
+      return {
+        async getAccount(address: string) {
+          accountsAsked.push(address);
+          return new Account(address, "1");
+        },
+        async simulateTransaction() {
+          return {
+            _parsed: true,
+            latestLedger: 1,
+            events: [],
+            minResourceFee: "400000",
+            transactionData: new SorobanDataBuilder().setResourceFee(400_000),
+            result: { auth: [], retval: xdr.ScVal.scvVoid() },
+          } as unknown as rpc.Api.SimulateTransactionResponse;
+        },
+        async sendTransaction(tx: Transaction | FeeBumpTransaction) {
+          if (send === "THROW_UNANSWERED") throw new TypeError("fetch failed: socket hang up");
+          return { status: send, hash: tx.hash().toString("hex"), latestLedger: 1, latestLedgerCloseTime: 0 } as unknown as rpc.Api.SendTransactionResponse;
+        },
+        async getTransaction(hash: string) {
+          const st = get[Math.min(reads++, get.length - 1)]!;
+          if (st === "THROW") throw new Error("the rpc went away");
+          return { status: rpc.Api.GetTransactionStatus[st], txHash: hash, latestLedger: 1, latestLedgerCloseTime: 0, oldestLedger: 1, oldestLedgerCloseTime: 0 } as unknown as rpc.Api.GetTransactionResponse;
+        },
+      };
+    };
+    // The caps store: counts the fee charges (positive INCRBY on the fees key) and their give-backs.
+    const store = new Map<string, bigint>();
+    const feeMoves: bigint[] = [];
+    const realFetch2 = globalThis.fetch;
+    process.env.KV_REST_API_URL = "https://fake-kv.test";
+    process.env.KV_REST_API_TOKEN = "t";
+    globalThis.fetch = (async (_url: string | URL, init?: { body?: string }) => {
+      const cmds = JSON.parse(String(init?.body ?? "[]")) as string[][];
+      const results = cmds.map(([op, key, arg]) => {
+        if (op === "EXPIRE") return { result: 1 };
+        const next = (store.get(key!) ?? 0n) + BigInt(arg!);
+        store.set(key!, next);
+        if (key!.includes(":fees:") && !key!.endsWith(":gross")) feeMoves.push(BigInt(arg!)); // the net key only
+        return { result: next.toString() };
+      });
+      return { ok: true, status: 200, json: async () => results } as unknown as Response;
+    }) as typeof fetch;
+    const sponsorKey = Keypair.random();
+    const cfg = makeConfig({ network: "testnet", sponsorSecret: sponsorKey.secret(), usdcIssuer: Keypair.random().publicKey() });
+    const recording = () => {
+      const signed: string[] = [];
+      return {
+        signed,
+        signer: { publicKey: () => sponsorKey.publicKey(), sign: (tx: Transaction | FeeBumpTransaction) => void (signed.push(tx.fee), tx.sign(sponsorKey)) },
+      };
+    };
+    const mint = async (send: Send, get: Get[], channels?: ChannelManager) => {
+      store.clear();
+      feeMoves.length = 0;
+      const rec = recording();
+      try {
+        const out = await relayCctpHandler(cfg, rec.signer, { burnTxHash: BURN }, {
+          forwarder: CCTP_TESTNET_FORWARDER,
+          fetchImpl: complete,
+          channels,
+          relay: { rpc: fakeRpc(send, get), pollMs: 1, maxPolls: 2 },
+        });
+        return { out, err: null as unknown, signed: rec.signed };
+      } catch (err) {
+        return { out: null, err, signed: rec.signed };
+      }
+    };
+    const landed = await mint("PENDING", ["SUCCESS"]);
+    ok("a mint that lands answers {status:'minted', confirmed:true}", landed.out?.status === "minted" && "confirmed" in landed.out && landed.out.confirmed === true, String((landed.err as Error | null)?.message ?? ""));
+    ok("its fee was charged once, before the one signature", feeMoves.filter((m) => m > 0n).length === 1 && landed.signed.length === 1);
+    const late = await mint("PENDING", ["NOT_FOUND", "NOT_FOUND", "NOT_FOUND"]);
+    ok("NOT_FOUND after the window: {status:'minted', confirmed:false}, never 'failed'", late.out?.status === "minted" && "confirmed" in late.out && late.out.confirmed === false);
+    ok("and the whole bid stays counted (undecided)", feeMoves.every((m) => m > 0n));
+    const gone = await mint("PENDING", ["NOT_FOUND", "THROW"]);
+    ok(
+      "an RPC that dies mid-poll gives the SAME body {status:'minted', confirmed:false}, with the hash (it used to read as Circle still attesting)",
+      gone.out?.status === "minted" && "hash" in gone.out && /^[0-9a-f]{64}$/.test(gone.out.hash) && gone.out.confirmed === false,
+      String((gone.err as Error | null)?.message ?? ""),
+    );
+    const unanswered = await mint("THROW_UNANSWERED", ["SUCCESS"]);
+    ok("a send that went unanswered gives that body too", unanswered.out?.status === "minted" && "confirmed" in unanswered.out && unanswered.out.confirmed === false);
+    const busy = await mint("TRY_AGAIN_LATER", ["SUCCESS"]);
+    ok("TRY_AGAIN_LATER raises 'busy' (503), nothing queued", isRelayBusy(busy.err), String((busy.err as Error | null)?.message));
+    ok("and the bid comes back whole", feeMoves.reduce((a, b) => a + b, 0n) === 0n, feeMoves.join(","));
+    // ORDER: with the day's budget spent the refusal comes before ANY sponsor signature.
+    store.clear();
+    feeMoves.length = 0;
+    const day = new Date().toISOString().slice(0, 10);
+    const rec = recording();
+    let refusal: unknown = null;
+    try {
+      store.set(`caps:testnet:fees:${day}`, 20_000_000_000n);
+      await relayCctpHandler(cfg, rec.signer, { burnTxHash: BURN }, { forwarder: CCTP_TESTNET_FORWARDER, fetchImpl: complete, relay: { rpc: fakeRpc("PENDING", ["SUCCESS"]), pollMs: 1, maxPolls: 2 } });
+    } catch (e) {
+      refusal = e;
+    }
+    ok("ORDER: a spent fee budget refuses the mint with the public sentence", isPublicRefusal(refusal) && (refusal as Error).message === FEE_BUDGET_REFUSAL, String((refusal as Error | null)?.message));
+    ok("ORDER: and the sponsor signed nothing", rec.signed.length === 0);
+    // The channel path keeps its lease for an undecided mint, and frees it for a decided one.
+    const pool = () => {
+      const channel = Keypair.random();
+      const state = { released: 0 };
+      const manager = { enabled: true, lease: async () => ({ keypair: channel, publicKey: channel.publicKey(), release: async () => void state.released++ }) } as unknown as ChannelManager;
+      return { manager, state };
+    };
+    const kept = pool();
+    await mint("THROW_UNANSWERED", ["SUCCESS"], kept.manager);
+    ok("an undecided mint keeps its channel lease (it may still land on that sequence)", kept.state.released === 0);
+    const freed = pool();
+    const viaChannel = await mint("PENDING", ["SUCCESS"], freed.manager);
+    ok("a decided mint frees it", freed.state.released === 1);
+    ok("and its fee-bump bids 2 x 1,000,000 + 400,000 (the inner's inclusion fee as the base)", viaChannel.signed[0] === "2400000", viaChannel.signed.join(","));
+    {
+      /* After the KMS cutover the account and the signer are two addresses (D3 item h). The mint must
+         be built on the ACCOUNT (its sequence, its fee) and only signed by the signer. */
+      const ACCOUNT = Keypair.random().publicKey();
+      const split = makeConfig({ network: "testnet", sponsorSecret: sponsorKey.secret(), sponsorAccountId: ACCOUNT, usdcIssuer: cfg.usdc.getIssuer()! });
+      const capture: Array<Transaction | FeeBumpTransaction> = [];
+      const splitSigner = { publicKey: () => sponsorKey.publicKey(), sign: (tx: Transaction | FeeBumpTransaction) => void (capture.push(tx), tx.sign(sponsorKey)) };
+      store.clear();
+      accountsAsked.length = 0;
+      await relayCctpHandler(split, splitSigner, { burnTxHash: BURN }, { forwarder: CCTP_TESTNET_FORWARDER, fetchImpl: complete, relay: { rpc: fakeRpc("PENDING", ["SUCCESS"]), pollMs: 1, maxPolls: 2 } });
+      const signedTx = capture[0] as Transaction | undefined;
+      ok("account != signer, sponsor path: the mint is loaded and sourced on the ACCOUNT, never the signer", accountsAsked[0] === ACCOUNT && signedTx?.source === ACCOUNT, `${accountsAsked.join(",")} / ${signedTx?.source}`);
+      capture.length = 0;
+      accountsAsked.length = 0;
+      const lanes = pool();
+      await relayCctpHandler(split, splitSigner, { burnTxHash: BURN }, { forwarder: CCTP_TESTNET_FORWARDER, fetchImpl: complete, channels: lanes.manager, relay: { rpc: fakeRpc("PENDING", ["SUCCESS"]), pollMs: 1, maxPolls: 2 } });
+      const bump = capture[0] as FeeBumpTransaction | undefined;
+      ok("account != signer, channel path: the fee-bump's fee source is the ACCOUNT", !!bump && "feeSource" in bump && bump.feeSource === ACCOUNT, String(bump && "feeSource" in bump ? bump.feeSource : "no fee-bump"));
+    }
+    {
+      /* The Worker's OWN answer (D3 item g) through worker.fetch: a submitted mint not yet seen to land
+         is 202 {status:'minted', confirmed:false}, a landed one 200. The Worker builds its own
+         rpc.Server, so the client's prototype is stubbed; Circle is the only thing asked over fetch. */
+      delete process.env.KV_REST_API_URL;
+      delete process.env.KV_REST_API_TOKEN;
+      globalThis.fetch = complete;
+      process.env.CCTP_FORWARDER = CCTP_TESTNET_FORWARDER;
+      process.env.CCTP_IRIS_URL = "https://iris.test";
+      const proto = rpc.Server.prototype as unknown as Record<string, unknown>;
+      const methods = ["getAccount", "simulateTransaction", "sendTransaction", "getTransaction"];
+      const saved = Object.fromEntries(methods.map((k) => [k, proto[k]]));
+      const useRpc = (send: Send, get: Get[]) => {
+        const f = fakeRpc(send, get)("x") as unknown as Record<string, unknown>;
+        for (const k of methods) proto[k] = f[k];
+      };
+      const relayOnce = async () => {
+        const res = await worker.fetch(
+          new Request("https://sponsor.test/cctp-relay", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ burnTxHash: BURN }) }),
+          ENV,
+        );
+        return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+      };
+      try {
+        useRpc("THROW_UNANSWERED", ["SUCCESS"]);
+        const undecided = await relayOnce();
+        ok("worker.fetch: a mint whose send went unanswered answers 202 {status:'minted', confirmed:false}", undecided.status === 202 && undecided.body.status === "minted" && undecided.body.confirmed === false, `${undecided.status} ${JSON.stringify(undecided.body)}`);
+        useRpc("PENDING", ["SUCCESS"]);
+        const landed = await relayOnce();
+        ok("worker.fetch: a mint that lands answers 200 {status:'minted', confirmed:true}", landed.status === 200 && landed.body.confirmed === true, `${landed.status} ${JSON.stringify(landed.body)}`);
+        useRpc("TRY_AGAIN_LATER", ["SUCCESS"]);
+        const busy = await relayOnce();
+        ok("worker.fetch: a busy RPC answers 503 with the busy sentence", busy.status === 503 && /network is busy/.test(String(busy.body.error)), `${busy.status} ${JSON.stringify(busy.body)}`);
+      } finally {
+        for (const k of methods) proto[k] = saved[k];
+      }
+    }
+    globalThis.fetch = realFetch2;
+    delete process.env.KV_REST_API_URL;
+    delete process.env.KV_REST_API_TOKEN;
+  }
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} CCTP RELAY ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

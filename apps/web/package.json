@@ -27,6 +27,7 @@
     "test:claimmeta": "tsx lib/claim-metadata.selftest.ts",
     "test:claimledger": "tsx lib/claim-ledger.selftest.ts",
     "test:claimhome": "tsx lib/claim-home.selftest.ts",
+    "test:pilotaccess": "tsx lib/pilot-access.selftest.ts",
     "test:agentmcp-live": "tsx lib/agent-mcp.livetest.ts",
     "lint": "eslint .",
     "agent-mcp": "tsx lib/agent-mcp.ts"

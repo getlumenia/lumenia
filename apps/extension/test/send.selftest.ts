@@ -51,6 +51,8 @@ type Behaviour =
 interface Cfg {
   settings?: Partial<Settings>;
   account?: { pubkey: string; phase: 1 | 2 } | null;
+  /** the account was made here and never backed up (account.ts backupView().needed) */
+  backupNeeded?: boolean;
   pilot?: Partial<PilotInfo> | Error;
   balance?: BalanceInfo;
   signerError?: Error;
@@ -167,6 +169,10 @@ async function main() {
       now: () => clock.now,
       settings: async () => ({ ...settings }),
       account: async () => account,
+      backupNeeded: async () => {
+        rig.log.push("backup");
+        return cfg.backupNeeded === true;
+      },
       signer: async (pubkey) => {
         rig.log.push("signer");
         rig.signerCalls.push(pubkey);
@@ -257,9 +263,14 @@ async function main() {
   const main2 = makeRig(MAIN);
   const m2 = await send(main2, { amount: "5", from: "Ayse" });
   ok(
-    "a real-money send asks the pilot once, first, then runs the same pipeline",
-    codeOf(m2) === "returned" && same(main2.log, ["pilot", "signer", "balance", "beacon:send_started", "createLink", "seal", "put:submitted", "post", "put:confirmed", "beacon:send_link_created"]),
+    "a real-money send checks the backup, asks the pilot once, then runs the same pipeline",
+    codeOf(m2) === "returned" && same(main2.log, ["backup", "pilot", "signer", "balance", "beacon:send_started", "createLink", "seal", "put:submitted", "post", "put:confirmed", "beacon:send_link_created"]),
     main2.log.join(" > "),
+  );
+  const practiceUnbacked = makeRig({ backupNeeded: true });
+  ok(
+    "practice money is not held to the backup: an account made here sends practice links at once",
+    codeOf(await send(practiceUnbacked)) === "returned" && !practiceUnbacked.log.includes("backup"),
   );
   ok("  ...as a public-network record", main2.puts[0]!.net === "public" && main2.creates[0]!.net === config.netConfig("public"));
 
@@ -281,9 +292,15 @@ async function main() {
     { name: "403, a body that is not JSON (a platform page)", err: relay(403, "Forbidden"), code: "uncertain", phase: "uncertain" },
     { name: "429, rate limited", err: relay(429, '{"error":"rate limit"}'), code: "rate-limited", phase: "failed" },
     { name: "429 with a platform page, not the sponsor's JSON", err: relay(429, "<html>Too Many Requests</html>"), code: "uncertain", phase: "uncertain" },
-    { name: "503, halted", err: relay(503, '{"error":"paused"}'), code: "halted", phase: "failed" },
+    // A 503 is told apart by the sponsor's own sentence, never by the status (D3): the operator's
+    // halt and a network that declined to queue the deposit are different waits.
+    { name: "503, halted (the Worker's own words)", err: relay(503, '{"error":"sponsor temporarily halted"}'), code: "halted", phase: "failed" },
+    { name: "503, the network is busy (nothing was queued)", err: relay(503, '{"error":"the network is busy; try again shortly"}'), code: "network-busy", phase: "failed", text: /network is busy/ },
+    { name: "503 with a sentence the sponsor does not send for a refusal", err: relay(503, '{"error":"paused"}'), code: "uncertain", phase: "uncertain" },
     { name: "503 from the platform mid-run (Workers error 1102), not the sponsor's JSON", err: relay(503, "<html>Error 1102 Worker exceeded resource limits</html>"), code: "uncertain", phase: "uncertain" },
     { name: "503 with JSON that carries no error sentence", err: relay(503, '{"ok":false}'), code: "uncertain", phase: "uncertain" },
+    { name: "400 on testnet, the day's fee budget (raised before the sponsor signs anything)", err: relay(400, '{"error":"today\'s sponsor fee budget is spent; try again tomorrow"}'), code: "day-limit", phase: "failed", text: /tomorrow/ },
+    { name: "400 on real money, the day's fee budget", cfg: MAIN, err: relay(400, '{"error":"today\'s sponsor fee budget is spent; try again tomorrow"}'), code: "day-limit", phase: "failed" },
     { name: "400 on testnet, the shared daily cap (a stated refusal, before the submit)", err: relay(400, '{"error":"canary cap: daily escrow cap of 50 USDC reached; try again tomorrow"}'), code: "sponsor-refused", phase: "failed", text: /limit for today is reached\. Nothing moved/ },
     { name: "400 on real money, the shared daily cap", cfg: MAIN, err: relay(400, '{"error":"canary cap: daily escrow cap of 50 USDC reached; try again tomorrow"}'), code: "sponsor-refused", phase: "failed", text: /limit for today is reached\. Nothing moved/ },
     { name: "400 on real money, the per-link cap", cfg: MAIN, err: relay(400, '{"error":"canary cap: amount 5.5 USDC exceeds the per-drop cap of 5 USDC"}'), code: "over-cap", phase: "failed" },
@@ -333,6 +350,7 @@ async function main() {
     [row("403, not on the pilot allowlist"), MESSAGES["not-approved"]],
     [row("429"), MESSAGES["rate-limited"]],
     [row("503, halted"), MESSAGES.halted],
+    [row("503, the network is busy"), MESSAGES["network-busy"]],
   ];
   for (const [r, sentence] of sentences) {
     const rig = makeRig({ create: { kind: "after-post", error: r.err } });
@@ -416,6 +434,9 @@ async function main() {
     { name: "no account", cfg: { account: null }, code: "no-account" },
     { name: "no consent and no account: consent is asked first", cfg: { settings: { consentAt: null }, account: null }, code: "needs-consent" },
     { name: "mainnet, an account with no password lock (phase 1)", cfg: { ...MAIN, account: { pubkey: PUB, phase: 1 } }, code: "needs-password", pilotAsked: false },
+    // With the pilot retired the sponsor admits every wallet: this is where the backup rule holds.
+    { name: "mainnet, an account made here and never backed up", cfg: { ...MAIN, backupNeeded: true }, code: "needs-backup", pilotAsked: false },
+    { name: "mainnet, never backed up, even with the pilot retired and the wallet admitted", cfg: { ...MAIN, backupNeeded: true, pilot: { pilot: false, approved: true, state: "open", limit: 0 } }, code: "needs-backup", pilotAsked: false },
     { name: "mainnet, the real-money note not accepted", cfg: { ...MAIN, settings: { net: "public", mainnetAck: false } }, code: "not-approved", pilotAsked: false },
     { name: "mainnet, the account is not approved", cfg: { ...MAIN, pilot: { approved: false, state: "none" } }, code: "not-approved", pilotAsked: true },
     { name: "mainnet, all five sends used (used == limit)", cfg: { ...MAIN, pilot: { used: 5, limit: 5 } }, code: "slots-used", pilotAsked: true },

@@ -333,6 +333,82 @@ export async function loadClaimableAmount(
 }
 
 /**
+ * What the ledger did with a transaction the sponsor accepted and stopped watching (its 202,
+ * lib/unconfirmed.ts):
+ *
+ *   "landed"   it is in a ledger and it succeeded (for a sweep: the account it closes is gone)
+ *   "failed"   it can no longer move anything: it was applied and failed, or no ledger can include it
+ *              any more (its time bound has passed and its sequence number was never used)
+ *   "pending"  not seen yet, and it may still be included: say so and wait, never "send it again"
+ *   "unknown"  we could not finish asking, or the answer would be a guess
+ *
+ * THREE READS, NOT ONE. A 404 for the hash is both "not yet" and "never" until the transaction's own
+ * time bound has passed, so the latest LEDGER's close time is read first (ledger time decides a time
+ * bound, and this device's clock can be minutes off), then each hash, then the source account: a
+ * transaction applies only while its sequence number is the account's next one, so an account that
+ * has moved past it has applied SOMETHING with that number, and if Horizon cannot name it by either
+ * hash this answers "unknown" rather than guess whose it was. The margin covers one Horizon instance
+ * behind a load balancer lagging the one that answered the ledger read.
+ *
+ * `closesSource` is for the sweep, whose success merges its own source away: a 404 for that account
+ * is the merge, and an account still there with its sequence used means the sweep did not land.
+ * `fetchImpl` exists for the self-test.
+ */
+export type SubmitOutcome = "landed" | "failed" | "pending" | "unknown";
+
+export async function loadSubmitOutcome(
+  check: { hashes: string[]; source: string; sequence: string; maxTime: number; closesSource?: boolean },
+  net: Pick<NetworkConfig, "horizonUrl">,
+  opts: { fetchImpl?: typeof fetch; marginS?: number } = {},
+): Promise<SubmitOutcome> {
+  // Destructured, never called as a method of `opts`: see loadClaimableAmount.
+  const { fetchImpl = fetch, marginS = 60 } = opts;
+  const base = net.horizonUrl.replace(/\/$/, "");
+  const get = (path: string) => fetchImpl(`${base}${path}`, { headers: { accept: "application/json" } });
+
+  // 1. Ledger time, first. Without it this can still say "landed" or "pending", never "failed".
+  let closedAt: number | null = null;
+  try {
+    const res = await get("/ledgers?order=desc&limit=1");
+    if (res.ok) {
+      const page = (await res.json()) as { _embedded?: { records?: { closed_at?: unknown }[] } };
+      const t = Date.parse(String(page?._embedded?.records?.[0]?.closed_at ?? ""));
+      if (Number.isFinite(t)) closedAt = Math.floor(t / 1000);
+    }
+  } catch {
+    /* no ledger time */
+  }
+
+  // 2. The transaction, by every hash it may be known by. Only a record is an answer here.
+  for (const hash of check.hashes) {
+    try {
+      const res = await get(`/transactions/${encodeURIComponent(hash)}`);
+      if (!res.ok) continue;
+      const tx = (await res.json()) as { successful?: unknown };
+      if (tx?.successful === true) return "landed";
+      if (tx?.successful === false) return "failed";
+    } catch {
+      /* not answered: the account below still can */
+    }
+  }
+
+  // 3. The source account's sequence number.
+  let used: boolean;
+  try {
+    const res = await get(`/accounts/${encodeURIComponent(check.source)}`);
+    if (res.status === 404) return check.closesSource ? "landed" : "unknown";
+    if (!res.ok) return "unknown";
+    const acc = (await res.json()) as { sequence?: unknown };
+    used = BigInt(String(acc?.sequence)) >= BigInt(check.sequence);
+  } catch {
+    return "unknown";
+  }
+  if (used) return check.closesSource ? "failed" : "unknown";
+  if (check.maxTime > 0 && closedAt !== null && closedAt > check.maxTime + marginS) return "failed";
+  return "pending";
+}
+
+/**
  * Is this effect a movement of the EXACT dollars this account holds?
  *
  * The issuer check is not pedantry. Anyone can issue an asset and call it USDC; matching on the

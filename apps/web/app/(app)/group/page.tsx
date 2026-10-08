@@ -31,7 +31,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
-import { isNeedsPassword } from "../../../lib/signer-error";
+import { isNeedsBackup, isNeedsPassword } from "../../../lib/signer-error";
 import { loadTotalUsd } from "../../../lib/horizon";
 import { getTestMoney } from "../../../lib/receive";
 import {
@@ -160,6 +160,8 @@ export default function GroupPage() {
   const [error, setError] = useState("");
   /** The account has no password yet, a different errand from a locked one, and /unlock can't do it. */
   const [needsPassword, setNeedsPassword] = useState(false);
+  /** Real money with the pilot retired and no backup yet: /pilot's secure step (lib/wallet.tsx getSigner). */
+  const [needsBackup, setNeedsBackup] = useState(false);
   const [ready, setReady] = useState<{
     link: string;
     linkHex: string;
@@ -274,6 +276,7 @@ export default function GroupPage() {
   async function makeOnce() {
     setError("");
     setNeedsPassword(false);
+    setNeedsBackup(false);
     if (!shareOk) return setError("Enter what each person gets.");
     if (overCap) return setError(`A group link holds up to ${formatUsd(POT_CAP_USD)} in total.`);
     if (wantWord) {
@@ -319,6 +322,12 @@ export default function GroupPage() {
       } catch (e) {
         /* An account with no password has nothing to unlock, and /unlock turns straight back here.
            Offered rather than jumped to, the same way /send and /notifications offer it. */
+        // First: raised for a Phase-1 account too, and /pilot's step sets the password as well.
+        if (isNeedsBackup(e)) {
+          setError("Lock this account and back it up to finish. Real money needs both, and nothing has been sent.");
+          setNeedsBackup(true);
+          return;
+        }
         if (isNeedsPassword(e) || account!.phase === 1) {
           setError("Set a password to finish, until then, this money can't be sent.");
           setNeedsPassword(true);
@@ -686,6 +695,11 @@ export default function GroupPage() {
       {needsPassword && (
         <Link href="/account" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
           Set a password
+        </Link>
+      )}
+      {needsBackup && (
+        <Link href="/pilot" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
+          Lock it and back it up
         </Link>
       )}
 

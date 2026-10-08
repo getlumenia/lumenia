@@ -224,7 +224,18 @@ export function Heading({ children, focus = true, class: cls }: { children: Comp
  * the accent (solid), because it is a safety cue and is loud on purpose. What a tap does, including
  * the real-money ceremony, lives in netswitch.tsx.
  */
-export function NetSwitch({ net, disabled = false, onPick }: { net: NetId; disabled?: boolean; onPick: (net: NetId) => void }) {
+export function NetSwitch({
+  net,
+  disabled = false,
+  realTitle = "Real money: capped per link",
+  onPick,
+}: {
+  net: NetId;
+  disabled?: boolean;
+  /** what real money is for this account right now (format.ts realMoneyTitle), never a fixed claim */
+  realTitle?: string;
+  onPick: (net: NetId) => void;
+}) {
   return (
     <div class="netswitch" role="group" aria-label="Which money">
       <button
@@ -243,7 +254,7 @@ export function NetSwitch({ net, disabled = false, onPick }: { net: NetId; disab
         class={cx("netswitch__opt", "netswitch__opt--real", net === "public" && "is-on")}
         aria-pressed={net === "public"}
         aria-label="Real money"
-        title="Real money: invite-only, capped"
+        title={realTitle}
         disabled={disabled}
         onClick={() => onPick("public")}
       >
@@ -266,12 +277,14 @@ export function BrandBar() {
 export function TopBar({
   net,
   switchDisabled = false,
+  realTitle,
   onPick,
   onLinks,
   onSettings,
 }: {
   net: NetId;
   switchDisabled?: boolean;
+  realTitle?: string;
   onPick: (net: NetId) => void;
   onLinks: () => void;
   onSettings: () => void;
@@ -279,7 +292,7 @@ export function TopBar({
   return (
     <header class="bar">
       <Wordmark />
-      <NetSwitch net={net} disabled={switchDisabled} onPick={onPick} />
+      <NetSwitch net={net} disabled={switchDisabled} realTitle={realTitle} onPick={onPick} />
       <span class="bar__spacer" />
       <button type="button" class="icon-btn" aria-label="Links" title="Links" onClick={onLinks}>
         <IconList />

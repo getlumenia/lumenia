@@ -6,9 +6,9 @@
  *   pnpm --filter @lumenia/extension exec tsx src/popup/popup.selftest.ts
  */
 import { MESSAGES } from "../lib/errors";
-import type { ErrorCode, LinkRecord } from "../lib/types";
+import type { ErrorCode, LinkRecord, PilotInfo } from "../lib/types";
 import { openRecord, recentReady } from "./flow";
-import { centsOf, dayWords, plainSentence, shortAddress } from "./format";
+import { centsOf, dayWords, plainSentence, realMoneyTitle, shortAddress } from "./format";
 import { describeProblem } from "./problems";
 
 let pass = 0;
@@ -27,12 +27,15 @@ const ALL_CODES = {
   "no-account": true,
   "needs-consent": true,
   "needs-password": true,
+  "needs-backup": true,
   "not-approved": true,
   "pilot-unknown": true,
   "slots-used": true,
   "over-cap": true,
   "rate-limited": true,
   halted: true,
+  "network-busy": true,
+  "day-limit": true,
   offline: true,
   uncertain: true,
   "bad-amount": true,
@@ -87,6 +90,24 @@ check("not-approved for the unaccepted note goes to Settings", describeProblem("
 check("not-enough-money on practice money offers practice dollars", describeProblem("not-enough-money", "", "testnet").action === "practice");
 check("account-not-found on real money does not offer practice dollars", describeProblem("account-not-found", "", "public").action !== "practice");
 check("slots-used offers to switch to practice money", describeProblem("slots-used", "", "public").action === "use-practice");
+// D3: real money waits for the backup, and three waits are three different answers.
+check("needs-backup opens the backup steps", describeProblem("needs-backup", MESSAGES["needs-backup"], "public").action === "backup");
+const haltedP = describeProblem("halted", MESSAGES.halted, "public");
+const busyP = describeProblem("network-busy", "Something technical: HTTP 503", "public");
+const dayP = describeProblem("day-limit", "Something technical: HTTP 400", "public");
+check("a busy network is not told as Lumenia pausing", !/paused/i.test(`${busyP.title} ${busyP.body}`) && /network is busy/i.test(busyP.body));
+check("a spent day limit says tomorrow, not 'later'", /tomorrow/.test(dayP.body) && !/later/.test(dayP.body));
+check("the halt, the busy network and the day limit are three different titles", new Set([haltedP.title, busyP.title, dayP.title]).size === 3);
+
+/* ------------------------------ the header's real-money title ------------------------------ */
+const pilotAnswer = (o: Partial<PilotInfo>): PilotInfo => ({ pilot: true, approved: false, state: "none", used: 0, limit: 5, at: 0, ...o });
+check("no answer yet: only the caps are named", realMoneyTitle(null) === "Real money: capped per link");
+check("the pilot retired: open to everyone, never 'invite-only'", /open to everyone/.test(realMoneyTitle(pilotAnswer({ pilot: false, approved: true, state: "open" }))) && !/invite-only/.test(realMoneyTitle(pilotAnswer({ pilot: false, approved: true, state: "open" }))));
+check("the pilot on, not approved: invite-only", /invite-only/.test(realMoneyTitle(pilotAnswer({}))));
+check("the pilot on, approved: in the pilot", /in the pilot/.test(realMoneyTitle(pilotAnswer({ approved: true, state: "approved" }))));
+for (const p of [null, pilotAnswer({}), pilotAnswer({ pilot: false, approved: true }), pilotAnswer({ approved: true })]) {
+  check(`the title is ASCII with no off-limits word (${realMoneyTitle(p)})`, ASCII.test(realMoneyTitle(p)) && !BANNED.test(realMoneyTitle(p)));
+}
 
 /* ----------------------------------- plain sentence filter ----------------------------------- */
 

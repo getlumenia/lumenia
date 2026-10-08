@@ -16,6 +16,8 @@ import { usePathname } from "next/navigation";
 import { Bell, LifeBuoy, Send, HandCoins } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { ensureCanReceive } from "../../lib/receivable";
+import { backupBlocksRealMoney } from "../../lib/pilot-access";
+import { hasBackup } from "../../lib/recovery-api";
 import { loadUnreadCount } from "../../lib/notifications";
 import { TestnetBanner } from "./TestnetBanner";
 import { eventMode } from "../../lib/event-mode";
@@ -74,7 +76,8 @@ function KeepAccountReceivable() {
   const { network, account, getSigner, unlocked } = useWallet();
   useEffect(() => {
     if (network !== "public" || !account) return;
-    void ensureCanReceive(account.address, getSigner).catch(() => {
+    // Opening the account's own dollar line moves no money (lib/wallet.tsx getSigner).
+    void ensureCanReceive(account.address, () => getSigner({ movesMoney: false })).catch(() => {
       /* the account menu says so, at the point the address is handed out */
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -83,7 +86,7 @@ function KeepAccountReceivable() {
 }
 
 function StartSendingLink() {
-  const { status, account, network, pilotState } = useWallet();
+  const { status, account, network, pilotState, pilotKnown } = useWallet();
   const pathname = usePathname();
   if (status === "loading" || !account) return null;
   /* ONLY ON REAL MONEY. Written as "not yet fully set up", this pill was permanent for every
@@ -94,7 +97,13 @@ function StartSendingLink() {
      list, genuinely cannot send yet, and /activate is where that is explained. (The checklist lived
      at /start until /start became the first-run entry, which sends anyone with an account home.) */
   if (network !== "public") return null;
-  const ready = account.phase === 2 && pilotState === "approved";
+  /* Ready means sending works, and with the pilot retired that needs the backup too: the wallet
+     refuses a money movement from an account with none (lib/wallet.tsx getSigner). The pill used to
+     vanish on the password alone, so the app said "ready" over an account whose key lived only here. */
+  const ready =
+    account.phase === 2 &&
+    (pilotState === "approved" || pilotState === "open") &&
+    !backupBlocksRealMoney({ onMainnet: true, pilotState, pilotKnown, backedUp: hasBackup(account.address) });
   if (ready) return null;
   return (
     <Link

@@ -12,7 +12,15 @@
 import { BASE_FEE, Horizon, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import type { Signer } from "./signer";
 import { activeNetwork } from "./network";
+import { signedFacts, throwIfUnconfirmed } from "./unconfirmed";
 
+/**
+ * A 202 from /feebump is NOT a collected balance: the sponsor handed the claim to the network and
+ * stopped watching before the ledger ruled on it. It throws lib/unconfirmed.ts's typed error, so the
+ * screen can say "asked, not confirmed yet" and re-read the list, never "collected" on no evidence.
+ * Asking again is safe: a balance can be claimed once, so a second claim of one that landed is
+ * refused by the ledger with nothing moved.
+ */
 export async function collectIncoming(opts: {
   sponsorUrl: string;
   signer: Signer;
@@ -34,6 +42,7 @@ export async function collectIncoming(opts: {
     body: JSON.stringify({ xdr: inner.toXDR(), recipientPublicKey: me, balanceId: opts.balanceId }),
   });
   const text = await res.text();
+  throwIfUnconfirmed(res.status, text, "/feebump", signedFacts(inner));
   if (!res.ok) throw new Error(`/feebump → ${res.status}: ${text}`);
   return { hash: (JSON.parse(text) as { hash: string }).hash };
 }

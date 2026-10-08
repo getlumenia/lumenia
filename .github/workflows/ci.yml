@@ -1,15 +1,23 @@
 name: CI
 
 # Hermetic checks on every push + PR to main. Deliberately does NOT run the testnet-dependent
-# suites (test:integration, test:watchdog, the concurrency tests, Playwright e2e, the spikes) —
-# those need friendbot + Horizon + USDC_ISSUER_SECRET and would be flaky/secret-dependent in CI.
-# They stay as the local + post-deploy gates. Everything here passes offline: typecheck, the
-# contract security gate (clippy strict + tests + audit/deny + coverage), the anti-drain
-# validator, the other offline sponsor suites (kms/caps/channels/pilot/recovery-store/identity),
-# the web self-tests (recovery/claimpw/receive/horizon/claimerr/suggest/txguard/money/cctp-web/
-# group/swap/extseam/walletkit/agentmcp), a production web build, and the browser
-# extension (typecheck, its offline self-tests, the Chrome + Firefox build and the Firefox lint,
-# with both zips kept as a build artifact).
+# suites (test:integration, test:watchdog, test:legacy, the concurrency tests, Playwright e2e, the
+# spikes, the adversarial run) - those need friendbot + Horizon + keys and would be flaky or
+# secret-dependent in CI. They stay as the local + post-deploy gates. Everything here passes
+# offline: typecheck, the contract security gate (clippy strict + tests + audit/deny + coverage),
+# the anti-drain validator, the other offline sponsor suites (kms / caps / channels / events /
+# cctp / pilot / recovery-store / identity / identity-routes / soroban-relay / watchdog-offline),
+# the web self-tests (recovery / claimpw / receive / horizon / claimerr / suggest / txguard /
+# money / cctp-web / group / swap / extseam / walletkit / agentmcp / linkprivacy / claimmeta /
+# claimledger / claimhome / pilotaccess), a production web build, and the browser extension (typecheck, its
+# offline self-tests, the Chrome + Firefox build and the Firefox lint, with both zips kept as a
+# build artifact).
+#
+# "Hardening suite (D3 a-k)" is the SOW 2 D3 evidence step: it re-runs, under the name the SOW
+# uses, exactly the suites that lock the open-mainnet hardening items (the item-to-suite table is
+# in evidence/SOW2_READINESS_REPORT.md, section D3.2). All of them but `fake-kv --selftest` also run
+# in the general steps above it; the duplicate run costs about a minute and makes the evidence
+# findable on the run page by name.
 
 on:
   push:
@@ -49,9 +57,9 @@ jobs:
       # Every offline sponsor suite runs here, not just anti-drain — the recovery selftest
       # crash of 2026-08 stayed invisible for days precisely because CI only ran one suite.
       # Network-dependent suites (test:integration, test:watchdog, test:concurrency*) stay out.
-      - name: Sponsor offline suites (kms + caps + channels + pilot + recovery-store + identity + events)
+      - name: Sponsor offline suites (kms + caps + channels + events + cctp + pilot + recovery-store + identity + identity-routes + soroban-relay + watchdog-offline)
         # The identity suites run against the in-memory store fallback: no KV_REST_API_* exists in
-        # CI, so they cannot reach — let alone write to — the production registry.
+        # CI, so they cannot reach, let alone write to, the production registry.
         run: |
           pnpm --filter @lumenia/sponsor test:kms
           pnpm --filter @lumenia/sponsor test:caps
@@ -63,7 +71,8 @@ jobs:
           pnpm --filter @lumenia/sponsor test:identity
           pnpm --filter @lumenia/sponsor test:identity-routes
           pnpm --filter @lumenia/sponsor test:soroban-relay
-      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + cctp-web + group + swap + extseam + walletkit + agentmcp + linkprivacy + claimmeta + claimledger + claimhome)
+          pnpm --filter @lumenia/sponsor test:watchdog-offline
+      - name: Web self-tests (recovery + claimpw + receive + horizon + claimerr + suggest + txguard + money + cctp-web + group + swap + extseam + walletkit + agentmcp + linkprivacy + claimmeta + claimledger + claimhome + pilotaccess)
         run: |
           pnpm --filter @lumenia/web test:recovery
           pnpm --filter @lumenia/web test:claimpw
@@ -84,6 +93,45 @@ jobs:
           pnpm --filter @lumenia/web test:claimmeta
           pnpm --filter @lumenia/web test:claimledger
           pnpm --filter @lumenia/web test:claimhome
+          pnpm --filter @lumenia/web test:pilotaccess
+      # SOW 2, D3 (open-mainnet readiness). One step, named as the SOW names it, listing the suites
+      # that lock each hardening item (the same mapping as the table in the readiness report, D3.2):
+      #   (a) relay simulation + fee bounds -> test:soroban-relay, test:cctp
+      #   (b) the per-day sponsor fee budget -> test:caps, test:soroban-relay, test:cctp,
+      #       test:antidrain, test:watchdog-offline
+      #   (c) single-shot cap accounting -> test:soroban-relay, test:pilot
+      #   (d) the per-share floor -> test:soroban-relay
+      #   (e) the per-source onboarding budget -> test:caps
+      #   (f) the watchdog heartbeat + auto-halt + the namespaced kill switch -> test:watchdog-offline
+      #   (g) unconfirmed submissions (202, 503 busy) -> test:soroban-relay, test:cctp, and on the
+      #       web test:claimerr, test:group, test:horizon, test:cctp-web, test:agentmcp
+      #   (h) the KMS signer and the account/signer split -> test:kms, test:caps, test:cctp,
+      #       test:antidrain
+      #   (i) the retirement switch and the pilot slot residuals -> test:pilot, test:pilotaccess (web)
+      #   (j) the refusals the adversarial run replays -> test:antidrain, and the stand-in store that
+      #       run needs -> fake-kv --selftest
+      #   (k) the per-sender cap -> test:caps
+      # The extension's own suite also holds (g) and (i); it runs in its own job, not in this step.
+      # The adversarial run itself needs a live Worker and is not in CI (its runs are in the
+      # readiness report, D3.3).
+      # `pnpm -C <dir> run <suite>`, not `pnpm --filter`: --filter exits 0 when the script does not
+      # exist, so a renamed or dropped suite would leave this evidence step green; `run` exits 1.
+      - name: Hardening suite (D3 a-k)
+        run: |
+          pnpm -C apps/sponsor run test:soroban-relay
+          pnpm -C apps/sponsor run test:cctp
+          pnpm -C apps/sponsor run test:caps
+          pnpm -C apps/sponsor run test:watchdog-offline
+          pnpm -C apps/sponsor run test:kms
+          pnpm -C apps/sponsor run test:pilot
+          pnpm -C apps/sponsor run test:antidrain
+          pnpm -C apps/sponsor run fake-kv --selftest --quiet
+          pnpm -C apps/web run test:claimerr
+          pnpm -C apps/web run test:group
+          pnpm -C apps/web run test:horizon
+          pnpm -C apps/web run test:cctp-web
+          pnpm -C apps/web run test:agentmcp
+          pnpm -C apps/web run test:pilotaccess
 
   build:
     name: Build web

@@ -8,7 +8,9 @@
  *       then it removes everything: the key record, the kept links, the records, the session;
  *   [d] one take-back per link at a time: a second tap while the first is on the wire is refused,
  *       so the sponsor never relays the same take-back twice, and "Forget" waits for it too;
- *   [e] one send at a time: a second send while the first is in flight is refused as busy.
+ *   [e] one send at a time: a second send while the first is in flight is refused as busy;
+ *   [f] an account made here and never backed up cannot switch to real money (needs-backup), with
+ *       nothing asked of the sponsor; practice money is never blocked.
  *
  * Offline: the RPC node and fetch are replaced with promises the test holds, IndexedDB is in memory.
  * RUN: pnpm --filter @lumenia/extension test:router
@@ -202,5 +204,33 @@ run("ROUTER", "the worker's front door (who may ask, what, and the guards on for
     ok("  ...the first one still finished on its own terms (here: the balance could not be read)", codeOf(one) !== "busy");
   } finally {
     globalThis.fetch = realFetch;
+  }
+
+  /* ---------------------------------------- [f] ---------------------------------------- */
+  section("f", "real money needs this account backed up first (the pilot's approval no longer stands in the way)");
+  await setUp();
+  // An account made here keeps its backup box locally until it is backed up with an email.
+  await fake.local.set({ [K.pendingBackup]: { v: 1, copies: [] } });
+  const realFetchF = globalThis.fetch;
+  const askedUrls: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    askedUrls.push(String(input));
+    throw new TypeError("fetch failed (the test answers nothing)");
+  }) as typeof fetch;
+  try {
+    const refusedSwitch = await ask({ type: "network.set", net: "public" });
+    ok("never backed up: the switch to real money is refused as needs-backup", codeOf(refusedSwitch) === "needs-backup");
+    ok(
+      "  ...before the pilot is asked (no /pilot-status request)",
+      !askedUrls.some((u) => u.includes("/pilot-status")),
+      askedUrls.join(" | "),
+    );
+    ok("  ...and the money stays practice", ((await fake.local.get(K.settings)) as { net?: string }).net === "testnet");
+    ok("practice money is never blocked by it", codeOf(await ask({ type: "network.set", net: "testnet" })) === "ok");
+    await fake.local.remove(K.pendingBackup);
+    const backedUp = await ask({ type: "network.set", net: "public" });
+    ok("backed up: past the backup rule, on to the pilot's answer (here: none, offline)", codeOf(backedUp) !== "needs-backup" && codeOf(backedUp) !== "ok", codeOf(backedUp));
+  } finally {
+    globalThis.fetch = realFetchF;
   }
 });

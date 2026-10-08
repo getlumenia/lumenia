@@ -63,6 +63,15 @@ apps/sponsor/public/
 
 # Cloudflare Workers (wrangler) — local secrets + build state, never commit
 **/.dev.vars
+# wrangler reads .dev.vars.<env> for `wrangler dev --env <env>`; the mainnet one holds a throwaway key
+**/.dev.vars.*
+# the KMS cutover tool writes the SetOptions XDR + hash here before submitting (real-money rule).
+# Any depth, not just apps/sponsor/: pnpm runs a package script from the package folder, so a
+# relative path typed at the repo root has landed one level deeper (apps/sponsor/apps/sponsor/...).
+**/.cutover/
+# the adversarial run's and the rehearsal's reports and throwaway keys (seeds that hold test funds),
+# at any depth for the same reason
+**/adversarial-out/
 **/.wrangler/
 
 # Heavy 3D GLB models (~60M) used ONLY by the internal /brand-kit workspace, which

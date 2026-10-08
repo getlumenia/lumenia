@@ -26,7 +26,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import QRCode from "react-qr-code";
-import { claimFragment } from "../../../lib/link-fragment";
+import { readDemoLinkReply } from "../../../lib/demo-link";
 import { explorerTxOn, mainnetConfig, testnetConfig, type NetworkConfig } from "../../../lib/network";
 import { walletsKitEnabled } from "../../../lib/wallets-kit";
 
@@ -156,13 +156,14 @@ export function EventBoard() {
     try {
       const res = await fetch(`${test.sponsorUrl.replace(/\/$/, "")}/demo-link`, { method: "POST" }).catch(() => null);
       if (!res) throw new Error("The practice sponsor could not be reached.");
-      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `It answered ${res.status}.`);
-      const d = (await res.json()) as { balanceId: string; bearerSecret: string; amount: string; issuer: string; from: string };
-      // Private shape (D2): no amount anywhere (the claim page reads it from the ledger by `b`), the
-      // name behind the key in the fragment. `seeded=1` stays in the query: a public marker the
-      // claim page's beacon reads, nothing about a person.
-      const q = `b=${d.balanceId}&i=${d.issuer}&seeded=1`;
-      setLink(`${window.location.origin}/c/${d.balanceId.slice(-8)}?${q}#${claimFragment({ key: d.bearerSecret, from: "Lumenia team" })}`);
+      /* Private shape (D2): no amount anywhere (the claim page reads it from the ledger by `b`), the
+         name behind the key in the fragment, `seeded=1` in the query (a public marker the claim
+         page's beacon reads, nothing about a person). Every reply is read by lib/demo-link.ts: the
+         sponsor's 202 ("submit unconfirmed", no link in it) used to reach a `.slice` on a missing
+         balance id and put the browser's TypeError on the board. */
+      const reply = readDemoLinkReply(res.status, await res.text().catch(() => ""), { seeded: true, from: "Lumenia team" });
+      if (!reply.ok) throw new Error(reply.message);
+      setLink(`${window.location.origin}${reply.link}`);
     } catch (e) {
       setMintError(e instanceof Error ? e.message : "Could not make a link just now.");
     } finally {

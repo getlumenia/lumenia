@@ -2,6 +2,19 @@
  * Small pure helpers for the popup: dates in words, a shortened address, whole cents, and the test
  * for "is this worker message a plain sentence a person can read".
  */
+import type { PilotInfo } from "../lib/types";
+
+/**
+ * The header switch's description of real money, from the pilot answer this browser last got. It was
+ * a fixed "invite-only, capped", which stayed on screen after the pilot was retired and told every
+ * wallet the sponsor now admitted that it could not use real money. With no answer yet it names
+ * only what is true either way: the caps.
+ */
+export function realMoneyTitle(pilot: PilotInfo | null): string {
+  if (!pilot) return "Real money: capped per link";
+  if (!pilot.pilot) return "Real money: open to everyone, capped per link";
+  return pilot.approved ? "Real money: you're in the pilot, capped per link" : "Real money: invite-only, capped";
+}
 
 /** G12345...123456: six characters from each end. */
 export function shortAddress(a: string): string {

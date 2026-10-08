@@ -20,16 +20,30 @@ import {
   Contract,
   Keypair,
   Networks,
+  SorobanDataBuilder,
   TransactionBuilder,
   nativeToScVal,
+  rpc,
   xdr,
   type Transaction,
   type FeeBumpTransaction,
 } from "@stellar/stellar-sdk";
-import { isPublicRefusal } from "./lib/caps.js";
+import { FEE_BUDGET_REFUSAL, isPublicRefusal } from "./lib/caps.js";
+import type { ChannelManager } from "./lib/channels.js";
 import { makeConfig, type SponsorConfig } from "./lib/config.js";
-import type { SponsorSigner } from "./lib/signer.js";
-import { groupClaimFailureToken, relayClaimHandler, relayDepositHandler } from "./lib/soroban-relay.js";
+import { signerFromSecret, type SponsorSigner } from "./lib/signer.js";
+import {
+  feeBumpBase,
+  groupClaimFailureToken,
+  isRelayBusy,
+  relayClaimHandler,
+  relayDepositHandler,
+  relayReclaimHandler,
+  type RelayDeps,
+  type RelayRpc,
+} from "./lib/soroban-relay.js";
+import { isSubmitUnconfirmed } from "./lib/stellar.js";
+import worker from "./worker.js";
 
 let pass = 0,
   fail = 0;
@@ -87,14 +101,19 @@ function depositArgs(amountStroops: bigint): xdr.ScVal[] {
   return [Address.fromString(sender.publicKey()).toScVal(), link(), i128(amountStroops), expiry];
 }
 
-/** Build a sender-sourced invoke, in memory, with a fake sequence: nothing is ever submitted. */
+/**
+ * Build a sender-sourced invoke, in memory, with a fake sequence: nothing is ever submitted. With
+ * `resourceFee` the envelope carries Soroban data declaring it, and the builder adds it on top of
+ * `fee` (the inclusion fee), exactly as an assembled transaction looks.
+ */
 function buildInvoke(
-  opts: { fn: string; args: xdr.ScVal[]; contract?: string; fee?: string; network?: string; ops?: number },
+  opts: { fn: string; args: xdr.ScVal[]; contract?: string; fee?: string; network?: string; ops?: number; resourceFee?: number },
 ): Transaction {
   const network = opts.network ?? Networks.TESTNET;
   const b = new TransactionBuilder(new Account(sender.publicKey(), "123456789"), {
     fee: opts.fee ?? "1000000",
     networkPassphrase: network,
+    ...(opts.resourceFee !== undefined ? { sorobanData: new SorobanDataBuilder().setResourceFee(opts.resourceFee).build() } : {}),
   });
   for (let i = 0; i < (opts.ops ?? 1); i++) {
     b.addOperation(new Contract(opts.contract ?? CONTRACT).call(opts.fn, ...opts.args));
@@ -110,19 +129,260 @@ interface GuardVerdict {
   publicRefusal: boolean;
 }
 
+/* ------------------------------ the fake Soroban RPC ------------------------------
+ * Every relay simulates before it pays (D3 item a), so even the pure guard tests above need an
+ * RPC that answers offline. The plan says what each call answers; the counters say what was asked.
+ * Shapes follow the SDK's parsed types (rpc.Api.*): `_parsed: true` keeps `assembleTransaction`
+ * from re-parsing, `transactionData` carries the resource fee it adds to the classic fee, and
+ * `result.auth` is what it copies onto the invoke op (lib/esm/rpc/transaction.js in the SDK). */
+type SimPlan = { error: string } | { minResourceFee: number } | { noResourceFee: true };
+/**
+ * THROW_UNANSWERED: the send call itself throws the way a dropped connection does (an Error with no
+ * HTTP response), so the RPC may have queued the transaction. THROW_REFUSED: it throws the JSON-RPC
+ * error object the SDK rethrows for an answered "invalid params" (lib/rpc/jsonrpc.js), so nothing
+ * was submitted. THROW_504: an HTTP 504 from a gateway, undecided.
+ */
+type SendPlan = "PENDING" | "DUPLICATE" | "TRY_AGAIN_LATER" | "ERROR" | "THROW_UNANSWERED" | "THROW_REFUSED" | "THROW_504";
+type GetPlan = "SUCCESS" | "FAILED" | "NOT_FOUND" | "THROW";
+
+/** The result an included transaction carries: what its fee source was charged, in stroops. */
+function resultCharging(feeCharged: number): xdr.TransactionResult {
+  return new xdr.TransactionResult({
+    feeCharged: xdr.Int64.fromString(String(feeCharged)),
+    result: xdr.TransactionResultResult.txSuccess([]),
+    ext: new xdr.TransactionResultExt(0),
+  });
+}
+
+function fakeRpc(
+  plan: { sim?: SimPlan; send?: SendPlan; get?: GetPlan[]; failedEvents?: xdr.DiagnosticEvent[]; charged?: number } = {},
+) {
+  const calls = { simulate: 0, send: 0, get: 0 };
+  const factory = (_url: string): RelayRpc => ({
+    async getAccount(address: string) {
+      return new Account(address, "1");
+    },
+    async simulateTransaction() {
+      calls.simulate++;
+      const p = plan.sim ?? { minResourceFee: 500_000 };
+      if ("error" in p) {
+        return { _parsed: true, latestLedger: 1, events: [], error: p.error } as unknown as rpc.Api.SimulateTransactionResponse;
+      }
+      if ("noResourceFee" in p) {
+        // A success that names no resource fee (an RPC or SDK parse change): the bound must refuse.
+        return {
+          _parsed: true,
+          latestLedger: 1,
+          events: [],
+          transactionData: new SorobanDataBuilder().setResourceFee(0),
+          result: { auth: [], retval: xdr.ScVal.scvVoid() },
+        } as unknown as rpc.Api.SimulateTransactionResponse;
+      }
+      return {
+        _parsed: true,
+        latestLedger: 1,
+        events: [],
+        minResourceFee: String(p.minResourceFee),
+        transactionData: new SorobanDataBuilder().setResourceFee(p.minResourceFee),
+        result: { auth: [], retval: xdr.ScVal.scvVoid() },
+      } as unknown as rpc.Api.SimulateTransactionResponse;
+    },
+    async sendTransaction(tx: Transaction | FeeBumpTransaction) {
+      calls.send++;
+      const status = plan.send ?? "PENDING";
+      if (status === "THROW_UNANSWERED") throw new TypeError("fetch failed: socket hang up");
+      if (status === "THROW_REFUSED") throw { code: -32602, message: "invalid params: cannot unmarshal transaction" };
+      if (status === "THROW_504") throw Object.assign(new Error("Request failed with status code 504"), { response: { status: 504 } });
+      return {
+        status,
+        hash: tx.hash().toString("hex"),
+        latestLedger: 1,
+        latestLedgerCloseTime: 0,
+        ...(status === "ERROR" ? { errorResult: { code: "txBadSeq" } } : {}),
+      } as unknown as rpc.Api.SendTransactionResponse;
+    },
+    async getTransaction(hash: string) {
+      const i = calls.get++;
+      const seq = plan.get ?? ["SUCCESS"];
+      const st = seq[Math.min(i, seq.length - 1)]!;
+      if (st === "THROW") throw new Error("the rpc went away");
+      return {
+        status: rpc.Api.GetTransactionStatus[st],
+        txHash: hash,
+        latestLedger: 1,
+        latestLedgerCloseTime: 0,
+        oldestLedger: 1,
+        oldestLedgerCloseTime: 0,
+        ...(st === "FAILED" && plan.failedEvents ? { diagnosticEventsXdr: plan.failedEvents } : {}),
+        // An included transaction (SUCCESS or FAILED) carries its result, and with it its fee.
+        ...((st === "SUCCESS" || st === "FAILED") && plan.charged !== undefined ? { resultXdr: resultCharging(plan.charged) } : {}),
+      } as unknown as rpc.Api.GetTransactionResponse;
+    },
+  });
+  return { factory, calls };
+}
+
+/** Deps for a test: the fake RPC, and a confirm wait of two instant polls instead of sixty seconds. */
+function depsFor(plan: Parameters<typeof fakeRpc>[0] = {}): { deps: RelayDeps; calls: { simulate: number; send: number; get: number } } {
+  const { factory, calls } = fakeRpc(plan);
+  return { deps: { rpc: factory, pollMs: 1, maxPolls: 2 }, calls };
+}
+
+/**
+ * An in-memory stand-in for the Upstash pipeline the caps module talks to (the same shape as in
+ * test-caps.ts), plus a log of every INCRBY so a test can count how many times the day's budget
+ * was RELEASED (a negative delta on the `:day:` key) and how many times the fee budget was charged
+ * (a positive delta on the `:fees:` key).
+ */
+function installFakeKv() {
+  const store = new Map<string, bigint>();
+  const log: Array<{ key: string; delta: bigint }> = [];
+  process.env.KV_REST_API_URL = "https://fake-kv.test";
+  process.env.KV_REST_API_TOKEN = "t";
+  globalThis.fetch = (async (url: string | URL, init?: { body?: string }) => {
+    const u = String(url);
+    if (u.endsWith("/pipeline")) {
+      const cmds = JSON.parse(String(init?.body ?? "[]")) as string[][];
+      const results = cmds.map(([op, key, arg]) => {
+        if (op === "EXPIRE") return { result: 1 };
+        if (op !== "INCRBY") throw new Error(`unexpected command ${op}`);
+        const delta = BigInt(arg!);
+        const next = (store.get(key!) ?? 0n) + delta;
+        store.set(key!, next);
+        log.push({ key: key!, delta });
+        return { result: next.toString() };
+      });
+      return { ok: true, status: 200, json: async () => results } as unknown as Response;
+    }
+    const got = u.match(/\/get\/(.+)$/);
+    if (got) {
+      const v = store.get(decodeURIComponent(got[1]!));
+      return { ok: true, status: 200, json: async () => ({ result: v === undefined ? null : v.toString() }) } as unknown as Response;
+    }
+    throw new Error(`unexpected fetch ${u}`);
+  }) as typeof fetch;
+  // The day key alone: with a sender the caps module also moves `...:day:<d>:sender:<G>` in the
+  // same pipeline, which is the per-sender cap doing its job, not a second release of the day. The
+  // fee charge moves `...:fees:<d>:gross` beside the net key the same way; it is counted apart.
+  const count = (part: string, sign: 1 | -1) =>
+    log.filter((l) => l.key.includes(part) && !l.key.includes(":sender:") && !l.key.endsWith(":gross") && (sign > 0 ? l.delta > 0n : l.delta < 0n)).length;
+  return {
+    store,
+    log,
+    reset: () => {
+      store.clear();
+      log.length = 0;
+    },
+    dayReleases: () => count(":day:", -1),
+    dayReserves: () => count(":day:", 1),
+    feeCharges: () => count(":fees:", 1),
+    feeRefunds: () => count(":fees:", -1),
+    /** What the day's fee counter reads now, in stroops. */
+    feeTotal: () => [...store].filter(([k]) => k.includes(":fees:") && !k.endsWith(":gross")).reduce((a, [, v]) => a + v, 0n),
+    /** The gross key: every bid the budget accepted, never lowered by a give-back. */
+    feeGross: () => [...store].filter(([k]) => k.endsWith(":fees:" + new Date().toISOString().slice(0, 10) + ":gross")).reduce((a, [, v]) => a + v, 0n),
+    /** Pre-spend the fee budget (as if the day's traffic had already used it). */
+    spendFees: (stroops: bigint) => {
+      const day = new Date().toISOString().slice(0, 10);
+      store.set(`caps:testnet:fees:${day}`, stroops);
+    },
+  };
+}
+
+/**
+ * The real sponsor signer behind a recorder: how many times it was asked to sign, and the fee of
+ * each envelope it signed. The ORDER tests use it with a pre-spent fee budget, where the right
+ * answer is a refusal with zero signatures.
+ */
+function recordingSigner() {
+  const fees: string[] = [];
+  const signer: SponsorSigner = {
+    publicKey: () => sponsor.publicKey(),
+    sign: (tx: Transaction | FeeBumpTransaction) => {
+      fees.push(tx.fee);
+      return realSigner.sign(tx);
+    },
+  };
+  return { signer, fees };
+}
+
+/** A one-channel pool stand-in that counts its releases (the relays only call `enabled` and `lease`). */
+function oneChannel() {
+  const channel = Keypair.random();
+  const state = { leased: 0, released: 0 };
+  const manager = {
+    enabled: true,
+    async lease() {
+      state.leased++;
+      return { keypair: channel, publicKey: channel.publicKey(), release: async () => void state.released++ };
+    },
+  } as unknown as ChannelManager;
+  return { manager, state };
+}
+function clearKv() {
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
+}
+
+/** The sponsor that really signs, for the branches past the guard (nothing is submitted: the RPC is the fake). */
+const realSigner = signerFromSecret(sponsor.secret());
+
 async function relayDeposit(
   config: SponsorConfig,
   tx: Transaction,
   senderPublicKey = sender.publicKey(),
+  deps: RelayDeps = depsFor().deps,
+  signer: SponsorSigner = stubSigner,
 ): Promise<GuardVerdict> {
   try {
-    await relayDepositHandler(config, stubSigner, { xdr: tx.toXDR(), senderPublicKey });
+    await relayDepositHandler(config, signer, { xdr: tx.toXDR(), senderPublicKey }, deps);
     return { accepted: false, message: "the handler returned without signing anything", publicRefusal: false };
   } catch (e) {
     const message = (e as Error).message;
     return { accepted: message === SENTINEL, message, publicRefusal: isPublicRefusal(e) };
   }
 }
+
+/** What a relay call ended in: a return value, or the error it threw, with the brands read. */
+interface Outcome {
+  returned?: { hash: string; confirmed: boolean };
+  message: string;
+  publicRefusal: boolean;
+  unconfirmed: boolean;
+  busy: boolean;
+  hash?: string;
+}
+async function outcomeOf(run: () => Promise<{ hash: string; confirmed: boolean }>): Promise<Outcome> {
+  try {
+    const returned = await run();
+    return { returned, message: "", publicRefusal: false, unconfirmed: false, busy: false, hash: returned.hash };
+  } catch (e) {
+    return {
+      message: (e as Error).message,
+      publicRefusal: isPublicRefusal(e),
+      unconfirmed: isSubmitUnconfirmed(e),
+      busy: isRelayBusy(e),
+      hash: (e as { hash?: string }).hash,
+    };
+  }
+}
+
+/** reclaim(sender, link): a sender-sourced reclaim invoke, in memory. */
+function buildReclaim(opts: { fee?: string; fn?: string; contract?: string } = {}): Transaction {
+  return buildInvoke({
+    fn: opts.fn ?? "reclaim",
+    args: [Address.fromString(sender.publicKey()).toScVal(), link()],
+    fee: opts.fee ?? "1000000",
+    contract: opts.contract,
+  });
+}
+
+const claimInput = () => ({
+  method: "claim",
+  linkHex: Buffer.from(Keypair.random().rawPublicKey()).toString("hex"),
+  payout: stranger.publicKey(),
+  sigHex: "cd".repeat(64),
+});
 
 /** A diagnostic event shaped like the one the host records when a call reverts. */
 function errorEvent(err: xdr.ScError): xdr.DiagnosticEvent {
@@ -343,6 +603,409 @@ async function main() {
     "the reason survives base64 XDR, which is how it actually arrives",
     groupClaimFailureToken([xdr.DiagnosticEvent.fromXDR(errorEvent(xdr.ScError.sceContract(8)).toXDR("base64"), "base64")]) === "already-claimed-this",
   );
+
+  /* ------------------------------------------------------------------------------------------
+   * SOW 2, D3. Everything below drives the relays PAST the guard with the fake RPC and a fake
+   * store, so the parts that used to be provable only on testnet (the fee bound after
+   * simulation, the single-shot cap accounting, the 202 on an undecided submit, the fee budget)
+   * are locked offline, in CI.
+   * ------------------------------------------------------------------------------------------ */
+  const kv = installFakeKv();
+  const deposit = (fee: string) => buildInvoke({ fn: "deposit", args: depositArgs(usdc(5)), fee });
+
+  console.log("[7] /v2-deposit simulates before it pays: the fee is bounded by what the invoke needs (item a)");
+  {
+    kv.reset();
+    const exact = await relayDeposit(TESTNET, deposit("3000000"), undefined, depsFor({ sim: { minResourceFee: 500_000 } }).deps);
+    check("a deposit whose fee is exactly the simulated resource fee + 0.25 XLM headroom is relayed", exact.accepted, exact.message);
+    const over = await relayDeposit(TESTNET, deposit("3000001"), undefined, depsFor({ sim: { minResourceFee: 500_000 } }).deps);
+    check("one stroop over that is refused", !over.accepted && /exceeds what the deposit needs \(3000000\)/.test(over.message), over.message);
+    check("and the refusal is NOT a public one on mainnet (it is redacted to a reference)", !over.publicRefusal);
+    kv.reset();
+    const sim = depsFor({ sim: { error: "HostError: Error(Contract, #3)" } });
+    const broken = await relayDeposit(TESTNET, deposit("1000000"), undefined, sim.deps);
+    check("a deposit the contract would reject is refused by the simulation", !broken.accepted && /would fail/.test(broken.message), broken.message);
+    check("before anything was signed (the signer was never reached)", broken.message !== SENTINEL);
+    check("and before the day's budget was touched (no INCRBY at all)", kv.log.length === 0, `${kv.log.length} store writes`);
+    check("the simulation ran exactly once and nothing was sent", sim.calls.simulate === 1 && sim.calls.send === 0);
+    const still = await relayDeposit(
+      TESTNET,
+      buildInvoke({ fn: "deposit", args: depositArgs(usdc(5)), fee: "20000001" }),
+      undefined,
+      depsFor({ sim: { minResourceFee: 19_000_000 } }).deps,
+    );
+    check("the absolute 2 XLM cap is still the outer bound, whatever the simulation says", !still.accepted && /exceeds cap 20000000/.test(still.message), still.message);
+  }
+
+  console.log("[8] single-shot cap accounting: the day's budget goes back at most once, never once the tx is on the network (item c)");
+  const dep = (plan: Parameters<typeof fakeRpc>[0]) => {
+    kv.reset();
+    const d = depsFor(plan);
+    return outcomeOf(() => relayDepositHandler(TESTNET, realSigner, { xdr: deposit("1000000").toXDR(), senderPublicKey: sender.publicKey() }, d.deps)).then((o) => ({ o, calls: d.calls }));
+  };
+  {
+    const { o } = await dep({ send: "ERROR" });
+    check("send ERROR: the handler throws 'send failed'", /send failed/.test(o.message), o.message);
+    check("send ERROR: the day's budget is released exactly once", kv.dayReleases() === 1 && kv.dayReserves() === 1, `${kv.dayReserves()} reserved, ${kv.dayReleases()} released`);
+    check(
+      "send ERROR: the fee bid comes back whole (core refused it while validating; it 'will not be included in the ledger')",
+      kv.feeCharges() === 1 && kv.feeRefunds() === 1 && kv.feeTotal() === 0n,
+      `${kv.feeCharges()} charged, ${kv.feeRefunds()} refunded, ${kv.feeTotal()} left`,
+    );
+    check(
+      "send ERROR: the GROSS key still shows the 2,000,000-stroop bid reached the signature (a give-back never hides that)",
+      kv.feeGross() === 2_000_000n,
+      String(kv.feeGross()),
+    );
+  }
+  {
+    const { o } = await dep({ send: "THROW_UNANSWERED" });
+    check("send THROWS unanswered (a reset after the RPC may have queued it): an unconfirmed submit with the hash, never a failure", o.unconfirmed && /^[0-9a-f]{64}$/.test(o.hash ?? ""), o.message);
+    check("send THROWS unanswered: the day's budget is NOT released (the deposit may still land)", kv.dayReleases() === 0 && kv.dayReserves() === 1);
+    check("send THROWS unanswered: the fee bid stays whole (undecided)", kv.feeCharges() === 1 && kv.feeRefunds() === 0);
+  }
+  {
+    const { o } = await dep({ send: "THROW_504" });
+    check("send answered by a gateway 504: undecided too, an unconfirmed submit", o.unconfirmed && !!o.hash, o.message);
+    check("send 504: nothing released", kv.dayReleases() === 0 && kv.feeRefunds() === 0);
+  }
+  {
+    const { o } = await dep({ send: "THROW_REFUSED" });
+    check("send REFUSED by the RPC (JSON-RPC invalid params): a plain refusal, nothing was submitted", !o.unconfirmed && /send refused/.test(o.message), o.message);
+    check("send REFUSED: the day's budget is released once and the fee bid comes back", kv.dayReleases() === 1 && kv.feeRefunds() === 1 && kv.feeTotal() === 0n);
+  }
+  {
+    const { o } = await dep({ send: "PENDING", get: ["NOT_FOUND", "FAILED"], charged: 31_000 });
+    check("on-ledger FAILED: the handler throws", /tx FAILED/.test(o.message), o.message);
+    check("on-ledger FAILED: the day's budget is released exactly once (it used to be twice)", kv.dayReleases() === 1, `${kv.dayReleases()} released`);
+    check("on-ledger FAILED: the fee is NOT given back whole, it is trued down to what the ledger charged", kv.feeTotal() === 31_000n, `${kv.feeTotal()} counted`);
+  }
+  {
+    const { o, calls } = await dep({ send: "PENDING", get: ["NOT_FOUND", "NOT_FOUND", "NOT_FOUND"] });
+    check("NOT_FOUND after the window: the handler RETURNS {confirmed:false} with the hash", !!o.returned && o.returned.confirmed === false && /^[0-9a-f]{64}$/.test(o.returned.hash), o.message);
+    check("NOT_FOUND after the window: the budget is NOT released (the deposit may still land)", kv.dayReleases() === 0);
+    check("NOT_FOUND after the window: the whole fee bid stays counted", kv.feeRefunds() === 0 && kv.feeTotal() === 2_000_000n, `${kv.feeTotal()}`);
+    check("the confirm wait honoured the injected window (1 + maxPolls reads)", calls.get === 3, `${calls.get} reads`);
+  }
+  {
+    const { o } = await dep({ send: "PENDING", get: ["NOT_FOUND", "THROW"] });
+    check("an RPC that dies mid-poll AFTER the send was accepted raises an unconfirmed submit, not a failure", o.unconfirmed && !!o.hash, o.message);
+    check("mid-poll death: the budget is NOT released, and the fee bid stays whole", kv.dayReleases() === 0 && kv.feeRefunds() === 0);
+  }
+  {
+    const { o } = await dep({ send: "TRY_AGAIN_LATER" });
+    check("TRY_AGAIN_LATER: the RPC declined to queue it, so the handler raises 'busy' (the worker answers 503)", o.busy && /busy; try again shortly/.test(o.message), o.message);
+    check("TRY_AGAIN_LATER: the day's budget is released once and the fee bid comes back (nothing is on the network)", kv.dayReleases() === 1 && kv.feeTotal() === 0n);
+  }
+  {
+    const { o } = await dep({ send: "DUPLICATE", get: ["SUCCESS"] });
+    check("DUPLICATE: the tx IS on the network; it is watched like PENDING and confirms", !!o.returned && o.returned.confirmed === true, o.message);
+    check("DUPLICATE: the budget is never released", kv.dayReleases() === 0);
+  }
+  {
+    const { o } = await dep({ send: "PENDING", get: ["SUCCESS"], charged: 20_721 });
+    check("SUCCESS returns {confirmed:true} and keeps the reservation", !!o.returned && o.returned.confirmed === true && kv.dayReleases() === 0, o.message);
+    check(
+      "SUCCESS: the day's fee count drops from the 2,000,000-stroop bid to the 20,721 the ledger charged",
+      kv.feeTotal() === 20_721n && kv.feeRefunds() === 1,
+      `${kv.feeTotal()} counted`,
+    );
+  }
+  {
+    const { o } = await dep({ send: "PENDING", get: ["SUCCESS"] });
+    check("SUCCESS with no readable result: the whole bid stays counted (never guess low)", !!o.returned && kv.feeTotal() === 2_000_000n && kv.feeRefunds() === 0, `${kv.feeTotal()}`);
+  }
+
+  console.log("[9] the sponsor fee budget is charged before the signature and refuses past the day (item b)");
+  {
+    kv.reset();
+    process.env.MAX_DAY_FEE_XLM = "0.1"; // a deposit of inner fee 0.1 XLM bids 0.2 XLM as a fee-bump
+    const refused = await relayDeposit(TESTNET, deposit("1000000"), undefined, depsFor().deps);
+    check("a bid past MAX_DAY_FEE_XLM is refused with the public sentence", !refused.accepted && refused.message === FEE_BUDGET_REFUSAL, refused.message);
+    check("the refusal keeps its text on every network", refused.publicRefusal);
+    check("nothing was signed (the signer was never reached)", refused.message !== SENTINEL);
+    check("the refused fee increment was undone and the day's escrow budget released", kv.feeCharges() === 1 && kv.feeRefunds() === 1 && kv.dayReleases() === 1, kv.log.filter((l) => !l.key.includes(":sender:")).map((l) => `${l.key.split(":").slice(2, 3).join("")}${l.delta > 0n ? "+" : "-"}`).join(" "));
+    delete process.env.MAX_DAY_FEE_XLM;
+    kv.reset();
+    const fine = await relayDeposit(TESTNET, deposit("1000000"), undefined, depsFor().deps);
+    check("under the budget the bid is charged once and the deposit reaches the signer", fine.accepted && kv.feeCharges() === 1, fine.message);
+    check(
+      "a signer that THROWS signed nothing, so the bid comes back (a KMS outage must not spend the day on retries)",
+      kv.feeRefunds() === 1 && kv.feeTotal() === 0n,
+      `${kv.feeRefunds()} refunded, ${kv.feeTotal()} left`,
+    );
+  }
+
+  console.log("[10] /v2-claim: the assembled fee is bounded, and an undecided submit is reported as one (items a, g)");
+  {
+    kv.reset();
+    const rich = await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), undefined, depsFor({ sim: { minResourceFee: 19_500_000 } }).deps));
+    check("a claim whose assembled fee lands over 2 XLM is refused", /exceeds cap 20000000/.test(rich.message), rich.message);
+    check("and nothing was charged or sent", kv.feeCharges() === 0);
+    kv.reset();
+    const ok = await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), undefined, depsFor({ get: ["SUCCESS"] }).deps));
+    check("a claim that lands returns {confirmed:true}", !!ok.returned && ok.returned.confirmed === true, ok.message);
+    check("and its fee bid was charged once", kv.feeCharges() === 1);
+    {
+      // ORDER: with the day's fee budget already spent, the charge refuses BEFORE the sponsor's key
+      // is asked for anything. A refactor that signs first would show a signature here.
+      kv.reset();
+      kv.spendFees(20_000_000_000n); // the whole 2,000 XLM testnet day
+      const rec = recordingSigner();
+      const spent = await outcomeOf(() => relayClaimHandler(TESTNET, rec.signer, claimInput(), undefined, depsFor({ get: ["SUCCESS"] }).deps));
+      check("ORDER: a spent fee budget refuses the claim with the public sentence", spent.message === FEE_BUDGET_REFUSAL && spent.publicRefusal, spent.message);
+      check("ORDER: and the sponsor's key signed NOTHING (charge before signature)", rec.fees.length === 0, `${rec.fees.length} signatures`);
+    }
+    {
+      // The channel path: the fee-bump bids base x 2 + resource fee at the smallest valid base,
+      // the inner's own inclusion fee (1,000,000), never the inner's total fee.
+      kv.reset();
+      const rec = recordingSigner();
+      const pool = oneChannel();
+      const viaChannel = await outcomeOf(() =>
+        relayClaimHandler(TESTNET, rec.signer, claimInput(), pool.manager, depsFor({ sim: { minResourceFee: 500_000 }, get: ["SUCCESS"] }).deps),
+      );
+      check("a channel-sourced claim lands and frees its lease", !!viaChannel.returned && pool.state.released === 1, viaChannel.message);
+      check(
+        "its fee-bump bids 2 x 1,000,000 + 500,000 = 2,500,000 (was 2 x 1,500,000 + 500,000)",
+        rec.fees[0] === "2500000",
+        rec.fees.join(","),
+      );
+    }
+    {
+      kv.reset();
+      const pool = oneChannel();
+      const unanswered = await outcomeOf(() =>
+        relayClaimHandler(TESTNET, realSigner, claimInput(), pool.manager, depsFor({ send: "THROW_UNANSWERED" }).deps),
+      );
+      check("a claim whose send went unanswered is an unconfirmed submit carrying the hash", unanswered.unconfirmed && !!unanswered.hash, unanswered.message);
+      check(
+        "and its channel lease is KEPT (left to lapse), because the claim may still land on that sequence",
+        pool.state.leased === 1 && pool.state.released === 0,
+        `${pool.state.released} released`,
+      );
+      const poolB = oneChannel();
+      await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), poolB.manager, depsFor({ get: ["NOT_FOUND", "THROW"] }).deps));
+      check("the same for an RPC that died mid-poll: the lease is kept", poolB.state.released === 0);
+      const poolC = oneChannel();
+      await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), poolC.manager, depsFor({ send: "ERROR" }).deps));
+      check("a DECIDED refusal (send ERROR) frees the lease at once", poolC.state.released === 1);
+    }
+    const late = await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), undefined, depsFor({ get: ["NOT_FOUND", "NOT_FOUND", "NOT_FOUND"] }).deps));
+    check("NOT_FOUND after the window RETURNS {confirmed:false} instead of throwing 'v2-claim tx NOT_FOUND'", !!late.returned && late.returned.confirmed === false, late.message);
+    const gone = await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), undefined, depsFor({ get: ["NOT_FOUND", "THROW"] }).deps));
+    check("an RPC that dies mid-poll raises an unconfirmed submit carrying the hash", gone.unconfirmed && !!gone.hash, gone.message);
+    const busy = await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), undefined, depsFor({ send: "TRY_AGAIN_LATER" }).deps));
+    check("TRY_AGAIN_LATER raises 'busy'", busy.busy, busy.message);
+    const refusedSim = await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), undefined, depsFor({ sim: { error: "bad signature" } }).deps));
+    check("a claim whose simulation fails (a bad link signature) is refused before any fee", /simulation failed/.test(refusedSim.message), refusedSim.message);
+    const share = await outcomeOf(() =>
+      relayClaimHandler(TESTNET, realSigner, { ...claimInput(), method: "claim_share" }, undefined, depsFor({ get: ["FAILED"], failedEvents: [errorEvent(xdr.ScError.sceContract(7))] }).deps),
+    );
+    check("a group claim the ledger refused still comes back as its named public token", share.publicRefusal && /group-claim-failed: drop-empty/.test(share.message), share.message);
+  }
+
+  console.log("[11] /v2-reclaim: simulated, fee-bounded, and reported honestly when undecided (items a, g)");
+  {
+    const reclaim = (fee: string, plan: Parameters<typeof fakeRpc>[0] = {}) =>
+      outcomeOf(() => relayReclaimHandler(TESTNET, realSigner, { xdr: buildReclaim({ fee }).toXDR(), senderPublicKey: sender.publicKey() }, depsFor(plan).deps));
+    const over = await reclaim("3000001", { sim: { minResourceFee: 500_000 } });
+    check("a reclaim fee one stroop over sim + 0.25 XLM is refused", /exceeds what the reclaim needs \(3000000\)/.test(over.message), over.message);
+    const broken = await reclaim("1000000", { sim: { error: "not expired" } });
+    check("a reclaim the contract would reject is refused by the simulation, no fee spent", /would fail/.test(broken.message), broken.message);
+    kv.reset();
+    const ok = await reclaim("3000000", { get: ["SUCCESS"] });
+    check("a reclaim at exactly the bound is relayed and returns {confirmed:true}", !!ok.returned && ok.returned.confirmed === true, ok.message);
+    check("and its fee bid was charged once", kv.feeCharges() === 1);
+    {
+      kv.reset();
+      kv.spendFees(20_000_000_000n);
+      const rec = recordingSigner();
+      const spent = await outcomeOf(() =>
+        relayReclaimHandler(TESTNET, rec.signer, { xdr: buildReclaim({ fee: "1000000" }).toXDR(), senderPublicKey: sender.publicKey() }, depsFor({ get: ["SUCCESS"] }).deps),
+      );
+      check("ORDER: a spent fee budget refuses the reclaim with the public sentence", spent.message === FEE_BUDGET_REFUSAL, spent.message);
+      check("ORDER: and the sponsor's key signed NOTHING", rec.fees.length === 0, `${rec.fees.length} signatures`);
+      kv.reset(); // the rest of this section runs on an unspent day
+    }
+    const unanswered = await reclaim("1000000", { send: "THROW_UNANSWERED" });
+    check("a reclaim whose send went unanswered is an unconfirmed submit, never 'failed'", unanswered.unconfirmed && !!unanswered.hash, unanswered.message);
+    const noFee = await reclaim("1000000", { sim: { noResourceFee: true } });
+    check("a reclaim simulation that names no resource fee is REFUSED (the bound must not fail open on NaN)", /named no resource fee/.test(noFee.message), noFee.message);
+    const late = await reclaim("1000000", { get: ["NOT_FOUND", "NOT_FOUND", "NOT_FOUND"] });
+    check("NOT_FOUND after the window RETURNS {confirmed:false}", !!late.returned && late.returned.confirmed === false, late.message);
+    const busy = await reclaim("1000000", { send: "TRY_AGAIN_LATER" });
+    check("TRY_AGAIN_LATER raises 'busy'", busy.busy, busy.message);
+    const wrong = await outcomeOf(() => relayReclaimHandler(TESTNET, realSigner, { xdr: buildReclaim({ fn: "deposit" }).toXDR(), senderPublicKey: sender.publicKey() }, depsFor().deps));
+    check("a non-reclaim method is still refused before any simulation", /only reclaim\/reclaim_pool/.test(wrong.message), wrong.message);
+  }
+
+  console.log("[12] /v2-deposit moves only the sender's own USDC, and its bound never fails open");
+  {
+    kv.reset();
+    // deposit(from = stranger), sourced and named by the sender: the per-sender cap and the pilot
+    // slot would land on the sender while the stranger's USDC moved.
+    const theirs = buildInvoke({
+      fn: "deposit",
+      args: [Address.fromString(stranger.publicKey()).toScVal(), link(), i128(usdc(5)), expiry],
+    });
+    const notFrom = await relayDeposit(TESTNET, theirs, undefined, depsFor().deps);
+    check("a deposit whose 'from' is not the sender is refused", !notFrom.accepted && /sender's own USDC/.test(notFrom.message), notFrom.message);
+    check("before anything is reserved or charged", kv.log.length === 0, `${kv.log.length} store writes`);
+    const poolTheirs = buildInvoke({
+      fn: "create_drop",
+      args: [Address.fromString(stranger.publicKey()).toScVal(), link(), i128(usdc(30)), xdr.ScVal.scvU32(3), expiry],
+    });
+    check("the same for a group pool's 'from'", !(await relayDeposit(TESTNET, poolTheirs, undefined, depsFor().deps)).accepted);
+    const noFee = await relayDeposit(TESTNET, deposit("1000000"), undefined, depsFor({ sim: { noResourceFee: true } }).deps);
+    check("a simulation that names no resource fee is REFUSED, not compared as NaN", !noFee.accepted && /named no resource fee/.test(noFee.message), noFee.message);
+  }
+
+  console.log("[13] the fee-bump bids the smallest valid base: the inner's own inclusion fee, never its total");
+  {
+    // An assembled-looking deposit: 2,000,000 inclusion + 224,320 declared resource fee = 2,224,320.
+    const assembled = buildInvoke({ fn: "deposit", args: depositArgs(usdc(5)), fee: "2000000", resourceFee: 224_320 });
+    check("feeBumpBase reads the inclusion fee out of the envelope (2,224,320 - 224,320)", feeBumpBase(assembled) === "2000000", feeBumpBase(assembled));
+    check("a classic transaction's base is its fee per op, and never below 100", feeBumpBase(deposit("100")) === "100" && feeBumpBase(deposit("50")) === "100");
+    /* A sender-signed inner may DECLARE a resource fee larger than its own fee. Core refuses such an
+       inner, but the base used to floor at 100 and the sponsor signed a bid of 200 + R, R being the
+       client's number: a review declared 14 XLM and got a 14 XLM fee-bump signed. */
+    const declaring = (fn: "deposit" | "reclaim", fee: number, resourceFee: number): Transaction => {
+      const args = fn === "deposit" ? depositArgs(usdc(5)) : [Address.fromString(sender.publicKey()).toScVal(), link()];
+      const env = buildInvoke({ fn, args, fee: "100", resourceFee: 1 }).toEnvelope();
+      // The builder adds R on top of the fee and needs it non-negative; a hand-made envelope need not.
+      (env.v1().tx().ext().value() as xdr.SorobanTransactionData).resourceFee(xdr.Int64.fromString(String(resourceFee)));
+      env.v1().tx().fee(fee);
+      return TransactionBuilder.fromXDR(env.toXDR("base64"), Networks.TESTNET) as Transaction;
+    };
+    let threw = "";
+    try {
+      feeBumpBase(declaring("deposit", 2_000_000, 140_000_000));
+    } catch (e) {
+      threw = (e as Error).message;
+    }
+    check("feeBumpBase REFUSES a Soroban inner whose declared resource fee its fee cannot cover (no floor at 100)", /cannot cover/.test(threw), threw || "returned a base");
+    check("an inner that leaves exactly the 100-stroop minimum still gets base 100", feeBumpBase(declaring("deposit", 2_000_000, 1_999_900)) === "100");
+    let threwNegative = "";
+    try {
+      feeBumpBase(declaring("deposit", 2_000_000, -140_000_000));
+    } catch (e) {
+      threwNegative = (e as Error).message;
+    }
+    check("feeBumpBase REFUSES a negative declared resource fee (the field is a signed int64)", /negative/.test(threwNegative), threwNegative || "returned a base");
+    for (const route of ["deposit", "reclaim"] as const) {
+      kv.reset();
+      const rec = recordingSigner();
+      const sim = depsFor({ sim: { minResourceFee: 500_000 }, get: ["SUCCESS"] });
+      const input = { xdr: declaring(route, 2_000_000, -140_000_000).toXDR(), senderPublicKey: sender.publicKey() };
+      const o = await outcomeOf(() =>
+        route === "deposit" ? relayDepositHandler(TESTNET, rec.signer, input, sim.deps) : relayReclaimHandler(TESTNET, rec.signer, input, sim.deps),
+      );
+      check(`/v2-${route}: a NEGATIVE declared resource fee (-14 XLM) is refused, nothing signed, nothing reserved`, !o.returned && /negative resource fee/.test(o.message) && rec.fees.length === 0 && kv.log.length === 0, `${o.message} ${rec.fees.join(",")}`);
+    }
+    for (const route of ["deposit", "reclaim"] as const) {
+      kv.reset();
+      const rec = recordingSigner();
+      const sim = depsFor({ sim: { minResourceFee: 500_000 }, get: ["SUCCESS"] });
+      const inner = declaring(route, 2_000_000, 140_000_000); // a fee inside the bound, R of 14 XLM
+      const input = { xdr: inner.toXDR(), senderPublicKey: sender.publicKey() };
+      const o = await outcomeOf(() =>
+        route === "deposit" ? relayDepositHandler(TESTNET, rec.signer, input, sim.deps) : relayReclaimHandler(TESTNET, rec.signer, input, sim.deps),
+      );
+      check(`/v2-${route}: an inner declaring a 14 XLM resource fee inside a 0.2 XLM fee is refused`, !o.returned && /resource fee its own fee cannot cover/.test(o.message), o.message);
+      check(`/v2-${route}: and the sponsor's key signed NOTHING`, rec.fees.length === 0, rec.fees.join(","));
+      check(`/v2-${route}: before any reservation or fee charge (no store write)`, kv.log.length === 0 && kv.feeCharges() === 0, `${kv.log.length} writes`);
+      check(`/v2-${route}: and nothing was sent`, sim.calls.send === 0);
+      kv.reset();
+      const edge = depsFor({ sim: { minResourceFee: 500_000 }, get: ["SUCCESS"] });
+      const rec2 = recordingSigner();
+      const fine = declaring(route, 2_000_000, 1_999_900);
+      const ok = await outcomeOf(() =>
+        route === "deposit"
+          ? relayDepositHandler(TESTNET, rec2.signer, { xdr: fine.toXDR(), senderPublicKey: sender.publicKey() }, edge.deps)
+          : relayReclaimHandler(TESTNET, rec2.signer, { xdr: fine.toXDR(), senderPublicKey: sender.publicKey() }, edge.deps),
+      );
+      check(`/v2-${route}: R = fee - 100 (the minimum inclusion fee left) is still relayed, bid = fee + 100`, !!ok.returned && rec2.fees.at(-1) === "2000100", `${ok.message} ${rec2.fees.join(",")}`);
+    }
+    kv.reset();
+    const rec = recordingSigner();
+    const d = await outcomeOf(() =>
+      relayDepositHandler(TESTNET, rec.signer, { xdr: assembled.toXDR(), senderPublicKey: sender.publicKey() }, depsFor({ sim: { minResourceFee: 224_320 }, get: ["SUCCESS"] }).deps),
+    );
+    check("the relayed deposit lands", !!d.returned, d.message);
+    check(
+      "and its fee-bump bid is 2 x 2,000,000 + 224,320 = 4,224,320 (the old base bid 4,672,960)",
+      rec.fees[0] === "4224320",
+      rec.fees.join(","),
+    );
+  }
+  clearKv();
+
+  /* The HTTP half of item g: what the Worker itself ANSWERS, through worker.fetch, with the Soroban
+     RPC client's prototype stubbed (the Worker builds its own `new rpc.Server`), so a revert of the
+     route's 202 or of the catch's 202/503 mapping fails here and not only in a browser. */
+  console.log("[14] the Worker's own answers: 202 for an undecided relay, 503 for a busy RPC, 200 for a landed one");
+  {
+    const proto = rpc.Server.prototype as unknown as Record<string, unknown>;
+    const saved = { ...Object.fromEntries(["getAccount", "simulateTransaction", "sendTransaction", "getTransaction"].map((k) => [k, proto[k]])) };
+    const stub = (send: "THROW" | "TRY_AGAIN_LATER" | "PENDING", get: "SUCCESS" | "THROW") => {
+      const f = fakeRpc({ get: [get === "THROW" ? "THROW" : "SUCCESS"] }).factory("x");
+      proto.getAccount = f.getAccount;
+      proto.simulateTransaction = f.simulateTransaction;
+      proto.getTransaction = f.getTransaction;
+      proto.sendTransaction = async (tx: Transaction | FeeBumpTransaction) => {
+        if (send === "THROW") throw new TypeError("fetch failed: socket hang up");
+        return { status: send, hash: tx.hash().toString("hex"), latestLedger: 1, latestLedgerCloseTime: 0 };
+      };
+    };
+    const ENV = {
+      STELLAR_NETWORK: "testnet",
+      SPONSOR_SECRET: sponsor.secret(),
+      USDC_ISSUER: issuer.publicKey(),
+      LUMENDROP_CONTRACT: CONTRACT,
+    };
+    const post = async (route: string, body: unknown) => {
+      const res = await worker.fetch(
+        new Request(`https://sponsor.test${route}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "cf-connecting-ip": `198.51.100.${10 + Math.floor(Math.random() * 200)}` },
+          body: JSON.stringify(body),
+        }),
+        ENV,
+      );
+      return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+    };
+    const depositBody = () => ({ xdr: deposit("1000000").toXDR(), senderPublicKey: sender.publicKey() });
+    try {
+      stub("THROW", "SUCCESS");
+      const unanswered = await post("/v2-deposit", depositBody());
+      check(
+        "/v2-deposit whose send went unanswered: 202 {error:'submit unconfirmed', hash}",
+        unanswered.status === 202 && unanswered.body.error === "submit unconfirmed" && /^[0-9a-f]{64}$/.test(String(unanswered.body.hash)),
+        `${unanswered.status} ${JSON.stringify(unanswered.body)}`,
+      );
+      stub("TRY_AGAIN_LATER", "SUCCESS");
+      const busy = await post("/v2-deposit", depositBody());
+      check("/v2-deposit when the RPC declines to queue: 503 with the busy sentence", busy.status === 503 && /network is busy/.test(String(busy.body.error)), `${busy.status} ${JSON.stringify(busy.body)}`);
+      stub("PENDING", "THROW");
+      const midPoll = await post("/v2-deposit", depositBody());
+      check("/v2-deposit whose RPC died while watching: 202 with the hash", midPoll.status === 202 && /^[0-9a-f]{64}$/.test(String(midPoll.body.hash)), `${midPoll.status} ${JSON.stringify(midPoll.body)}`);
+      stub("PENDING", "SUCCESS");
+      const landed = await post("/v2-deposit", depositBody());
+      check("/v2-deposit that lands: 200 {hash, confirmed:true}", landed.status === 200 && landed.body.confirmed === true, `${landed.status} ${JSON.stringify(landed.body)}`);
+      stub("THROW", "SUCCESS");
+      const claimUnanswered = await post("/v2-claim", claimInput());
+      check("/v2-claim whose send went unanswered: 202, never a 400 the screen would retry", claimUnanswered.status === 202 && /^[0-9a-f]{64}$/.test(String(claimUnanswered.body.hash)), `${claimUnanswered.status} ${JSON.stringify(claimUnanswered.body)}`);
+      stub("PENDING", "SUCCESS");
+      const claimed = await post("/v2-claim", claimInput());
+      check("/v2-claim that lands: 200 {hash, confirmed:true}", claimed.status === 200 && claimed.body.confirmed === true, `${claimed.status} ${JSON.stringify(claimed.body)}`);
+      stub("TRY_AGAIN_LATER", "SUCCESS");
+      const reclaimBusy = await post("/v2-reclaim", { xdr: buildReclaim({ fee: "1000000" }).toXDR(), senderPublicKey: sender.publicKey() });
+      check("/v2-reclaim when the RPC declines to queue: 503 busy", reclaimBusy.status === 503 && /network is busy/.test(String(reclaimBusy.body.error)), `${reclaimBusy.status} ${JSON.stringify(reclaimBusy.body)}`);
+    } finally {
+      Object.assign(proto, saved);
+    }
+  }
 
   console.log("\n============================================================");
   console.log(fail === 0 ? ` ✅ V2 RELAY GUARD TESTS PASS (${pass}/${pass})` : ` ❌ ${fail} FAILURES (${pass} passed)`);

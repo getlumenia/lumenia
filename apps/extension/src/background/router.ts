@@ -208,6 +208,10 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
       if (req.net === "public") {
         const acct = await requireAccount();
         if (acct.phase !== 2) throw fail("needs-password");
+        /* An account made here and never backed up exists in this browser only. The pilot's
+           approval used to stand between it and real money; with the pilot retired the sponsor
+           admits every wallet, so this is where the backup rule holds (and again in runSend). */
+        if ((await backupView()).needed) throw fail("needs-backup");
         const p = await pilotStatus(acct.pubkey);
         if (!p.approved) throw fail("not-approved");
         if (!(await readSettings()).mainnetAck) throw new ExtError("not-approved", "Read the real-money note and accept it first.");
@@ -255,6 +259,7 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
               now: () => Date.now(),
               settings: readSettings,
               account: currentAccount,
+              backupNeeded: async () => (await backupView()).needed,
               signer: signerFor,
               pilot: (pubkey) => pilotStatus(pubkey),
               balance: readBalance,

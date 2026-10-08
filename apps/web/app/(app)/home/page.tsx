@@ -21,9 +21,13 @@ import { useWallet } from "../../../lib/wallet";
 import { activeNetwork } from "../../../lib/network";
 import { loadBalance, loadActivityForAccounts, loadIncomingClaims, loadLinkStatus, loadTotalUsd, type ActivityItem, type IncomingClaim } from "../../../lib/horizon";
 import { collectIncoming } from "../../../lib/claim";
-import { sweepIntoHome } from "../../../lib/sweep";
+import { forgetPendingSweep, pendingSweep, settlePendingSweep, sweepIntoHome } from "../../../lib/sweep";
 import { unlockPhase1, removeAccount, isPublished } from "../../../lib/keystore";
-import { isNeedsPassword } from "../../../lib/signer-error";
+import { isNeedsBackup, isNeedsPassword } from "../../../lib/signer-error";
+import { isUnconfirmedSubmit } from "../../../lib/unconfirmed";
+import { backupBlocksRealMoney } from "../../../lib/pilot-access";
+import { hasBackup } from "../../../lib/recovery-api";
+import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { indicativeRate, getLiveRate } from "../../../lib/rate";
 import { formatUsd } from "../../../lib/money";
 import { BalanceHeader } from "../../../components/brand/BalanceHeader";
@@ -69,7 +73,7 @@ const EVENT_ACTIONS: Array<{ href: string; label: string; icon: string }> = [
 
 export default function HomePage() {
   const event = eventMode();
-  const { status, account, accounts, getSigner, refresh: refreshWallet } = useWallet();
+  const { status, account, accounts, getSigner, refresh: refreshWallet, network, pilotState, pilotKnown } = useWallet();
   const router = useRouter();
   const [usd, setUsd] = useState<string | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
@@ -156,6 +160,22 @@ export default function HomePage() {
           // its way to it would bounce off an account that no longer exists. Publishing is
           // recorded locally by /add-money (keystore.markPublished).
           if (await isPublished(other.address)) continue;
+          /* A sweep of this account the sponsor accepted and never saw decided (its 202, remembered
+             by lib/sweep.ts). The key stays until the ledger shows the merge or the sweep's hash
+             succeeded, the only evidence the money left; a sweep that can no longer land leaves the
+             money here, so it is swept again below; anything else waits for a later visit. */
+          const pending = pendingSweep(other.address);
+          if (pending) {
+            const outcome = await settlePendingSweep(other.address, pending);
+            if (outcome === "landed") {
+              forgetPendingSweep(other.address);
+              await removeAccount(other.address);
+              sweptAny = true;
+              continue;
+            }
+            if (outcome !== "failed") continue;
+            forgetPendingSweep(other.address);
+          }
           // Drive off the USDC BALANCE: the frozen /c/[id] route already claimed the
           // incoming CB into the throwaway, so the money sits as plain USDC (no open
           // CB) — the production bug case, and the only shape this sweep completes.
@@ -191,7 +211,8 @@ export default function HomePage() {
             seed.fill(0);
           }
           // The accountMerge in the sweep closed the throwaway on-chain → drop its
-          // record too. removeAccount refuses to touch home, so this is safe.
+          // record too. removeAccount refuses to touch home, so this is safe. A sweep that came back
+          // undecided threw before this line, so its key is kept (see the pending check above).
           await removeAccount(other.address);
         } catch (e) {
           if (process.env.NODE_ENV !== "production") {
@@ -260,6 +281,14 @@ export default function HomePage() {
            without leaving the money: LockMoneyCard renders below for exactly this account. A
            different place therefore gets different words, naming that card by its own heading, so
            the sentence can never be read as the trip to /account the other screens offer. */
+        /* Real money with the pilot retired and no backup yet (lib/wallet.tsx getSigner). The card
+           below carries the same heading and does both steps in one, on this screen. */
+        if (isNeedsBackup(e)) {
+          setCollectError(
+            'Lock this account and back it up, then collect this. The "Lock this money to you" card below does both.',
+          );
+          return;
+        }
         if (isNeedsPassword(e)) {
           setCollectError(
             "Set a password to finish setting up, then collect this. The “Lock this money to you” card below does it.",
@@ -271,7 +300,14 @@ export default function HomePage() {
       }
       await collectIncoming({ sponsorUrl: sponsorUrl(), signer, balanceId });
       await reload();
-    } catch {
+    } catch (e) {
+      /* The sponsor's 202 (lib/claim.ts): asked, not yet confirmed. Neither "collected" nor a
+         failure; the list drops the row once the ledger has it, and asking again is safe. */
+      if (isUnconfirmedSubmit(e)) {
+        setCollectError(copy.errors.collectUnconfirmed);
+        await reload().catch(() => undefined);
+        return;
+      }
       // Terminal vs. transient, by re-reading whether the balance still exists —
       // never leak a Horizon result code (vocabulary law). Gone = already collected
       // or reclaimed → say so calmly + refresh so the stale item disappears.
@@ -369,7 +405,27 @@ export default function HomePage() {
       </Link>
       )}
 
-      {account.phase === 1 && <LockMoneyCard />}
+      {/* ON REAL MONEY THE LOCK IS THE SECURE STEP. LockMoneyCard sets a password and writes no
+          backup, and with the pilot retired that left an account the app called ready while its
+          only key lived on this phone. On real money this card does both in one step (the same
+          RecoveryFlow /pilot uses), for a Phase-1 account and for a locked one with no backup yet
+          (lib/pilot-access.ts backupBlocksRealMoney). Practice money keeps the one-field lock. */}
+      {network === "public" &&
+      (account.phase === 1 ||
+        backupBlocksRealMoney({ onMainnet: true, pilotState, pilotKnown, backedUp: hasBackup(account.address) })) ? (
+        <MoneyCard className="p-5">
+          <p className="font-semibold text-ink">{copy.lock.title}</p>
+          <p className="mt-1 text-sm text-ink-soft">
+            Real money needs a password and a backup. This one step does both, so a new phone can bring
+            it back with your email and password.
+          </p>
+          <div className="mt-4">
+            <RecoveryFlow mode="secure" />
+          </div>
+        </MoneyCard>
+      ) : (
+        account.phase === 1 && <LockMoneyCard />
+      )}
 
       {/* Activity — the most recent few; the full history lives on /activity. */}
       <section>

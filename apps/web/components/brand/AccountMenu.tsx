@@ -83,7 +83,7 @@ export function AccountMenu() {
   useEffect(() => {
     if (!open || !account || network !== "public") return;
     let alive = true;
-    void ensureCanReceive(account.address, getSigner).then((r) => alive && setReceivable(r));
+    void ensureCanReceive(account.address, () => getSigner({ movesMoney: false })).then((r) => alive && setReceivable(r));
     return () => {
       alive = false;
     };

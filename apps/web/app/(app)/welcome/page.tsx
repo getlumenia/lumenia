@@ -66,7 +66,7 @@ function Dots({ step }: { step: Step }) {
 
 export default function WelcomePage() {
   const router = useRouter();
-  const { status, account, getSigner, createAccount, network, mainnetApproved, switchNetwork } = useWallet();
+  const { status, account, getSigner, createAccount, network, mainnetApproved, pilotState, switchNetwork } = useWallet();
   const [step, setStep] = useState<Step>("hello");
   const [name, setName] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -152,7 +152,7 @@ export default function WelcomePage() {
     setBusy(true);
     setError(null);
     try {
-      const signer = await getSigner();
+      const signer = await getSigner({ movesMoney: false }); // a signed name proof, not a money movement
       const claimed = await claimHandle(signer, target);
       setName(claimed.name);
       markWelcomeSeen();
@@ -310,7 +310,11 @@ export default function WelcomePage() {
               >
                 <span className="app-choice-t">Real money</span>
                 <span className="app-choice-s">
-                  {mainnetApproved ? "You're on the pilot list." : "Invite-only for now."}
+                  {pilotState === "open"
+                    ? "Open to everyone, capped per transfer."
+                    : mainnetApproved
+                      ? "You're on the pilot list."
+                      : "Invite-only for now."}
                 </span>
               </button>
             </div>

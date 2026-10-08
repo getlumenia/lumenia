@@ -27,6 +27,7 @@ import type { Signer } from "./signer";
 import { activeNetwork } from "./network";
 import { claimFragment } from "./link-fragment";
 import { assertHealthMatchesPin, pinnedUsdcIssuer } from "./tx-guard";
+import { UnconfirmedSubmitError, isUnconfirmedSubmit, signedFacts, throwIfUnconfirmed, type SignedFacts } from "./unconfirmed";
 
 const RECLAIM_AFTER_SECONDS = (7 * 24 * 60 * 60).toString(); // money comes back after 7 days
 
@@ -36,13 +37,43 @@ export interface SendResult {
   hash: string;
 }
 
-async function postJson(url: string, body: unknown): Promise<Record<string, unknown>> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+/**
+ * A payment the sponsor accepted and never saw decided (its 202), or whose reply never came back.
+ *
+ * The send used to read the 202 as a success: its body carries no balance id, so the screen crashed
+ * on it and said "Your money hasn't moved. Try again", and a person who did that could pay twice.
+ * The claimable balance this payment creates has an id fixed by the transaction itself (its source
+ * account, sequence number and operation index), so it is computed before the POST and travels on
+ * the error: if the payment lands, the screen can still name it.
+ */
+export class SendUnconfirmedError extends UnconfirmedSubmitError {
+  constructor(
+    base: UnconfirmedSubmitError,
+    /** the id of the claimable balance this payment creates, if it lands */
+    readonly balanceId: string,
+  ) {
+    super(base.route, base.hash, base.signed);
+    this.name = "SendUnconfirmedError";
+  }
+}
+
+async function postJson(url: string, body: unknown, signed?: SignedFacts): Promise<Record<string, unknown>> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    /* A request carrying a signed payment that got no answer may still have been submitted: the
+       connection can drop after the sponsor took it. Only the ledger can say which, so it is the
+       same undecided outcome as a 202, settled by the same reads. */
+    if (signed) throw new UnconfirmedSubmitError(new URL(url).pathname, "", signed);
+    throw e;
+  }
   const text = await res.text();
+  throwIfUnconfirmed(res.status, text, new URL(url).pathname, signed ?? null);
   if (!res.ok) throw new Error(`${new URL(url).pathname} → ${res.status}: ${text}`);
   return JSON.parse(text) as Record<string, unknown>;
 }
@@ -88,12 +119,22 @@ async function submitSponsoredCB(opts: {
     .build();
   await opts.signer.sign(inner); // sender signs create + end
 
-  const res = (await postJson(`${base}/send-link`, {
-    xdr: inner.toXDR(),
-    senderPublicKey: sender,
-  })) as { hash: string; balanceId: string };
+  // Fixed by the transaction itself, so it is known before the reply (see SendUnconfirmedError).
+  // Index 1 is the createClaimableBalance op, the shape the sponsor's send policy pins.
+  const expectedId = inner.getClaimableBalanceId(1);
+  let res: { hash: string; balanceId: string };
+  try {
+    res = (await postJson(
+      `${base}/send-link`,
+      { xdr: inner.toXDR(), senderPublicKey: sender },
+      signedFacts(inner),
+    )) as { hash: string; balanceId: string };
+  } catch (e) {
+    if (isUnconfirmedSubmit(e)) throw new SendUnconfirmedError(e, expectedId);
+    throw e;
+  }
 
-  return { hash: res.hash, balanceId: res.balanceId, usdcIssuer: issuer };
+  return { hash: res.hash, balanceId: res.balanceId || expectedId, usdcIssuer: issuer };
 }
 
 export async function createSendLink(opts: {

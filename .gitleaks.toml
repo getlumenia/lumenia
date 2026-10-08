@@ -19,4 +19,25 @@ regexes = [
   # name the testnet spike's evidence uses (evidence/spike11/visibility.json): the on-chain address
   # of a storage entry, readable by anyone through the RPC, not a credential.
   '''ledgerKeyXdr": "AAAABg[A-Za-z0-9+/]+=*''',
+  # AWS KMS's public name for the Ed25519 key type (the KMS signer and its offline test use it as a
+  # KeySpec value): a constant from the AWS documentation, not a credential.
+  '''KeySpec: "ECC_NIST_EDWARDS25519"''',
 ]
+
+# A Stellar secret seed: "S" and 55 more base32 characters. The default ruleset only catches one
+# next to a word like "secret"; a bare seed under any other name (the retirement rehearsal's
+# rehearsal-keys.json keeps its wallets' seeds under "w1" and "w2") went through unreported. A seed
+# moves money, so the shape alone is the finding, whatever it is called.
+[[rules]]
+id = "stellar-secret-seed"
+description = "Stellar secret seed (S + 55 base32 characters)"
+regex = '''\bS[A-Z2-7]{55}\b'''
+
+  # A placeholder that spells the base32 alphabet in order is not a key (apps/web/lib/claim-error.selftest.ts
+  # feeds one to the redaction it tests, and it is in history since ec92517). gitleaks 8.30.1's default
+  # stopwords already skip it; this keeps it skipped if a version bump changes them. A real seed is
+  # random: the chance that it contains this 32-character run is 32^-32.
+  [[rules.allowlists]]
+  description = "base32 alphabet placeholders"
+  regexTarget = "match"
+  regexes = ['''ABCDEFGHIJKLMNOPQRSTUVWXYZ234567''']

@@ -12,15 +12,17 @@
  * mailer code (which reads process.env) works unchanged. getService() is called lazily
  * (inside fetch), never at module top level — env isn't available at isolate startup.
  */
-import { getServiceAsync, enforceRateLimit, corsHeaders } from "./lib/service.js";
-import { isHalted } from "./lib/kill-switch.js";
-import { runWatchdog } from "./lib/watchdog.js";
+import { getServiceAsync, serviceConfigFromEnv, enforceRateLimit, corsHeaders, type Service } from "./lib/service.js";
+import { ChannelManager } from "./lib/channels.js";
+import { horizon } from "./lib/stellar.js";
+import { isHalted, haltStatus } from "./lib/kill-switch.js";
+import { runWatchdog, alertingStatus, watchdogStamps, watchdogAge } from "./lib/watchdog.js";
 import { createAccountHandler } from "./lib/create-account.js";
 import { feebumpHandler } from "./lib/feebump.js";
 import { sendLinkHandler } from "./lib/send.js";
 import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
-import { relayClaimHandler, relayDepositHandler, relayReclaimHandler } from "./lib/soroban-relay.js";
+import { relayClaimHandler, relayDepositHandler, relayReclaimHandler, isRelayBusy } from "./lib/soroban-relay.js";
 import { relayCctpHandler } from "./lib/cctp-relay.js";
 import { faucetHandler } from "./lib/faucet.js";
 import { demoLinkHandler } from "./lib/demo-link.js";
@@ -30,9 +32,17 @@ import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent, recordEvent, eventsSummary } from "./lib/events.js";
 import { putBox, getBox, putAliasBox, getAliasBox, type OwnerProof } from "./lib/recovery-store.js";
 import { requestOtp, verifyOtp, idForEmail } from "./lib/recovery-otp.js";
-import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, getPilotState, verifyApprovalToken } from "./lib/pilot.js";
+import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, isPilotApproved, verifyApprovalToken } from "./lib/pilot.js";
 import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected, notifyPilotInterest } from "./lib/pilot-request.js";
-import { isPublicRefusal, PublicRefusal, checkOnboardingBudget, onboardingBudgetFromEnv } from "./lib/caps.js";
+import {
+  isPublicRefusal,
+  PublicRefusal,
+  checkOnboardingBudget,
+  onboardingBudgetFromEnv,
+  readDayCounters,
+  readSponsorFeeDay,
+  stroopsToXlm,
+} from "./lib/caps.js";
 import { isSubmitUnconfirmed } from "./lib/stellar.js";
 import {
   resolveProof,
@@ -162,14 +172,19 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
  * entire pilot allowance — and a genuine send that failed on a bad sequence or a Horizon blip cost
  * the user a slot too. Only a transaction that actually went through should spend one.
  */
-async function withPilotSlot<T>(pubkey: string, run: () => Promise<T>): Promise<T | { error: string }> {
+export async function withPilotSlot<T>(pubkey: string, run: () => Promise<T>): Promise<T | { error: string }> {
   if (!pilotEnabled()) return run();
   const p = await enforcePilot(pubkey);
   if (!p.ok) return { error: p.reason ?? "not admitted to the pilot" };
   try {
     return await run();
   } catch (e) {
-    await p.release?.();
+    /* Only a transaction that definitely did not happen gives the slot back. A submission the
+     * network never ruled on (SubmitUnconfirmedError: a Horizon timeout, an RPC that stopped
+     * answering mid-poll) may still land, and handing the slot back for it let one approved wallet
+     * spend the same slot twice: once for the deposit that landed, once for the retry. The handler's
+     * own `{confirmed:false}` return takes the same line, by not throwing at all. */
+    if (!isSubmitUnconfirmed(e)) await p.release?.();
     throw e;
   }
 }
@@ -203,6 +218,73 @@ const GRANT_ROUTES = new Set(["/pilot-approve", "/pilot-reject"]);
 /** Anything larger than this is not one of our requests; reject before parsing (F8). */
 const MAX_BODY_BYTES = 16 * 1024;
 
+/**
+ * /health's store readings (watchdog stamps, fee day, day counters), cached per isolate for a few
+ * seconds. The cache holds the READ IN FLIGHT, not just its result, so a burst of requests on a cold
+ * or expired cache shares one refresh: at most five store requests per isolate per window (two stamp
+ * GETs, two fee GETs, one counters pipeline), whatever the request rate. Before D3 /health read no
+ * store at all, and an anonymous amplifier is the class of hole the /pilot-status comment warns
+ * about. A rate limiter would not do this job, because the limiter itself writes to the store on
+ * every request. The halt is NOT in this cache: `haltStatus` keeps its own 5 s verdict, and caching
+ * that again here let /health show a halt or a resume up to about ten seconds late.
+ */
+const HEALTH_CACHE_MS = 5_000;
+type HealthReadings = {
+  stamps: Awaited<ReturnType<typeof watchdogStamps>>;
+  fees: Awaited<ReturnType<typeof readSponsorFeeDay>>;
+  counters: Awaited<ReturnType<typeof readDayCounters>>;
+};
+let healthCache: { at: number; network: string; value: Promise<HealthReadings> } | null = null;
+
+function healthReadings(network: string, now: number): Promise<HealthReadings> {
+  if (healthCache && healthCache.network === network && now - healthCache.at >= 0 && now - healthCache.at < HEALTH_CACHE_MS) {
+    return healthCache.value;
+  }
+  const value = Promise.all([
+    watchdogStamps(network as "testnet" | "mainnet"),
+    readSponsorFeeDay(undefined, now),
+    readDayCounters(now),
+  ]).then(([stamps, fees, counters]) => ({ stamps, fees, counters }));
+  const entry = { at: now, network, value };
+  healthCache = entry;
+  // A refresh that fails is not kept: the next request tries again.
+  value.catch(() => {
+    if (healthCache === entry) healthCache = null;
+  });
+  return value;
+}
+
+/**
+ * The service for the READ routes while the signer cannot be built. In KMS mode the signer starts
+ * with one GetPublicKey, and while KMS is unreachable that throws; every route used to answer 400,
+ * /health and the recovery routes included. Only the routes that sign need the signer, so the others
+ * run on the config alone (built with no KMS call) and /health says the signer is unavailable. A
+ * value or grant route still fails, as it must: there is no fallback signer.
+ */
+function degradedService(): Service & { degraded: true } {
+  const { config, accountSource, kms } = serviceConfigFromEnv();
+  return {
+    config,
+    signer: {
+      publicKey: () => "",
+      sign: () => {
+        throw new Error("the signer is unavailable");
+      },
+    },
+    signerKind: kms ? "kms" : "env",
+    accountSource,
+    faucet: null,
+    server: horizon(config),
+    channels: new ChannelManager([]),
+    degraded: true,
+  };
+}
+
+/** Tests only: forget the cached /health readings so a suite can see a store change at once. */
+export function resetHealthCache(): void {
+  healthCache = null;
+}
+
 export default {
   async fetch(
     request: Request,
@@ -218,8 +300,17 @@ export default {
     if (method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders() });
 
     try {
-      // KMS-aware bootstrap: with KMS_KEY_ID set the sponsor signs via AWS KMS (no hot key).
-      const { config, signer, faucet, server, channels } = await getServiceAsync();
+      // KMS-aware bootstrap: with KMS_KEY_ID set the sponsor signs via AWS KMS (no hot key). Only the
+      // routes that sign need the signer; a failed bootstrap leaves the read routes up (degradedService).
+      let svc: Service & { degraded?: true };
+      try {
+        svc = await getServiceAsync();
+      } catch (e) {
+        if (VALUE_ROUTES.has(url) || GRANT_ROUTES.has(url)) throw e;
+        console.error(`[service] the signer could not be built, read routes only: ${(e as Error).message}`);
+        svc = degradedService();
+      }
+      const { config, signer, signerKind, faucet, server, channels } = svc;
 
       // Kill-switch: one flip halts every value-moving route AND the two routes that grant the
       // right to move value (see lib/kill-switch.ts). Method-agnostic on purpose — the grant
@@ -241,14 +332,52 @@ export default {
         }
       }
 
+      /* /health is the one page an operator (and the dead-man workflow) reads from outside: which
+       * key signs and for which account, whether the sponsor is halted and why, when the watchdog
+       * last completed a run, whether a page can leave the Worker at all, and how much of today's
+       * budgets is spent. Nothing here is a secret: no token, no key id, only public addresses and
+       * counters a funding report already publishes. Unmetered, and its store readings are cached
+       * per isolate (`healthReadings`): wait more than 5 s to see a store change here. */
       if (method === "GET" && url === "/health") {
+        const now = Date.now();
+        const [halt, { stamps, fees, counters }] = await Promise.all([haltStatus(now), healthReadings(config.network, now)]);
         return json(200, {
-          ok: true,
+          // False only while the signer cannot be built (a KMS outage): every value route then fails.
+          ok: !svc.degraded,
           service: "lumenia-sponsor",
           network: config.network,
-          sponsorPublicKey: signer.publicKey(),
+          sponsorPublicKey: config.sponsorAccountId,
+          account: config.sponsorAccountId,
+          // Where the account address came from: an explicit SPONSOR_ACCOUNT_ID (the KMS split), or
+          // the signer's own key (the env hot key, account and signer one and the same).
+          accountSource: svc.accountSource,
+          signer: svc.degraded
+            ? { kind: signerKind, publicKey: null, available: false }
+            : { kind: signerKind, publicKey: signer.publicKey(), available: true },
+          pilotMode: pilotEnabled(),
           usdcCode: config.usdc.getCode(),
           usdcIssuer: config.usdc.getIssuer(),
+          contract: config.lumendropContract ?? null,
+          halt,
+          /* `lastRun` is written by every scheduled run, `lastFullRun` only by one in which every check
+             completed (lib/watchdog.ts). The heartbeat workflow needs both keys present, null or not.
+             An age is NEGATIVE for a stamp from the future, which the workflow reads as a failure. */
+          watchdog: {
+            lastRun: stamps.lastRun,
+            ageSeconds: watchdogAge(stamps.lastRun, now),
+            lastFullRun: stamps.lastFullRun,
+            fullAgeSeconds: watchdogAge(stamps.lastFullRun, now),
+          },
+          alerting: alertingStatus(),
+          fees: {
+            day: fees.day,
+            spentXlm: fees.spentStroops === null ? null : stroopsToXlm(fees.spentStroops),
+            // Every bid accepted today, never lowered by a give-back (lib/caps.ts, feeGrossDayKey).
+            grossXlm: fees.grossStroops === null ? null : stroopsToXlm(fees.grossStroops),
+            maxXlm: stroopsToXlm(fees.maxStroops),
+            used: fees.used === null ? null : Math.round(fees.used * 1000) / 1000,
+          },
+          counters: { ...counters, maxDaySourceAccounts: onboardingBudgetFromEnv().maxDaySourceAccounts },
         });
       }
 
@@ -264,10 +393,19 @@ export default {
            of it, so exhausting one connection cannot refuse everybody else's claim for the rest of
            the day. The caller is keyed from the same address the rate limiter just used. The route
            itself stays open by design. */
-        const budget = await checkOnboardingBudget(onboardingBudgetFromEnv(), clientIp(request));
+        const budget = await checkOnboardingBudget(onboardingBudgetFromEnv(), clientIp(request), Date.now(), body.recipientPublicKey);
         if (!budget.ok) throw new PublicRefusal(budget.reason!);
         try {
-          return json(200, await createAccountHandler(server, config, signer, { recipientPublicKey: body.recipientPublicKey }, channels));
+          /* A REPEAT (this key already holds today's slot) is served on the sponsor path, never on
+             a channel. A lease is held for its whole 150 s TTL because the client submits later, so
+             leased repeats (up to 11 holds per admitted key a day) let one address empty the pool
+             for minutes and push EVERY fresh claim onto the sponsor's single sequence, which a
+             review measured. On the sponsor path the cost stays with repeats: two in flight share
+             the sponsor's next sequence, and one a client submits (an account that exists makes it
+             fail, but it is included) moves that sequence under the other sponsor-path handouts in
+             flight, which then fail with a bad sequence and are retried. Disclosed in the report. */
+          const pool = budget.repeat ? undefined : channels;
+          return json(200, await createAccountHandler(server, config, signer, { recipientPublicKey: body.recipientPublicKey }, pool));
         } catch (e) {
           // The handler threw, so no sandwich was handed out — the only outcome this service can
           // see. A sandwich that IS handed out and then abandoned keeps its slot (lib/caps.ts).
@@ -355,7 +493,10 @@ export default {
           irisUrl: process.env.CCTP_IRIS_URL,
           channels,
         });
-        return json(r.status === "pending" ? 202 : 200, r);
+        // 202 both while Circle has not attested yet AND when the mint was accepted but not yet
+        // observed to land (the same "accepted, undecided" answer every relay gives, D3 item g).
+        const undecided = r.status === "pending" || r.confirmed === false;
+        return json(undecided ? 202 : 200, r);
       }
 
       if (method === "POST" && url === "/v2-claim") {
@@ -365,10 +506,16 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), body.payout);
         if (rl.limited) return json(429, { error: rl.reason });
-        return json(200, await relayClaimHandler(config, signer, {
+        const out = await relayClaimHandler(config, signer, {
           method: body.method, linkHex: body.linkHex, payout: body.payout, sigHex: body.sigHex,
           contract: body.contract, // optional: a superseded escrow, for links minted pre-upgrade
-        }, channels));
+        }, channels);
+        /* 202 when the claim is on the network but the RPC had not shown it landing before the
+         * window closed, exactly as /v2-deposit answers (below). A 400 here used to be redacted on
+         * mainnet to "request failed", which the claim screen could only read as "nothing moved",
+         * and its retry minted another sponsored payout account for a claim that then landed. A
+         * returned 202 is not a thrown error, so the redaction never touches it. */
+        return json(out.confirmed === false ? 202 : 200, out);
       }
 
       if (method === "POST" && url === "/v2-deposit") {
@@ -397,7 +544,9 @@ export default {
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
-        return json(200, await relayReclaimHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey }));
+        const out = await relayReclaimHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey });
+        // Same 202 contract as /v2-deposit and /v2-claim: accepted, undecided, here is the hash.
+        return json(out.confirmed === false ? 202 : 200, out);
       }
 
       if (method === "POST" && url === "/faucet") {
@@ -467,6 +616,18 @@ export default {
       // pilot is off (every testnet deployment) it answers a plain "not a pilot", so the client
       // simply stays on testnet. The real gate is still the allowlist enforced on value routes.
       if (method === "GET" && url === "/pilot-status") {
+        /* The retirement switch (SOW 2, D3 item i): with PILOT_MODE unset this Worker admits every
+         * wallet to its value routes, so the honest answer is "open", to anyone, with or without a
+         * key (a device with no account yet has none to send). It is answered BEFORE the rate
+         * limiter on purpose: it reads no store, so there is nothing to amplify, and a bucket the
+         * sender's own sends had spent must never turn "open" into a 429 the client could take
+         * for "not approved".
+         *
+         * `approved: true` does NOT open real money for a web build from before this switch: that
+         * build reads state "open" as "none" and keys every switch button on "approved". The web
+         * from this change has to be live before the flip (evidence/SOW2_OPS_NOTE.md, section 1.2,
+         * step 0). */
+        if (!pilotEnabled()) return json(200, { pilot: false, approved: true, state: "open" });
         const pubkey = new URL(request.url).searchParams.get("pubkey");
         // Validated + metered: it reaches the store, and unmetered it is both an allowlist
         // enumeration oracle and a free amplifier turning one GET into a KV pipeline.
@@ -475,7 +636,6 @@ export default {
         }
         const rl = await enforceRateLimit(clientIp(request), pubkey);
         if (rl.limited) return json(429, { error: rl.reason });
-        if (!pilotEnabled()) return json(200, { pilot: false, approved: false });
         try {
           return json(200, { pilot: true, ...(await pilotStatus(pubkey)) });
         } catch {
@@ -500,13 +660,22 @@ export default {
         if (!(await verifyApprovalToken("approve", pubkey, token, exp, Date.now()))) {
           return html(403, "<h2>Not authorized</h2><p>This approval link is invalid or has expired.</p>");
         }
+        /* Idempotent: tapping the emailed Approve link twice must not re-send "you're in". Decided
+         * from the allowlist flag itself, the one thing the value routes admit on, read with a call
+         * that throws: the status key is not the allowlist (a revoked wallet kept "approved" and was
+         * never re-admitted by its link), and a failed read must not fall through to approving.
+         * `approvePilot` no longer resets spent slots either way (lib/pilot.ts). */
+        let alreadyIn: boolean;
         try {
-          // Idempotent: tapping the emailed Approve link twice must not re-send "you're in".
-          const prev = await getPilotState(pubkey);
-          await approvePilot(pubkey); // SET is idempotent — safe to re-run.
-          if (prev === "approved") {
-            return html(200, `<h2>✓ Already approved</h2><p><code>${pubkey.slice(0, 8)}…${pubkey.slice(-6)}</code> is already in the mainnet pilot — no second email sent.</p>`);
-          }
+          alreadyIn = await isPilotApproved(pubkey);
+        } catch {
+          return html(503, "<h2>Could not check</h2><p>The pilot store did not answer, so nothing was changed. Try the link again in a minute.</p>");
+        }
+        if (alreadyIn) {
+          return html(200, `<h2>Already approved</h2><p><code>${pubkey.slice(0, 8)}...${pubkey.slice(-6)}</code> is already in the mainnet pilot. No second email sent.</p>`);
+        }
+        try {
+          await approvePilot(pubkey);
           const email = await getPilotEmail(pubkey);
           if (email) await notifyPilotApproved(pubkey, email).catch(() => {});
           return html(200, `<h2>✓ Approved</h2><p><code>${pubkey.slice(0, 8)}…${pubkey.slice(-6)}</code> is now in the mainnet pilot.</p><p>${email ? `We emailed <b>${email}</b>.` : "No stored email — they’ll see it on their account."}</p>`);
@@ -892,6 +1061,10 @@ export default {
         const hash = (e as { hash?: string }).hash;
         return json(202, { error: "submit unconfirmed", ...(hash ? { hash } : {}) });
       }
+      /* The RPC declined to queue a relayed transaction (TRY_AGAIN_LATER): nothing is on the
+       * network and the budget was given back. 503 with a public sentence, on every network: the
+       * claim screen reads "shortly" as a short wait worth a retry, never as a failure. */
+      if (isRelayBusy(e)) return json(503, { error: message });
       if (process.env.STELLAR_NETWORK === "mainnet") {
         const ref = crypto.randomUUID().slice(0, 8);
         console.error(`[error ${ref}] ${new URL(request.url).pathname}: ${message}`);
@@ -908,11 +1081,17 @@ export default {
    */
   async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
     hydrateEnv(env);
-    const { config, signer } = await getServiceAsync();
-    ctx.waitUntil(
-      runWatchdog(config, signer.publicKey()).then((r) => {
-        console.log(`[watchdog] checked ${r.checked.join(", ")} — ${r.alerts.length} alert(s)`);
-      }),
-    );
+    /* The watchdog needs the ACCOUNT, never the signer: built without a signer and without a single
+       KMS call, so a KMS outage cannot stop the one stop that needs no store (lib/service.ts). This
+       is the Worker's own scheduled run, the only caller that may halt and write the heartbeat:
+       `runWatchdog` is read-only without both flags (lib/watchdog.ts, contract 5). The run is both
+       handed to waitUntil and awaited, so it is covered by the cron's own duration either way. */
+    const { config } = serviceConfigFromEnv();
+    const run = runWatchdog(config, config.sponsorAccountId, { autoHalt: true, heartbeat: true }).then((r) => {
+      console.log(`[watchdog] checked ${r.checked.join(", ")}: ${r.alerts.length} alert(s); heartbeat ${r.lastRun}; full run ${r.lastFullRun}`);
+      if (r.autoHalted) console.error("[watchdog] AUTO-HALT written: every value route answers 503 until an operator clears it");
+    });
+    ctx.waitUntil(run);
+    await run;
   },
 };

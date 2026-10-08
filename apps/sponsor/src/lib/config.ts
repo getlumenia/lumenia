@@ -6,7 +6,7 @@
  * the signer is an env hot-key; a KMS raw-signer drops in behind the same
  * `SponsorSigner` seam (see lib/signer.ts, proven mechanically by Spike #1b).
  */
-import { Asset, Networks } from "@stellar/stellar-sdk";
+import { Asset, Keypair, Networks, StrKey } from "@stellar/stellar-sdk";
 
 export type StellarNetwork = "testnet" | "mainnet";
 
@@ -43,6 +43,16 @@ export interface SponsorConfig {
   horizonUrl: string;
   /** Hot sponsor secret (S...). KMS key id replaces this later — see lib/signer.ts. */
   sponsorSecret: string;
+  /**
+   * The sponsor ACCOUNT (G...): the address that sources operations, pays fee-bumps and owns the
+   * sponsored reserves. It is NOT necessarily the signing key's address. Before the KMS cutover the
+   * two were the same thing, and every handler read `signer.publicKey()` for both, so moving the
+   * signer into KMS would have made the Worker act as a brand-new, unfunded account. Now the KMS
+   * public key is ADDED as a signer (weight 1) on the EXISTING sponsor account, this field names
+   * that account, and signing is whatever `SponsorSigner` is wired. `SPONSOR_ACCOUNT_ID` in the
+   * environment sets it; unset, it defaults to the signer's own address (the pre-cutover shape).
+   */
+  sponsorAccountId: string;
   /**
    * Test-USDC faucet secret (S...) — a SEPARATE key from the sponsor (two blast
    * radii). Optional: if unset, the /faucet endpoint is disabled. Testnet only.
@@ -105,6 +115,8 @@ export function parseChannelSecrets(raw: string | undefined): string[] {
 export function makeConfig(parts: {
   network: StellarNetwork;
   sponsorSecret: string;
+  /** The sponsor account (G...). Defaults to the address of `sponsorSecret` when that is set. */
+  sponsorAccountId?: string;
   faucetSecret?: string;
   usdcIssuer: string;
   usdcCode?: string;
@@ -122,6 +134,7 @@ export function makeConfig(parts: {
     networkPassphrase: passphraseFor(network),
     horizonUrl: parts.horizonUrl ?? defaultHorizon(network),
     sponsorSecret: parts.sponsorSecret,
+    sponsorAccountId: resolveSponsorAccountId(parts.sponsorAccountId, parts.sponsorSecret),
     faucetSecret: parts.faucetSecret,
     usdc: new Asset(parts.usdcCode ?? "USDC", parts.usdcIssuer),
     feeBumpMaxStroops: parts.feeBumpMaxStroops ?? "10000", // 0.001 XLM per tx
@@ -131,6 +144,29 @@ export function makeConfig(parts: {
     channelSecrets: parts.channelSecrets ?? [],
     port: parts.port ?? 8787,
   };
+}
+
+/**
+ * The sponsor account id: the explicit one when given (it must be a valid G... address, because a
+ * typo here would source every operation from an account that does not exist), otherwise the
+ * address of the hot secret, otherwise empty: the service fills an empty id from the live signer
+ * (lib/service.ts), which is the only place a KMS-derived address is known.
+ */
+export function resolveSponsorAccountId(explicit: string | undefined, sponsorSecret: string | undefined): string {
+  if (explicit) {
+    if (!StrKey.isValidEd25519PublicKey(explicit)) {
+      throw new Error("SPONSOR_ACCOUNT_ID must be a valid Stellar account address (G...)");
+    }
+    return explicit;
+  }
+  if (sponsorSecret) {
+    try {
+      return Keypair.fromSecret(sponsorSecret).publicKey();
+    } catch {
+      /* an unparseable secret fails later, at the signer, with its own message */
+    }
+  }
+  return "";
 }
 
 /** Parse a comma/whitespace-separated list of contract ids (empty ⇒ []). */
@@ -153,6 +189,7 @@ export function loadConfig(): SponsorConfig {
     // In KMS mode (KMS_KEY_ID set) the sponsor signs via AWS KMS and no hot secret exists —
     // see lib/kms-signer.ts + service.getServiceAsync(). Otherwise the env hot-key is required.
     sponsorSecret: process.env.KMS_KEY_ID ? (process.env.SPONSOR_SECRET ?? "") : required("SPONSOR_SECRET"),
+    sponsorAccountId: process.env.SPONSOR_ACCOUNT_ID,
     faucetSecret: process.env.FAUCET_SECRET,
     usdcIssuer: required("USDC_ISSUER"),
     usdcCode: process.env.USDC_CODE,

@@ -19,6 +19,7 @@
  * Every reader is defensive and the fallback is the old retryable message, which is safe advice
  * when we genuinely do not know.
  */
+import { isUnconfirmedSubmit } from "./unconfirmed";
 
 export type ClaimErrorKind =
   /** The balance is already claimed — usually by this same person, on an earlier tap. */
@@ -44,7 +45,18 @@ export type ClaimErrorKind =
   | "uncertain"
   /** Rate limited. Real, temporary, and retrying in a moment works. */
   | "busy"
-  /** The service is deliberately paused. Whether a retry is worth offering depends on how long. */
+  /**
+   * The network declined to queue the transaction ("the network is busy; try again shortly"): nothing
+   * moved, and a tap in a moment is the right move. Not Lumenia pausing anything.
+   */
+  | "network-busy"
+  /**
+   * A published day limit is spent ("today's sponsor fee budget is spent; try again tomorrow", the
+   * day's new-account limits, the day's escrow cap): nothing moved, and nothing changes before
+   * midnight UTC, so there is no button. Not "a short while".
+   */
+  | "day-limit"
+  /** The service is deliberately paused (the operator's halt). Whether a retry is worth offering depends on how long. */
   | "paused"
   /** The device is offline or the service is unreachable. */
   | "offline"
@@ -144,6 +156,16 @@ function statusOf(blob: string): number | null {
 }
 
 export function classifyClaimError(err: unknown): ClaimErrorInfo {
+  /* A Horizon route's 202 (/feebump, /sweep, ...), as lib/sponsor.ts and lib/claim.ts now throw it
+     (lib/unconfirmed.ts): the claim is on the network and undecided. By the type first, so no
+     message wording can move it; the words "submit unconfirmed" below catch every other shape. */
+  if (isUnconfirmedSubmit(err)) {
+    return {
+      kind: "uncertain",
+      detail: "the network hasn't confirmed this yet - open the link again in a moment to check",
+      retryable: false,
+    };
+  }
   const blob = flatten(err);
   const status = statusOf(blob);
 
@@ -192,7 +214,10 @@ export function classifyClaimError(err: unknown): ClaimErrorInfo {
    * payout address, which the contract's per-payout dedupe cannot recognise, and the pool paid one
    * person twice. Reopening the link is the honest next step, because that path reads the account
    * and the escrow before it says anything (lib/lumendrop.ts::readClaimProgress). */
-  if (/v2-claim tx NOT_FOUND/i.test(blob)) {
+  /* The same answer now arrives as a 202 from every relay (`{hash, confirmed:false}`, or the
+   * Horizon routes' `{error:"submit unconfirmed", hash}`), which survives the mainnet redaction
+   * because a returned 202 is not a thrown error (SOW 2, D3 item g). */
+  if (/v2-claim tx NOT_FOUND|submit unconfirmed|"confirmed"\s*:\s*false|\u2192\s*202\b|status:202/i.test(blob)) {
     return {
       kind: "uncertain",
       detail: "the network hasn't confirmed this yet - open the link again in a moment to check",
@@ -217,11 +242,28 @@ export function classifyClaimError(err: unknown): ClaimErrorInfo {
     return { kind: "busy", detail: "rate limited", retryable: true };
   }
 
-  /* Three different waits land here: an operator halt (indefinite), a day's onboarding budget
-   * spent (until UTC midnight), and a counter the sponsor could not read (seconds). Only the last
-   * is worth a button — the screens hide the retry when `retryable` is false, and on the claim
-   * route a reload is no substitute, because the bearer key was stripped from the address. So the
-   * server's own sentence decides: it is the only thing that knows which wait this is. */
+  /* Three waits that used to share one kind, and one sentence: "We've paused claiming for a short
+   * while". A recipient blocked by the spent fee budget was told it was a short pause while the
+   * detail line said "try again tomorrow", and a congested network read as Lumenia pausing. Each is
+   * now its own kind, told apart by the sponsor's own sentence (apps/sponsor/src/lib/caps.ts,
+   * soroban-relay.ts), the only thing that knows which wait this is.
+   *
+   * THE NETWORK IS BUSY (the relay's 503 when the RPC declined to queue): nothing moved, retry soon. */
+  if (/network is busy/i.test(blob)) {
+    return { kind: "network-busy", detail: "the network is busy right now", retryable: true };
+  }
+
+  /* A DAY LIMIT (the fee budget, the day's new-account limits, the day's escrow cap): a published
+   * rule in the sponsor's own words, forwarded as the detail, and nothing changes until midnight
+   * UTC, so no button. Matched on the sentence, whatever the status: these arrive as 400s. */
+  if (/try again tomorrow|budget is spent|paused for today/i.test(blob)) {
+    return { kind: "day-limit", detail: actionableRefusal(blob) ?? "today's limit is reached", retryable: false };
+  }
+
+  /* What is left: an operator halt (indefinite) and a counter the sponsor could not read. Only a
+   * sentence that says "shortly" is worth a button - the screens hide the retry when `retryable`
+   * is false, and on the claim route a reload is no substitute, because the bearer key was
+   * stripped from the address. */
   if (status === 503 || /halt|paused|unavailable/i.test(blob)) {
     const said = actionableRefusal(blob);
     return {

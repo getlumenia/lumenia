@@ -9,10 +9,11 @@
  * two claim methods, valid 32-byte link + 64-byte sig. The sponsor sources the tx (pays fees) and
  * can never lose value — it holds no USDC in this path.
  */
-import { rpc, Address, Contract, TransactionBuilder, scValToNative, xdr, type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
-import { capsFromEnv, checkCaps, PublicRefusal, stroopsToUsdc } from "./caps.js";
+import { rpc, Address, Contract, TransactionBuilder, scValToNative, xdr, type Account, type Transaction, type FeeBumpTransaction } from "@stellar/stellar-sdk";
+import { capsFromEnv, chargeSponsorFee, checkCaps, PublicRefusal, signCharged, stroopsToUsdc } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
+import { feeChargedOf, isSubmitUnconfirmed, SubmitUnconfirmedError } from "./stellar.js";
 import { CHANNEL_LEASE_TTL_SECONDS, type ChannelManager } from "./channels.js";
 
 const ALLOWED_METHODS = new Set<string>(["claim", "claim_share"]);
@@ -89,6 +90,243 @@ const V2_DEPOSIT_FEE_CAP = 20_000_000;
  * that is the honest figure plus slack; anything higher is somebody spending the sponsor's XLM.
  */
 const V2_RECLAIM_INCLUSION_HEADROOM = 2_500_000;
+/**
+ * The same bound for a relayed DEPOSIT (SOW 2, D3 item a). Until this existed the deposit relay
+ * trusted whatever fee the client had written, up to the 2 XLM cap, and fee-bumped it unread: on an
+ * open mainnet that is a 2 XLM-per-request bill against the sponsor's float, bounded only by the
+ * rate limit. The web builds a deposit with a 2,000,000-stroop inclusion fee on top of the
+ * simulated resource fee (apps/web/lib/lumendrop.ts, createV2Link / createV2GroupLink), so 0.25 XLM
+ * is that figure plus slack for a resource fee that moved between the client's simulation and ours.
+ * The absolute V2_DEPOSIT_FEE_CAP stays as the outer bound.
+ */
+const DEPOSIT_INCLUSION_HEADROOM = 2_500_000;
+
+/**
+ * The slice of the Soroban RPC the relays use, so a test can stand in a fake for all of it
+ * (simulate / send / poll) and the single-shot cap accounting can be proven per branch without a
+ * network. `rpc.Server` satisfies it as is.
+ */
+export interface RelayRpc {
+  getAccount(address: string): Promise<Account>;
+  simulateTransaction(tx: Transaction | FeeBumpTransaction): Promise<rpc.Api.SimulateTransactionResponse>;
+  sendTransaction(tx: Transaction | FeeBumpTransaction): Promise<rpc.Api.SendTransactionResponse>;
+  getTransaction(hash: string): Promise<rpc.Api.GetTransactionResponse>;
+}
+
+export interface RelayDeps {
+  /** Builds the RPC client for a url. Defaults to `new rpc.Server(url)`. */
+  rpc?: (url: string) => RelayRpc;
+  /** Confirm-wait tuning for tests only; production keeps the values below. */
+  pollMs?: number;
+  maxPolls?: number;
+}
+
+const defaultRpc = (url: string): RelayRpc => new rpc.Server(url);
+
+/**
+ * The RPC declined to QUEUE a transaction (`sendTransaction` status TRY_AGAIN_LATER): the network
+ * is busy and nothing was accepted, so nothing can land. The worker answers 503 with this sentence,
+ * which the claim screen reads as a short wait worth a retry (apps/web/lib/claim-error.ts keys on
+ * "shortly"). It is a public sentence on purpose: it names no policy and no internals.
+ */
+export class RelayBusyError extends Error {
+  readonly relayBusy = true;
+  constructor() {
+    super("the network is busy; try again shortly");
+    this.name = "RelayBusyError";
+  }
+}
+
+/** True for a submission the RPC refused to queue because it was busy. Reads the brand. */
+export function isRelayBusy(e: unknown): boolean {
+  return e instanceof RelayBusyError || (e as { relayBusy?: boolean } | null | undefined)?.relayBusy === true;
+}
+
+/** The deposit/reclaim confirm wait: 40 polls of 1.5 s, the same 60 s as the claim's timebound. */
+const V2_SUBMIT_POLL_MS = 1500;
+const V2_SUBMIT_MAX_POLLS = 40;
+
+/**
+ * The fee-bump base for a Soroban inner transaction: its own inclusion fee per operation (the fee
+ * minus the declared resource fee), never below the 100-stroop network minimum. That is the SDK's
+ * own minimum (TransactionBuilder.buildFeeBumpTransaction refuses anything lower), and the bid it
+ * builds from it is base x (ops + 1) + resourceFee.
+ *
+ * Every relay used to pass the inner's TOTAL fee as the base, which bid the resource fee three
+ * times, 2 x (I + R) + R instead of 2 x I + R: 4,672,960 stroops instead of 4,224,320 for an honest
+ * testnet deposit, and about 40% more where the resource fee is large. The bid is what the day's fee
+ * budget holds while a transaction is in flight, so the overstatement refused traffic for nothing.
+ */
+export function feeBumpBase(inner: Transaction): string {
+  const ops = BigInt(Math.max(1, inner.operations.length));
+  const resource = declaredResourceFee(inner);
+  const perOp = (BigInt(inner.fee) + ops - 1n) / ops - resource; // the SDK's fee / ops, rounded up, less R
+  /* A Soroban inner whose declared resource fee leaves less than the 100-stroop minimum for
+     inclusion is malformed, and core refuses it. Flooring the base at 100 here would still have the
+     sponsor BID 200 + R for it, with R whatever the client wrote; refused instead, never floored. */
+  if (resource < 0n) throw new Error(`the inner declares a negative resource fee (${resource})`);
+  if (resource > 0n && perOp < 100n) {
+    throw new Error(`the inner declares a resource fee (${resource}) that its fee (${inner.fee}) cannot cover`);
+  }
+  return (perOp > 100n ? perOp : 100n).toString();
+}
+
+/** The Soroban resource fee an inner transaction DECLARES (its sorobanData), 0 for a classic one. */
+export function declaredResourceFee(inner: Transaction): bigint {
+  const env = inner.toEnvelope();
+  if (env.switch().name !== "envelopeTypeTx") return 0n;
+  const data = env.v1().tx().ext().value() as xdr.SorobanTransactionData | undefined;
+  return data ? BigInt(data.resourceFee().toString()) : 0n;
+}
+
+/**
+ * The declared resource fee must fit inside the inner's own fee with room for the minimum inclusion
+ * fee. The fee bounds above cap the TOTAL, but a sender-signed inner may declare a resource fee
+ * larger than that total: core refuses such an inner, yet the fee-bump around it bids 200 + R before
+ * core says so, and R was the client's to choose. A review declared 14 XLM and the sponsor signed a
+ * 14 XLM bid, which held most of mainnet's day while it was in flight (all of it until UTC midnight
+ * had the send gone unanswered). Checked before any reservation, so a refusal costs nothing.
+ */
+function refuseOversizedResourceFee(inner: Transaction, route: string): void {
+  const declared = declaredResourceFee(inner);
+  // The field is a signed int64: a NEGATIVE declared fee raised the base above the inner's own fee
+  // and the bid with it (a review had a 0.2 XLM inner with R = -14 XLM bid 14.4 XLM).
+  if (declared < 0n) throw new Error(`${route}: the inner declares a negative resource fee`);
+  if (declared > BigInt(inner.fee) - 100n) {
+    throw new Error(`${route}: the inner declares a resource fee its own fee cannot cover`);
+  }
+}
+
+/**
+ * The bid a relay may sign for a one-operation inner: with 0 <= R <= fee - 100 the fee-bump bids
+ * `2 x (fee - R) + R`, at most twice the inner's own fee. Checked on the BUILT fee-bump, so a bid
+ * the guards above did not foresee is refused before the charge and the signature.
+ */
+function refuseInflatedBid(feeBump: { fee: string }, inner: Transaction, route: string): void {
+  if (BigInt(feeBump.fee) > 2n * BigInt(inner.fee)) {
+    throw new Error(`${route}: fee-bump bid ${feeBump.fee} exceeds twice the inner fee ${inner.fee}`);
+  }
+}
+
+/**
+ * Is a throw from `sendTransaction` a refusal that reached nothing, or an answer that never came?
+ * The SDK (16.x, lib/rpc/jsonrpc.js) throws the JSON-RPC `error` object itself when the server
+ * answered with one, and its HTTP client throws an Error carrying `response.status` for an HTTP
+ * failure and none for a transport failure.
+ *
+ * Refused outright: the request-shape JSON-RPC codes (-32700 parse error, -32600 invalid request,
+ * -32601 method not found, -32602 invalid params; the RPC refused before submitting anything) and
+ * an HTTP 4xx other than 408 (a gateway or the RPC refused the request itself). Everything else may
+ * have queued the transaction and is UNDECIDED: a -32603 internal error (also what the RPC answers
+ * when its own call to core failed), a 5xx, a 408, a reset, a timeout.
+ */
+function sendRefusedOutright(e: unknown): boolean {
+  if (e && typeof e === "object" && !(e instanceof Error) && "code" in e) {
+    const code = (e as { code?: unknown }).code;
+    return code === -32700 || code === -32600 || code === -32601 || code === -32602;
+  }
+  const status = (e as { response?: { status?: unknown } } | null | undefined)?.response?.status;
+  return typeof status === "number" && status >= 400 && status < 500 && status !== 408;
+}
+
+/** A thrown value as one log line, whether the SDK threw an Error or a JSON-RPC error object. */
+function describeThrow(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  const rpcErr = e as { code?: unknown; message?: unknown } | null | undefined;
+  if (rpcErr && typeof rpcErr === "object") return `${String(rpcErr.code ?? "")} ${String(rpcErr.message ?? "")}`.trim();
+  return String(e);
+}
+
+/**
+ * Charge, sign, send and watch ONE sponsor-paid Soroban transaction: the part every relay shares
+ * (SOW 2, D3 items b, c and g), in one place so the relays cannot drift apart.
+ *
+ *   - the day's fee budget takes the bid before the signature, and the network's answer settles it
+ *     (lib/caps.ts): the signer throwing, ERROR, TRY_AGAIN_LATER and a send refused outright give it
+ *     back; an included transaction (SUCCESS or FAILED) counts what its result says it was charged;
+ *     anything undecided keeps the whole bid;
+ *   - a send that THROWS without a definitive refusal is undecided, not failed: the RPC may have
+ *     queued the transaction before its answer was lost. It is raised as SubmitUnconfirmedError
+ *     with the hash, so the caller keeps its cap reservation, the worker keeps the pilot slot and
+ *     answers 202, and the client settles it against the ledger. Until 2026-10-08 this branch was a
+ *     plain 400 that released both and told the sender "your money hasn't moved" for a deposit
+ *     that could still land;
+ *   - TRY_AGAIN_LATER raises RelayBusyError: 503, nothing queued.
+ *
+ * Returns the hash and the last poll answer: SUCCESS, FAILED, or NOT_FOUND after the window.
+ * Throws a plain Error (or RelayBusyError) only when nothing reached the network, and
+ * SubmitUnconfirmedError for everything undecided; `isSubmitUnconfirmed` tells the two apart.
+ */
+export async function payAndSubmit(
+  server: RelayRpc,
+  signer: SponsorSigner,
+  tx: Transaction | FeeBumpTransaction,
+  label: string,
+  deps: RelayDeps,
+  window: { pollMs: number; maxPolls: number },
+): Promise<{ hash: string; got: rpc.Api.GetTransactionResponse }> {
+  const charge = await chargeSponsorFee(tx.fee);
+  await signCharged(charge, () => signer.sign(tx));
+  const hash = tx.hash().toString("hex");
+
+  let sent: rpc.Api.SendTransactionResponse;
+  try {
+    sent = await server.sendTransaction(tx);
+  } catch (e) {
+    if (sendRefusedOutright(e)) {
+      await charge.notIncluded();
+      throw new Error(`${label} send refused: ${describeThrow(e)}`);
+    }
+    throw new SubmitUnconfirmedError(`${label}: the RPC did not answer the send (${describeThrow(e)})`, hash);
+  }
+  // A send ERROR is stellar-core refusing the transaction outright: it "will not be included in the
+  // ledger" (developers.stellar.org/docs/data/apis/rpc/api-reference/methods/sendTransaction).
+  if (sent.status === "ERROR") {
+    await charge.notIncluded();
+    throw new Error(`${label} send failed: ${JSON.stringify(sent.errorResult)}`);
+  }
+  // The RPC declined to queue it at all: nothing is on the network.
+  if (sent.status === "TRY_AGAIN_LATER") {
+    await charge.notIncluded();
+    throw new RelayBusyError();
+  }
+  // PENDING, or DUPLICATE: a transaction the RPC already holds is on the network just the same.
+  const got = await pollUntilDecided(server, sent.hash, deps, window);
+  if (got.status === rpc.Api.GetTransactionStatus.SUCCESS || got.status === rpc.Api.GetTransactionStatus.FAILED) {
+    // Included, so it paid: the count drops from the bid to the fee its result names.
+    await charge.settled(feeChargedOf((got as { resultXdr?: xdr.TransactionResult }).resultXdr));
+  }
+  return { hash: sent.hash, got };
+}
+
+/**
+ * Watch a transaction the RPC has accepted until the ledger decides it, or the window closes.
+ *
+ * Everything after `sendTransaction` accepted is us OBSERVING a transaction that is on the
+ * network. An RPC that stops answering mid-poll therefore cannot be reported as "it failed": the
+ * transaction may land a second later. It is raised as `SubmitUnconfirmedError` with the hash, the
+ * same brand `lib/stellar.ts` uses for a Horizon answer that never came, and the worker turns that
+ * into a 202 on every network (the mainnet redaction never touches it).
+ */
+async function pollUntilDecided(
+  server: RelayRpc,
+  hash: string,
+  deps: RelayDeps,
+  defaults: { pollMs: number; maxPolls: number },
+): Promise<rpc.Api.GetTransactionResponse> {
+  const pollMs = deps.pollMs ?? defaults.pollMs;
+  const maxPolls = deps.maxPolls ?? defaults.maxPolls;
+  try {
+    let got = await server.getTransaction(hash);
+    for (let i = 0; i < maxPolls && got.status === rpc.Api.GetTransactionStatus.NOT_FOUND; i++) {
+      await sleep(pollMs);
+      got = await server.getTransaction(hash);
+    }
+    return got;
+  } catch (e) {
+    throw new SubmitUnconfirmedError(`the RPC stopped answering while the transaction was being watched: ${(e as Error).message}`, hash);
+  }
+}
 
 /**
  * Timebound (s) for a v2-claim tx AND the confirm-wait budget — kept EQUAL on purpose:
@@ -136,14 +374,17 @@ function exitContract(config: SponsorConfig, requested?: string): string {
 export interface RelayClaimResult {
   hash: string;
   /**
-   * Did we OBSERVE this transaction land? Present on /v2-deposit only.
+   * Did we OBSERVE this transaction land? Present on every relay since SOW 2 D3 (item g); it was
+   * /v2-deposit only before.
    *
    * `false` means the ledger accepted it for inclusion but the RPC had not shown us the result
-   * before our poll window closed — an ordinary outcome under congestion, and NOT a failure. The
+   * before our poll window closed: an ordinary outcome under congestion, and NOT a failure. The
    * distinction has to survive all the way to the caller, because "the deposit did not happen" is
-   * the one claim that must never be guessed: acting on it means depositing again.
+   * the one claim that must never be guessed: acting on it means depositing again, and on a claim
+   * it means minting another sponsored payout account (another onboarding slot and 1.5 XLM) to ask
+   * a question whose answer is already on the ledger. The worker answers 202 for `false`.
    */
-  confirmed?: boolean;
+  confirmed: boolean;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -203,6 +444,7 @@ export async function relayClaimHandler(
   signer: SponsorSigner,
   input: RelayClaimInput,
   channels?: ChannelManager,
+  deps: RelayDeps = {},
 ): Promise<RelayClaimResult> {
   if (!config.lumendropContract) throw new Error("v2 relayer not configured (LUMENDROP_CONTRACT unset)");
   if (!ALLOWED_METHODS.has(input.method)) throw new Error(`method not allowed: ${input.method}`);
@@ -215,7 +457,7 @@ export async function relayClaimHandler(
   // Address.fromString throws on a malformed payout — reject before spending a simulation.
   const payoutScVal = Address.fromString(input.payout).toScVal();
 
-  const server = new rpc.Server(config.sorobanRpcUrl);
+  const server = (deps.rpc ?? defaultRpc)(config.sorobanRpcUrl);
 
   // C1: like /create-account, the sponsor-sourced submit serializes concurrent v2 claims
   // on the sponsor's ONE sequence. Lease a CHANNEL to source the tx (its own sequence)
@@ -223,8 +465,13 @@ export async function relayClaimHandler(
   // lends its sequence. This path SERVER-submits, so the lease is released as soon as the
   // tx confirms (high reuse). No channel/lease ⇒ the sponsor-sourced fallback.
   const lease = channels?.enabled ? await channels.lease() : null;
+  /* A claim whose outcome is UNDECIDED (the send went unanswered, or the RPC died mid-poll) may
+   * still land inside its 60 s timebound on this channel's sequence. Its lease is kept and left to
+   * lapse (150 s TTL) instead of being freed at once: the next claim would otherwise build on the
+   * same sequence and collide with it (TRY_AGAIN_LATER or tx_bad_seq, and another fee bid). */
+  let keepLease = false;
   try {
-    const sourcePub = lease ? lease.publicKey : signer.publicKey();
+    const sourcePub = lease ? lease.publicKey : config.sponsorAccountId;
     const source = await server.getAccount(sourcePub);
     const tx = new TransactionBuilder(source, { fee: "1000000", networkPassphrase: config.networkPassphrase })
       .addOperation(
@@ -252,43 +499,51 @@ export async function relayClaimHandler(
 
     let submitTx: Transaction | FeeBumpTransaction;
     if (lease) {
-      prepared.sign(lease.keypair); // channel = tx source (lends its sequence)
-      // Fee-bump so the SPONSOR pays the Soroban fee (mirrors /v2-deposit). prepared.fee
-      // already covers inclusion + resource fee; the fee-bump per-op floor requires ≥ it.
-      const feeBump = TransactionBuilder.buildFeeBumpTransaction(
-        signer.publicKey(),
-        prepared.fee,
+      // Channel = tx source (lends its sequence). Its signature on the inner is made before the
+      // charge, because the fee-bump copies the inner envelope as it is when built; the inner never
+      // leaves this process unless the sponsor's own signature below follows, so a refused charge
+      // posts nothing.
+      prepared.sign(lease.keypair);
+      // Fee-bump so the SPONSOR pays the Soroban fee (mirrors /v2-deposit), at the smallest base
+      // the SDK accepts (`feeBumpBase`).
+      submitTx = TransactionBuilder.buildFeeBumpTransaction(
+        config.sponsorAccountId,
+        feeBumpBase(prepared),
         prepared,
         config.networkPassphrase,
       );
-      await signer.sign(feeBump);
-      submitTx = feeBump;
     } else {
-      await signer.sign(prepared); // sponsor = tx source (fallback)
-      submitTx = prepared;
+      submitTx = prepared; // sponsor = tx source (fallback)
     }
 
-    const sent = await server.sendTransaction(submitTx);
-    if (sent.status === "ERROR") throw new Error(`v2-claim send failed: ${JSON.stringify(sent.errorResult)}`);
-    // Confirm-wait is bounded to V2_CLAIM_TIMEOUT_SECONDS (= the tx timebound) so a tx not
-    // yet in a ledger by then is already tx_too_late; the lease is freed only after this.
-    const maxPolls = Math.ceil((V2_CLAIM_TIMEOUT_SECONDS * 1000) / V2_CLAIM_POLL_MS);
-    let got = await server.getTransaction(sent.hash);
-    for (let i = 0; i < maxPolls && got.status === "NOT_FOUND"; i++) {
-      await sleep(V2_CLAIM_POLL_MS);
-      got = await server.getTransaction(sent.hash);
-    }
+    // Charge the bid, sign, send and watch (D3 items b, c, g). The confirm-wait is bounded to
+    // V2_CLAIM_TIMEOUT_SECONDS (= the tx timebound), so a tx not yet in a ledger by then is already
+    // tx_too_late; the lease is freed only after this, and only for a decided outcome.
+    const { hash, got } = await payAndSubmit(server, signer, submitTx, "v2-claim", deps, {
+      pollMs: V2_CLAIM_POLL_MS,
+      maxPolls: Math.ceil((V2_CLAIM_TIMEOUT_SECONDS * 1000) / V2_CLAIM_POLL_MS),
+    });
     /* A group claim the ledger definitively REFUSED comes back as a named reason, not as a status
      * string. NOT_FOUND is deliberately left alone below: that transaction may still land, and
      * calling it a failure is the one thing this relay must never guess. */
     if (got.status === rpc.Api.GetTransactionStatus.FAILED && input.method === "claim_share") {
       throw new PublicRefusal(`group-claim-failed: ${groupClaimFailureToken(got.diagnosticEventsXdr)}`);
     }
-    if (got.status !== "SUCCESS") throw new Error(`v2-claim tx ${got.status}`);
-    return { hash: sent.hash };
+    if (got.status === rpc.Api.GetTransactionStatus.FAILED) throw new Error(`v2-claim tx ${got.status}`);
+    if (got.status === rpc.Api.GetTransactionStatus.SUCCESS) return { hash, confirmed: true };
+    /* Still NOT_FOUND after the window. This used to throw "v2-claim tx NOT_FOUND", which the
+     * worker answered as a 400 and, on mainnet, redacted to "request failed": the one answer the
+     * claim screen could only read as "failed, try again", and each retry minted a fresh payout
+     * account. Say what is true instead: accepted, undecided, here is the hash. The web settles it
+     * against the ledger (the transaction's own status, then the payout's balance) before it says
+     * anything. */
+    return { hash, confirmed: false };
+  } catch (e) {
+    if (isSubmitUnconfirmed(e)) keepLease = true;
+    throw e;
   } finally {
-    // Server-submit path: the channel is free the instant this claim settles/fails.
-    if (lease) await lease.release();
+    // Server-submit path: the channel is free the instant this claim is DECIDED (or never sent).
+    if (lease && !keepLease) await lease.release();
   }
 }
 
@@ -305,12 +560,13 @@ export interface RelayDepositInput {
  * pays no gas (proven: the gasless-deposit spike, 5/5). The sponsor can never lose value — the USDC
  * is the sender's own, and the fee-bump only pays the tx fee. Tight guard: the inner MUST be a
  * single `deposit` or `create_drop` invoke on the KNOWN LumenDrop contract, sourced by the sender,
- * under the fee cap, and within the canary caps.
+ * under the fee cap, simulated here before anything is paid, and within the canary caps.
  */
 export async function relayDepositHandler(
   config: SponsorConfig,
   signer: SponsorSigner,
   input: RelayDepositInput,
+  deps: RelayDeps = {},
 ): Promise<RelayClaimResult> {
   if (!config.lumendropContract) throw new Error("v2 relayer not configured (LUMENDROP_CONTRACT unset)");
   const inner = TransactionBuilder.fromXDR(input.xdr, config.networkPassphrase) as Transaction;
@@ -342,6 +598,21 @@ export async function relayDepositHandler(
   const args = ic.args();
   const arity = DEPOSIT_ARITY[calledFn]!;
   if (args.length !== arity) throw new Error(`${calledFn} expects ${arity} args, got ${args.length}`);
+  /* The USDC that moves is `from`'s (args[0]), and every per-sender bound below, the day cap's
+   * sender share and the pilot slot, is keyed on `senderPublicKey`. They must be the same key: a
+   * review showed deposit(from = W) sourced by another account S was accepted with the reservation
+   * on S, so W could move the whole day across two such accounts past its own share, and on a
+   * pilot Worker an approved S could relay an unapproved W's money. The web always builds
+   * from = sender, so this refuses nothing honest. */
+  let from: string;
+  try {
+    from = Address.fromScVal(args[0]!).toString();
+  } catch {
+    throw new Error(`${calledFn}: 'from' is not an address`);
+  }
+  if (from !== input.senderPublicKey) {
+    throw new Error(`${calledFn} must move the sender's own USDC ('from' ${shortKey(from)} is not the sender)`);
+  }
   const amountStroops = BigInt(scValToNative(args[2]!) as bigint | number | string);
   const caps = capsFromEnv();
 
@@ -372,7 +643,33 @@ export async function relayDepositHandler(
     }
   }
 
-  const cap = await checkCaps(amountStroops, caps);
+  const server = (deps.rpc ?? defaultRpc)(config.sorobanRpcUrl);
+
+  /* Simulate BEFORE the sponsor pays for anything and BEFORE the day's budget is touched, exactly
+   * as /v2-reclaim does (D3 item a). A deposit the contract would reject (paused, a bad expiry, a
+   * sender without the USDC) used to be fee-bumped unread and billed to the sponsor when it failed
+   * on-ledger; a simulation that fails costs nothing and is refused here. The reason stays an
+   * ordinary Error: on mainnet it is redacted to a reference, because the contract's refusal text
+   * is an oracle on the caller's own account state and the validator, not a product rule.
+   *
+   * Soroban RPC `simulateTransaction` (developers.stellar.org/docs/data/apis/rpc/api-reference/
+   * methods/simulateTransaction): an error answer carries `error`; a success carries
+   * `minResourceFee` as a string of stroops. Both as the SDK parses them (rpc.Api.*). */
+  const sim = await server.simulateTransaction(inner);
+  if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-deposit would fail: ${sim.error}`);
+  /* And the fee is what the invoke needs, not what the caller wrote. The inner fee is signed by
+   * the sender and cannot be lowered here, so an inflated one is refused instead. A simulation
+   * that names no numeric resource fee is refused too: `x > NaN` is false, so the bound would
+   * otherwise fail open and the 2 XLM cap would be the only one left. */
+  const needed = Number.parseInt(sim.minResourceFee, 10) + DEPOSIT_INCLUSION_HEADROOM;
+  if (!Number.isFinite(needed)) throw new Error("v2-deposit simulation named no resource fee");
+  if (Number.parseInt(inner.fee, 10) > needed) {
+    throw new Error(`inner fee ${inner.fee} exceeds what the deposit needs (${needed})`);
+  }
+  refuseOversizedResourceFee(inner, "v2-deposit");
+
+  // The day cap and the per-SENDER day cap (D3 item k), reserved together and released together.
+  const cap = await checkCaps(amountStroops, caps, Date.now(), input.senderPublicKey);
   if (!cap.ok) throw new PublicRefusal(`canary cap: ${cap.reason}`);
 
   /* The day's budget goes back at most ONCE, and never once the transaction is on the network.
@@ -380,45 +677,40 @@ export async function relayDepositHandler(
    * catch below, which released it again: every failed deposit handed back twice its amount, and
    * the counter (a plain KV integer) could run negative, which is a day cap that no longer caps.
    * The catch also fired for an RPC that died mid-poll AFTER the transaction was accepted, giving
-   * back the budget for a deposit that then landed. */
+   * back the budget for a deposit that then landed, and a send that THREW was handled as if it had
+   * never been sent although the RPC may have queued it. test-soroban-relay.ts counts the releases
+   * per branch (ERROR 1, FAILED 1, TRY_AGAIN_LATER 1, send refused outright 1, NOT_FOUND 0, mid-poll
+   * throw 0, send THROW 0) so this stays locked. */
   let released = false;
   const releaseOnce = async () => {
     if (released) return;
     released = true;
     await cap.release?.();
   };
-  let onNetwork = false;
 
   try {
+    // The sponsor pays the inner's inclusion + Soroban resource fee, at the smallest base the SDK
+    // accepts (`feeBumpBase`).
     const feeBump = TransactionBuilder.buildFeeBumpTransaction(
-      signer.publicKey(),
-      inner.fee, // covers the inner's inclusion + Soroban resource fee (paid by the sponsor)
+      config.sponsorAccountId,
+      feeBumpBase(inner),
       inner,
       config.networkPassphrase,
     );
-    await signer.sign(feeBump);
+    refuseInflatedBid(feeBump, inner, "v2-deposit");
+    /* Charge, sign, send and watch (`payAndSubmit`). It throws a plain Error, or RelayBusyError
+     * (503), only when nothing reached the network: the fee budget refused, the signer threw, the
+     * send was refused outright, ERROR, or TRY_AGAIN_LATER. Those are the branches that can
+     * honestly say the money did not move, and the catch below gives the cap back for them. */
+    const { hash, got } = await payAndSubmit(server, signer, feeBump, "v2-deposit", deps, {
+      pollMs: V2_SUBMIT_POLL_MS,
+      maxPolls: V2_SUBMIT_MAX_POLLS,
+    });
 
-    const server = new rpc.Server(config.sorobanRpcUrl);
-    const sent = await server.sendTransaction(feeBump);
-    // A send ERROR is the ledger refusing the transaction outright: nothing was accepted, nothing
-    // will land. This is the ONLY branch that can honestly say the money did not move.
-    if (sent.status === "ERROR") {
-      await releaseOnce();
-      throw new Error(`v2-deposit send failed: ${JSON.stringify(sent.errorResult)}`);
-    }
-
-    // From here the transaction IS on the network. Everything below is us trying to observe it.
-    onNetwork = true;
-    let got = await server.getTransaction(sent.hash);
-    for (let i = 0; i < 40 && got.status === "NOT_FOUND"; i++) {
-      await sleep(1500);
-      got = await server.getTransaction(sent.hash);
-    }
-
-    if (got.status === "SUCCESS") return { hash: sent.hash, confirmed: true as const };
+    if (got.status === rpc.Api.GetTransactionStatus.SUCCESS) return { hash, confirmed: true };
 
     // FAILED is a definitive on-ledger rejection — the deposit did not take effect, so the day's
-    // budget goes back.
+    // budget goes back. (The fee does not: an included transaction pays its fee whatever it did.)
     if (got.status === rpc.Api.GetTransactionStatus.FAILED) {
       await releaseOnce();
       throw new Error(`v2-deposit tx ${got.status}`);
@@ -433,13 +725,13 @@ export async function relayDepositHandler(
      *
      * So: say we could not confirm, hand back the hash, and keep the budget reserved. The caller
      * settles it against the escrow, which is the only authority on whether the drop exists. */
-    return { hash: sent.hash, confirmed: false as const };
+    return { hash, confirmed: false };
   } catch (e) {
-    // Pre-submit faults (signing, fee-bump construction, an unreachable RPC before sendTransaction)
-    // genuinely never touched the ledger and get the budget back. Anything thrown after the
-    // transaction was accepted — an RPC that stopped answering mid-poll, or the two definitive
-    // branches above, which already released — keeps the reservation.
-    if (!onNetwork) await releaseOnce();
+    /* Everything that never reached the network (a fault before the send, a send refused outright,
+     * ERROR, TRY_AGAIN_LATER) and the definitive FAILED above give the budget back, once. Only an
+     * UNDECIDED submission keeps the reservation: a send that went unanswered, or an RPC that
+     * stopped answering while the transaction was being watched, may still land. */
+    if (!isSubmitUnconfirmed(e)) await releaseOnce();
     throw e;
   }
 }
@@ -457,6 +749,7 @@ export async function relayReclaimHandler(
   config: SponsorConfig,
   signer: SponsorSigner,
   input: RelayDepositInput,
+  deps: RelayDeps = {},
 ): Promise<RelayClaimResult> {
   if (!config.lumendropContract) throw new Error("v2 relayer not configured (LUMENDROP_CONTRACT unset)");
   const inner = TransactionBuilder.fromXDR(input.xdr, config.networkPassphrase) as Transaction;
@@ -479,7 +772,7 @@ export async function relayReclaimHandler(
     throw new Error(`inner fee ${inner.fee} exceeds cap ${V2_DEPOSIT_FEE_CAP}`);
   }
 
-  const server = new rpc.Server(config.sorobanRpcUrl);
+  const server = (deps.rpc ?? defaultRpc)(config.sorobanRpcUrl);
 
   /* Simulate BEFORE the sponsor pays for anything, exactly as /v2-claim does. Until now this
    * route fee-bumped whatever it was handed: a `reclaim` the contract would reject (not expired,
@@ -496,25 +789,29 @@ export async function relayReclaimHandler(
    * the client's own inclusion fee (0.2 XLM, lib/lumendrop.ts) plus a little slack; a simulation
    * whose resource fee moved between the client's run and ours still fits. */
   const needed = Number.parseInt(sim.minResourceFee, 10) + V2_RECLAIM_INCLUSION_HEADROOM;
+  // `x > NaN` is false: a simulation with no numeric resource fee must refuse, not fail open.
+  if (!Number.isFinite(needed)) throw new Error("v2-reclaim simulation named no resource fee");
   if (Number.parseInt(inner.fee, 10) > needed) {
     throw new Error(`inner fee ${inner.fee} exceeds what the reclaim needs (${needed})`);
   }
+  refuseOversizedResourceFee(inner, "v2-reclaim");
 
   const feeBump = TransactionBuilder.buildFeeBumpTransaction(
-    signer.publicKey(),
-    inner.fee,
+    config.sponsorAccountId,
+    feeBumpBase(inner),
     inner,
     config.networkPassphrase,
   );
-  await signer.sign(feeBump);
-
-  const sent = await server.sendTransaction(feeBump);
-  if (sent.status === "ERROR") throw new Error(`v2-reclaim send failed: ${JSON.stringify(sent.errorResult)}`);
-  let got = await server.getTransaction(sent.hash);
-  for (let i = 0; i < 40 && got.status === "NOT_FOUND"; i++) {
-    await sleep(1500);
-    got = await server.getTransaction(sent.hash);
-  }
-  if (got.status !== "SUCCESS") throw new Error(`v2-reclaim tx ${got.status}`);
-  return { hash: sent.hash };
+  refuseInflatedBid(feeBump, inner, "v2-reclaim");
+  // Charge the bid, sign, send and watch: the same single step every relay uses (`payAndSubmit`).
+  const { hash, got } = await payAndSubmit(server, signer, feeBump, "v2-reclaim", deps, {
+    pollMs: V2_SUBMIT_POLL_MS,
+    maxPolls: V2_SUBMIT_MAX_POLLS,
+  });
+  if (got.status === rpc.Api.GetTransactionStatus.FAILED) throw new Error(`v2-reclaim tx ${got.status}`);
+  if (got.status === rpc.Api.GetTransactionStatus.SUCCESS) return { hash, confirmed: true };
+  /* NOT_FOUND after the window: accepted, undecided. A reclaim reported as failed is retried by
+   * the sender's screen, and the contract refuses the second one (the drop is gone), which the
+   * sender then reads as "my money is stuck"; 202 with the hash lets the screen read the ledger. */
+  return { hash, confirmed: false };
 }

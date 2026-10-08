@@ -16,6 +16,7 @@
  */
 import { TransactionBuilder, type Transaction, type Horizon } from "@stellar/stellar-sdk";
 import { validateInnerTransaction, type InnerTxPolicy } from "./anti-drain.js";
+import { chargeSponsorFee, signCharged } from "./caps.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { submit } from "./stellar.js";
@@ -48,7 +49,8 @@ export async function feebumpHandler(
   // D3 gate: the anti-drain validator must accept the client tx before we sign.
   const policy: InnerTxPolicy = {
     expectedSource: input.recipientPublicKey,
-    sponsor: signer.publicKey(),
+    sponsor: config.sponsorAccountId,
+    sponsorSigner: signer.publicKey(), // a KMS key's own address is sponsor-controlled too (lib/anti-drain.ts)
     expectedAsset: config.usdc,
     expectedBalanceId: input.balanceId,
     maxOps: 1, // the claim path is exactly one claimClaimableBalance op
@@ -64,11 +66,23 @@ export async function feebumpHandler(
   }
 
   const feeBump = TransactionBuilder.buildFeeBumpTransaction(
-    signer.publicKey(),
+    config.sponsorAccountId,
     String(FEEBUMP_PER_OP_STROOPS),
     inner,
     config.networkPassphrase,
   );
-  await signer.sign(feeBump);
-  return submit(server, feeBump);
+  /* The bid must be exactly the route's own: the SDK adds any resource fee the inner DECLARES
+     (its Soroban data) to the fee-bump, and nothing above reads that field, so a client could
+     declare 14 XLM on a claim and have the sponsor bid it (a review did). A classic inner carries
+     no Soroban data; a bid other than the nominal one is refused before the charge. */
+  if (BigInt(feeBump.fee) !== BigInt(totalFee)) {
+    throw new Error(`fee-bump fee ${feeBump.fee} differs from the ${totalFee} this route bids (the inner declares Soroban resources)`);
+  }
+  // The sponsor pays this bid. It is charged against the day's fee budget AFTER every guard and
+  // BEFORE the signature, and settled by the network's answer: a signer that throws or a refusal
+  // core made while validating gives it back, an included transaction counts what it was charged,
+  // and an undecided one keeps the whole bid (lib/caps.ts, the fee budget header).
+  const charge = await chargeSponsorFee(feeBump.fee);
+  await signCharged(charge, () => signer.sign(feeBump));
+  return submit(server, feeBump, charge);
 }

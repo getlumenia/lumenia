@@ -31,8 +31,18 @@ export const copy = {
     errAlreadyTitle: "You already have this money",
     errAlreadyBody: "This link was claimed — it's in your account already. Nothing more to do here.",
     errBusyBody: "A lot of people are claiming right now. Wait a moment and tap again.",
+    /* Three waits, three sentences (lib/claim-error.ts): they used to share "a short while", which
+       was false for two of them. The operator's pause is open-ended; a day limit ends at midnight
+       UTC and has no button; a busy network is seconds and has one. */
     errPausedBody:
-      "We've paused claiming for a short while. Your money is untouched and this link keeps working — please come back a little later.",
+      "Claiming is paused right now. Your money is untouched and this link keeps working. Please come back later.",
+    errNetworkBusyBody: "The network is busy right now. Your money is untouched. Wait a moment and tap again.",
+    errDayLimitBody:
+      "We've reached today's limit on what we can cover. Your money is untouched and this link keeps working. Please come back tomorrow: the limit resets at midnight UTC.",
+    /* The claim was handed to the network and not yet confirmed. No button: reopening the link
+       checks the ledger before it says anything, which a second tap here would not. */
+    errUncertainBody:
+      "The network hasn't confirmed this yet. Open the link again in a moment and this screen will check before it says anything.",
     errOfflineBody: "We couldn't reach Lumenia. Check your connection and tap again.",
     errLinkBody: "This link is incomplete. Open the original message and tap the link there.",
     /* Shown small under the message. It exists so that someone reporting "it didn't work" can tell
@@ -197,6 +207,10 @@ export const copy = {
     // reclaimed it after 7 days). Terminal, not retryable — the list refreshes so
     // the stale item disappears. Told calmly, never as "try again forever".
     collectGone: "This money is no longer waiting. It may already be in your account, or the sender took it back.",
+    // A take-back the network accepted but had not confirmed yet (the sponsor's 202). Asking again is safe.
+    takeBackUnconfirmed: "We asked for it back and the network hasn't confirmed it yet. This list updates when it does.",
+    // The same for collecting money waiting for you (/feebump's 202). Asking again is safe: it is claimed once.
+    collectUnconfirmed: "We asked for it and the network hasn't confirmed it yet. It shows in your balance when it does.",
   },
   /**
    * Feedback — the "report a problem" channel (FeedbackDialog → sponsor /feedback,

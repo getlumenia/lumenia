@@ -34,7 +34,7 @@ import {
   BASE_FEE,
   type FeeBumpTransaction,
   type Transaction,
-  type xdr,
+  xdr,
 } from "@stellar/stellar-sdk";
 // the deployed validator (same module the live /feebump imports)
 import {
@@ -737,6 +737,112 @@ check(
     basePolicy,
   ),
   false,
+);
+
+// ---------------------------------------------------------------------------
+// SIGNER: once the sponsor signs with a key that is NOT the account (the KMS split, SOW 2 D3
+// item h), that key is also its own address's master key. A sponsor signature over an op that
+// address sources authorizes the op, so the address is sponsor-controlled exactly like the account.
+// ---------------------------------------------------------------------------
+const kmsKey = Keypair.random();
+const K = kmsKey.publicKey();
+const kmsSendOps = (cbSource: string = K): xdr.Operation[] => [
+  Operation.beginSponsoringFutureReserves({ sponsoredId: K, source: sponsor.publicKey() }),
+  Operation.createClaimableBalance({
+    asset: USDC,
+    amount: "20",
+    claimants: [
+      new Claimant(bearer.publicKey(), Claimant.predicateUnconditional()),
+      new Claimant(K, Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(RECLAIM))),
+    ],
+    source: cbSource,
+  }),
+  Operation.endSponsoringFutureReserves({ source: K }),
+];
+check(
+  "SIG-1 a send whose SENDER is the signing address is refused (it would move USDC held there)",
+  validateInnerTransaction(buildTx(K, kmsSendOps()), { ...sendPolicy, expectedSource: K, sponsorSigner: K }),
+  false,
+  "sponsor's signing key",
+);
+check(
+  "SIG-2 the same transaction passed before the split rule existed (the hole this closes)",
+  validateInnerTransaction(buildTx(K, kmsSendOps()), { ...sendPolicy, expectedSource: K }),
+  true,
+);
+check(
+  "SIG-3 an op SOURCED by the signing address inside an ordinary send is refused",
+  validateInnerTransaction(
+    buildTx(recipient.publicKey(), [
+      ...sendOps(goodClaimants).slice(0, 2),
+      Operation.endSponsoringFutureReserves({ source: K }),
+    ]),
+    { ...sendPolicy, sponsorSigner: K },
+  ),
+  false,
+  "sponsor's signing key",
+);
+check(
+  "SIG-4 a claim whose recipient is the signing address is refused",
+  validateInnerTransaction(buildTx(K, [Operation.claimClaimableBalance({ balanceId: BALANCE_ID })]), { ...basePolicy, expectedSource: K, sponsorSigner: K }),
+  false,
+  "sponsor's signing key",
+);
+checkPayout("SIG-5 a payout from the signing address is refused", payoutOps({ source: K }), false, "sponsor's signing key", { ...payoutPolicy, sender: K, sponsorSigner: K }, K);
+check(
+  "SIG-6 a sweep whose throwaway is the signing address is refused",
+  validateSweepTransaction(buildTx(K, sweepTail().map((op) => op)), { ...sweepPolicy, throwaway: K, sponsorSigner: K }),
+  false,
+  "sponsor's signing key",
+);
+check(
+  "SIG-7 a sweep whose HOME is the signing address is refused too",
+  validateSweepTransaction(buildTx(throwaway.publicKey(), sweepOps()), { ...sweepPolicy, home: K, sponsorSigner: K }),
+  false,
+  "sponsor's signing key",
+);
+check(
+  "SIG-8 a signing address EQUAL to the account (the env hot key today) changes nothing",
+  validateInnerTransaction(buildTx(recipient.publicKey(), sendOps(goodClaimants)), { ...sendPolicy, sponsorSigner: sponsor.publicKey() }),
+  true,
+);
+// MALFORMED SWEEPS: shapes stellar-core refuses while validating with txFAILED (a code it also gives an
+// included, failed transaction), so they must never reach the signer.
+check(
+  "SWEEP-SELF a sweep whose home IS the throwaway (a merge into itself) is refused",
+  validateSweepTransaction(
+    buildTx(throwaway.publicKey(), [
+      Operation.payment({ destination: throwaway.publicKey(), asset: USDC, amount: SWEEP_AMOUNT, source: throwaway.publicKey() }),
+      Operation.changeTrust({ asset: USDC, limit: "0", source: throwaway.publicKey() }),
+      Operation.accountMerge({ destination: throwaway.publicKey(), source: throwaway.publicKey() }),
+    ]),
+    { ...sweepPolicy, home: throwaway.publicKey(), expectedBalanceId: undefined },
+  ),
+  false,
+  "home must differ",
+);
+{
+  // The SDK refuses to BUILD a zero payment, so the amount is zeroed in the XDR, as a client could.
+  const pay = Operation.payment({ destination: home.publicKey(), asset: USDC, amount: "1", source: throwaway.publicKey() });
+  pay.body().paymentOp().amount(xdr.Int64.fromString("0"));
+  check(
+    "SWEEP-ZERO a sweep with a zero payment is refused even when the client declared 0",
+    validateSweepTransaction(
+      buildTx(throwaway.publicKey(), [
+        pay,
+        Operation.changeTrust({ asset: USDC, limit: "0", source: throwaway.publicKey() }),
+        Operation.accountMerge({ destination: home.publicKey(), source: throwaway.publicKey() }),
+      ]),
+      { ...sweepPolicy, expectedAmount: "0", expectedBalanceId: undefined },
+    ),
+    false,
+    "must be positive",
+  );
+}
+check(
+  "SIG-9 and an ordinary send with a separate signing address still passes",
+  validateInnerTransaction(buildTx(recipient.publicKey(), sendOps(goodClaimants)), { ...sendPolicy, sponsorSigner: K }),
+  true,
 );
 
 console.log("\n============================================================");

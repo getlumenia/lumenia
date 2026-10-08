@@ -119,12 +119,18 @@ export type ErrorCode =
   | "no-account"
   | "needs-consent"
   | "needs-password"
+  /** real money, and this account lives only in this browser: back it up first */
+  | "needs-backup"
   | "not-approved"
   | "pilot-unknown"
   | "slots-used"
   | "over-cap"
   | "rate-limited"
   | "halted"
+  /** the network declined to queue it: nothing moved, try again shortly */
+  | "network-busy"
+  /** a published day limit is spent (the fee budget, ...): nothing moved, try again tomorrow */
+  | "day-limit"
   | "offline"
   | "uncertain"
   | "bad-amount"

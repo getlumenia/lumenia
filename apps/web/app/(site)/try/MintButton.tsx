@@ -20,7 +20,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { claimFragment } from "../../../lib/link-fragment";
+import { readDemoLinkReply } from "../../../lib/demo-link";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 const RESUME_KEY = "lumenia.try.link";
@@ -52,11 +52,12 @@ export function MintButton() {
       // path below — where the sponsor sends a real, human reason — is unchanged.
       const res = await fetch(`${SPONSOR_URL}/demo-link`, { method: "POST" }).catch(() => null);
       if (!res) throw new Error("We couldn't reach it just now. Check your connection and try again.");
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "This isn't available right now. Please try again in a moment.");
-      const d = (await res.json()) as { balanceId: string; bearerSecret: string; amount: string; issuer: string; from: string };
-      const id = d.balanceId.slice(-8);
-      const q = `b=${d.balanceId}&i=${d.issuer}`;
-      const link = `/c/${id}?${q}#${claimFragment({ key: d.bearerSecret, from: d.from })}`;
+      /* The sponsor's 202 ("submit unconfirmed", no link in it) used to reach a `.slice` on a
+         missing balance id and put the browser's TypeError on the page. Every reply is read by
+         lib/demo-link.ts now, which answers a whole link or a sentence. */
+      const reply = readDemoLinkReply(res.status, await res.text().catch(() => ""));
+      if (!reply.ok) throw new Error(reply.message);
+      const link = reply.link;
       // Keep the link where a RELOAD can find it again.
       //
       // The claim route strips the #fragment from the address bar the moment it reads it, which is

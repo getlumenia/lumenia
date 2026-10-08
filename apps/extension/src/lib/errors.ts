@@ -3,9 +3,10 @@
  *
  * The line that matters is the deposit's `onPrepared` hook. Before it, nothing was signed and kept,
  * so any failure is simply "nothing happened". After it, the signed deposit may already be on the
- * ledger, and only the sponsor's OWN refusals prove it is not, each raised before the relay runs
- * (apps/sponsor/src/worker.ts): the pilot gate (403), the rate limiter (429), the halt switch (503),
- * and the refusals it states in words, such as the caps (400). Each must come with the sponsor's
+ * ledger, and only the sponsor's OWN refusals prove it is not, each raised before anything is
+ * submitted (apps/sponsor/src/worker.ts): the pilot gate (403), the rate limiter (429), the halt
+ * switch and the busy network (503, told apart by their sentences, see sponsorWait), and the refusals
+ * it states in words, such as the caps and the fee budget (400). Each must come with the sponsor's
  * JSON body: the same status with any other body (a platform error page, a proxy) may have been
  * produced after the submit. A plain 400 is UNCERTAIN on testnet, where every thrown reason is shown,
  * including RPC errors after the submit; on mainnet the Worker hides every reason that is not a
@@ -33,12 +34,15 @@ export const MESSAGES: Record<ErrorCode, string> = {
   "no-account": "Restore your Lumenia account first.",
   "needs-consent": "Read and agree to what this extension sends before it can do anything.",
   "needs-password": "Real money needs an account locked with a password.",
+  "needs-backup": "Real money needs this account backed up first. Until then it lives only in this browser.",
   "not-approved": "Real money is invite-only for now, and this account is not approved yet.",
   "pilot-unknown": "We couldn't check whether real money is open for this account. Try again in a minute.",
   "slots-used": "You've used all your real-money sends in the pilot.",
   "over-cap": `During the pilot you can send up to ${formatUsd(TX_CAP_USD)} at a time and ${formatUsd(DAY_CAP_USD)} a day.`,
   "rate-limited": "Too many tries in a minute. Wait a moment, then try again.",
   halted: "Sending is paused right now. Your money hasn't moved. Try again later.",
+  "network-busy": "The network is busy right now. Your money hasn't moved. Try again in a moment.",
+  "day-limit": "Lumenia has reached today's limit on what it can cover. Your money hasn't moved. Try again tomorrow, after midnight UTC.",
   offline: "We couldn't reach Lumenia. Your money hasn't moved. Check your connection and try again.",
   uncertain: "We sent it, but couldn't confirm it yet. Don't send it again: we keep checking, and it will show in Links.",
   "bad-amount": "Enter an amount, like 5 or 2.50.",
@@ -108,6 +112,21 @@ export function reasonOf(body: string): string {
 
 const sentence = (s: string): string => (s ? `${s.charAt(0).toUpperCase()}${s.slice(1)}${/[.!?]$/.test(s) ? "" : "."}` : "");
 
+/**
+ * Which wait a sponsor sentence names, or null. Keyed on the WORDS, never on the status: the relays'
+ * 503 means two different things, the operator's halt and a network that declined to queue the
+ * transaction, and every JSON 503 used to read as "Sending is paused right now", so a congested
+ * network was presented as Lumenia pausing. The fee budget comes as a 400 and is the third wait.
+ * Each is raised before anything is submitted (the halt before the relay runs, the busy network when
+ * the RPC refused to queue it, the fee budget before the sponsor signs), so each proves nothing moved.
+ */
+export function sponsorWait(reason: string): { code: "halted" | "network-busy" | "day-limit"; message: string } | null {
+  if (/\bhalted\b/i.test(reason)) return { code: "halted", message: MESSAGES.halted };
+  if (/network is busy/i.test(reason)) return { code: "network-busy", message: MESSAGES["network-busy"] };
+  if (/fee budget is spent/i.test(reason)) return { code: "day-limit", message: MESSAGES["day-limit"] };
+  return null;
+}
+
 /** A 403 from the pilot gate, in the words the popup shows. */
 function pilotRefusal(reason: string): { code: ErrorCode; message: string } {
   if (/not on the pilot allowlist/i.test(reason)) return { code: "not-approved", message: MESSAGES["not-approved"] };
@@ -128,12 +147,14 @@ export const REDACTED = "request failed";
  */
 function isStatedRefusal(reason: string, mainnet: boolean): boolean {
   if (!reason || reason === REDACTED) return false;
-  return mainnet || /^(canary cap:|a group link|each share is below)/i.test(reason);
+  return mainnet || /^(canary cap:|a group link|each share is below|today's sponsor fee budget is spent)/i.test(reason);
 }
 
 /** A stated refusal, in the words the popup shows. */
 function statedRefusal(reason: string): { code: ErrorCode; message: string } {
   const why = reason.replace(/^canary cap:\s*/i, "");
+  const wait = sponsorWait(why);
+  if (wait) return wait;
   if (/fail-closed/i.test(why)) return { code: "halted", message: MESSAGES.halted };
   if (/per-drop cap/i.test(why)) return { code: "over-cap", message: MESSAGES["over-cap"] };
   if (/daily escrow cap/i.test(why)) {
@@ -163,7 +184,12 @@ export function judgeDepositFailure(e: unknown, ctx: { mainnet: boolean } = { ma
     if (reason) {
       if (r.status === 403) return { kind: "failed", ...pilotRefusal(reason) };
       if (r.status === 429) return { kind: "failed", code: "rate-limited", message: MESSAGES["rate-limited"] };
-      if (r.status === 503) return { kind: "failed", code: "halted", message: MESSAGES.halted };
+      // A 503 is a refusal only in one of the sponsor's own wait sentences; any other words fall
+      // through to uncertain, the safe reading of a status alone.
+      if (r.status === 503) {
+        const wait = sponsorWait(reason);
+        if (wait) return { kind: "failed", ...wait };
+      }
       if (r.status === 400 && isStatedRefusal(reason, ctx.mainnet)) return { kind: "failed", ...statedRefusal(reason) };
     }
   }

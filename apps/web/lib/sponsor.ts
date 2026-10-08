@@ -17,6 +17,7 @@ import {
 import { activeNetwork, type NetworkConfig } from "./network";
 import type { Signer } from "./signer";
 import { assertSponsoredOnboarding, assertSponsoredTrustline, pinnedUsdcIssuer } from "./tx-guard";
+import { signedFacts, throwIfUnconfirmed, type SignedFacts } from "./unconfirmed";
 
 export interface ClaimParams {
   sponsorUrl: string;
@@ -36,13 +37,20 @@ export interface ClaimOutcome {
   publicKey: string;
 }
 
-async function postJson(url: string, body: unknown): Promise<Record<string, unknown>> {
+/**
+ * `signed`: the facts of the transaction this request carries, when it carries one of ours. A 202
+ * (or "submit unconfirmed") then throws lib/unconfirmed.ts's typed error instead of reading as a
+ * landed claim, which is what `res.ok` alone made of it: the claim screen said "Your money" and sent
+ * claim_succeeded for a claim the ledger had not decided (lib/claim-error.ts files it "uncertain").
+ */
+async function postJson(url: string, body: unknown, signed?: SignedFacts): Promise<Record<string, unknown>> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
   const text = await res.text();
+  throwIfUnconfirmed(res.status, text, new URL(url).pathname, signed ?? null);
   if (!res.ok) throw new Error(`${new URL(url).pathname} → ${res.status}: ${text}`);
   return JSON.parse(text) as Record<string, unknown>;
 }
@@ -118,11 +126,11 @@ export async function runClaim({
     .setTimeout(180)
     .build();
   inner.sign(claimKey);
-  const feebump = (await postJson(`${base}/feebump`, {
-    xdr: inner.toXDR(),
-    recipientPublicKey: pub,
-    balanceId,
-  })) as { hash: string };
+  const feebump = (await postJson(
+    `${base}/feebump`,
+    { xdr: inner.toXDR(), recipientPublicKey: pub, balanceId },
+    signedFacts(inner),
+  )) as { hash: string };
 
   return { hash: feebump.hash, publicKey: pub };
 }

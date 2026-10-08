@@ -156,9 +156,18 @@ export async function burnToStellar(opts: {
   return burn;
 }
 
-export type RelayState = { status: "pending"; detail: string } | { status: "minted"; hash: string };
+export type RelayState =
+  | { status: "pending"; detail: string }
+  /** `confirmed: false`: the mint was accepted by the network and not yet seen landing (the relay's 202). */
+  | { status: "minted"; hash: string; confirmed?: boolean };
 
-/** One ask of our sponsor to relay the mint. 202 = Circle has not attested yet; ask again. */
+/**
+ * One ask of our sponsor to relay the mint. A 202 has two meanings, told apart by the body: Circle
+ * has not attested yet (ask again), or the mint was SUBMITTED and the ledger had not shown it landing
+ * when the relay's window closed (SOW 2, D3). The second must never be read as the first: asking
+ * again would relay the same message, which the forwarder refuses as a replay, and the page would
+ * report a failure for money that is landing.
+ */
 export async function askRelay(sponsorUrl: string, burnTxHash: string, fetchImpl: typeof fetch = fetch): Promise<RelayState> {
   const r = await fetchImpl(`${sponsorUrl.replace(/\/$/, "")}/cctp-relay`, {
     method: "POST",
@@ -166,7 +175,19 @@ export async function askRelay(sponsorUrl: string, burnTxHash: string, fetchImpl
     body: JSON.stringify({ burnTxHash }),
   });
   const body = (await r.json().catch(() => ({}))) as { status?: string; hash?: string; detail?: string; error?: string };
-  if (r.status === 202) return { status: "pending", detail: body.detail ?? "Circle is attesting the burn" };
-  if (r.status === 200 && body.status === "minted" && body.hash) return { status: "minted", hash: body.hash };
+  /* The submitted mint has a second 202 body: `{error:"submit unconfirmed", hash}`, when the RPC
+     stopped answering while the relay watched the mint (apps/sponsor/src/lib/cctp-relay.ts). It
+     used to fall through to "pending", and the page asked again: the re-relay is refused as a
+     replay (a "stalled" screen over money that arrived), or, with the first mint still queued, a
+     second mint was signed and charged. Only an explicit "pending" asks again; a mint hash or
+     "submit unconfirmed" is a submitted mint, whatever else the body says. */
+  if (r.status === 202) {
+    const hash = typeof body.hash === "string" ? body.hash : "";
+    const submitted =
+      body.status === "minted" || hash !== "" || (typeof body.error === "string" && /submit unconfirmed/i.test(body.error));
+    if (submitted && body.status !== "pending") return { status: "minted", hash, confirmed: false };
+    return { status: "pending", detail: body.detail ?? "Circle is attesting the burn" };
+  }
+  if (r.status === 200 && body.status === "minted" && body.hash) return { status: "minted", hash: body.hash, confirmed: true };
   throw new Error(body.error ?? `the relay answered ${r.status}`);
 }

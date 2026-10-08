@@ -18,7 +18,9 @@ export function PilotStatusChip() {
 
   const chip = onMainnet
     ? { label: "Real money", cls: "border-money bg-money text-primary-foreground", dot: true }
-    : pilotState === "approved"
+    : pilotState === "open"
+      ? { label: "Real money is open", cls: "border-money bg-secondary text-money", dot: true }
+      : pilotState === "approved"
       ? { label: "Approved for real money", cls: "border-money bg-secondary text-money", dot: true }
       : pilotState === "pending"
         ? { label: "On the pilot list", cls: "border-transparent bg-secondary text-ink", dot: false }
