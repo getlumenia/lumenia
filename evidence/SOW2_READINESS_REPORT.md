@@ -248,11 +248,12 @@ every place it stays public.
 
 ## D3. Open-mainnet readiness: the hardened sponsor, the KMS signer, the retirement switch
 
-Status: **code done and tested, 2026-10-08.** Every item below is in the commit that adds this
-section, held by an offline suite that runs in CI under the step "Hardening suite (D3 a-k)". The
-steps that need a deployed Worker, AWS or the chain (the deploys, the KMS cutover, the rehearsal on
-the deployed testnet Worker, the live adversarial runs) are the owner's; their rows say _pending_
-until they are run, and [`SOW2_OPS_NOTE.md`](SOW2_OPS_NOTE.md) holds their exact commands and logs.
+Status: **code done, tested and deployed, 2026-10-08.** Every item below is held by an offline
+suite that runs in CI under the step "Hardening suite (D3 a-k)" (green, D3.2). Both Workers run this
+code since 2026-10-08 (the mainnet one with `PILOT_MODE=1` kept), and the live adversarial runs,
+both Workers' first watchdog stamps and the heartbeat workflow's first green run are below. Still
+pending, the owner's steps: the KMS cutover and the rehearsal on the deployed testnet Worker;
+[`SOW2_OPS_NOTE.md`](SOW2_OPS_NOTE.md) holds their exact commands and logs.
 
 What D3 does not do: open mainnet. The mainnet Worker keeps `PILOT_MODE=1` (hand-approved wallets
 only, $5 a transfer, $50 a day, fail-closed) until the written legal opinion the Customer Development
@@ -432,14 +433,94 @@ Totals: 27 probes, 22 pass, 0 fail, 5 skipped.
 Sponsor balance: not readable (a local throwaway sponsor key that has no account on this network).
 Run: 2026-10-08T14-46-05-554Z UTC, target http://127.0.0.1:8788, network mainnet, mode full.
 
-**Run 3: full mode against the deployed testnet Worker.** _Pending the testnet deploy:_
+**Run 3: full mode against the deployed testnet Worker.**
 `pnpm --filter @lumenia/sponsor adversarial -- --target https://lumenia-sponsor.avakit.workers.dev --network testnet --mode full --rate-cap 300 --account-rate-cap 15`.
+Its first attempt, at 17:30 UTC on the first testnet deploy, had 28 rows and 2 failing, and both
+were real findings: `/create-account` answered "Too many subrequests by single Worker invocation" at
+the 40th call of the per-source exhaustion probe, because a full 40-channel pool cost one store round
+trip per channel per pass and a Worker invocation may make only so many; and the runner's per-IP
+burst, sent one request at a time over the internet, outlasted the limiter's one-minute window. The
+lease now takes the first free channel of a pass in one round trip (commit `6b6b98c`, `test:channels`
+[7] and [8]), and the burst goes out in parallel batches. The repeat, on that fix, at 17:48 UTC: the
+exhaustion probe was served 75 times past the full pool and refused only by the address's share;
+the store-dependent rows are SKIP by design (the live store is not ours to seed or halt).
 
-**Run 4: refusal-only against the live mainnet Worker.** _Pending the mainnet deploy and the
-owner's yes:_ `pnpm --filter @lumenia/sponsor adversarial -- --target https://lumenia-sponsor-mainnet.avakit.workers.dev --network mainnet --mode refusal-only`.
-Refusal-only because the exhaustion probes would lock real recipients out until UTC midnight. The
-containment artifact is the mainnet sponsor's XLM and USDC balance before and after the run, which
-the script prints and this row will quote.
+| # | Section | Probe | Expected | Got | Result |
+|---|---|---|---|---|---|
+| 1 | setup | onboard + fund the throwaway sender | an account with test USDC | GBW7UH... funded | PASS |
+| 2 | a. fees | /v2-deposit inner fee = 2 XLM cap + 1 stroop | 400 refused by the cap; nothing counted against the fee budget | 400 {"error":"inner fee 20000001 exceeds cap 20000000"} | PASS |
+| 3 | a. fees | /v2-deposit from an unfunded sender (simulation fails) | 400 refused by the simulation; nothing counted against the fee budget | 400 {"error":"v2-deposit would fail: HostError: Error(Contract, #13)  ... | PASS |
+| 4 | a. fees | /v2-reclaim of a drop that does not exist (simulation fails) | 400 refused by the simulation; nothing counted against the fee budget | 400 {"error":"v2-reclaim would fail: HostError: Error(Contract, #2)  ... | PASS |
+| 5 | a. fees | /v2-deposit fee = simulated need + headroom + 0.01 XLM (2849324 stroops, local minResourceFee 249324) | 400 refused, naming the bound; nothing counted against the fee budget | 400 {"error":"inner fee 2849324 exceeds what the deposit needs (2749328)"} | PASS |
+| 6 | a. fees | the fee budget across the 4 probe(s) above | nothing charged: fees.spentXlm (and the gross, when readable) unchanged 6 s after the last probe | fees.spentXlm 0.0226778 -> 0.0226778; nothing charged (/health fees.grossXlm) | PASS |
+| 7 | a. fees | /v2-deposit at exactly the bound (2749328 stroops; the one real 0.2 USDC deposit) | 200 confirmed or 202 accepted, with a hash | 200 {"hash":"9afcdd14...a9b8f270","confirmed":true} | PASS |
+| 8 | c. junk | /v2-claim with a 31-byte link | refused; nothing counted against the fee budget | 400 {"error":"link must be 32 bytes (hex)"} | PASS |
+| 9 | c. junk | /v2-claim naming a foreign contract id | refused; nothing counted against the fee budget | 400 {"error":"contract not allowed: CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR"} | PASS |
+| 10 | c. junk | /v2-claim with a method outside the allowlist | refused; nothing counted against the fee budget | 400 {"error":"method not allowed: withdraw"} | PASS |
+| 11 | c. junk | /v2-claim with a random 64-byte signature for a real unclaimed link | refused by the simulation; nothing counted against the fee budget | 400 {"error":"v2-claim simulation failed: HostError: Error(Crypto, InvalidInput)  ... | PASS |
+| 12 | c. junk | /feebump: a sponsor-sourced payment inside the claim | refused; nothing counted against the fee budget | 400 {"error":"anti-drain rejected the inner tx: op sequence [payment] != expected [claimClaimableBalance]"} | PASS |
+| 13 | c. junk | /feebump: a claim whose balance id differs from the one named | refused; nothing counted against the fee budget | 400 {"error":"anti-drain rejected the inner tx: claim balanceId 00000000cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdc... | PASS |
+| 14 | c. junk | /feebump: a claim op sourced by a muxed (M...) address | refused; nothing counted against the fee budget | 400 {"error":"anti-drain rejected the inner tx: op 'claimClaimableBalance' source must be a plain G... acco... | PASS |
+| 15 | c. junk | /send-link: a send whose claimable balance has three claimants (a bigger sponsored reserve) | refused; nothing counted against the fee budget | 400 {"error":"anti-drain rejected the send tx: createClaimableBalance has 3 claimants, expected 2"} | PASS |
+| 16 | c. junk | /send-link: a send with no unconditional claimant (the reserve could stay locked) | refused; nothing counted against the fee budget | 400 {"error":"anti-drain rejected the send tx: createClaimableBalance has no unconditional claimant (reserv... | PASS |
+| 17 | c. junk | /payout: a payout to a destination that is not the one named | refused; nothing counted against the fee budget | 400 {"error":"anti-drain rejected the payout tx: payout destination GDABMZJFJ2JHNKZT7UV52GFKB7EJ7URIOUTOE6S... | PASS |
+| 18 | c. junk | /sweep: a sweep whose payment the sponsor sources | refused; nothing counted against the fee budget | 400 {"error":"anti-drain rejected the sweep tx: sweep must be [payment,changeTrust,accountMerge] (optionall... | PASS |
+| 19 | c. junk | /feebump: a claim whose inner fee is far over the fee-bump cap | refused; nothing counted against the fee budget | 400 {"error":"Invalid baseFee, it should be at least 5000000 stroops."} | PASS |
+| 20 | c. junk | /feebump: a body whose xdr is not XDR | refused; nothing counted against the fee budget | 400 {"error":"XDR Read Error: unknown EnvelopeType member for value 158"} | PASS |
+| 21 | c. junk | the fee budget across the 13 probe(s) above | nothing charged: fees.spentXlm (and the gross, when readable) unchanged 6 s after the last probe | fees.spentXlm 0.0437601 -> 0.0437601; nothing charged (/health fees.grossXlm) | PASS |
+| 22 | b. budgets | /create-account from this address until its share of 120 is spent | refused with 'paused for today' at or before call 121 | refused at call 76 | PASS |
+| 23 | b. budgets | a second source is still served | served | not run (cannot present a second address from one machine; proven against wrangler dev with --kv and --source-ip) | SKIP |
+| 24 | b. budgets | the day cap (600 accounts, 1000 USDC) and the fee budget | contained | not run (pre-seeding needs the fake store (--kv); proven against wrangler dev) | SKIP |
+| 25 | a. fees | /v2-reclaim fee = simulated need + headroom + 0.01 XLM (2627478 stroops, local minResourceFee 27478) | 400 refused, naming the bound; nothing counted against the fee budget | 400 {"error":"inner fee 2627478 exceeds what the reclaim needs (2527481)"} | PASS |
+| 26 | a. fees | the fee budget across the 1 probe(s) above | nothing charged: fees.spentXlm (and the gross, when readable) unchanged 6 s after the last probe | fees.spentXlm 0.0467601 -> 0.0467601; nothing charged (/health fees.grossXlm) | PASS |
+| 27 | a. fees | /v2-reclaim at exactly the bound (2527478 stroops; the money comes back) | 200 confirmed or 202 accepted | 200 {"hash":"fffedf3a...991c57af","confirmed":true} | PASS |
+| 28 | d. rate limits | 17 junk /v2-claim posts for one payout key | the per-account limiter's 429 by post 16, and not before post 12 | first 429 at post 16: 429 {"error":"per-account rate limit exceeded"} | PASS |
+| 29 | d. rate limits | 305 GETs to /events/summary from one address, in batches of 25 | the per-IP limiter's 429 after at most 300 served | a 429 after 284 served: 429 {"error":"per-IP rate limit exceeded"} | PASS |
+| 30 | e. halt | SET sponsor:halt:<net> -> every value and grant route 503 within 5 s | 503 everywhere | not run (the live store is not ours to write; proven against wrangler dev with --kv. SPONSOR_HALT=1 + deploy is the ...) | SKIP |
+
+Totals: 30 probes, 27 pass, 0 fail, 3 skipped.
+Sponsor balance: before 19993.9925092 XLM / 0 USDC, after 19993.9696540 XLM / 0 USDC; spent 0.0228552 XLM.
+Run: 2026-10-08T17-48-59-637Z UTC, target https://lumenia-sponsor.avakit.workers.dev, network testnet, mode full.
+
+**Run 4: refusal-only against the live mainnet Worker, 2026-10-08 17:54 UTC, right after its
+deploy.** `pnpm --filter @lumenia/sponsor adversarial -- --target https://lumenia-sponsor-mainnet.avakit.workers.dev --network mainnet --mode refusal-only`.
+Refusal-only because the exhaustion probes would lock real recipients out until UTC midnight;
+nothing was funded and nothing that could land was submitted. The containment artifact: the
+mainnet sponsor's balance was 239.6774337 XLM and 0 USDC before the run and the same after it. The
+pilot gate answers most value routes first for a wallet nobody approved, so those rows are SKIP; the
+guards behind it are the ones Runs 1 and 2 and the offline suites hold.
+
+| # | Section | Probe | Expected | Got | Result |
+|---|---|---|---|---|---|
+| 1 | a. fees | /v2-deposit inner fee = 2 XLM cap + 1 stroop | 400 refused by the cap; nothing counted against the fee budget | not run (the pilot gate answers first (pilotMode true): a wallet nobody approved never reaches this guard; run it ag...) | SKIP |
+| 2 | a. fees | /v2-deposit from an unfunded sender (simulation fails) | 400 refused by the simulation; nothing counted against the fee budget | not run (the pilot gate answers first (pilotMode true): a wallet nobody approved never reaches this guard; run it ag...) | SKIP |
+| 3 | a. fees | /v2-deposit from a wallet nobody approved (the pilot gate) | 403 'not on the pilot allowlist'; nothing counted against the fee budget | 403 {"error":"this wallet is not on the pilot allowlist yet"} | PASS |
+| 4 | a. fees | /v2-reclaim of a drop that does not exist (simulation fails) | 400 refused by the simulation; nothing counted against the fee budget | 400 {"error":"request failed","ref":"4a7aab6d"} | PASS |
+| 5 | a. fees | the fee budget across the 2 probe(s) above | nothing charged: fees.spentXlm (and the gross, when readable) unchanged 6 s after the last probe | fees.spentXlm 0 -> 0; nothing charged (/health fees.grossXlm) | PASS |
+| 6 | a. fees | /v2-deposit fee = simulated need + headroom + 0.01 XLM | 400 refused | not run (needs a funded sender: full mode only) | SKIP |
+| 7 | a. fees | /v2-reclaim fee = simulated need + headroom + 0.01 XLM | 400 refused | not run (needs a funded sender: full mode only) | SKIP |
+| 8 | c. junk | /v2-claim with a random signature for a real unclaimed link | 400 refused | not run (needs the real link from full mode) | SKIP |
+| 9 | c. junk | /send-link: a send whose claimable balance has three claimants (a bigger sponsored reserve) | refused; nothing counted against the fee budget | not run (the pilot gate answers first (pilotMode true): a wallet nobody approved never reaches the send policy, whic...) | SKIP |
+| 10 | c. junk | /send-link: a send with no unconditional claimant (the reserve could stay locked) | refused; nothing counted against the fee budget | not run (the pilot gate answers first (pilotMode true): a wallet nobody approved never reaches the send policy, whic...) | SKIP |
+| 11 | c. junk | /v2-claim with a 31-byte link | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"01d6d684"} | PASS |
+| 12 | c. junk | /v2-claim naming a foreign contract id | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"7b6f94ad"} | PASS |
+| 13 | c. junk | /v2-claim with a method outside the allowlist | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"22d48e01"} | PASS |
+| 14 | c. junk | /feebump: a sponsor-sourced payment inside the claim | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"3af55a15"} | PASS |
+| 15 | c. junk | /feebump: a claim whose balance id differs from the one named | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"b4aede33"} | PASS |
+| 16 | c. junk | /feebump: a claim op sourced by a muxed (M...) address | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"a5202224"} | PASS |
+| 17 | c. junk | /payout: a payout to a destination that is not the one named | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"ca3b625a"} | PASS |
+| 18 | c. junk | /sweep: a sweep whose payment the sponsor sources | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"959479a9"} | PASS |
+| 19 | c. junk | /feebump: a claim whose inner fee is far over the fee-bump cap | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"fe82a6c3"} | PASS |
+| 20 | c. junk | /feebump: a body whose xdr is not XDR | refused; nothing counted against the fee budget | 400 {"error":"request failed","ref":"ac16a2fb"} | PASS |
+| 21 | c. junk | the fee budget across the 10 probe(s) above | nothing charged: fees.spentXlm (and the gross, when readable) unchanged 6 s after the last probe | fees.spentXlm 0 -> 0; nothing charged (/health fees.grossXlm) | PASS |
+| 22 | b. budgets | every exhaustion probe | contained | not run (refusal-only mode: exhaustion is never run against a live mainnet Worker (it locks real recipients out unti...) | SKIP |
+| 23 | d. rate limits | 7 junk /v2-claim posts for one payout key | the per-account limiter's 429 by post 6, and not before post 2 | first 429 at post 6: 429 {"error":"per-account rate limit exceeded"} | PASS |
+| 24 | d. rate limits | 35 GETs to /events/summary from one address, in batches of 25 | the per-IP limiter's 429 after at most 30 served | a 429 after 24 served: 429 {"error":"per-IP rate limit exceeded"} | PASS |
+| 25 | e. halt | SET sponsor:halt:<net> -> every value and grant route 503 within 5 s | 503 everywhere | not run (the live store is not ours to write; proven against wrangler dev with --kv. SPONSOR_HALT=1 + deploy is the ...) | SKIP |
+
+Totals: 25 probes, 16 pass, 0 fail, 9 skipped.
+Sponsor balance: before 239.6774337 XLM / 0 USDC, after 239.6774337 XLM / 0 USDC; spent 0.0000000 XLM.
+Run: 2026-10-08T17-54-26-957Z UTC, target https://lumenia-sponsor-mainnet.avakit.workers.dev, network mainnet, mode refusal-only.
 
 ### D3.4 The retirement switch, rehearsed
 
@@ -454,23 +535,22 @@ section 1.4. The run on the deployed testnet Worker is the owner's (ops note sec
 
 ### D3.5 What `/health` says now
 
-Read at 13:48 UTC on 2026-10-08 from the mainnet configuration: a local `wrangler dev --env mainnet`
-of this code before the third review round (whose fixes add no field), with a throwaway key and the
-local store, after a run like Run 2 (hence 3 accounts counted). The addresses are masked because
-that Worker used a throwaway key. Nothing in it is a secret: no token, no key id, only public
-addresses and counters.
+Read from the LIVE mainnet Worker at 18:02 UTC on 2026-10-08, after its deploy and its first
+watchdog run (18:00:36 UTC, a full run, nothing halted). The signer is still the environment key
+(`"kind": "env"`): the KMS cutover is pending (D3.6). Nothing in it is a secret: no token, no key id,
+only public addresses and counters.
 
 ```json
 {
   "ok": true,
   "service": "lumenia-sponsor",
   "network": "mainnet",
-  "sponsorPublicKey": "<the sponsor account, G...>",
-  "account": "<the sponsor account, G...>",
+  "sponsorPublicKey": "GBLBAKFVTS2GSEOUK3AKOZAO3I6T34YHNJPG4DMF5JODVWJDJIPDYZZ2",
+  "account": "GBLBAKFVTS2GSEOUK3AKOZAO3I6T34YHNJPG4DMF5JODVWJDJIPDYZZ2",
   "accountSource": "signer",
   "signer": {
     "kind": "env",
-    "publicKey": "<the signing key, G...>",
+    "publicKey": "GBLBAKFVTS2GSEOUK3AKOZAO3I6T34YHNJPG4DMF5JODVWJDJIPDYZZ2",
     "available": true
   },
   "pilotMode": true,
@@ -483,17 +563,14 @@ addresses and counters.
     "reason": null
   },
   "watchdog": {
-    "lastRun": null,
-    "ageSeconds": null,
-    "lastFullRun": null,
-    "fullAgeSeconds": null
+    "lastRun": "2026-10-08T18:00:36.837Z",
+    "ageSeconds": 87,
+    "lastFullRun": "2026-10-08T18:00:36.837Z",
+    "fullAgeSeconds": 87
   },
   "alerting": {
-    "configured": false,
-    "missing": [
-      "RESEND_API_KEY",
-      "ALERT_NOTIFY_TO (or FEEDBACK_NOTIFY_TO)"
-    ]
+    "configured": true,
+    "missing": []
   },
   "fees": {
     "day": "2026-10-08",
@@ -507,15 +584,17 @@ addresses and counters.
     "maxDayUsdc": "50",
     "maxDayAccounts": 60,
     "escrowUsdc": "0",
-    "accounts": 3,
+    "accounts": 0,
     "maxDaySourceAccounts": 8
   }
 }
 ```
 
-The live pages: `https://lumenia-sponsor.avakit.workers.dev/health` carries these fields since the
-testnet deploy (2026-10-08); `https://lumenia-sponsor-mainnet.avakit.workers.dev/health` will after
-the mainnet deploy, which is pending.
+The live pages: `https://lumenia-sponsor.avakit.workers.dev/health` and
+`https://lumenia-sponsor-mainnet.avakit.workers.dev/health`. Both watchdogs stamped their first full
+run at 18:00:36 UTC, and the heartbeat workflow's first run, started by hand right after, was green
+([run 37821047843](https://github.com/getlumenia/lumenia/actions/runs/37821047843)); no
+`watchdog-heartbeat` issue was opened.
 
 ### D3.6 The KMS trace
 
@@ -642,7 +721,10 @@ means 28 a day.
   component test exists.
 - **The watchdog's worst case and the free plan.** A run that pages through a backlog, halts and
   retries its reads can need more than the 50 subrequests the Workers free plan allows per
-  invocation; which plan the two Workers are on is not recorded here (D3.9). During a rotation, the
+  invocation. The live testnet run hit the per-invocation subrequest limit on `/create-account` at
+  about that count (fixed for the channel lease, Run 3), which suggests the free plan; the plan
+  itself is not recorded here (D3.9). A relay that polls a slow transaction for its whole window
+  (40 polls) comes close to the same limit; a poll that fails on it reads as undecided (202). During a rotation, the
   page for the second SetOptions may be held by the alert cooldown (the runbook says how to confirm
   the scan instead).
 - **The local node server** (`apps/sponsor/src/index.ts`) now answers 202 and 503 like the Worker,
@@ -651,21 +733,22 @@ means 28 a day.
 
 ### D3.9 Not verified yet, stated plainly
 
-- The testnet Worker runs this code since 2026-10-08 about 17:03 UTC (version `0b8f86da`): its live
-  `/health` carries the new fields, and the live claim regression passed through it and the deployed
-  web (tx [`6151c3d7...b1d75c`](https://stellar.expert/explorer/testnet/tx/6151c3d7ad2393c6ff9c30c4be41c5d4f2ecce2536f50891ba8be370eeb1d75c)). The mainnet Worker still runs the pre-D3 code, so its
-  `/health` has none of the new fields, and the heartbeat workflow fails (and keeps one issue open)
-  until it is deployed.
+- Deployed 2026-10-08: the testnet Worker about 17:03 UTC, again with the lease fix at about 17:48 UTC
+  (version `7bfebe3e`); the mainnet Worker at 17:54 UTC (version `73136ad0`) with `PILOT_MODE=1`
+  kept, after checking that the mainnet sponsor sourced no operation the watchdog halts on (its newest
+  200 operations, 2026-08-24 to 10-03) and that the escrow's running wasm matches the pin. The live
+  claim regression passed through the deployed web and the testnet Worker (tx
+  [`6151c3d7...b1d75c`](https://stellar.expert/explorer/testnet/tx/6151c3d7ad2393c6ff9c30c4be41c5d4f2ecce2536f50891ba8be370eeb1d75c)).
 - The KMS path has never signed with a live AWS key; `kms-check` is the first live proof, and the
   AWS documentation does not state the Ed25519 signature's encoding (the code expects the raw 64
   bytes).
 - Whether the two Workers share one store cannot be read from the repository (the store's address is
   a secret); the halt and cooldown keys were made per network on the assumption that they do.
-- Which Cloudflare plan the Workers run on (the subrequest budget above), and whether GitHub keeps
-  the heartbeat workflow's issue label for a token with `issues: write`: its open, update and close
-  cycle has never run in this repository; the first runs after the push will show it.
+- Which Cloudflare plan the Workers run on (the subrequest budget above), and the heartbeat
+  workflow's issue cycle: its open, update and close path has not run yet (its first run was green).
 - Runs 1 and 2 used a local Worker and a local stand-in for the store: they prove the code and its
-  answers, not the deployed configuration. Runs 3 and 4 are the deployed proof.
+  answers, not the deployed configuration. Runs 3 and 4 are the deployed proof, without the
+  store-dependent rows (seeded budgets, the store halt), which only Runs 1 and 2 show.
 - The adversarial runner's own refusals (full mode against a live mainnet Worker, `--kv` with a live
   mainnet target, full mode on a local mainnet Worker without `--kv`, a store that is not the current
   stand-in) stop it before any probe or spend, but no test in the repository holds them and their
