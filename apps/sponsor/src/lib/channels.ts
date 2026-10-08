@@ -34,6 +34,26 @@
 import { Keypair } from "@stellar/stellar-sdk";
 import { kvConfigFromEnv } from "./rate-limit.js";
 
+/**
+ * The most store round trips one `lease()` may spend. Every round trip is a subrequest, and a
+ * Worker invocation may make only so many (50 on the Workers Free plan) before every later one in
+ * the same request fails. A full pool used to cost attempts x pool size round trips, one SET NX per
+ * channel: a live testnet run on the 40-channel pool had /create-account answer "Too many
+ * subrequests" at the 40th call, where it should have fallen back to the sponsor path. The store
+ * now leases the first free channel of a pass in ONE round trip (`ACQUIRE_ANY_SCRIPT`), so a lease
+ * costs at most one round trip per attempt; a store without that script is held to this bound.
+ */
+export const MAX_LEASE_PROBES = 10;
+
+/**
+ * Lease the first free channel among KEYS, in the order given, in ONE round trip: SET NX on each
+ * key until one takes. KEYS are the channel keys in a random order, ARGV[1] the lease token, ARGV[2]
+ * the TTL in seconds. Answers the 1-based index of the key leased, or 0 when every one is held. The
+ * local fake store (cli/fake-kv.ts) answers this exact script, so keep the two in step.
+ */
+export const ACQUIRE_ANY_SCRIPT =
+  "for i = 1, #KEYS do if redis.call('set', KEYS[i], ARGV[1], 'NX', 'EX', ARGV[2]) then return i end end return 0";
+
 /** Exclusive-lease lifetime (seconds). MUST exceed CHANNEL_TX_TIMEOUT_SECONDS. */
 export const CHANNEL_LEASE_TTL_SECONDS = 150;
 /** Timebound (seconds) of a tx built on a leased channel. MUST be < the lease TTL. */
@@ -49,11 +69,23 @@ if (CHANNEL_TX_TIMEOUT_SECONDS >= CHANNEL_LEASE_TTL_SECONDS) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** 0..n-1 in a random order (Fisher-Yates). */
+function shuffled(n: number): number[] {
+  const order = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j]!, order[i]!];
+  }
+  return order;
+}
+
 /** A minimal exclusive-lease store with FENCED release (compare-and-delete on a token). */
 export interface LeaseStore {
   /** Try to take an exclusive lease on `key` for `ttlSeconds`. Returns the lease token on
    *  success, or null if the key is already leased. */
   acquire(key: string, ttlSeconds: number): Promise<string | null>;
+  /** Lease the first free key of `keys`, in that order, in one round trip; null when all are held. */
+  acquireAny?(keys: string[], ttlSeconds: number): Promise<{ index: number; token: string } | null>;
   /** Release the lease ONLY if `token` still owns it (fences against a TTL-expired holder
    *  deleting a successor's lease). Best-effort; the TTL is the backstop. */
   release(key: string, token: string): Promise<void>;
@@ -92,6 +124,11 @@ function redisLeaseStore(kv: KvConfig): LeaseStore {
       const ok = (await pipeline(["SET", key, token, "NX", "EX", String(ttlSeconds)])) === "OK";
       return ok ? token : null;
     },
+    async acquireAny(keys, ttlSeconds) {
+      const token = newToken();
+      const index = Number(await pipeline(["EVAL", ACQUIRE_ANY_SCRIPT, String(keys.length), ...keys, token, String(ttlSeconds)]));
+      return Number.isInteger(index) && index >= 1 && index <= keys.length ? { index: index - 1, token } : null;
+    },
     async release(key, token) {
       try {
         await pipeline(["EVAL", FENCED_DEL, "1", key, token]);
@@ -118,6 +155,13 @@ export function memoryLeaseStore(): LeaseStore {
     async release(key, token) {
       const cur = leases.get(key);
       if (cur && cur.token === token) leases.delete(key); // fenced
+    },
+    async acquireAny(keys, ttlSeconds) {
+      for (const [index, key] of keys.entries()) {
+        const token = await this.acquire(key, ttlSeconds);
+        if (token !== null) return { index, token };
+      }
+      return null;
     },
   };
 }
@@ -190,20 +234,44 @@ export class ChannelManager {
   }
 
   /**
-   * Acquire an exclusive lease on a free channel. Scans every channel once from a
-   * randomized start (spreads load across isolates), then briefly retries to ride out a
-   * transiently-full pool. Returns null if none free OR the store is unavailable — the
-   * caller then falls back to the sponsor-sourced path (never worse than today).
+   * Acquire an exclusive lease on a free channel. Probes the channels in a fresh random order
+   * each pass (spreads load across isolates; a start-and-walk scan ran through clusters of leased
+   * channels), then briefly retries to ride out a transiently-full pool, never more than
+   * `MAX_LEASE_PROBES` probes in all. Returns null if none was free within that bound OR the
+   * store is unavailable: the caller then falls back to the sponsor-sourced path.
    */
-  async lease(opts?: { attempts?: number; delayMs?: number }): Promise<ChannelLease | null> {
+  async lease(opts?: { attempts?: number; delayMs?: number; maxProbes?: number }): Promise<ChannelLease | null> {
     if (!this.enabled) return null;
     const attempts = opts?.attempts ?? 6;
     const delayMs = opts?.delayMs ?? 250;
+    const maxProbes = opts?.maxProbes ?? MAX_LEASE_PROBES;
     const n = this.keypairs.length;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      const start = Math.floor(Math.random() * n);
-      for (let i = 0; i < n; i++) {
-        const kp = this.keypairs[(start + i) % n]!;
+    let probes = 0;
+    for (let attempt = 0; attempt < attempts && probes < maxProbes; attempt++) {
+      const order = shuffled(n);
+      if (this.store.acquireAny) {
+        // The whole pass in one round trip: the first free channel of a random order.
+        probes++;
+        let got: { index: number; token: string } | null;
+        try {
+          got = await this.store.acquireAny(order.map((i) => `chan:${this.keypairs[i]!.publicKey()}`), CHANNEL_LEASE_TTL_SECONDS);
+        } catch (e) {
+          console.warn(`[channels] lease store unavailable, falling back: ${(e as Error).message}`);
+          return null;
+        }
+        if (got) {
+          const kp = this.keypairs[order[got.index]!]!;
+          const key = `chan:${kp.publicKey()}`;
+          const t = got.token;
+          return { keypair: kp, publicKey: kp.publicKey(), release: () => this.store.release(key, t) };
+        }
+        if (attempt < attempts - 1 && probes < maxProbes) await sleep(delayMs);
+        continue;
+      }
+      for (const idx of order) {
+        if (probes >= maxProbes) break;
+        probes++;
+        const kp = this.keypairs[idx]!;
         const key = `chan:${kp.publicKey()}`;
         let token: string | null;
         try {
@@ -219,8 +287,8 @@ export class ChannelManager {
           return { keypair: kp, publicKey: kp.publicKey(), release: () => this.store.release(key, t) };
         }
       }
-      if (attempt < attempts - 1) await sleep(delayMs);
+      if (attempt < attempts - 1 && probes < maxProbes) await sleep(delayMs);
     }
-    return null; // pool exhausted — caller falls back
+    return null; // pool exhausted (or too full to find a channel within the bound): caller falls back
   }
 }

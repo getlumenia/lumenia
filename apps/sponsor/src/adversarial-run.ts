@@ -1179,23 +1179,29 @@ async function sectionD(): Promise<void> {
   // /events/summary is metered per IP and nothing else (no account bucket), so it measures the
   // per-IP cap alone. The burst above is in this minute's window too, so the 429 arrives EARLIER
   // than the cap, never later: the check is "by the cap + 1".
-  let first429 = -1;
+  /* In parallel batches: sent one at a time over the internet, 300 requests outlast the limiter's
+     one-minute window, and a burst split across two windows never reaches the cap (a live testnet
+     run sent 305 and saw no 429). Served replies are counted; the cap holds if at most RATE_CAP
+     were served before the first 429. */
+  const total = RATE_CAP + 5;
+  let served = 0;
   let ipReply: Reply | null = null;
-  for (let i = 1; i <= RATE_CAP + 5; i++) {
-    const r = await call("/events/summary", { timeoutMs: 20_000 });
-    if (r.status === 429) {
-      first429 = i;
-      ipReply = r;
-      break;
+  for (let sent = 0; sent < total && !ipReply; ) {
+    const batch = Math.min(25, total - sent);
+    const replies = await Promise.all(Array.from({ length: batch }, () => call("/events/summary", { timeoutMs: 20_000 })));
+    sent += batch;
+    for (const r of replies) {
+      if (r.status === 429) ipReply ??= r;
+      else if (r.status === 200) served++;
     }
   }
   const byIp = ipReply !== null && says(ipReply, /per-IP/);
   record(
     "d",
-    `${RATE_CAP + 5} GETs to /events/summary from one address`,
-    `the per-IP limiter's 429 by request ${RATE_CAP + 1}`,
-    ipReply ? `first 429 at request ${first429}: ${short(ipReply)}` : `no 429 in ${RATE_CAP + 5} requests`,
-    byIp && first429 <= RATE_CAP + 1,
+    `${total} GETs to /events/summary from one address, in batches of 25`,
+    `the per-IP limiter's 429 after at most ${RATE_CAP} served`,
+    ipReply ? `a 429 after ${served} served: ${short(ipReply)}` : `no 429 in ${total} requests (${served} served)`,
+    byIp && served <= RATE_CAP,
     "the real per-IP cap of this Worker; the per-account burst above was in the same minute's window",
   );
 }

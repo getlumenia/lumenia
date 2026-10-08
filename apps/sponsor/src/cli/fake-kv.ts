@@ -28,6 +28,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
+import { ACQUIRE_ANY_SCRIPT } from "../lib/channels.js";
 
 type Value = { kind: "string"; value: string } | { kind: "set"; value: Set<string> } | { kind: "list"; value: string[] };
 
@@ -304,7 +305,19 @@ function runOne(cmd: string[]): Reply {
       if (!Number.isInteger(numkeys) || numkeys < 0 || numkeys > args.length - 2) {
         return { error: "ERR Number of keys can't be greater than number of args" };
       }
-      return evalFenced(String(args[0] ?? ""), args.slice(2, 2 + numkeys).map(String), args.slice(2 + numkeys).map(String));
+      const keys = args.slice(2, 2 + numkeys).map(String);
+      const argv = args.slice(2 + numkeys).map(String);
+      if (String(args[0] ?? "") === ACQUIRE_ANY_SCRIPT) {
+        // The channel pool's one-round-trip lease (lib/channels.ts): SET NX EX on each key in order.
+        if (argv.length < 2) return { error: "ERR the lease script needs ARGV[1] and ARGV[2]" };
+        for (const [i, key] of keys.entries()) {
+          const set = run(["SET", key, argv[0]!, "NX", "EX", argv[1]!]);
+          if ("error" in set) return set;
+          if (set.result === "OK") return { result: i + 1 };
+        }
+        return { result: 0 };
+      }
+      return evalFenced(String(args[0] ?? ""), keys, argv);
     }
     default:
       return { error: `UNSUPPORTED ${op}` };
@@ -434,6 +447,12 @@ async function selftest(): Promise<number> {
   r(["SET", "lock", "tok"]);
   check("a wrong token answers 0", res(r(["EVAL", DOCS_UNLOCK, 1, "lock", "other"])) === 0 && getString("lock") === "tok");
   check("the holder's token answers DEL's count and frees the lock", res(r(["EVAL", DOCS_UNLOCK, 1, "lock", "tok"])) === 1 && getString("lock") === null);
+
+  console.log("EVAL: the channel pool's one-round-trip lease");
+  fresh();
+  r(["SET", "chan:a", "held"]);
+  check("the first FREE key in the order given is leased, and its 1-based index answered", res(r(["EVAL", ACQUIRE_ANY_SCRIPT, 2, "chan:a", "chan:b", "tok", 150])) === 2 && getString("chan:b") === "tok" && getString("chan:a") === "held");
+  check("with every key held it answers 0 and writes nothing", res(r(["EVAL", ACQUIRE_ANY_SCRIPT, 2, "chan:a", "chan:b", "tok2", 150])) === 0 && getString("chan:b") === "tok");
 
   console.log("EVAL: the script shapes the interpreter must refuse");
   fresh();

@@ -14,7 +14,7 @@
  * RUN: pnpm --filter @lumenia/sponsor test:channels   (offline, deterministic)
  */
 import { Keypair } from "@stellar/stellar-sdk";
-import { ChannelManager, memoryLeaseStore } from "./lib/channels.js";
+import { ACQUIRE_ANY_SCRIPT, ChannelManager, MAX_LEASE_PROBES, defaultLeaseStore, memoryLeaseStore } from "./lib/channels.js";
 
 let passed = 0;
 let failed = 0;
@@ -181,6 +181,83 @@ async function main() {
     else process.env.STELLAR_NETWORK = savedNet;
     clearKv();
     for (const [k, v] of savedKv) if (v !== undefined) process.env[k] = v;
+  }
+
+  console.log("\n[7] a full pool costs a bounded number of store round trips (the Workers subrequest limit)");
+  {
+    // A live testnet run had /create-account fail with "Too many subrequests" once the pool filled:
+    // a full pool cost attempts x pool size probes, each one a subrequest. Bounded now.
+    const counting = (inner: ReturnType<typeof memoryLeaseStore>) => {
+      const seen = { acquires: 0 };
+      return {
+        seen,
+        store: {
+          acquire: (k: string, t: number) => (seen.acquires++, inner.acquire(k, t)),
+          release: (k: string, tok: string) => inner.release(k, tok),
+        },
+      };
+    };
+    const big = counting(memoryLeaseStore());
+    const mgr = new ChannelManager(makeSecrets(40), big.store);
+    for (let i = 0; i < 40; i++) await big.store.acquire(`chan:${mgr.publicKeys()[i]}`, 150); // every channel leased elsewhere
+    big.seen.acquires = 0;
+    const none = await mgr.lease({ delayMs: 1 });
+    ok(`a full pool of 40 returns null after at most ${MAX_LEASE_PROBES} probes (it used to be 6 x 40 = 240)`, none === null && big.seen.acquires === MAX_LEASE_PROBES, `${big.seen.acquires} probes`);
+    const small = counting(memoryLeaseStore());
+    const mgr3 = new ChannelManager(makeSecrets(3), small.store);
+    await small.store.acquire(`chan:${mgr3.publicKeys()[0]}`, 150);
+    await small.store.acquire(`chan:${mgr3.publicKeys()[1]}`, 150);
+    small.seen.acquires = 0;
+    const last = await mgr3.lease({ delayMs: 1 });
+    ok("a small pool's last free channel is still found within the bound", last !== null && last.publicKey === mgr3.publicKeys()[2] && small.seen.acquires <= 3, `${small.seen.acquires} probes`);
+    await last?.release();
+  }
+
+  console.log("\n[8] the shared store leases the first free channel of a pass in ONE round trip");
+  {
+    const saved = { url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN, fetch: globalThis.fetch };
+    process.env.KV_REST_API_URL = "https://fake-kv.test";
+    process.env.KV_REST_API_TOKEN = "t";
+    const held = new Map<string, string>();
+    let trips = 0;
+    // Upstash as the lease store sees it: the one-round-trip lease script and the fenced release.
+    globalThis.fetch = (async (_u: string | URL, init?: { body?: string }) => {
+      trips++;
+      const [cmd] = JSON.parse(String(init?.body)) as string[][];
+      let result: unknown = null;
+      if (cmd![0] === "EVAL" && cmd![1] === ACQUIRE_ANY_SCRIPT) {
+        const n = Number(cmd![2]);
+        const keys = cmd!.slice(3, 3 + n);
+        const token = cmd![3 + n]!;
+        result = 0;
+        for (const [i, k] of keys.entries()) {
+          if (!held.has(k)) {
+            held.set(k, token);
+            result = i + 1;
+            break;
+          }
+        }
+      } else if (cmd![0] === "EVAL") {
+        const [k, tok] = [cmd![3]!, cmd![4]!];
+        result = held.get(k) === tok ? (held.delete(k), 1) : 0;
+      }
+      return { ok: true, status: 200, json: async () => [{ result }] } as unknown as Response;
+    }) as typeof fetch;
+    const mgr = new ChannelManager(makeSecrets(40), defaultLeaseStore());
+    for (const pk of mgr.publicKeys().slice(0, 39)) held.set(`chan:${pk}`, "elsewhere");
+    trips = 0;
+    const last = await mgr.lease({ delayMs: 1 });
+    ok("a 40-channel pool with ONE free channel leases it in one round trip (it used to take up to 40)", last !== null && last.publicKey === mgr.publicKeys()[39] && trips === 1, `${trips} round trips`);
+    trips = 0;
+    const none = await mgr.lease({ delayMs: 1 });
+    ok("a full pool answers null after one round trip per attempt (6), not one per channel (6 x 40 = 240)", none === null && trips === 6, `${trips} round trips`);
+    await last!.release();
+    ok("and the lease's release is the fenced compare-and-delete", !held.has(`chan:${mgr.publicKeys()[39]}`));
+    globalThis.fetch = saved.fetch;
+    if (saved.url === undefined) delete process.env.KV_REST_API_URL;
+    else process.env.KV_REST_API_URL = saved.url;
+    if (saved.token === undefined) delete process.env.KV_REST_API_TOKEN;
+    else process.env.KV_REST_API_TOKEN = saved.token;
   }
 
   console.log("\n============================================================");
