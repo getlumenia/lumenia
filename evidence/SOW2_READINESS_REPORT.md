@@ -296,14 +296,14 @@ Plan names (section 7.4). D3 makes that opening a configuration change that has 
 | `apps/web` `test:pilotaccess` (new) | i | none | 62 |
 | `apps/extension` `test` (all nine suites) | g, i | 1,814 | 1,927 |
 
-The CI step `Hardening suite (D3 a-k)` (`.github/workflows/ci.yml:118`) runs `test:soroban-relay`,
+The CI step `Hardening suite (D3 a-k)` (`.github/workflows/ci.yml:119`) runs `test:soroban-relay`,
 `test:cctp`, `test:caps`, `test:watchdog-offline`, `test:kms`, `test:pilot`, `test:antidrain`,
 `fake-kv --selftest`, `test:claimerr`, `test:group`, `test:horizon`, `test:cctp-web`, `test:agentmcp`
 and `test:pilotaccess` under the name the SOW uses; all but the store self-test also run in the
 general steps above it, and the extension's suite runs in its own job. The whole offline gate on this commit, run locally on 2026-10-08: sponsor 12
 suites / 1,200 assertions, web 19 / 869, extension 9 / 1,927, the escrow contract's `cargo test` 29/29,
 three typechecks clean, web lint clean at `--max-warnings 0`, the web production build 70/70 pages.
-CI run: _pending (the push)_.
+CI run: [37813352621](https://github.com/getlumenia/lumenia/actions/runs/37813352621), green on commit `227db3f` (2026-10-08), the step "Hardening suite (D3 a-k)" included.
 
 Browser runs with this commit's web code (a local production build, 2026-10-08): the live claim
 regression `e2e/claim.spec.ts` passed against the D3 sponsor (a local `wrangler dev` of this
@@ -513,8 +513,9 @@ addresses and counters.
 }
 ```
 
-The live pages: _pending the deploys_ (`https://lumenia-sponsor.avakit.workers.dev/health`,
-`https://lumenia-sponsor-mainnet.avakit.workers.dev/health`).
+The live pages: `https://lumenia-sponsor.avakit.workers.dev/health` carries these fields since the
+testnet deploy (2026-10-08); `https://lumenia-sponsor-mainnet.avakit.workers.dev/health` will after
+the mainnet deploy, which is pending.
 
 ### D3.6 The KMS trace
 
@@ -650,9 +651,11 @@ means 28 a day.
 
 ### D3.9 Not verified yet, stated plainly
 
-- Nothing in D3 has been deployed when this section is written: both Workers still run the pre-D3
-  code, so the live `/health` pages carry none of the new fields and the heartbeat workflow's first
-  runs fail with "no watchdog stamp" until the deploys.
+- The testnet Worker runs this code since 2026-10-08 about 17:03 UTC (version `0b8f86da`): its live
+  `/health` carries the new fields, and the live claim regression passed through it and the deployed
+  web (tx [`6151c3d7...b1d75c`](https://stellar.expert/explorer/testnet/tx/6151c3d7ad2393c6ff9c30c4be41c5d4f2ecce2536f50891ba8be370eeb1d75c)). The mainnet Worker still runs the pre-D3 code, so its
+  `/health` has none of the new fields, and the heartbeat workflow fails (and keeps one issue open)
+  until it is deployed.
 - The KMS path has never signed with a live AWS key; `kms-check` is the first live proof, and the
   AWS documentation does not state the Ed25519 signature's encoding (the code expects the raw 64
   bytes).
