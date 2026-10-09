@@ -30,6 +30,7 @@ import type { Signer } from "./signer";
 import { resolveNetwork, activeNetwork, USDC_ISSUER, type NetworkConfig } from "./network";
 import { deriveLinkKey, makeLinkSeed, passwordFragment } from "./claim-password";
 import { assertSponsoredOnboarding } from "./tx-guard";
+import { submitOrConfirm } from "./submit";
 /* The relayer's contract-error tokens are read in exactly one place. A resumed group claim coming
    back "this payout already has a share" is a SUCCESS wearing a failure's clothes, and the classifier
    is what knows the difference. (No cycle: claim-error.ts imports nothing from here.) */
@@ -1084,7 +1085,8 @@ export async function claimV2ToSponsoredAccount(opts: {
     const sandwich = TransactionBuilder.fromXDR(created.xdr, net.passphrase) as Transaction;
     assertSponsoredOnboarding(sandwich, payoutPublic, net.id);
     sandwich.sign(payout);
-    await horizon.submitTransaction(sandwich);
+    // A lost Horizon reply is answered by the ledger, not by waiting (lib/submit.ts).
+    await submitOrConfirm(horizon, sandwich, net);
 
     /* The account exists on-ledger now, so the caller gets the key BEFORE the money is sent to it.
      *

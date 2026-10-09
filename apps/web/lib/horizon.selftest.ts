@@ -26,6 +26,8 @@ import {
   type ActivityItem,
 } from "./horizon";
 import { LEGACY_TESTNET_USDC_ISSUER, USDC_ISSUER, testnetConfig } from "./network";
+import { Account, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
+import { EVERY_MS, GIVE_UP_MS, submitOrConfirm } from "./submit";
 
 let passed = 0;
 let failed = 0;
@@ -241,6 +243,92 @@ async function submitOutcomes(): Promise<void> {
   }
 }
 
+/*
+ * submitOrConfirm (lib/submit.ts): Horizon's reply to POST /transactions can be lost while the
+ * transaction lands (testnet f6530217...ef1070, 2026-10-09: in a ledger 3 seconds after it was sent,
+ * and the claim screen waited on the reply). Driven with an instant clock: no network, no waiting.
+ */
+async function submitOrConfirmCases() {
+  console.log("\n[submit] a lost Horizon reply is answered by the ledger, never by waiting or by sending again");
+  const kp = Keypair.random();
+  const tx = new TransactionBuilder(new Account(kp.publicKey(), "100"), { fee: "100", networkPassphrase: Networks.TESTNET })
+    .addOperation(Operation.bumpSequence({ bumpTo: "200" }))
+    .setTimeout(180)
+    .build();
+  const hash = tx.hash().toString("hex");
+  const NET = { horizonUrl: "https://horizon.invalid/" };
+  const server = { submitTransaction: async () => ({}) } as unknown as Parameters<typeof submitOrConfirm>[0];
+  const never = () => new Promise<unknown>(() => {});
+  const clockFor = () => {
+    let t = 0;
+    return { sleep: async (ms: number) => { t += ms; }, now: () => t };
+  };
+  const refusal = (status: number) => Object.assign(new Error(`Request failed with status ${status}`), { response: { status } });
+  const outcomes = (list: ("landed" | "failed" | "pending" | "unknown")[]) => {
+    let i = 0;
+    const asked = { n: 0 };
+    return { asked, outcome: async () => { asked.n++; return list[Math.min(i++, list.length - 1)]; } };
+  };
+  const settle = async (p: Promise<unknown>) => p.then((v) => ({ v, e: null as unknown }), (e: unknown) => ({ v: null, e }));
+
+  {
+    let sent = 0;
+    const o = outcomes(["pending"]);
+    const r = await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: async () => { sent++; return { hash }; } }));
+    const v = r.v as { hash: string; confirmedBy: string } | null;
+    ok("Horizon answers first: its answer decides", v?.confirmedBy === "horizon" && v.hash === hash && sent === 1, JSON.stringify(v));
+  }
+  {
+    let sent = 0;
+    const o = outcomes(["pending", "landed"]);
+    const r = await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: () => { sent++; return never(); } }));
+    const v = r.v as { confirmedBy: string } | null;
+    ok("a reply that never comes: the ledger says landed, so it is done", v?.confirmedBy === "ledger" && sent === 1, JSON.stringify(v));
+  }
+  {
+    const lost = new TypeError("fetch failed");
+    const o = outcomes(["unknown", "landed"]);
+    const r = await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: async () => { throw lost; } }));
+    ok("a reset connection, then the ledger says landed: done, not an error", (r.v as { confirmedBy?: string } | null)?.confirmedBy === "ledger");
+  }
+  {
+    const lost = new TypeError("fetch failed");
+    const o = outcomes(["failed"]);
+    const r = await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: async () => { throw lost; } }));
+    ok("a reset connection, and the ledger says it failed: the original error, unchanged", r.e === lost);
+  }
+  {
+    const no = refusal(400);
+    const o = outcomes(["landed"]);
+    const r = await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: async () => { throw no; } }));
+    ok("Horizon's own 400 is a decided refusal: thrown as it is", r.e === no);
+  }
+  {
+    const gateway = refusal(504);
+    const o = outcomes(["pending", "landed"]);
+    const r = await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: async () => { throw gateway; } }));
+    ok("Horizon's 504 is not a refusal: the ledger is asked, and it landed", (r.v as { confirmedBy?: string } | null)?.confirmedBy === "ledger");
+  }
+  {
+    const lost = new TypeError("fetch failed");
+    const o = outcomes(["pending"]);
+    const r = await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: async () => { throw lost; } }));
+    const bound = Math.ceil(GIVE_UP_MS / EVERY_MS) + 1;
+    ok("the ledger never decides: the original error, after a bounded number of reads", r.e === lost && o.asked.n <= bound, `${o.asked.n} reads, bound ${bound}`);
+  }
+  {
+    const o = outcomes(["failed"]);
+    const r = await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: never }));
+    ok("the ledger says failed and Horizon stays silent: a clear error, not a screen that waits forever", r.e instanceof Error && /failed on the ledger/.test((r.e as Error).message));
+  }
+  {
+    let sent = 0;
+    const o = outcomes(["pending", "pending", "landed"]);
+    await settle(submitOrConfirm(server, tx, NET, { ...clockFor(), outcome: o.outcome, submit: () => { sent++; return never(); } }));
+    ok("nothing is ever sent twice", sent === 1, `${sent} submissions`);
+  }
+}
+
 async function main() {
   console.log("\n[claimable] the read itself: amount | gone (404 only) | unknown (everything else)");
   const NET = testnetConfig();
@@ -303,6 +391,7 @@ async function main() {
   }
 
   await submitOutcomes();
+  await submitOrConfirmCases();
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} HORIZON SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

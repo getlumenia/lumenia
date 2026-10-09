@@ -18,6 +18,7 @@ import { activeNetwork, type NetworkConfig } from "./network";
 import type { Signer } from "./signer";
 import { assertSponsoredOnboarding, assertSponsoredTrustline, pinnedUsdcIssuer } from "./tx-guard";
 import { signedFacts, throwIfUnconfirmed, type SignedFacts } from "./unconfirmed";
+import { submitOrConfirm } from "./submit";
 
 export interface ClaimParams {
   sponsorUrl: string;
@@ -116,7 +117,8 @@ export async function runClaim({
   }
   if (onboardingNeeded) {
     sandwich.sign(claimKey);
-    await server.submitTransaction(sandwich);
+    // A lost Horizon reply is answered by the ledger, not by waiting (lib/submit.ts).
+    await submitOrConfirm(server, sandwich, net);
   }
 
   // 2. Build + sign the claim; the sponsor anti-drain-validates + fee-bumps it.
@@ -173,6 +175,6 @@ export async function prepareAccount({
     assertSponsoredOnboarding(sandwich, signer.publicKey(), net.id);
   }
   await signer.sign(sandwich);
-  const res = await server.submitTransaction(sandwich);
-  return { hash: (res as { hash: string }).hash };
+  const { hash } = await submitOrConfirm(server, sandwich, net);
+  return { hash };
 }
