@@ -67,9 +67,11 @@ from the SOW as written". In short:
   dishonest reveal cannot take other people's money. Groth16 on BLS12-381 was measured on testnet
   with the upstream example circuit only. This is a negative result, and the report says so first.
 - The adversarial run against the live mainnet sponsor was refusal-only: it showed junk claims
-  refused and nothing spent; the fee-bound and budget-exhaustion probes ran against the deployed
-  testnet sponsor and a local copy configured as mainnet, because on mainnet they would lock real
-  recipients out until UTC midnight.
+  refused, the classic fee-bump route refusing an inflated fee, and nothing spent. The other
+  inflated-fee probes and the budget-exhaustion probes ran against the deployed testnet sponsor and a
+  local copy on the testnet ledger; a local copy configured as mainnet ran only the onboarding-share
+  probes. On mainnet the pilot gate answers first for a wallet nobody approved, the fee probes need a
+  funded sender, and budget exhaustion would lock real recipients out until UTC midnight.
 - The "26 people approved during this sprint": the store held one access request (2026-09-27,
   approved that day). The figure 26 could not be reproduced from our records.
 - The Chrome Web Store still serves 0.1.2, which makes links in the pre-D2 shape, until 0.1.3 is
@@ -80,8 +82,10 @@ from the SOW as written". In short:
 
 ## Customer Development Plan: what changed this period
 
-**Numbers, corrected.** The pilot has moved about USD 4.4 in total (median payment USD 0.002,
-largest USD 1.00), most of it in our own scripted run of 24 August. No real-money transfer has gone
+**Numbers, corrected.** The pilot has moved about USD 4.4 in total (recounted from Horizon on
+6 September). USD 2.76 of it was 69 person-to-person payments (median USD 0.002, largest USD 1.00);
+65 of those 69 came from our own scripted run of 24 August, though together they add up to only
+USD 0.26 (Horizon, counted again on 9 October). No real-money transfer has gone
 through the service between 31 August and 9 October. The plan's "26 pilot access requests, 36
 feedback submissions" could not be reproduced: on 27 September the store held one access request,
 one feedback entry and six waitlist sign-ups. The plan counted five recorded sessions; two were

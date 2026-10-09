@@ -54,7 +54,7 @@ wording, it is under [SOW 2: deviations from the SOW as written](#sow-2-deviatio
 | Live proof on testnet | Readiness report D1.3: links made in the extension and claimed on getlumenia.com in a browser with no extension, for example the send [`017bef46...c1ec71`](https://stellar.expert/explorer/testnet/tx/017bef46e84e1875d5eb7ec147de0fb25b7c6f0e38aaa5067172ab8206c1ec71) and its claim [`c0669dc4...26c3fc`](https://stellar.expert/explorer/testnet/tx/c0669dc474f3897624eda460618d61ef0df71dc3bcb119620a24a001c326c3fc), a take-back after expiry, and an account made in the extension, end to end. |
 | Metric 1: the mainnet send and its claim | _Pending the owner's run_: the deposit hash and the claim hash. |
 | Demo video (practice money) | A 60 fps silent demo of extension 0.1.3 on Stellar testnet, recorded 2026-10-09 with a scripted Playwright capture: an account made in the extension, practice dollars arriving, a right-click paste into a chat box, the link (no amount, no name), the recipient claiming in a browser that never saw Lumenia (the link on screen: testnet deposit [`c2fe32df...b9ca59`](https://stellar.expert/explorer/testnet/tx/c2fe32df12d1e3b26fbcb94ceca780d16952e757bffbbf85e01780eca3b9ca59), claim [`2d7deb6a...5514c8`](https://stellar.expert/explorer/testnet/tx/2d7deb6a3e8e378bcd11a204d03a1580ff0e397eb17717926c47dd41e55514c8)), the extension's list turning to Claimed, and the Real money note. Automation cannot open Chrome's native context menu, so the right-click is driven through the extension's own menu handler. Served at <https://getlumenia.com/media/lumenia-extension-demo.mp4> since the 2026-10-09 web deploy. Readiness report D1.6. It is not the metric-1 recording. |
-| Not verified yet | Readiness report D1.4: the first run in Firefox, a paste on the real chat sites, a real-money send. |
+| Not verified yet | Readiness report D1.4: Firefox as a person installs it from addons.mozilla.org (the run of 2026-10-09 used a temporary add-on), a paste on the real chat sites, a real-money send. |
 
 ### Metric 2 and D2: private links and the commitment spike
 
@@ -172,7 +172,9 @@ $50 to $400, the sponsored accounts from 40 to 200 a day and 200 per caller IP, 
 requests a minute and the per-wallet budget to 50 operations. It was due back at 21:00 Istanbul on
 20 Sept and was reverted on 24 Sept (`858e999`), three and a half days late and inside this SOW's
 window. The $5 per-transfer cap, fail-closed and the allowlist never moved, and nothing was spent
-while the step stood: the sponsor held 239.6774331 XLM on 20 Sept and on 24 Sept. The SOW names a
+while the step stood: Horizon shows no transaction sent or paid for by the sponsor between 30 Aug and
+9 Oct, and its balance only rose, by 0.0000001 XLM dust payments from outside accounts (239.6774327
+XLM for most of 20 Sept, 239.6774331 XLM on 24 Sept). The SOW names a
 professional review as the gate for raising caps materially; this was a temporary event setting, not
 that step.
 

@@ -768,7 +768,7 @@ that need a funded sender were skipped, and every other refusal probe passed aga
 windows that did not move. Its rows repeat Run 3's and are not transcribed here.
 
 **Run 5: refusal-only against the live mainnet Worker after the 2026-10-09 deploy** (version `baaeaae0`, tagged
-`215cfb2`, 08:53 UTC): 25 rows, 0 failing; the same classes as Run 4 (junk claims refused, the classic
+`215cfb2`, 08:53 UTC): 25 rows, 16 pass, 0 fail, 9 skipped; the same classes as Run 4 (junk claims refused, the classic
 `/feebump` inflated-fee refusal, the pilot gate, the rate limits), every refusal answered `request failed` with a
 reference and nothing charged against the fee budget (`fees.spentXlm` 0 before and after); the sponsor held
 239.6774337 XLM and 0 USDC before and after. Report `apps/sponsor/adversarial-out/adversarial-mainnet-refusal-only-2026-10-09T08-53-06-497Z.md`.
