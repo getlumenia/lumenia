@@ -1,0 +1,2 @@
+# Run output of `cargo test` (soroban testutils snapshots); none is a fixture.
+test_snapshots/

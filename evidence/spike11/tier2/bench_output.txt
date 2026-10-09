@@ -1,0 +1,1237 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/bench.rs (target/debug/deps/bench-785762cba158b619)
+
+running 6 tests
+test bench_arkworks_native ... === fixture=arkworks mode=native ===
+public_inputs=9 ic_points=10
+raw_bytes: proof=384 (G1 96 + G2 192 + G1 96), vk=1632 (G1 96 + 3*G2 192 + 10*G1 96), public_inputs=288 (32 each)
+scval_xdr_bytes: vk=1840 proof=456 public_inputs=336 total_args=2632
+resources: instructions=68201369 mem_bytes=302566 disk_read_entries=0 memory_read_entries=1 write_entries=0
+sdk_fee_estimate(2024-12-11 pubnet snapshot, stroops): total=170504 instructions=170504
+budget: cpu=68205556 mem=307136
+  Bls12381Pairing: iterations=1 inputs=Some(4) cpu=30335852 mem=294093
+  Bls12381G1Mul: iterations=9 inputs=None cpu=22130865 mem=0
+  Bls12381G1Add: iterations=9 inputs=None cpu=69201 mem=0
+  Bls12381G1CheckPointOnCurve: iterations=31 inputs=None cpu=59954 mem=0
+  Bls12381G1CheckPointInSubgroup: iterations=13 inputs=None cpu=9496630 mem=0
+  Bls12381G2CheckPointOnCurve: iterations=4 inputs=None cpu=23684 mem=0
+  Bls12381G2CheckPointInSubgroup: iterations=4 inputs=None cpu=4231288 mem=0
+  Bls12381G1ProjectiveToAffine: iterations=18 inputs=None cpu=1667556 mem=0
+  Bls12381DecodeFp: iterations=78 inputs=None cpu=76830 mem=0
+  Bls12381EncodeFp: iterations=36 inputs=None cpu=23796 mem=0
+  Bls12381FrFromU256: iterations=9 inputs=None cpu=17946 mem=0
+  VmInstantiation: iterations=0 inputs=Some(0) cpu=0 mem=0
+  WasmInsnExec: iterations=0 inputs=None cpu=0 mem=0
+  ParseWasmInstructions: iterations=0 inputs=Some(0) cpu=0 mem=0
+--- trackers (all cost types) ---
+TRACKER WasmInsnExec 0 - 0 0
+TRACKER MemAlloc 86 7097 38211 8473
+TRACKER MemCpy 151 7543 7276 0
+TRACKER MemCmp 38 1408 1840 0
+TRACKER DispatchHostFunction 0 - 0 0
+TRACKER VisitObject 278 - 16958 0
+TRACKER ValSer 17 152 3931 4570
+TRACKER ValDeser 0 0 0 0
+TRACKER ComputeSha256Hash 1 0 3738 0
+TRACKER ComputeEd25519PubKey 0 - 0 0
+TRACKER VerifyEd25519Sig 0 0 0 0
+TRACKER VmInstantiation 0 0 0 0
+TRACKER VmCachedInstantiation 0 0 0 0
+TRACKER InvokeVmFunction 0 - 0 0
+TRACKER ComputeKeccak256Hash 0 0 0 0
+TRACKER DecodeEcdsaCurve256Sig 0 - 0 0
+TRACKER RecoverEcdsaSecp256k1Key 0 - 0 0
+TRACKER Int256AddSub 0 - 0 0
+TRACKER Int256Mul 0 - 0 0
+TRACKER Int256Div 0 - 0 0
+TRACKER Int256Pow 0 - 0 0
+TRACKER Int256Shift 0 - 0 0
+TRACKER ChaCha20DrawBytes 0 0 0 0
+TRACKER ParseWasmInstructions 0 0 0 0
+TRACKER ParseWasmFunctions 0 0 0 0
+TRACKER ParseWasmGlobals 0 0 0 0
+TRACKER ParseWasmTableEntries 0 0 0 0
+TRACKER ParseWasmTypes 0 0 0 0
+TRACKER ParseWasmDataSegments 0 0 0 0
+TRACKER ParseWasmElemSegments 0 0 0 0
+TRACKER ParseWasmImports 0 0 0 0
+TRACKER ParseWasmExports 0 0 0 0
+TRACKER ParseWasmDataSegmentBytes 0 0 0 0
+TRACKER InstantiateWasmInstructions 0 - 0 0
+TRACKER InstantiateWasmFunctions 0 0 0 0
+TRACKER InstantiateWasmGlobals 0 0 0 0
+TRACKER InstantiateWasmTableEntries 0 0 0 0
+TRACKER InstantiateWasmTypes 0 - 0 0
+TRACKER InstantiateWasmDataSegments 0 0 0 0
+TRACKER InstantiateWasmElemSegments 0 0 0 0
+TRACKER InstantiateWasmImports 0 0 0 0
+TRACKER InstantiateWasmExports 0 0 0 0
+TRACKER InstantiateWasmDataSegmentBytes 0 0 0 0
+TRACKER Sec1DecodePointUncompressed 0 - 0 0
+TRACKER VerifyEcdsaSecp256r1Sig 0 - 0 0
+TRACKER Bls12381EncodeFp 36 - 23796 0
+TRACKER Bls12381DecodeFp 78 - 76830 0
+TRACKER Bls12381G1CheckPointOnCurve 31 - 59954 0
+TRACKER Bls12381G1CheckPointInSubgroup 13 - 9496630 0
+TRACKER Bls12381G2CheckPointOnCurve 4 - 23684 0
+TRACKER Bls12381G2CheckPointInSubgroup 4 - 4231288 0
+TRACKER Bls12381G1ProjectiveToAffine 18 - 1667556 0
+TRACKER Bls12381G2ProjectiveToAffine 0 - 0 0
+TRACKER Bls12381G1Add 9 - 69201 0
+TRACKER Bls12381G1Mul 9 - 22130865 0
+TRACKER Bls12381G1Msm 0 0 0 0
+TRACKER Bls12381MapFpToG1 0 - 0 0
+TRACKER Bls12381HashToG1 0 0 0 0
+TRACKER Bls12381G2Add 0 - 0 0
+TRACKER Bls12381G2Mul 0 - 0 0
+TRACKER Bls12381G2Msm 0 0 0 0
+TRACKER Bls12381MapFp2ToG2 0 - 0 0
+TRACKER Bls12381HashToG2 0 0 0 0
+TRACKER Bls12381Pairing 1 4 30335852 294093
+TRACKER Bls12381FrFromU256 9 - 17946 0
+TRACKER Bls12381FrToU256 0 - 0 0
+TRACKER Bls12381FrAddSub 0 - 0 0
+TRACKER Bls12381FrMul 0 - 0 0
+TRACKER Bls12381FrPow 0 0 0 0
+TRACKER Bls12381FrInv 0 - 0 0
+TRACKER Bn254EncodeFp 0 - 0 0
+TRACKER Bn254DecodeFp 0 - 0 0
+TRACKER Bn254G1CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointInSubgroup 0 - 0 0
+TRACKER Bn254G1ProjectiveToAffine 0 - 0 0
+TRACKER Bn254G1Add 0 - 0 0
+TRACKER Bn254G1Mul 0 - 0 0
+TRACKER Bn254Pairing 0 0 0 0
+TRACKER Bn254FrFromU256 0 - 0 0
+TRACKER Bn254FrToU256 0 - 0 0
+TRACKER Bn254FrAddSub 0 - 0 0
+TRACKER Bn254FrMul 0 - 0 0
+TRACKER Bn254FrPow 0 0 0 0
+TRACKER Bn254FrInv 0 - 0 0
+TRACKER Bn254G1Msm 0 0 0 0
+--- full budget table ---
+=================================================================
+Cpu limit: 100000000; used: 68205556
+Mem limit: 41943040; used: 307136
+=================================================================
+CostType                           cpu_insns      mem_bytes      
+WasmInsnExec                       0              0              
+MemAlloc                           38211          8473           
+MemCpy                             7276           0              
+MemCmp                             1840           0              
+DispatchHostFunction               0              0              
+VisitObject                        16958          0              
+ValSer                             3931           4570           
+ValDeser                           0              0              
+ComputeSha256Hash                  3738           0              
+ComputeEd25519PubKey               0              0              
+VerifyEd25519Sig                   0              0              
+VmInstantiation                    0              0              
+VmCachedInstantiation              0              0              
+InvokeVmFunction                   0              0              
+ComputeKeccak256Hash               0              0              
+DecodeEcdsaCurve256Sig             0              0              
+RecoverEcdsaSecp256k1Key           0              0              
+Int256AddSub                       0              0              
+Int256Mul                          0              0              
+Int256Div                          0              0              
+Int256Pow                          0              0              
+Int256Shift                        0              0              
+ChaCha20DrawBytes                  0              0              
+ParseWasmInstructions              0              0              
+ParseWasmFunctions                 0              0              
+ParseWasmGlobals                   0              0              
+ParseWasmTableEntries              0              0              
+ParseWasmTypes                     0              0              
+ParseWasmDataSegments              0              0              
+ParseWasmElemSegments              0              0              
+ParseWasmImports                   0              0              
+ParseWasmExports                   0              0              
+ParseWasmDataSegmentBytes          0              0              
+InstantiateWasmInstructions        0              0              
+InstantiateWasmFunctions           0              0              
+InstantiateWasmGlobals             0              0              
+InstantiateWasmTableEntries        0              0              
+InstantiateWasmTypes               0              0              
+InstantiateWasmDataSegments        0              0              
+InstantiateWasmElemSegments        0              0              
+InstantiateWasmImports             0              0              
+InstantiateWasmExports             0              0              
+InstantiateWasmDataSegmentBytes    0              0              
+Sec1DecodePointUncompressed        0              0              
+VerifyEcdsaSecp256r1Sig            0              0              
+Bls12381EncodeFp                   23796          0              
+Bls12381DecodeFp                   76830          0              
+Bls12381G1CheckPointOnCurve        59954          0              
+Bls12381G1CheckPointInSubgroup     9496630        0              
+Bls12381G2CheckPointOnCurve        23684          0              
+Bls12381G2CheckPointInSubgroup     4231288        0              
+Bls12381G1ProjectiveToAffine       1667556        0              
+Bls12381G2ProjectiveToAffine       0              0              
+Bls12381G1Add                      69201          0              
+Bls12381G1Mul                      22130865       0              
+Bls12381G1Msm                      0              0              
+Bls12381MapFpToG1                  0              0              
+Bls12381HashToG1                   0              0              
+Bls12381G2Add                      0              0              
+Bls12381G2Mul                      0              0              
+Bls12381G2Msm                      0              0              
+Bls12381MapFp2ToG2                 0              0              
+Bls12381HashToG2                   0              0              
+Bls12381Pairing                    30335852       294093         
+Bls12381FrFromU256                 17946          0              
+Bls12381FrToU256                   0              0              
+Bls12381FrAddSub                   0              0              
+Bls12381FrMul                      0              0              
+Bls12381FrPow                      0              0              
+Bls12381FrInv                      0              0              
+Bn254EncodeFp                      0              0              
+Bn254DecodeFp                      0              0              
+Bn254G1CheckPointOnCurve           0              0              
+Bn254G2CheckPointOnCurve           0              0              
+Bn254G2CheckPointInSubgroup        0              0              
+Bn254G1ProjectiveToAffine          0              0              
+Bn254G1Add                         0              0              
+Bn254G1Mul                         0              0              
+Bn254Pairing                       0              0              
+Bn254FrFromU256                    0              0              
+Bn254FrToU256                      0              0              
+Bn254FrAddSub                      0              0              
+Bn254FrMul                         0              0              
+Bn254FrPow                         0              0              
+Bn254FrInv                         0              0              
+Bn254G1Msm                         0              0              
+=================================================================
+
+
+Writing test snapshot file for test "bench_arkworks_native" to "test_snapshots/bench_arkworks_native.1.json".
+ok
+test bench_arkworks_wasm ... === fixture=arkworks mode=WASM ===
+public_inputs=9 ic_points=10
+raw_bytes: proof=384 (G1 96 + G2 192 + G1 96), vk=1632 (G1 96 + 3*G2 192 + 10*G1 96), public_inputs=288 (32 each)
+scval_xdr_bytes: vk=1840 proof=456 public_inputs=336 total_args=2632
+resources: instructions=68660030 mem_bytes=1505968 disk_read_entries=0 memory_read_entries=2 write_entries=0
+sdk_fee_estimate(2024-12-11 pubnet snapshot, stroops): total=171651 instructions=171651
+budget: cpu=68670560 mem=1530622
+  Bls12381Pairing: iterations=1 inputs=Some(4) cpu=30335852 mem=294093
+  Bls12381G1Mul: iterations=9 inputs=None cpu=22130865 mem=0
+  Bls12381G1Add: iterations=9 inputs=None cpu=69201 mem=0
+  Bls12381G1CheckPointOnCurve: iterations=31 inputs=None cpu=59954 mem=0
+  Bls12381G1CheckPointInSubgroup: iterations=13 inputs=None cpu=9496630 mem=0
+  Bls12381G2CheckPointOnCurve: iterations=4 inputs=None cpu=23684 mem=0
+  Bls12381G2CheckPointInSubgroup: iterations=4 inputs=None cpu=4231288 mem=0
+  Bls12381G1ProjectiveToAffine: iterations=18 inputs=None cpu=1667556 mem=0
+  Bls12381DecodeFp: iterations=78 inputs=None cpu=76830 mem=0
+  Bls12381EncodeFp: iterations=36 inputs=None cpu=23796 mem=0
+  Bls12381FrFromU256: iterations=9 inputs=None cpu=17946 mem=0
+  VmInstantiation: iterations=0 inputs=Some(0) cpu=0 mem=0
+  WasmInsnExec: iterations=24719 inputs=None cpu=98876 mem=0
+  ParseWasmInstructions: iterations=0 inputs=Some(0) cpu=0 mem=0
+--- trackers (all cost types) ---
+TRACKER WasmInsnExec 24719 - 98876 0
+TRACKER MemAlloc 156 1122699 208041 1125195
+TRACKER MemCpy 176 10517 8698 0
+TRACKER MemCmp 43 1588 2080 0
+TRACKER DispatchHostFunction 103 - 31930 0
+TRACKER VisitObject 298 - 18178 0
+TRACKER ValSer 39 5072 10088 24654
+TRACKER ValDeser 0 0 0 0
+TRACKER ComputeSha256Hash 1 0 3738 0
+TRACKER ComputeEd25519PubKey 0 - 0 0
+TRACKER VerifyEd25519Sig 0 0 0 0
+TRACKER VmInstantiation 0 0 0 0
+TRACKER VmCachedInstantiation 0 0 0 0
+TRACKER InvokeVmFunction 1 - 1948 14
+TRACKER ComputeKeccak256Hash 0 0 0 0
+TRACKER DecodeEcdsaCurve256Sig 0 - 0 0
+TRACKER RecoverEcdsaSecp256k1Key 0 - 0 0
+TRACKER Int256AddSub 0 - 0 0
+TRACKER Int256Mul 0 - 0 0
+TRACKER Int256Div 0 - 0 0
+TRACKER Int256Pow 0 - 0 0
+TRACKER Int256Shift 0 - 0 0
+TRACKER ChaCha20DrawBytes 0 0 0 0
+TRACKER ParseWasmInstructions 0 0 0 0
+TRACKER ParseWasmFunctions 0 0 0 0
+TRACKER ParseWasmGlobals 0 0 0 0
+TRACKER ParseWasmTableEntries 0 0 0 0
+TRACKER ParseWasmTypes 0 0 0 0
+TRACKER ParseWasmDataSegments 0 0 0 0
+TRACKER ParseWasmElemSegments 0 0 0 0
+TRACKER ParseWasmImports 0 0 0 0
+TRACKER ParseWasmExports 0 0 0 0
+TRACKER ParseWasmDataSegmentBytes 0 0 0 0
+TRACKER InstantiateWasmInstructions 1 - 43030 70704
+TRACKER InstantiateWasmFunctions 1 15 885 1712
+TRACKER InstantiateWasmGlobals 1 4 334 213
+TRACKER InstantiateWasmTableEntries 1 0 0 0
+TRACKER InstantiateWasmTypes 1 - 0 0
+TRACKER InstantiateWasmDataSegments 1 2 359 2025
+TRACKER InstantiateWasmElemSegments 1 0 0 0
+TRACKER InstantiateWasmImports 1 15 97145 11441
+TRACKER InstantiateWasmExports 1 5 11605 358
+TRACKER InstantiateWasmDataSegmentBytes 1 217 23 213
+TRACKER Sec1DecodePointUncompressed 0 - 0 0
+TRACKER VerifyEcdsaSecp256r1Sig 0 - 0 0
+TRACKER Bls12381EncodeFp 36 - 23796 0
+TRACKER Bls12381DecodeFp 78 - 76830 0
+TRACKER Bls12381G1CheckPointOnCurve 31 - 59954 0
+TRACKER Bls12381G1CheckPointInSubgroup 13 - 9496630 0
+TRACKER Bls12381G2CheckPointOnCurve 4 - 23684 0
+TRACKER Bls12381G2CheckPointInSubgroup 4 - 4231288 0
+TRACKER Bls12381G1ProjectiveToAffine 18 - 1667556 0
+TRACKER Bls12381G2ProjectiveToAffine 0 - 0 0
+TRACKER Bls12381G1Add 9 - 69201 0
+TRACKER Bls12381G1Mul 9 - 22130865 0
+TRACKER Bls12381G1Msm 0 0 0 0
+TRACKER Bls12381MapFpToG1 0 - 0 0
+TRACKER Bls12381HashToG1 0 0 0 0
+TRACKER Bls12381G2Add 0 - 0 0
+TRACKER Bls12381G2Mul 0 - 0 0
+TRACKER Bls12381G2Msm 0 0 0 0
+TRACKER Bls12381MapFp2ToG2 0 - 0 0
+TRACKER Bls12381HashToG2 0 0 0 0
+TRACKER Bls12381Pairing 1 4 30335852 294093
+TRACKER Bls12381FrFromU256 9 - 17946 0
+TRACKER Bls12381FrToU256 0 - 0 0
+TRACKER Bls12381FrAddSub 0 - 0 0
+TRACKER Bls12381FrMul 0 - 0 0
+TRACKER Bls12381FrPow 0 0 0 0
+TRACKER Bls12381FrInv 0 - 0 0
+TRACKER Bn254EncodeFp 0 - 0 0
+TRACKER Bn254DecodeFp 0 - 0 0
+TRACKER Bn254G1CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointInSubgroup 0 - 0 0
+TRACKER Bn254G1ProjectiveToAffine 0 - 0 0
+TRACKER Bn254G1Add 0 - 0 0
+TRACKER Bn254G1Mul 0 - 0 0
+TRACKER Bn254Pairing 0 0 0 0
+TRACKER Bn254FrFromU256 0 - 0 0
+TRACKER Bn254FrToU256 0 - 0 0
+TRACKER Bn254FrAddSub 0 - 0 0
+TRACKER Bn254FrMul 0 - 0 0
+TRACKER Bn254FrPow 0 0 0 0
+TRACKER Bn254FrInv 0 - 0 0
+TRACKER Bn254G1Msm 0 0 0 0
+--- full budget table ---
+=================================================================
+Cpu limit: 100000000; used: 68670560
+Mem limit: 41943040; used: 1530622
+=================================================================
+CostType                           cpu_insns      mem_bytes      
+WasmInsnExec                       98876          0              
+MemAlloc                           208041         1125195        
+MemCpy                             8698           0              
+MemCmp                             2080           0              
+DispatchHostFunction               31930          0              
+VisitObject                        18178          0              
+ValSer                             10088          24654          
+ValDeser                           0              0              
+ComputeSha256Hash                  3738           0              
+ComputeEd25519PubKey               0              0              
+VerifyEd25519Sig                   0              0              
+VmInstantiation                    0              0              
+VmCachedInstantiation              0              0              
+InvokeVmFunction                   1948           14             
+ComputeKeccak256Hash               0              0              
+DecodeEcdsaCurve256Sig             0              0              
+RecoverEcdsaSecp256k1Key           0              0              
+Int256AddSub                       0              0              
+Int256Mul                          0              0              
+Int256Div                          0              0              
+Int256Pow                          0              0              
+Int256Shift                        0              0              
+ChaCha20DrawBytes                  0              0              
+ParseWasmInstructions              0              0              
+ParseWasmFunctions                 0              0              
+ParseWasmGlobals                   0              0              
+ParseWasmTableEntries              0              0              
+ParseWasmTypes                     0              0              
+ParseWasmDataSegments              0              0              
+ParseWasmElemSegments              0              0              
+ParseWasmImports                   0              0              
+ParseWasmExports                   0              0              
+ParseWasmDataSegmentBytes          0              0              
+InstantiateWasmInstructions        43030          70704          
+InstantiateWasmFunctions           885            1712           
+InstantiateWasmGlobals             334            213            
+InstantiateWasmTableEntries        0              0              
+InstantiateWasmTypes               0              0              
+InstantiateWasmDataSegments        359            2025           
+InstantiateWasmElemSegments        0              0              
+InstantiateWasmImports             97145          11441          
+InstantiateWasmExports             11605          358            
+InstantiateWasmDataSegmentBytes    23             213            
+Sec1DecodePointUncompressed        0              0              
+VerifyEcdsaSecp256r1Sig            0              0              
+Bls12381EncodeFp                   23796          0              
+Bls12381DecodeFp                   76830          0              
+Bls12381G1CheckPointOnCurve        59954          0              
+Bls12381G1CheckPointInSubgroup     9496630        0              
+Bls12381G2CheckPointOnCurve        23684          0              
+Bls12381G2CheckPointInSubgroup     4231288        0              
+Bls12381G1ProjectiveToAffine       1667556        0              
+Bls12381G2ProjectiveToAffine       0              0              
+Bls12381G1Add                      69201          0              
+Bls12381G1Mul                      22130865       0              
+Bls12381G1Msm                      0              0              
+Bls12381MapFpToG1                  0              0              
+Bls12381HashToG1                   0              0              
+Bls12381G2Add                      0              0              
+Bls12381G2Mul                      0              0              
+Bls12381G2Msm                      0              0              
+Bls12381MapFp2ToG2                 0              0              
+Bls12381HashToG2                   0              0              
+Bls12381Pairing                    30335852       294093         
+Bls12381FrFromU256                 17946          0              
+Bls12381FrToU256                   0              0              
+Bls12381FrAddSub                   0              0              
+Bls12381FrMul                      0              0              
+Bls12381FrPow                      0              0              
+Bls12381FrInv                      0              0              
+Bn254EncodeFp                      0              0              
+Bn254DecodeFp                      0              0              
+Bn254G1CheckPointOnCurve           0              0              
+Bn254G2CheckPointOnCurve           0              0              
+Bn254G2CheckPointInSubgroup        0              0              
+Bn254G1ProjectiveToAffine          0              0              
+Bn254G1Add                         0              0              
+Bn254G1Mul                         0              0              
+Bn254Pairing                       0              0              
+Bn254FrFromU256                    0              0              
+Bn254FrToU256                      0              0              
+Bn254FrAddSub                      0              0              
+Bn254FrMul                         0              0              
+Bn254FrPow                         0              0              
+Bn254FrInv                         0              0              
+Bn254G1Msm                         0              0              
+=================================================================
+
+
+Writing test snapshot file for test "bench_arkworks_wasm" to "test_snapshots/bench_arkworks_wasm.1.json".
+ok
+test bench_circom_native ... === fixture=circom mode=native ===
+public_inputs=1 ic_points=2
+raw_bytes: proof=384 (G1 96 + G2 192 + G1 96), vk=864 (G1 96 + 3*G2 192 + 2*G1 96), public_inputs=32 (32 each)
+scval_xdr_bytes: vk=1008 proof=456 public_inputs=48 total_args=1512
+resources: instructions=40971736 mem_bytes=297830 disk_read_entries=0 memory_read_entries=1 write_entries=0
+sdk_fee_estimate(2024-12-11 pubnet snapshot, stroops): total=102430 instructions=102430
+budget: cpu=40975923 mem=302400
+  Bls12381Pairing: iterations=1 inputs=Some(4) cpu=30335852 mem=294093
+  Bls12381G1Mul: iterations=1 inputs=None cpu=2458985 mem=0
+  Bls12381G1Add: iterations=1 inputs=None cpu=7689 mem=0
+  Bls12381G1CheckPointOnCurve: iterations=7 inputs=None cpu=13538 mem=0
+  Bls12381G1CheckPointInSubgroup: iterations=5 inputs=None cpu=3652550 mem=0
+  Bls12381G2CheckPointOnCurve: iterations=4 inputs=None cpu=23684 mem=0
+  Bls12381G2CheckPointInSubgroup: iterations=4 inputs=None cpu=4231288 mem=0
+  Bls12381G1ProjectiveToAffine: iterations=2 inputs=None cpu=185284 mem=0
+  Bls12381DecodeFp: iterations=30 inputs=None cpu=29550 mem=0
+  Bls12381EncodeFp: iterations=4 inputs=None cpu=2644 mem=0
+  Bls12381FrFromU256: iterations=1 inputs=None cpu=1994 mem=0
+  VmInstantiation: iterations=0 inputs=Some(0) cpu=0 mem=0
+  WasmInsnExec: iterations=0 inputs=None cpu=0 mem=0
+  ParseWasmInstructions: iterations=0 inputs=Some(0) cpu=0 mem=0
+--- trackers (all cost types) ---
+TRACKER WasmInsnExec 0 - 0 0
+TRACKER MemAlloc 30 3257 13427 3737
+TRACKER MemCpy 79 4791 3908 0
+TRACKER MemCmp 30 1152 1456 0
+TRACKER DispatchHostFunction 0 - 0 0
+TRACKER VisitObject 105 - 6405 0
+TRACKER ValSer 17 152 3931 4570
+TRACKER ValDeser 0 0 0 0
+TRACKER ComputeSha256Hash 1 0 3738 0
+TRACKER ComputeEd25519PubKey 0 - 0 0
+TRACKER VerifyEd25519Sig 0 0 0 0
+TRACKER VmInstantiation 0 0 0 0
+TRACKER VmCachedInstantiation 0 0 0 0
+TRACKER InvokeVmFunction 0 - 0 0
+TRACKER ComputeKeccak256Hash 0 0 0 0
+TRACKER DecodeEcdsaCurve256Sig 0 - 0 0
+TRACKER RecoverEcdsaSecp256k1Key 0 - 0 0
+TRACKER Int256AddSub 0 - 0 0
+TRACKER Int256Mul 0 - 0 0
+TRACKER Int256Div 0 - 0 0
+TRACKER Int256Pow 0 - 0 0
+TRACKER Int256Shift 0 - 0 0
+TRACKER ChaCha20DrawBytes 0 0 0 0
+TRACKER ParseWasmInstructions 0 0 0 0
+TRACKER ParseWasmFunctions 0 0 0 0
+TRACKER ParseWasmGlobals 0 0 0 0
+TRACKER ParseWasmTableEntries 0 0 0 0
+TRACKER ParseWasmTypes 0 0 0 0
+TRACKER ParseWasmDataSegments 0 0 0 0
+TRACKER ParseWasmElemSegments 0 0 0 0
+TRACKER ParseWasmImports 0 0 0 0
+TRACKER ParseWasmExports 0 0 0 0
+TRACKER ParseWasmDataSegmentBytes 0 0 0 0
+TRACKER InstantiateWasmInstructions 0 - 0 0
+TRACKER InstantiateWasmFunctions 0 0 0 0
+TRACKER InstantiateWasmGlobals 0 0 0 0
+TRACKER InstantiateWasmTableEntries 0 0 0 0
+TRACKER InstantiateWasmTypes 0 - 0 0
+TRACKER InstantiateWasmDataSegments 0 0 0 0
+TRACKER InstantiateWasmElemSegments 0 0 0 0
+TRACKER InstantiateWasmImports 0 0 0 0
+TRACKER InstantiateWasmExports 0 0 0 0
+TRACKER InstantiateWasmDataSegmentBytes 0 0 0 0
+TRACKER Sec1DecodePointUncompressed 0 - 0 0
+TRACKER VerifyEcdsaSecp256r1Sig 0 - 0 0
+TRACKER Bls12381EncodeFp 4 - 2644 0
+TRACKER Bls12381DecodeFp 30 - 29550 0
+TRACKER Bls12381G1CheckPointOnCurve 7 - 13538 0
+TRACKER Bls12381G1CheckPointInSubgroup 5 - 3652550 0
+TRACKER Bls12381G2CheckPointOnCurve 4 - 23684 0
+TRACKER Bls12381G2CheckPointInSubgroup 4 - 4231288 0
+TRACKER Bls12381G1ProjectiveToAffine 2 - 185284 0
+TRACKER Bls12381G2ProjectiveToAffine 0 - 0 0
+TRACKER Bls12381G1Add 1 - 7689 0
+TRACKER Bls12381G1Mul 1 - 2458985 0
+TRACKER Bls12381G1Msm 0 0 0 0
+TRACKER Bls12381MapFpToG1 0 - 0 0
+TRACKER Bls12381HashToG1 0 0 0 0
+TRACKER Bls12381G2Add 0 - 0 0
+TRACKER Bls12381G2Mul 0 - 0 0
+TRACKER Bls12381G2Msm 0 0 0 0
+TRACKER Bls12381MapFp2ToG2 0 - 0 0
+TRACKER Bls12381HashToG2 0 0 0 0
+TRACKER Bls12381Pairing 1 4 30335852 294093
+TRACKER Bls12381FrFromU256 1 - 1994 0
+TRACKER Bls12381FrToU256 0 - 0 0
+TRACKER Bls12381FrAddSub 0 - 0 0
+TRACKER Bls12381FrMul 0 - 0 0
+TRACKER Bls12381FrPow 0 0 0 0
+TRACKER Bls12381FrInv 0 - 0 0
+TRACKER Bn254EncodeFp 0 - 0 0
+TRACKER Bn254DecodeFp 0 - 0 0
+TRACKER Bn254G1CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointInSubgroup 0 - 0 0
+TRACKER Bn254G1ProjectiveToAffine 0 - 0 0
+TRACKER Bn254G1Add 0 - 0 0
+TRACKER Bn254G1Mul 0 - 0 0
+TRACKER Bn254Pairing 0 0 0 0
+TRACKER Bn254FrFromU256 0 - 0 0
+TRACKER Bn254FrToU256 0 - 0 0
+TRACKER Bn254FrAddSub 0 - 0 0
+TRACKER Bn254FrMul 0 - 0 0
+TRACKER Bn254FrPow 0 0 0 0
+TRACKER Bn254FrInv 0 - 0 0
+TRACKER Bn254G1Msm 0 0 0 0
+--- full budget table ---
+=================================================================
+Cpu limit: 100000000; used: 40975923
+Mem limit: 41943040; used: 302400
+=================================================================
+CostType                           cpu_insns      mem_bytes      
+WasmInsnExec                       0              0              
+MemAlloc                           13427          3737           
+MemCpy                             3908           0              
+MemCmp                             1456           0              
+DispatchHostFunction               0              0              
+VisitObject                        6405           0              
+ValSer                             3931           4570           
+ValDeser                           0              0              
+ComputeSha256Hash                  3738           0              
+ComputeEd25519PubKey               0              0              
+VerifyEd25519Sig                   0              0              
+VmInstantiation                    0              0              
+VmCachedInstantiation              0              0              
+InvokeVmFunction                   0              0              
+ComputeKeccak256Hash               0              0              
+DecodeEcdsaCurve256Sig             0              0              
+RecoverEcdsaSecp256k1Key           0              0              
+Int256AddSub                       0              0              
+Int256Mul                          0              0              
+Int256Div                          0              0              
+Int256Pow                          0              0              
+Int256Shift                        0              0              
+ChaCha20DrawBytes                  0              0              
+ParseWasmInstructions              0              0              
+ParseWasmFunctions                 0              0              
+ParseWasmGlobals                   0              0              
+ParseWasmTableEntries              0              0              
+ParseWasmTypes                     0              0              
+ParseWasmDataSegments              0              0              
+ParseWasmElemSegments              0              0              
+ParseWasmImports                   0              0              
+ParseWasmExports                   0              0              
+ParseWasmDataSegmentBytes          0              0              
+InstantiateWasmInstructions        0              0              
+InstantiateWasmFunctions           0              0              
+InstantiateWasmGlobals             0              0              
+InstantiateWasmTableEntries        0              0              
+InstantiateWasmTypes               0              0              
+InstantiateWasmDataSegments        0              0              
+InstantiateWasmElemSegments        0              0              
+InstantiateWasmImports             0              0              
+InstantiateWasmExports             0              0              
+InstantiateWasmDataSegmentBytes    0              0              
+Sec1DecodePointUncompressed        0              0              
+VerifyEcdsaSecp256r1Sig            0              0              
+Bls12381EncodeFp                   2644           0              
+Bls12381DecodeFp                   29550          0              
+Bls12381G1CheckPointOnCurve        13538          0              
+Bls12381G1CheckPointInSubgroup     3652550        0              
+Bls12381G2CheckPointOnCurve        23684          0              
+Bls12381G2CheckPointInSubgroup     4231288        0              
+Bls12381G1ProjectiveToAffine       185284         0              
+Bls12381G2ProjectiveToAffine       0              0              
+Bls12381G1Add                      7689           0              
+Bls12381G1Mul                      2458985        0              
+Bls12381G1Msm                      0              0              
+Bls12381MapFpToG1                  0              0              
+Bls12381HashToG1                   0              0              
+Bls12381G2Add                      0              0              
+Bls12381G2Mul                      0              0              
+Bls12381G2Msm                      0              0              
+Bls12381MapFp2ToG2                 0              0              
+Bls12381HashToG2                   0              0              
+Bls12381Pairing                    30335852       294093         
+Bls12381FrFromU256                 1994           0              
+Bls12381FrToU256                   0              0              
+Bls12381FrAddSub                   0              0              
+Bls12381FrMul                      0              0              
+Bls12381FrPow                      0              0              
+Bls12381FrInv                      0              0              
+Bn254EncodeFp                      0              0              
+Bn254DecodeFp                      0              0              
+Bn254G1CheckPointOnCurve           0              0              
+Bn254G2CheckPointOnCurve           0              0              
+Bn254G2CheckPointInSubgroup        0              0              
+Bn254G1ProjectiveToAffine          0              0              
+Bn254G1Add                         0              0              
+Bn254G1Mul                         0              0              
+Bn254Pairing                       0              0              
+Bn254FrFromU256                    0              0              
+Bn254FrToU256                      0              0              
+Bn254FrAddSub                      0              0              
+Bn254FrMul                         0              0              
+Bn254FrPow                         0              0              
+Bn254FrInv                         0              0              
+Bn254G1Msm                         0              0              
+=================================================================
+
+
+Writing test snapshot file for test "bench_circom_native" to "test_snapshots/bench_circom_native.1.json".
+ok
+test bench_circom_wasm ... === fixture=circom mode=WASM ===
+public_inputs=1 ic_points=2
+raw_bytes: proof=384 (G1 96 + G2 192 + G1 96), vk=864 (G1 96 + 3*G2 192 + 2*G1 96), public_inputs=32 (32 each)
+scval_xdr_bytes: vk=1008 proof=456 public_inputs=48 total_args=1512
+resources: instructions=41347090 mem_bytes=1500248 disk_read_entries=0 memory_read_entries=2 write_entries=0
+sdk_fee_estimate(2024-12-11 pubnet snapshot, stroops): total=103368 instructions=103368
+budget: cpu=41357620 mem=1524902
+  Bls12381Pairing: iterations=1 inputs=Some(4) cpu=30335852 mem=294093
+  Bls12381G1Mul: iterations=1 inputs=None cpu=2458985 mem=0
+  Bls12381G1Add: iterations=1 inputs=None cpu=7689 mem=0
+  Bls12381G1CheckPointOnCurve: iterations=7 inputs=None cpu=13538 mem=0
+  Bls12381G1CheckPointInSubgroup: iterations=5 inputs=None cpu=3652550 mem=0
+  Bls12381G2CheckPointOnCurve: iterations=4 inputs=None cpu=23684 mem=0
+  Bls12381G2CheckPointInSubgroup: iterations=4 inputs=None cpu=4231288 mem=0
+  Bls12381G1ProjectiveToAffine: iterations=2 inputs=None cpu=185284 mem=0
+  Bls12381DecodeFp: iterations=30 inputs=None cpu=29550 mem=0
+  Bls12381EncodeFp: iterations=4 inputs=None cpu=2644 mem=0
+  Bls12381FrFromU256: iterations=1 inputs=None cpu=1994 mem=0
+  VmInstantiation: iterations=0 inputs=Some(0) cpu=0 mem=0
+  WasmInsnExec: iterations=13343 inputs=None cpu=53372 mem=0
+  ParseWasmInstructions: iterations=0 inputs=Some(0) cpu=0 mem=0
+--- trackers (all cost types) ---
+TRACKER WasmInsnExec 13343 - 53372 0
+TRACKER MemAlloc 59 1118531 165422 1119475
+TRACKER MemCpy 112 7957 5690 0
+TRACKER MemCmp 35 1332 1696 0
+TRACKER DispatchHostFunction 39 - 12090 0
+TRACKER VisitObject 117 - 7137 0
+TRACKER ValSer 39 5072 10088 24654
+TRACKER ValDeser 0 0 0 0
+TRACKER ComputeSha256Hash 1 0 3738 0
+TRACKER ComputeEd25519PubKey 0 - 0 0
+TRACKER VerifyEd25519Sig 0 0 0 0
+TRACKER VmInstantiation 0 0 0 0
+TRACKER VmCachedInstantiation 0 0 0 0
+TRACKER InvokeVmFunction 1 - 1948 14
+TRACKER ComputeKeccak256Hash 0 0 0 0
+TRACKER DecodeEcdsaCurve256Sig 0 - 0 0
+TRACKER RecoverEcdsaSecp256k1Key 0 - 0 0
+TRACKER Int256AddSub 0 - 0 0
+TRACKER Int256Mul 0 - 0 0
+TRACKER Int256Div 0 - 0 0
+TRACKER Int256Pow 0 - 0 0
+TRACKER Int256Shift 0 - 0 0
+TRACKER ChaCha20DrawBytes 0 0 0 0
+TRACKER ParseWasmInstructions 0 0 0 0
+TRACKER ParseWasmFunctions 0 0 0 0
+TRACKER ParseWasmGlobals 0 0 0 0
+TRACKER ParseWasmTableEntries 0 0 0 0
+TRACKER ParseWasmTypes 0 0 0 0
+TRACKER ParseWasmDataSegments 0 0 0 0
+TRACKER ParseWasmElemSegments 0 0 0 0
+TRACKER ParseWasmImports 0 0 0 0
+TRACKER ParseWasmExports 0 0 0 0
+TRACKER ParseWasmDataSegmentBytes 0 0 0 0
+TRACKER InstantiateWasmInstructions 1 - 43030 70704
+TRACKER InstantiateWasmFunctions 1 15 885 1712
+TRACKER InstantiateWasmGlobals 1 4 334 213
+TRACKER InstantiateWasmTableEntries 1 0 0 0
+TRACKER InstantiateWasmTypes 1 - 0 0
+TRACKER InstantiateWasmDataSegments 1 2 359 2025
+TRACKER InstantiateWasmElemSegments 1 0 0 0
+TRACKER InstantiateWasmImports 1 15 97145 11441
+TRACKER InstantiateWasmExports 1 5 11605 358
+TRACKER InstantiateWasmDataSegmentBytes 1 217 23 213
+TRACKER Sec1DecodePointUncompressed 0 - 0 0
+TRACKER VerifyEcdsaSecp256r1Sig 0 - 0 0
+TRACKER Bls12381EncodeFp 4 - 2644 0
+TRACKER Bls12381DecodeFp 30 - 29550 0
+TRACKER Bls12381G1CheckPointOnCurve 7 - 13538 0
+TRACKER Bls12381G1CheckPointInSubgroup 5 - 3652550 0
+TRACKER Bls12381G2CheckPointOnCurve 4 - 23684 0
+TRACKER Bls12381G2CheckPointInSubgroup 4 - 4231288 0
+TRACKER Bls12381G1ProjectiveToAffine 2 - 185284 0
+TRACKER Bls12381G2ProjectiveToAffine 0 - 0 0
+TRACKER Bls12381G1Add 1 - 7689 0
+TRACKER Bls12381G1Mul 1 - 2458985 0
+TRACKER Bls12381G1Msm 0 0 0 0
+TRACKER Bls12381MapFpToG1 0 - 0 0
+TRACKER Bls12381HashToG1 0 0 0 0
+TRACKER Bls12381G2Add 0 - 0 0
+TRACKER Bls12381G2Mul 0 - 0 0
+TRACKER Bls12381G2Msm 0 0 0 0
+TRACKER Bls12381MapFp2ToG2 0 - 0 0
+TRACKER Bls12381HashToG2 0 0 0 0
+TRACKER Bls12381Pairing 1 4 30335852 294093
+TRACKER Bls12381FrFromU256 1 - 1994 0
+TRACKER Bls12381FrToU256 0 - 0 0
+TRACKER Bls12381FrAddSub 0 - 0 0
+TRACKER Bls12381FrMul 0 - 0 0
+TRACKER Bls12381FrPow 0 0 0 0
+TRACKER Bls12381FrInv 0 - 0 0
+TRACKER Bn254EncodeFp 0 - 0 0
+TRACKER Bn254DecodeFp 0 - 0 0
+TRACKER Bn254G1CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointInSubgroup 0 - 0 0
+TRACKER Bn254G1ProjectiveToAffine 0 - 0 0
+TRACKER Bn254G1Add 0 - 0 0
+TRACKER Bn254G1Mul 0 - 0 0
+TRACKER Bn254Pairing 0 0 0 0
+TRACKER Bn254FrFromU256 0 - 0 0
+TRACKER Bn254FrToU256 0 - 0 0
+TRACKER Bn254FrAddSub 0 - 0 0
+TRACKER Bn254FrMul 0 - 0 0
+TRACKER Bn254FrPow 0 0 0 0
+TRACKER Bn254FrInv 0 - 0 0
+TRACKER Bn254G1Msm 0 0 0 0
+--- full budget table ---
+=================================================================
+Cpu limit: 100000000; used: 41357620
+Mem limit: 41943040; used: 1524902
+=================================================================
+CostType                           cpu_insns      mem_bytes      
+WasmInsnExec                       53372          0              
+MemAlloc                           165422         1119475        
+MemCpy                             5690           0              
+MemCmp                             1696           0              
+DispatchHostFunction               12090          0              
+VisitObject                        7137           0              
+ValSer                             10088          24654          
+ValDeser                           0              0              
+ComputeSha256Hash                  3738           0              
+ComputeEd25519PubKey               0              0              
+VerifyEd25519Sig                   0              0              
+VmInstantiation                    0              0              
+VmCachedInstantiation              0              0              
+InvokeVmFunction                   1948           14             
+ComputeKeccak256Hash               0              0              
+DecodeEcdsaCurve256Sig             0              0              
+RecoverEcdsaSecp256k1Key           0              0              
+Int256AddSub                       0              0              
+Int256Mul                          0              0              
+Int256Div                          0              0              
+Int256Pow                          0              0              
+Int256Shift                        0              0              
+ChaCha20DrawBytes                  0              0              
+ParseWasmInstructions              0              0              
+ParseWasmFunctions                 0              0              
+ParseWasmGlobals                   0              0              
+ParseWasmTableEntries              0              0              
+ParseWasmTypes                     0              0              
+ParseWasmDataSegments              0              0              
+ParseWasmElemSegments              0              0              
+ParseWasmImports                   0              0              
+ParseWasmExports                   0              0              
+ParseWasmDataSegmentBytes          0              0              
+InstantiateWasmInstructions        43030          70704          
+InstantiateWasmFunctions           885            1712           
+InstantiateWasmGlobals             334            213            
+InstantiateWasmTableEntries        0              0              
+InstantiateWasmTypes               0              0              
+InstantiateWasmDataSegments        359            2025           
+InstantiateWasmElemSegments        0              0              
+InstantiateWasmImports             97145          11441          
+InstantiateWasmExports             11605          358            
+InstantiateWasmDataSegmentBytes    23             213            
+Sec1DecodePointUncompressed        0              0              
+VerifyEcdsaSecp256r1Sig            0              0              
+Bls12381EncodeFp                   2644           0              
+Bls12381DecodeFp                   29550          0              
+Bls12381G1CheckPointOnCurve        13538          0              
+Bls12381G1CheckPointInSubgroup     3652550        0              
+Bls12381G2CheckPointOnCurve        23684          0              
+Bls12381G2CheckPointInSubgroup     4231288        0              
+Bls12381G1ProjectiveToAffine       185284         0              
+Bls12381G2ProjectiveToAffine       0              0              
+Bls12381G1Add                      7689           0              
+Bls12381G1Mul                      2458985        0              
+Bls12381G1Msm                      0              0              
+Bls12381MapFpToG1                  0              0              
+Bls12381HashToG1                   0              0              
+Bls12381G2Add                      0              0              
+Bls12381G2Mul                      0              0              
+Bls12381G2Msm                      0              0              
+Bls12381MapFp2ToG2                 0              0              
+Bls12381HashToG2                   0              0              
+Bls12381Pairing                    30335852       294093         
+Bls12381FrFromU256                 1994           0              
+Bls12381FrToU256                   0              0              
+Bls12381FrAddSub                   0              0              
+Bls12381FrMul                      0              0              
+Bls12381FrPow                      0              0              
+Bls12381FrInv                      0              0              
+Bn254EncodeFp                      0              0              
+Bn254DecodeFp                      0              0              
+Bn254G1CheckPointOnCurve           0              0              
+Bn254G2CheckPointOnCurve           0              0              
+Bn254G2CheckPointInSubgroup        0              0              
+Bn254G1ProjectiveToAffine          0              0              
+Bn254G1Add                         0              0              
+Bn254G1Mul                         0              0              
+Bn254Pairing                       0              0              
+Bn254FrFromU256                    0              0              
+Bn254FrToU256                      0              0              
+Bn254FrAddSub                      0              0              
+Bn254FrMul                         0              0              
+Bn254FrPow                         0              0              
+Bn254FrInv                         0              0              
+Bn254G1Msm                         0              0              
+=================================================================
+
+
+Writing test snapshot file for test "bench_circom_wasm" to "test_snapshots/bench_circom_wasm.1.json".
+ok
+test bench_gnark_native ... === fixture=gnark mode=native ===
+public_inputs=1 ic_points=2
+raw_bytes: proof=384 (G1 96 + G2 192 + G1 96), vk=864 (G1 96 + 3*G2 192 + 2*G1 96), public_inputs=32 (32 each)
+scval_xdr_bytes: vk=1008 proof=456 public_inputs=48 total_args=1512
+resources: instructions=40971736 mem_bytes=297830 disk_read_entries=0 memory_read_entries=1 write_entries=0
+sdk_fee_estimate(2024-12-11 pubnet snapshot, stroops): total=102430 instructions=102430
+budget: cpu=40975923 mem=302400
+  Bls12381Pairing: iterations=1 inputs=Some(4) cpu=30335852 mem=294093
+  Bls12381G1Mul: iterations=1 inputs=None cpu=2458985 mem=0
+  Bls12381G1Add: iterations=1 inputs=None cpu=7689 mem=0
+  Bls12381G1CheckPointOnCurve: iterations=7 inputs=None cpu=13538 mem=0
+  Bls12381G1CheckPointInSubgroup: iterations=5 inputs=None cpu=3652550 mem=0
+  Bls12381G2CheckPointOnCurve: iterations=4 inputs=None cpu=23684 mem=0
+  Bls12381G2CheckPointInSubgroup: iterations=4 inputs=None cpu=4231288 mem=0
+  Bls12381G1ProjectiveToAffine: iterations=2 inputs=None cpu=185284 mem=0
+  Bls12381DecodeFp: iterations=30 inputs=None cpu=29550 mem=0
+  Bls12381EncodeFp: iterations=4 inputs=None cpu=2644 mem=0
+  Bls12381FrFromU256: iterations=1 inputs=None cpu=1994 mem=0
+  VmInstantiation: iterations=0 inputs=Some(0) cpu=0 mem=0
+  WasmInsnExec: iterations=0 inputs=None cpu=0 mem=0
+  ParseWasmInstructions: iterations=0 inputs=Some(0) cpu=0 mem=0
+--- trackers (all cost types) ---
+TRACKER WasmInsnExec 0 - 0 0
+TRACKER MemAlloc 30 3257 13427 3737
+TRACKER MemCpy 79 4791 3908 0
+TRACKER MemCmp 30 1152 1456 0
+TRACKER DispatchHostFunction 0 - 0 0
+TRACKER VisitObject 105 - 6405 0
+TRACKER ValSer 17 152 3931 4570
+TRACKER ValDeser 0 0 0 0
+TRACKER ComputeSha256Hash 1 0 3738 0
+TRACKER ComputeEd25519PubKey 0 - 0 0
+TRACKER VerifyEd25519Sig 0 0 0 0
+TRACKER VmInstantiation 0 0 0 0
+TRACKER VmCachedInstantiation 0 0 0 0
+TRACKER InvokeVmFunction 0 - 0 0
+TRACKER ComputeKeccak256Hash 0 0 0 0
+TRACKER DecodeEcdsaCurve256Sig 0 - 0 0
+TRACKER RecoverEcdsaSecp256k1Key 0 - 0 0
+TRACKER Int256AddSub 0 - 0 0
+TRACKER Int256Mul 0 - 0 0
+TRACKER Int256Div 0 - 0 0
+TRACKER Int256Pow 0 - 0 0
+TRACKER Int256Shift 0 - 0 0
+TRACKER ChaCha20DrawBytes 0 0 0 0
+TRACKER ParseWasmInstructions 0 0 0 0
+TRACKER ParseWasmFunctions 0 0 0 0
+TRACKER ParseWasmGlobals 0 0 0 0
+TRACKER ParseWasmTableEntries 0 0 0 0
+TRACKER ParseWasmTypes 0 0 0 0
+TRACKER ParseWasmDataSegments 0 0 0 0
+TRACKER ParseWasmElemSegments 0 0 0 0
+TRACKER ParseWasmImports 0 0 0 0
+TRACKER ParseWasmExports 0 0 0 0
+TRACKER ParseWasmDataSegmentBytes 0 0 0 0
+TRACKER InstantiateWasmInstructions 0 - 0 0
+TRACKER InstantiateWasmFunctions 0 0 0 0
+TRACKER InstantiateWasmGlobals 0 0 0 0
+TRACKER InstantiateWasmTableEntries 0 0 0 0
+TRACKER InstantiateWasmTypes 0 - 0 0
+TRACKER InstantiateWasmDataSegments 0 0 0 0
+TRACKER InstantiateWasmElemSegments 0 0 0 0
+TRACKER InstantiateWasmImports 0 0 0 0
+TRACKER InstantiateWasmExports 0 0 0 0
+TRACKER InstantiateWasmDataSegmentBytes 0 0 0 0
+TRACKER Sec1DecodePointUncompressed 0 - 0 0
+TRACKER VerifyEcdsaSecp256r1Sig 0 - 0 0
+TRACKER Bls12381EncodeFp 4 - 2644 0
+TRACKER Bls12381DecodeFp 30 - 29550 0
+TRACKER Bls12381G1CheckPointOnCurve 7 - 13538 0
+TRACKER Bls12381G1CheckPointInSubgroup 5 - 3652550 0
+TRACKER Bls12381G2CheckPointOnCurve 4 - 23684 0
+TRACKER Bls12381G2CheckPointInSubgroup 4 - 4231288 0
+TRACKER Bls12381G1ProjectiveToAffine 2 - 185284 0
+TRACKER Bls12381G2ProjectiveToAffine 0 - 0 0
+TRACKER Bls12381G1Add 1 - 7689 0
+TRACKER Bls12381G1Mul 1 - 2458985 0
+TRACKER Bls12381G1Msm 0 0 0 0
+TRACKER Bls12381MapFpToG1 0 - 0 0
+TRACKER Bls12381HashToG1 0 0 0 0
+TRACKER Bls12381G2Add 0 - 0 0
+TRACKER Bls12381G2Mul 0 - 0 0
+TRACKER Bls12381G2Msm 0 0 0 0
+TRACKER Bls12381MapFp2ToG2 0 - 0 0
+TRACKER Bls12381HashToG2 0 0 0 0
+TRACKER Bls12381Pairing 1 4 30335852 294093
+TRACKER Bls12381FrFromU256 1 - 1994 0
+TRACKER Bls12381FrToU256 0 - 0 0
+TRACKER Bls12381FrAddSub 0 - 0 0
+TRACKER Bls12381FrMul 0 - 0 0
+TRACKER Bls12381FrPow 0 0 0 0
+TRACKER Bls12381FrInv 0 - 0 0
+TRACKER Bn254EncodeFp 0 - 0 0
+TRACKER Bn254DecodeFp 0 - 0 0
+TRACKER Bn254G1CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointInSubgroup 0 - 0 0
+TRACKER Bn254G1ProjectiveToAffine 0 - 0 0
+TRACKER Bn254G1Add 0 - 0 0
+TRACKER Bn254G1Mul 0 - 0 0
+TRACKER Bn254Pairing 0 0 0 0
+TRACKER Bn254FrFromU256 0 - 0 0
+TRACKER Bn254FrToU256 0 - 0 0
+TRACKER Bn254FrAddSub 0 - 0 0
+TRACKER Bn254FrMul 0 - 0 0
+TRACKER Bn254FrPow 0 0 0 0
+TRACKER Bn254FrInv 0 - 0 0
+TRACKER Bn254G1Msm 0 0 0 0
+--- full budget table ---
+=================================================================
+Cpu limit: 100000000; used: 40975923
+Mem limit: 41943040; used: 302400
+=================================================================
+CostType                           cpu_insns      mem_bytes      
+WasmInsnExec                       0              0              
+MemAlloc                           13427          3737           
+MemCpy                             3908           0              
+MemCmp                             1456           0              
+DispatchHostFunction               0              0              
+VisitObject                        6405           0              
+ValSer                             3931           4570           
+ValDeser                           0              0              
+ComputeSha256Hash                  3738           0              
+ComputeEd25519PubKey               0              0              
+VerifyEd25519Sig                   0              0              
+VmInstantiation                    0              0              
+VmCachedInstantiation              0              0              
+InvokeVmFunction                   0              0              
+ComputeKeccak256Hash               0              0              
+DecodeEcdsaCurve256Sig             0              0              
+RecoverEcdsaSecp256k1Key           0              0              
+Int256AddSub                       0              0              
+Int256Mul                          0              0              
+Int256Div                          0              0              
+Int256Pow                          0              0              
+Int256Shift                        0              0              
+ChaCha20DrawBytes                  0              0              
+ParseWasmInstructions              0              0              
+ParseWasmFunctions                 0              0              
+ParseWasmGlobals                   0              0              
+ParseWasmTableEntries              0              0              
+ParseWasmTypes                     0              0              
+ParseWasmDataSegments              0              0              
+ParseWasmElemSegments              0              0              
+ParseWasmImports                   0              0              
+ParseWasmExports                   0              0              
+ParseWasmDataSegmentBytes          0              0              
+InstantiateWasmInstructions        0              0              
+InstantiateWasmFunctions           0              0              
+InstantiateWasmGlobals             0              0              
+InstantiateWasmTableEntries        0              0              
+InstantiateWasmTypes               0              0              
+InstantiateWasmDataSegments        0              0              
+InstantiateWasmElemSegments        0              0              
+InstantiateWasmImports             0              0              
+InstantiateWasmExports             0              0              
+InstantiateWasmDataSegmentBytes    0              0              
+Sec1DecodePointUncompressed        0              0              
+VerifyEcdsaSecp256r1Sig            0              0              
+Bls12381EncodeFp                   2644           0              
+Bls12381DecodeFp                   29550          0              
+Bls12381G1CheckPointOnCurve        13538          0              
+Bls12381G1CheckPointInSubgroup     3652550        0              
+Bls12381G2CheckPointOnCurve        23684          0              
+Bls12381G2CheckPointInSubgroup     4231288        0              
+Bls12381G1ProjectiveToAffine       185284         0              
+Bls12381G2ProjectiveToAffine       0              0              
+Bls12381G1Add                      7689           0              
+Bls12381G1Mul                      2458985        0              
+Bls12381G1Msm                      0              0              
+Bls12381MapFpToG1                  0              0              
+Bls12381HashToG1                   0              0              
+Bls12381G2Add                      0              0              
+Bls12381G2Mul                      0              0              
+Bls12381G2Msm                      0              0              
+Bls12381MapFp2ToG2                 0              0              
+Bls12381HashToG2                   0              0              
+Bls12381Pairing                    30335852       294093         
+Bls12381FrFromU256                 1994           0              
+Bls12381FrToU256                   0              0              
+Bls12381FrAddSub                   0              0              
+Bls12381FrMul                      0              0              
+Bls12381FrPow                      0              0              
+Bls12381FrInv                      0              0              
+Bn254EncodeFp                      0              0              
+Bn254DecodeFp                      0              0              
+Bn254G1CheckPointOnCurve           0              0              
+Bn254G2CheckPointOnCurve           0              0              
+Bn254G2CheckPointInSubgroup        0              0              
+Bn254G1ProjectiveToAffine          0              0              
+Bn254G1Add                         0              0              
+Bn254G1Mul                         0              0              
+Bn254Pairing                       0              0              
+Bn254FrFromU256                    0              0              
+Bn254FrToU256                      0              0              
+Bn254FrAddSub                      0              0              
+Bn254FrMul                         0              0              
+Bn254FrPow                         0              0              
+Bn254FrInv                         0              0              
+Bn254G1Msm                         0              0              
+=================================================================
+
+
+Writing test snapshot file for test "bench_gnark_native" to "test_snapshots/bench_gnark_native.1.json".
+ok
+test bench_gnark_wasm ... === fixture=gnark mode=WASM ===
+public_inputs=1 ic_points=2
+raw_bytes: proof=384 (G1 96 + G2 192 + G1 96), vk=864 (G1 96 + 3*G2 192 + 2*G1 96), public_inputs=32 (32 each)
+scval_xdr_bytes: vk=1008 proof=456 public_inputs=48 total_args=1512
+resources: instructions=41347090 mem_bytes=1500248 disk_read_entries=0 memory_read_entries=2 write_entries=0
+sdk_fee_estimate(2024-12-11 pubnet snapshot, stroops): total=103368 instructions=103368
+budget: cpu=41357620 mem=1524902
+  Bls12381Pairing: iterations=1 inputs=Some(4) cpu=30335852 mem=294093
+  Bls12381G1Mul: iterations=1 inputs=None cpu=2458985 mem=0
+  Bls12381G1Add: iterations=1 inputs=None cpu=7689 mem=0
+  Bls12381G1CheckPointOnCurve: iterations=7 inputs=None cpu=13538 mem=0
+  Bls12381G1CheckPointInSubgroup: iterations=5 inputs=None cpu=3652550 mem=0
+  Bls12381G2CheckPointOnCurve: iterations=4 inputs=None cpu=23684 mem=0
+  Bls12381G2CheckPointInSubgroup: iterations=4 inputs=None cpu=4231288 mem=0
+  Bls12381G1ProjectiveToAffine: iterations=2 inputs=None cpu=185284 mem=0
+  Bls12381DecodeFp: iterations=30 inputs=None cpu=29550 mem=0
+  Bls12381EncodeFp: iterations=4 inputs=None cpu=2644 mem=0
+  Bls12381FrFromU256: iterations=1 inputs=None cpu=1994 mem=0
+  VmInstantiation: iterations=0 inputs=Some(0) cpu=0 mem=0
+  WasmInsnExec: iterations=13343 inputs=None cpu=53372 mem=0
+  ParseWasmInstructions: iterations=0 inputs=Some(0) cpu=0 mem=0
+--- trackers (all cost types) ---
+TRACKER WasmInsnExec 13343 - 53372 0
+TRACKER MemAlloc 59 1118531 165422 1119475
+TRACKER MemCpy 112 7957 5690 0
+TRACKER MemCmp 35 1332 1696 0
+TRACKER DispatchHostFunction 39 - 12090 0
+TRACKER VisitObject 117 - 7137 0
+TRACKER ValSer 39 5072 10088 24654
+TRACKER ValDeser 0 0 0 0
+TRACKER ComputeSha256Hash 1 0 3738 0
+TRACKER ComputeEd25519PubKey 0 - 0 0
+TRACKER VerifyEd25519Sig 0 0 0 0
+TRACKER VmInstantiation 0 0 0 0
+TRACKER VmCachedInstantiation 0 0 0 0
+TRACKER InvokeVmFunction 1 - 1948 14
+TRACKER ComputeKeccak256Hash 0 0 0 0
+TRACKER DecodeEcdsaCurve256Sig 0 - 0 0
+TRACKER RecoverEcdsaSecp256k1Key 0 - 0 0
+TRACKER Int256AddSub 0 - 0 0
+TRACKER Int256Mul 0 - 0 0
+TRACKER Int256Div 0 - 0 0
+TRACKER Int256Pow 0 - 0 0
+TRACKER Int256Shift 0 - 0 0
+TRACKER ChaCha20DrawBytes 0 0 0 0
+TRACKER ParseWasmInstructions 0 0 0 0
+TRACKER ParseWasmFunctions 0 0 0 0
+TRACKER ParseWasmGlobals 0 0 0 0
+TRACKER ParseWasmTableEntries 0 0 0 0
+TRACKER ParseWasmTypes 0 0 0 0
+TRACKER ParseWasmDataSegments 0 0 0 0
+TRACKER ParseWasmElemSegments 0 0 0 0
+TRACKER ParseWasmImports 0 0 0 0
+TRACKER ParseWasmExports 0 0 0 0
+TRACKER ParseWasmDataSegmentBytes 0 0 0 0
+TRACKER InstantiateWasmInstructions 1 - 43030 70704
+TRACKER InstantiateWasmFunctions 1 15 885 1712
+TRACKER InstantiateWasmGlobals 1 4 334 213
+TRACKER InstantiateWasmTableEntries 1 0 0 0
+TRACKER InstantiateWasmTypes 1 - 0 0
+TRACKER InstantiateWasmDataSegments 1 2 359 2025
+TRACKER InstantiateWasmElemSegments 1 0 0 0
+TRACKER InstantiateWasmImports 1 15 97145 11441
+TRACKER InstantiateWasmExports 1 5 11605 358
+TRACKER InstantiateWasmDataSegmentBytes 1 217 23 213
+TRACKER Sec1DecodePointUncompressed 0 - 0 0
+TRACKER VerifyEcdsaSecp256r1Sig 0 - 0 0
+TRACKER Bls12381EncodeFp 4 - 2644 0
+TRACKER Bls12381DecodeFp 30 - 29550 0
+TRACKER Bls12381G1CheckPointOnCurve 7 - 13538 0
+TRACKER Bls12381G1CheckPointInSubgroup 5 - 3652550 0
+TRACKER Bls12381G2CheckPointOnCurve 4 - 23684 0
+TRACKER Bls12381G2CheckPointInSubgroup 4 - 4231288 0
+TRACKER Bls12381G1ProjectiveToAffine 2 - 185284 0
+TRACKER Bls12381G2ProjectiveToAffine 0 - 0 0
+TRACKER Bls12381G1Add 1 - 7689 0
+TRACKER Bls12381G1Mul 1 - 2458985 0
+TRACKER Bls12381G1Msm 0 0 0 0
+TRACKER Bls12381MapFpToG1 0 - 0 0
+TRACKER Bls12381HashToG1 0 0 0 0
+TRACKER Bls12381G2Add 0 - 0 0
+TRACKER Bls12381G2Mul 0 - 0 0
+TRACKER Bls12381G2Msm 0 0 0 0
+TRACKER Bls12381MapFp2ToG2 0 - 0 0
+TRACKER Bls12381HashToG2 0 0 0 0
+TRACKER Bls12381Pairing 1 4 30335852 294093
+TRACKER Bls12381FrFromU256 1 - 1994 0
+TRACKER Bls12381FrToU256 0 - 0 0
+TRACKER Bls12381FrAddSub 0 - 0 0
+TRACKER Bls12381FrMul 0 - 0 0
+TRACKER Bls12381FrPow 0 0 0 0
+TRACKER Bls12381FrInv 0 - 0 0
+TRACKER Bn254EncodeFp 0 - 0 0
+TRACKER Bn254DecodeFp 0 - 0 0
+TRACKER Bn254G1CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointOnCurve 0 - 0 0
+TRACKER Bn254G2CheckPointInSubgroup 0 - 0 0
+TRACKER Bn254G1ProjectiveToAffine 0 - 0 0
+TRACKER Bn254G1Add 0 - 0 0
+TRACKER Bn254G1Mul 0 - 0 0
+TRACKER Bn254Pairing 0 0 0 0
+TRACKER Bn254FrFromU256 0 - 0 0
+TRACKER Bn254FrToU256 0 - 0 0
+TRACKER Bn254FrAddSub 0 - 0 0
+TRACKER Bn254FrMul 0 - 0 0
+TRACKER Bn254FrPow 0 0 0 0
+TRACKER Bn254FrInv 0 - 0 0
+TRACKER Bn254G1Msm 0 0 0 0
+--- full budget table ---
+=================================================================
+Cpu limit: 100000000; used: 41357620
+Mem limit: 41943040; used: 1524902
+=================================================================
+CostType                           cpu_insns      mem_bytes      
+WasmInsnExec                       53372          0              
+MemAlloc                           165422         1119475        
+MemCpy                             5690           0              
+MemCmp                             1696           0              
+DispatchHostFunction               12090          0              
+VisitObject                        7137           0              
+ValSer                             10088          24654          
+ValDeser                           0              0              
+ComputeSha256Hash                  3738           0              
+ComputeEd25519PubKey               0              0              
+VerifyEd25519Sig                   0              0              
+VmInstantiation                    0              0              
+VmCachedInstantiation              0              0              
+InvokeVmFunction                   1948           14             
+ComputeKeccak256Hash               0              0              
+DecodeEcdsaCurve256Sig             0              0              
+RecoverEcdsaSecp256k1Key           0              0              
+Int256AddSub                       0              0              
+Int256Mul                          0              0              
+Int256Div                          0              0              
+Int256Pow                          0              0              
+Int256Shift                        0              0              
+ChaCha20DrawBytes                  0              0              
+ParseWasmInstructions              0              0              
+ParseWasmFunctions                 0              0              
+ParseWasmGlobals                   0              0              
+ParseWasmTableEntries              0              0              
+ParseWasmTypes                     0              0              
+ParseWasmDataSegments              0              0              
+ParseWasmElemSegments              0              0              
+ParseWasmImports                   0              0              
+ParseWasmExports                   0              0              
+ParseWasmDataSegmentBytes          0              0              
+InstantiateWasmInstructions        43030          70704          
+InstantiateWasmFunctions           885            1712           
+InstantiateWasmGlobals             334            213            
+InstantiateWasmTableEntries        0              0              
+InstantiateWasmTypes               0              0              
+InstantiateWasmDataSegments        359            2025           
+InstantiateWasmElemSegments        0              0              
+InstantiateWasmImports             97145          11441          
+InstantiateWasmExports             11605          358            
+InstantiateWasmDataSegmentBytes    23             213            
+Sec1DecodePointUncompressed        0              0              
+VerifyEcdsaSecp256r1Sig            0              0              
+Bls12381EncodeFp                   2644           0              
+Bls12381DecodeFp                   29550          0              
+Bls12381G1CheckPointOnCurve        13538          0              
+Bls12381G1CheckPointInSubgroup     3652550        0              
+Bls12381G2CheckPointOnCurve        23684          0              
+Bls12381G2CheckPointInSubgroup     4231288        0              
+Bls12381G1ProjectiveToAffine       185284         0              
+Bls12381G2ProjectiveToAffine       0              0              
+Bls12381G1Add                      7689           0              
+Bls12381G1Mul                      2458985        0              
+Bls12381G1Msm                      0              0              
+Bls12381MapFpToG1                  0              0              
+Bls12381HashToG1                   0              0              
+Bls12381G2Add                      0              0              
+Bls12381G2Mul                      0              0              
+Bls12381G2Msm                      0              0              
+Bls12381MapFp2ToG2                 0              0              
+Bls12381HashToG2                   0              0              
+Bls12381Pairing                    30335852       294093         
+Bls12381FrFromU256                 1994           0              
+Bls12381FrToU256                   0              0              
+Bls12381FrAddSub                   0              0              
+Bls12381FrMul                      0              0              
+Bls12381FrPow                      0              0              
+Bls12381FrInv                      0              0              
+Bn254EncodeFp                      0              0              
+Bn254DecodeFp                      0              0              
+Bn254G1CheckPointOnCurve           0              0              
+Bn254G2CheckPointOnCurve           0              0              
+Bn254G2CheckPointInSubgroup        0              0              
+Bn254G1ProjectiveToAffine          0              0              
+Bn254G1Add                         0              0              
+Bn254G1Mul                         0              0              
+Bn254Pairing                       0              0              
+Bn254FrFromU256                    0              0              
+Bn254FrToU256                      0              0              
+Bn254FrAddSub                      0              0              
+Bn254FrMul                         0              0              
+Bn254FrPow                         0              0              
+Bn254FrInv                         0              0              
+Bn254G1Msm                         0              0              
+=================================================================
+
+
+Writing test snapshot file for test "bench_gnark_wasm" to "test_snapshots/bench_gnark_wasm.1.json".
+ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+

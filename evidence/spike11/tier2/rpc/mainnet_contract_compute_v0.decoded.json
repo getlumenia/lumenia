@@ -1,0 +1,1 @@
+{"config_setting":{"contract_compute_v0":{"ledger_max_instructions":"580000000","tx_max_instructions":"400000000","fee_rate_per_instructions_increment":"7","tx_memory_limit":41943040}}}

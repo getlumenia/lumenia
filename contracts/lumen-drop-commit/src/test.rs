@@ -8,7 +8,8 @@ use super::*;
 use ed25519_dalek::{Signer, SigningKey};
 use proptest::prelude::*;
 use soroban_sdk::testutils::{
-    Address as _, AuthorizedFunction, AuthorizedInvocation, Events as _, Ledger as _,
+    storage::Persistent as _, Address as _, AuthorizedFunction, AuthorizedInvocation,
+    Events as _, Ledger as _,
 };
 use soroban_sdk::xdr::{ContractEventBody, ScVal};
 use soroban_sdk::{
@@ -52,7 +53,12 @@ struct Fixture<'a> {
 }
 
 fn setup<'a>() -> Fixture<'a> {
-    let env = Env::default();
+    setup_in(Env::default())
+}
+
+/// The same fixture inside a given environment, e.g. one whose ledger settings were changed
+/// first, so the contracts are created under them.
+fn setup_in<'a>(env: Env) -> Fixture<'a> {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
@@ -574,6 +580,54 @@ fn deposit_inputs_and_expiry_bounds_enforced() {
         Err(Ok(Error::AlreadyExists))
     );
     assert_eq!(f.token.balance(&f.id), 10);
+}
+
+/// What the deposit-time bump does under the LIVE networks' settings, which the default test
+/// ledger (minimum persistent TTL 4,096, below the threshold) does not show.
+/// `extend_ttl(TTL_THRESHOLD, TTL_EXTEND)` only fires when fewer than TTL_THRESHOLD (17,280)
+/// ledgers remain, and both networks give a NEW persistent entry more than that
+/// (CONFIG_SETTING_STATE_ARCHIVAL read 2026-10-09: minPersistentTtl 120,960 on testnet, about
+/// 7 days at 5 s a ledger; 2,073,600 on mainnet, about 120 days). So a new Drop record lives
+/// exactly the network minimum: on testnet that is shorter than MAX_EXPIRY_HORIZON, and a
+/// claimable drop can archive. Measured on testnet as well: the first spike drop, deposited at
+/// ledger 5,057,518, was live until 5,178,477 (= deposit + 120,959). Late in a record's life,
+/// under the threshold, the claim's bump does fire and extends it to TTL_EXTEND.
+#[test]
+fn deposit_bump_leaves_a_new_record_at_the_network_minimum_ttl() {
+    for min_persistent in [120_960u32, 2_073_600] {
+        let env = Env::default();
+        env.ledger().set_min_persistent_entry_ttl(min_persistent);
+        env.ledger().set_max_entry_ttl(3_110_400);
+        let f = setup_in(env);
+        let sender = funded_sender(&f, 100);
+        let sk = link_key(90);
+        let s = salt(&f.env, 90);
+        let expiry = f.env.ledger().timestamp() + MAX_EXPIRY_HORIZON;
+        let link = deposit_honest(&f, &sender, &sk, 100, &s, expiry);
+        let key = DataKey::Drop(link.clone());
+        let ttl = || {
+            f.env
+                .as_contract(&f.id, || f.env.storage().persistent().get_ttl(&key))
+        };
+
+        // No bump at deposit: the new record already holds the network minimum.
+        assert_eq!(ttl(), min_persistent - 1);
+        assert!(ttl() > TTL_THRESHOLD);
+        // At 5 s a ledger, only the mainnet minimum outlives the 30-day expiry horizon.
+        let lives_seconds = u64::from(min_persistent - 1) * 5;
+        assert_eq!(lives_seconds >= MAX_EXPIRY_HORIZON, min_persistent == 2_073_600);
+
+        // Under the threshold, the claim's bump fires: up to TTL_EXTEND ledgers from now.
+        f.env
+            .ledger()
+            .set_sequence_number(f.env.ledger().sequence() + min_persistent - 1 - 10_000);
+        assert_eq!(ttl(), 10_000);
+        let payout = Address::generate(&f.env);
+        let sig = claim_sig(&f, &sk, &link, &payout, 100, &s);
+        f.client.claim(&link, &payout, &sig, &100, &s);
+        assert_eq!(ttl(), TTL_EXTEND);
+        assert_eq!(f.token.balance(&payout), 100);
+    }
 }
 
 /// Invariant 5: reclaim needs the recorded sender's auth, not just the clock. A claim needs no

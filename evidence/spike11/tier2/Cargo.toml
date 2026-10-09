@@ -1,0 +1,40 @@
+[package]
+name = "bls12_381_verifier"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Local copy of stellar/soroban-examples groth16_verifier/contracts/bls12_381_verifier
+# (commit 03d42aa6b973dcf3a453a99d0c6a6e8d25a196e2), re-pinned from soroban-sdk "28"
+# to soroban-sdk =26.1.1 (the version contracts/lumen-drop resolves) to measure
+# one Groth16 verification in the host budget model. Source files are unchanged.
+# Changed in this manifest (Lumenia D2 spike): the soroban-sdk pin, `rust-version` dropped,
+# and the upstream workspace's release profile plus an empty [workspace] added so the crate
+# builds on its own. tests/bench.rs and tests/args_xdr.rs are additions, not upstream files.
+
+[lib]
+crate-type = ["lib", "cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = "=26.1.1"
+
+[dev-dependencies]
+soroban-sdk = { version = "=26.1.1", features = ["testutils"] }
+ark-bls12-381 = "0.6"
+ark-ff = "0.6"
+ark-serialize = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
+
+[workspace]

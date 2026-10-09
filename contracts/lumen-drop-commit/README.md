@@ -154,7 +154,7 @@ Two properties are new to this crate:
 ## Testing
 
 ```bash
-cargo test                       # 21 tests: 20 unit tests + 1 model-based solvency property
+cargo test                       # 22 tests: 21 unit tests + 1 model-based solvency property
 cargo clippy --all-targets -- -D warnings \
   -W clippy::arithmetic_side_effects -W clippy::unwrap_used -W clippy::panic
 cargo deny check                 # the same supply-chain policy as LumenDrop
@@ -162,8 +162,24 @@ PROPTEST_CASES=16 cargo mutants -f src/lib.rs   # mutation testing
 ```
 
 The dependency versions are LumenDrop's exactly: `Cargo.lock` was copied from
-`contracts/lumen-drop`, and only its root entry differs. This crate is not part of CI: `ci.yml`
-and `contract-security.yml` run `contracts/lumen-drop` only.
+`contracts/lumen-drop`, and only its root entry differs. The tests and the strict clippy above run
+in CI, in the job "Spike contract (testnet only)" of `.github/workflows/ci.yml`, which the required
+"CI passed" job depends on. `contract-security.yml` (audit, deny, scout, coverage) covers
+`contracts/lumen-drop` only.
+
+## Storage lifetime on the live networks
+
+`MAX_EXPIRY_HORIZON` (30 days) bounds a drop's `expiry`; it does not keep the drop's record from
+being archived. The bump in `deposit` and `claim`, `extend_ttl(17_280, 518_400)`, only fires once
+fewer than 17,280 ledgers (about a day) remain, and both networks give a new persistent entry more
+than that: 120,960 ledgers on testnet (about 7 days at 5 s a ledger) and 2,073,600 on mainnet (about
+120 days), read from `CONFIG_SETTING_STATE_ARCHIVAL` on 2026-10-09. So a new record lives exactly the
+network minimum. On testnet a claimable drop with a 30-day expiry archives after about 7 days, and
+the contract's instance and wasm archive on the same clock unless someone extends them. Nothing is
+lost: since protocol 23 an archived entry is restored automatically when a transaction uses it (the
+simulation adds the restore), at the cost of a restore fee. The test
+`deposit_bump_leaves_a_new_record_at_the_network_minimum_ttl` pins this under both networks'
+settings. The deployed spike was extended by hand on 2026-10-09 (`evidence/spike11/ttl.json`).
 
 ## Build
 
@@ -175,8 +191,19 @@ stellar contract build           # -> target/wasm32v1-none/release/lumen_drop_co
 plain `cargo check --target wasm32v1-none` fails without it. Built here with stellar-cli 27.1.0
 and rustc 1.96.0.
 
+The build is reproducible from this source: `shasum -a 256
+target/wasm32v1-none/release/lumen_drop_commit.wasm` gives
+`0a7dbe551dacffc8894f8a20d7afaf72bd77e263c25b627d5d35e45a2d7e5ee4` (15,549 bytes), the code of the
+testnet deployment `CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA`. Checked on
+2026-10-09 in two checkouts, before and after the comment change in `src/lib.rs` that day
+(comments are not part of the wasm).
+
 A testnet deploy, if the spike needs one (testnet only, never `--network mainnet`). Any SAC
 works as the token; a test asset issued by the deploying key lets that key mint its own deposits.
+The deployment above was made with the JavaScript SDK (`apps/sponsor/src/spike11-commitment.ts`,
+`Operation.uploadContractWasm` + `createCustomContract`); the CLI recipe below was never run, and
+stellar-cli 27.1.0 warns that it supports protocol 27 while both networks are on 29, so it stays
+UNVERIFIED (`stellar contract extend` from the same CLI did work on protocol 29).
 
 ```bash
 stellar contract deploy --wasm target/wasm32v1-none/release/lumen_drop_commit.wasm \

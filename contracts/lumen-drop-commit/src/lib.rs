@@ -34,9 +34,9 @@ contractmeta!(key = "binver", val = "0.1.0");
 const TTL_THRESHOLD: u32 = 17_280;
 const TTL_EXTEND: u32 = 518_400;
 
-/// Upper bound on how far in the future a drop's `expiry` may sit (seconds). Keeps every
-/// drop's whole life inside the ~30-day persistent-TTL window bumped at deposit, so a live
-/// (claimable) drop can never hit archival before it is either claimed or reclaimable.
+/// Upper bound on how far in the future a drop's `expiry` may sit (seconds). Not an archival
+/// guarantee: the bump at deposit fires only below TTL_THRESHOLD, so a new record lives the
+/// network minimum (testnet ~7 days, mainnet ~120) and can archive while claimable (README).
 const MAX_EXPIRY_HORIZON: u64 = 30 * 24 * 60 * 60;
 
 /// Domain-separation tags. They continue LumenDrop's (0x01 single claim, 0x02 group claim), so a

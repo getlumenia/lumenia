@@ -1,0 +1,283 @@
+{
+ "what": "TTL extension of the D2 spike's testnet state, so it stays live (not archived) through the review",
+ "network": "testnet (Test SDF Network ; September 2015), protocol 29, RPC https://soroban-testnet.stellar.org",
+ "tool": "stellar-cli 27.1.0, `stellar contract extend --ledgers-to-extend 3110399 --durability persistent --network testnet`, paid by a throwaway testnet key funded by friendbot (no owner key, no real money)",
+ "ledgersToExtend": 3110399,
+ "why3110399": "the network maximum: maxEntryTtl is 3,110,400 ledgers on testnet and an extension may reach at most maxEntryTtl - 1 ledgers ahead",
+ "stateArchival": {
+  "maxEntryTtl": 3110400,
+  "minPersistentTtl": 120960,
+  "minTemporaryTtl": 720
+ },
+ "before": {
+  "readAt": "2026-10-09T00:17:43.425Z",
+  "latestLedger": 5096295,
+  "entries": [
+   {
+    "label": "commitment escrow instance CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA",
+    "lastModifiedLedgerSeq": 5057513,
+    "liveUntilLedgerSeq": 5178472
+   },
+   {
+    "label": "commitment escrow wasm 0a7dbe551dacffc8894f8a20d7afaf72bd77e263c25b627d5d35e45a2d7e5ee4",
+    "lastModifiedLedgerSeq": 5057512,
+    "liveUntilLedgerSeq": 5178471
+   },
+   {
+    "label": "test asset SAC instance CCX2B4R3UOJWUO7H2CIKEFPZP7J54ULHXKRRBQXAQSEQGWEYTSYCMWME",
+    "lastModifiedLedgerSeq": 5057510,
+    "liveUntilLedgerSeq": 5178469
+   },
+   {
+    "label": "test asset balance of the escrow (SAC Balance entry)",
+    "lastModifiedLedgerSeq": 5057535,
+    "liveUntilLedgerSeq": 5575918
+   },
+   {
+    "label": "Drop record #0 (link d66b6140e8e985073425384ad1adec91c7639aa8b54190f7e70450914cc90049)",
+    "lastModifiedLedgerSeq": 5057519,
+    "liveUntilLedgerSeq": 5178477
+   },
+   {
+    "label": "Drop record #1 (link 54757d63c6dce23ab467e5df6b00415ec71e6eea0aa2245e443f2cdb413eef2b)",
+    "lastModifiedLedgerSeq": 5057523,
+    "liveUntilLedgerSeq": 5178481
+   },
+   {
+    "label": "Drop record #2 (link 3394b587697001dbbaa7c24cb96521d3434d2d7d7af6cdcf37a2ee7b6dd9f260)",
+    "lastModifiedLedgerSeq": 5057527,
+    "liveUntilLedgerSeq": 5178485
+   },
+   {
+    "label": "Drop record #3 (link b2caaef7e4872a48c3d38257d3bd98be02707b057a6c02e53ac6eff5d74f243c)",
+    "lastModifiedLedgerSeq": 5057531,
+    "liveUntilLedgerSeq": 5178489
+   },
+   {
+    "label": "Drop record #4 (link 20875063badbd937bf2da9c69180a1f55956178ef0ce91532cb77d2e1ea37001)",
+    "lastModifiedLedgerSeq": 5057535,
+    "liveUntilLedgerSeq": 5178493
+   }
+  ]
+ },
+ "transactions": [
+  {
+   "what": "commitment escrow instance (stellar contract extend --id CAGWIGEG...LCXA)",
+   "hash": "e810ef505a225ed9a95328d3d10337d44ea47aadf1ec838c36269bf1643ff392",
+   "explorer": "https://stellar.expert/explorer/testnet/tx/e810ef505a225ed9a95328d3d10337d44ea47aadf1ec838c36269bf1643ff392",
+   "ledger": 5096301,
+   "createdAt": "2026-10-09T00:18:12.000Z",
+   "feeChargedStroops": "4164692",
+   "rentFeeChargedStroops": "4162355"
+  },
+  {
+   "what": "commitment escrow wasm (stellar contract extend --wasm-hash 0a7dbe55...5ee4)",
+   "hash": "f57c11c49b2688bb7bdd77f8f074407a128862387522823d4e2303a4455a186c",
+   "explorer": "https://stellar.expert/explorer/testnet/tx/f57c11c49b2688bb7bdd77f8f074407a128862387522823d4e2303a4455a186c",
+   "ledger": 5096303,
+   "createdAt": "2026-10-09T00:18:22.000Z",
+   "feeChargedStroops": "1445688164",
+   "rentFeeChargedStroops": "1445685880"
+  },
+  {
+   "what": "the five Drop records (stellar contract extend --id CAGWIGEG...LCXA --key-xdr <DataKey::Drop(link)> x5)",
+   "hash": "cab6473fb28da144e562159dfd53690d76cba340ee9f9dd412030ce2cb7baedf",
+   "explorer": "https://stellar.expert/explorer/testnet/tx/cab6473fb28da144e562159dfd53690d76cba340ee9f9dd412030ce2cb7baedf",
+   "ledger": 5096308,
+   "createdAt": "2026-10-09T00:18:47.000Z",
+   "feeChargedStroops": "25944735",
+   "rentFeeChargedStroops": "25940253"
+  },
+  {
+   "what": "test asset SAC instance (stellar contract extend --id CCX2B4R3...MWME)",
+   "hash": "6175758e59a0a8b250edc05e477b9f9b6cc82d445ad65fefbc7f8e8922806f24",
+   "explorer": "https://stellar.expert/explorer/testnet/tx/6175758e59a0a8b250edc05e477b9f9b6cc82d445ad65fefbc7f8e8922806f24",
+   "ledger": 5096310,
+   "createdAt": "2026-10-09T00:18:57.000Z",
+   "feeChargedStroops": "6785970",
+   "rentFeeChargedStroops": "6783633"
+  },
+  {
+   "what": "the escrow's balance entry in the SAC (stellar contract extend --id CCX2B4R3...MWME --key-xdr <Balance(escrow)>)",
+   "hash": "169df691ce2577d08d35f57d8f7238a9f16358cbf98ab74319214c08326b58e1",
+   "explorer": "https://stellar.expert/explorer/testnet/tx/169df691ce2577d08d35f57d8f7238a9f16358cbf98ab74319214c08326b58e1",
+   "ledger": 5096314,
+   "createdAt": "2026-10-09T00:19:17.000Z",
+   "feeChargedStroops": "2777440",
+   "rentFeeChargedStroops": "2774824"
+  },
+  {
+   "what": "Groth16 verifier instance (stellar contract extend --id CBMYSVI2...75MD)",
+   "hash": "e57bb2c216cb4fac0a6b624d035ebe5190978a747bb103b405b87cc77bcbe62f",
+   "explorer": "https://stellar.expert/explorer/testnet/tx/e57bb2c216cb4fac0a6b624d035ebe5190978a747bb103b405b87cc77bcbe62f",
+   "ledger": 5096468,
+   "createdAt": "2026-10-09T00:32:07.000Z",
+   "feeChargedStroops": "1465740",
+   "rentFeeChargedStroops": "1463403"
+  },
+  {
+   "what": "Groth16 verifier wasm (stellar contract extend --wasm-hash 40706c83...44c1)",
+   "hash": "639385d8682390d30afd800a0c7f9c81efd634c0b577e838fa400d61accb7b9f",
+   "explorer": "https://stellar.expert/explorer/testnet/tx/639385d8682390d30afd800a0c7f9c81efd634c0b577e838fa400d61accb7b9f",
+   "ledger": 5096469,
+   "createdAt": "2026-10-09T00:32:12.000Z",
+   "feeChargedStroops": "665801681",
+   "rentFeeChargedStroops": "665799397"
+  }
+ ],
+ "totalFeeChargedStroops": "2152628422",
+ "totalFeeChargedXlm": "215.2628422",
+ "after": {
+  "readAt": "2026-10-09T00:32:24.134Z",
+  "latestLedger": 5096471,
+  "method": "getLedgerEntries (read-only)",
+  "entries": [
+   {
+    "label": "commitment escrow instance CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057513,
+    "liveUntilLedgerSeq": 8206700,
+    "ledgersLeft": 3110229,
+    "archived": false,
+    "aboutUntil": "2027-04-07"
+   },
+   {
+    "label": "commitment escrow wasm 0a7dbe551dacffc8894f8a20d7afaf72bd77e263c25b627d5d35e45a2d7e5ee4",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057512,
+    "liveUntilLedgerSeq": 8206702,
+    "ledgersLeft": 3110231,
+    "archived": false,
+    "aboutUntil": "2027-04-07"
+   },
+   {
+    "label": "test asset SAC instance CCX2B4R3UOJWUO7H2CIKEFPZP7J54ULHXKRRBQXAQSEQGWEYTSYCMWME",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057510,
+    "liveUntilLedgerSeq": 8206709,
+    "ledgersLeft": 3110238,
+    "archived": false,
+    "aboutUntil": "2027-04-07"
+   },
+   {
+    "label": "test asset balance of the escrow (SAC Balance entry)",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057535,
+    "liveUntilLedgerSeq": 8206713,
+    "ledgersLeft": 3110242,
+    "archived": false,
+    "aboutUntil": "2027-04-07",
+    "value": {
+     "amount": "0",
+     "authorized": true,
+     "clawback": false
+    }
+   },
+   {
+    "label": "Drop record #0 (link d66b6140e8e985073425384ad1adec91c7639aa8b54190f7e70450914cc90049)",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057519,
+    "liveUntilLedgerSeq": 8206707,
+    "ledgersLeft": 3110236,
+    "archived": false,
+    "aboutUntil": "2027-04-07",
+    "value": {
+     "variant": "V1",
+     "sender": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF",
+     "commitment": "58b1eec1e2fc7a995378308392445e7bc1b374c6516c8e31fe016d3ca05e9c2d",
+     "escrowed": "1234567",
+     "expiry": "1791397572",
+     "claimed": true
+    }
+   },
+   {
+    "label": "Drop record #1 (link 54757d63c6dce23ab467e5df6b00415ec71e6eea0aa2245e443f2cdb413eef2b)",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057523,
+    "liveUntilLedgerSeq": 8206707,
+    "ledgersLeft": 3110236,
+    "archived": false,
+    "aboutUntil": "2027-04-07",
+    "value": {
+     "variant": "V1",
+     "sender": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF",
+     "commitment": "90b7ace7cf55d0f0b8c3426d7e5bb9acd728998ee79d03ea7ec9a0734cb7dba6",
+     "escrowed": "1234568",
+     "expiry": "1791397592",
+     "claimed": true
+    }
+   },
+   {
+    "label": "Drop record #2 (link 3394b587697001dbbaa7c24cb96521d3434d2d7d7af6cdcf37a2ee7b6dd9f260)",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057527,
+    "liveUntilLedgerSeq": 8206707,
+    "ledgersLeft": 3110236,
+    "archived": false,
+    "aboutUntil": "2027-04-07",
+    "value": {
+     "variant": "V1",
+     "sender": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF",
+     "commitment": "7db0e846d7ffe65d90fd1230f189727c748563b7a366150ff1283455d9def0da",
+     "escrowed": "1234569",
+     "expiry": "1791397612",
+     "claimed": true
+    }
+   },
+   {
+    "label": "Drop record #3 (link b2caaef7e4872a48c3d38257d3bd98be02707b057a6c02e53ac6eff5d74f243c)",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057531,
+    "liveUntilLedgerSeq": 8206707,
+    "ledgersLeft": 3110236,
+    "archived": false,
+    "aboutUntil": "2027-04-07",
+    "value": {
+     "variant": "V1",
+     "sender": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF",
+     "commitment": "0c7f303512bee847ffdb58d76216a4696a8f360574031c3d49ef61edf90fa80a",
+     "escrowed": "1234570",
+     "expiry": "1791397632",
+     "claimed": true
+    }
+   },
+   {
+    "label": "Drop record #4 (link 20875063badbd937bf2da9c69180a1f55956178ef0ce91532cb77d2e1ea37001)",
+    "found": true,
+    "lastModifiedLedgerSeq": 5057535,
+    "liveUntilLedgerSeq": 8206707,
+    "ledgersLeft": 3110236,
+    "archived": false,
+    "aboutUntil": "2027-04-07",
+    "value": {
+     "variant": "V1",
+     "sender": "GBKXPL53GR536LZWQ4MYFMIFVI5PXVBC55KRA57SLU6J3FLU5DQZMSAF",
+     "commitment": "cb4e95ffe929cbcf62597446ce86583558da4b4bf9b983a25f4244d5e2fdbc09",
+     "escrowed": "1234571",
+     "expiry": "1791397652",
+     "claimed": true
+    }
+   },
+   {
+    "label": "Groth16 verifier instance CBMYSVI2KCESZC6BNAKDTKHJKIA22EKXLOILPYVPQYIGVJ44R7PL75MD",
+    "found": true,
+    "lastModifiedLedgerSeq": 5096448,
+    "liveUntilLedgerSeq": 8206867,
+    "ledgersLeft": 3110396,
+    "archived": false,
+    "aboutUntil": "2027-04-07"
+   },
+   {
+    "label": "Groth16 verifier wasm 40706c83e703e9173ea1b1ad32ee84b19f0d26125349fe0f904f6c39364344c1",
+    "found": true,
+    "lastModifiedLedgerSeq": 5096447,
+    "liveUntilLedgerSeq": 8206868,
+    "ledgersLeft": 3110397,
+    "archived": false,
+    "aboutUntil": "2027-04-07"
+   }
+  ]
+ },
+ "reproduce": "pnpm --filter @lumenia/sponsor exec tsx src/spike11-ttl.ts   (read-only, prints the same 'after' shape for today)",
+ "note": "aboutUntil assumes the measured 5.0 s per testnet ledger. Since protocol 23 an archived entry is restored automatically when a transaction uses it, so an entry past its live-until ledger is archived, not lost; a testnet reset would remove everything regardless, and the committed XDR in visibility.json stays."
+}
