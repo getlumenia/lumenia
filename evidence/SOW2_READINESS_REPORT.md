@@ -12,14 +12,11 @@ owner's, every item of it:**
 - **the KMS cutover on both Workers** (D3.6, ops note section 2.2: `ops/kms/cloudshell-setup.sh` in
   AWS CloudShell, then `ops/kms/cutover.sh` on each network). Until the mainnet Worker signs with
   KMS, metric 3 is not met.
-- **extension 0.1.3 in the Chrome Web Store** (D1, Published builds): built on 2026-10-09 and
-  public on addons.mozilla.org since 08:36 UTC that day; the Chrome Web Store upload is the owner's,
-  and that store reviews the package before it goes live.
 - **the Workers plan check** (D3.8): which Cloudflare plan the two Workers run on is not recorded.
 - **the firm for the written legal opinion** (D3.8 a): choosing the firm the request goes to.
 
 Everything else is done: D1's published builds (0.1.3 public on addons.mozilla.org since 2026-10-09,
-with the listing's privacy policy), checklist, tests, testnet proof in Chrome and in Firefox, the
+with the listing's privacy policy, and submitted to the Chrome Web Store the same day, in review), checklist, tests, testnet proof in Chrome and in Firefox, the
 0.1.3 build and its practice-money demo video; D2's code, live since 2026-10-07, its tests and the testnet commitment
 spike with the Groth16 measurement; D3's hardening, green in CI and deployed on both Workers on
 2026-10-08, with the live adversarial runs, the first watchdog stamps and the heartbeat's first runs.
@@ -46,8 +43,8 @@ sender's own account and shows whether it was claimed. It reuses the website's s
 (`apps/web/lib`); the recipient side does not change. Published as version 0.1.2 on the Chrome Web
 Store and on addons.mozilla.org, both built from commit `062725f`. The next build, 0.1.3, was built
 on 2026-10-09 from the merged tree (commit `00aa0a5`), submitted to addons.mozilla.org the same
-day and public there since 08:36 UTC; its Chrome Web Store upload is the owner's, so that store
-still serves 0.1.2.
+day and public there since 08:36 UTC; it was submitted to the Chrome Web Store the same day and is
+in that store's review, so the Chrome Web Store still serves 0.1.2.
 
 ### Published builds
 
@@ -57,7 +54,7 @@ still serves 0.1.2.
 | addons.mozilla.org, public: https://addons.mozilla.org/en-US/firefox/addon/lumenia/ | 0.1.2 | 2026-10-07 (approved 14:10 UTC; the file was uploaded on 2026-10-04) | [`062725f`](https://github.com/getlumenia/lumenia/tree/062725f) | the AMO file, sha256 `988e3c69014d041b79288b06af5c56e24ede379a221a68d6753d7a12b15103a0` (AMO's public API gives the same hash) |
 | getlumenia.com/extension/lumenia-firefox.xpi, self-hosted, AMO-signed (unlisted) | 0.1.1 | 2026-10-04 | the signed file is in the repository, `apps/web/public/extension/lumenia-firefox.xpi` (added in `cea442d`); its code is the published 0.1.2's apart from the version string | sha256 `792667fbce088a10fe5e71287f27fc305dac49684486a53eda1e081764e2039e` |
 | addons.mozilla.org, public: https://addons.mozilla.org/en-US/firefox/addon/lumenia/ | 0.1.3 | 2026-10-09 (uploaded 08:30:48 UTC, reviewed 08:36:17 UTC; AMO version 6557822) | commit `00aa0a5`, packed as `lumenia-extension-sources-0.1.3.zip`, sha256 `a4bbcb530ea164c6e8a374fb06626d51e98296d59a5f282a69f58c6cbea627b5` | the signed file AMO serves, sha256 `17b2da7ee288d3c1a5570634bac5a466215c7447b3cabb0acbb2fdeb7ce07c3c` (AMO's public API), signed from the `dist/firefox` folder of `lumenia-firefox-0.1.3.zip` (sha256 `7ddb559764c7c81aa151bcc06a65fb33cc879077de825ecca6246acf2547260d`) |
-| Chrome Web Store, the next build | 0.1.3 | _pending: the owner's dashboard upload, then the store's review_ | commit `00aa0a5` (the same sources archive) | `lumenia-chrome-0.1.3.zip` sha256 `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73` |
+| Chrome Web Store, the next build | 0.1.3 | submitted 2026-10-09, in review | commit `00aa0a5` (the same sources archive) | `lumenia-chrome-0.1.3.zip` sha256 `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73` |
 
 Both store packages hold the same `background.js` (sha256 `6999fb8eebd3a97302ea8eb3b63bc6a66ccb467370290c5b9e02b85bbe901024`)
 and `popup.js` (sha256 `e26584432d56755dc601f5bab80d7d744dd5bbc80a93a48771747d5759661623`).
@@ -247,7 +244,7 @@ All four were read back from `horizon-testnet.stellar.org` as successful (ledger
 - **The Chrome Web Store's 0.1.2 makes links in the pre-D2 shape** (amount and name in the query),
   and it has neither of the two rules added after it (see D1.1). The 0.1.3 build of 2026-10-09 has
   the private shape and both rules; addons.mozilla.org serves it since 2026-10-09, and it reaches
-  Chrome users once the Chrome Web Store has reviewed it (the upload is the owner's; see the D2
+  Chrome users once the Chrome Web Store has reviewed it (submitted on 2026-10-09; see the D2
   section and D3.8).
 - **No real-money send from the extension yet, so no recording of one.** Metric 1 (D1.5) needs a
   mainnet link made from the published extension and claimed; that send and its recording are the
@@ -419,7 +416,7 @@ chosen (the defaults). Until every row is filled, metric 2 is not met.
 - The mainnet run above is not done yet; until it is, metric 2 is not met.
 - The Chrome Web Store's package (0.1.2, built from `062725f`) and the self-hosted 0.1.1 were built
   before D2 and make links in the old shape until 0.1.3 replaces them. addons.mozilla.org serves
-  0.1.3 since 2026-10-09 (08:36 UTC); the Chrome Web Store upload is the owner's.
+  0.1.3 since 2026-10-09 (08:36 UTC); it is in the Chrome Web Store's review since the same day.
 - Previews were checked with the chat apps' user agents, not inside every chat app; the cards on a
   real phone are the owner's screenshots.
 - A v1 practice link's key (from /try or /event) is also the key of the account it opens. Until
@@ -1094,8 +1091,8 @@ the professional review the gate for these two steps, not for the opening:
 - **The extension packages before 0.1.3** (Chrome Web Store 0.1.2, the self-hosted 0.1.1) read a
   202 answer to a take-back from the D3 sponsor as landed, and have no backup rule for real money
   (D1.1). The source keeps a 202 open and has the rule, and so does the 0.1.3 build of 2026-10-09,
-  public on addons.mozilla.org since that day; its Chrome Web Store upload is the owner's, and the
-  flip waits until it is live in both (ops note section 1.2).
+  public on addons.mozilla.org since that day and in the Chrome Web Store's review since the same day;
+  the flip waits until it is live in both (ops note section 1.2).
 - **A direct payment's "do not pay again" lives in the page.** After a 202 on a payment to a known
   address the page says not to pay again and offers no button, and re-checks the ledger; a reload,
   or reopening the request link, loses that state and offers Pay again.

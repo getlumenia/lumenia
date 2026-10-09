@@ -10,8 +10,8 @@ each checked for secrets, are in [`evidence/sow2-screenshots/`](sow2-screenshots
 
 SOW 2 asked for three things. **D1**, a sender-side browser extension: built, in both stores
 (Chrome Web Store public since 2026-10-06, addons.mozilla.org public since 2026-10-07), with
-version 0.1.3 public on addons.mozilla.org since 2026-10-09 and waiting for its Chrome Web Store
-upload; the same day it ran end to end in Firefox on practice money. **D2**, private links: live on getlumenia.com
+version 0.1.3 public on addons.mozilla.org since 2026-10-09 and in the Chrome Web Store's review
+since the same day; the same day it ran end to end in Firefox on practice money. **D2**, private links: live on getlumenia.com
 since 2026-10-07 (no amount and no name in a link, the claim page reads the amount from the
 ledger, a plain chat preview, a password by default for real money), with a public privacy page,
 a written leak audit and a testnet commitment spike. **D3**, open-mainnet readiness: the hardened
@@ -35,7 +35,7 @@ keys and accounts; the tools for each are in the repository.
 | Deliverable | Evidence | Where |
 |---|---|---|
 | D1 | Public repository | [`apps/extension`](../apps/extension/) with its [README](../apps/extension/README.md) (what it does, every permission, what it sends and keeps, the published builds and how to rebuild them) |
-| D1 | Store listing or signed package | Chrome Web Store, public at 0.1.2; addons.mozilla.org, public at 0.1.3 since 2026-10-09 (reviewed 08:36 UTC; the signed file's sha256 `17b2da7e...7c3c` on AMO's public API), with the listing's privacy-policy field linking the privacy page. The 0.1.3 packages were built 2026-10-09 and a clean-room rebuild from the sources archive is byte-identical; the Chrome Web Store upload of 0.1.3 is _pending_ |
+| D1 | Store listing or signed package | Chrome Web Store, public at 0.1.2; addons.mozilla.org, public at 0.1.3 since 2026-10-09 (reviewed 08:36 UTC; the signed file's sha256 `17b2da7e...7c3c` on AMO's public API), with the listing's privacy-policy field linking the privacy page. The 0.1.3 packages were built 2026-10-09 and a clean-room rebuild from the sources archive is byte-identical; 0.1.3 was submitted to the Chrome Web Store on 2026-10-09 and is in its review |
 | D1 | Demo video | A 47-second silent demo of 0.1.3 on practice money: make an account, paste a link into a chat box, the recipient claims in a browser that never saw Lumenia, the sender's list shows Claimed, real money waits for a backup and an approval. Served at https://getlumenia.com/media/lumenia-extension-demo.mp4 since 2026-10-09. The right-click step is driven through the extension's own menu handler, because automation cannot open Chrome's native context menu |
 | D1 | Firefox run (practice money) | 2026-10-09: the 0.1.3 Firefox package in Firefox 155 made an account, a $0.25 link in the private shape, and saw it Claimed after a claim on getlumenia.com in a separate browser; four testnet transactions and two screenshots in [readiness report D1.3](SOW2_READINESS_REPORT.md) |
 | D1 | Mainnet transaction hash | _pending_ (metric 1) |
@@ -108,11 +108,10 @@ reading is taken from the dashboard before the package is sent.
 
 ## What remains, and who does it
 
-All four need the founder's keys, accounts or wallet. Each has a written procedure. Done on 2026-10-09: the web and both sponsor Workers run the merged release (testnet `213a2832`, then `32067caf` after the rehearsal's last deploy; mainnet `baaeaae0`; all tagged `215cfb2`), a refusal-only run against the new mainnet Worker spent nothing, the heartbeat alert drill opened and closed issue #46, extension 0.1.3 went public on addons.mozilla.org and ran end to end in Firefox on practice money, and the retirement switch was rehearsed on the deployed testnet Worker from 08:57 to 09:03 UTC: six phases, 22 logged steps, all PASS, every deposit that landed taken back ([ops note section 1.4](SOW2_OPS_NOTE.md)).
+All three need the founder's keys, accounts or wallet. Each has a written procedure. Done on 2026-10-09: the web and both sponsor Workers run the merged release (testnet `213a2832`, then `32067caf` after the rehearsal's last deploy; mainnet `baaeaae0`; all tagged `215cfb2`), a refusal-only run against the new mainnet Worker spent nothing, the heartbeat alert drill opened and closed issue #46, extension 0.1.3 went public on addons.mozilla.org, ran end to end in Firefox on practice money and was submitted to the Chrome Web Store (in review), and the retirement switch was rehearsed on the deployed testnet Worker from 08:57 to 09:03 UTC: six phases, 22 logged steps, all PASS, every deposit that landed taken back ([ops note section 1.4](SOW2_OPS_NOTE.md)).
 
 | Step | Tool or procedure |
 |---|---|
-| Upload extension 0.1.3 to the Chrome Web Store (addons.mozilla.org: public since 2026-10-09, its privacy-policy field filled the same day) | The built package and the exact steps in [`apps/extension/README.md`](../apps/extension/README.md) |
 | Metric 2: one private mainnet link from getlumenia.com/send (no name typed), previews screenshotted in WhatsApp and Telegram, claimed in a browser with no Lumenia account | [readiness report D2.5](SOW2_READINESS_REPORT.md) |
 | Metric 1: one mainnet link from the store extension, claimed in a second clean browser, recorded in one take | [readiness report D1](SOW2_READINESS_REPORT.md) |
 | The KMS cutover, testnet then mainnet | [`ops/kms/cloudshell-setup.sh`](../ops/kms/cloudshell-setup.sh) in AWS CloudShell, then [`ops/kms/cutover.sh`](../ops/kms/cutover.sh) |

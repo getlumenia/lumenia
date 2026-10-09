@@ -166,7 +166,7 @@ see the D3 entry below) and ends on version `32067caf`, the same release in its 
   0.1.1. Public on the Chrome Web Store by 2026-10-06 and on addons.mozilla.org since
   2026-10-07. Its links still carry the amount and the sender's name in the query.
 - **0.1.3** (built 2026-10-09 from commit `00aa0a5`; **public on addons.mozilla.org since 2026-10-09**,
-  its listing's privacy-policy field filled the same day; the Chrome Web Store upload is the owner's): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
+  its listing's privacy-policy field filled the same day; submitted to the Chrome Web Store on 2026-10-09, in review): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
   no amount anywhere and no name unless one is typed; the From field starts empty, and the name
   0.1.2 saved is deleted at startup; the one-time real-money note "Real money on Lumenia is an
   early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so
