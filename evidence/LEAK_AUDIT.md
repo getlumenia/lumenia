@@ -18,9 +18,8 @@ merged on 2026-10-09 and held by the offline suites on the merged tree: no sende
 unless one is typed, `seeded=1` only on team-funded group links, a rich card only for a live drop or
 pool, v1 practice beacons to the testnet Worker, and the sponsor's log redaction. The web half is
 live since the deploy of `00aa0a5` on 2026-10-09 (the live claim, private-preview and send checks passed against
-getlumenia.com that morning); row 11 holds on each Worker only after that Worker's next deploy, which is the owner's.
-Until then each Worker runs the `24d0f4e` code, where a refused relay simulation, payout or sweep on mainnet can still log a full
-address or an amount.
+getlumenia.com that morning); row 11 holds on both Workers since their deploys of 2026-10-09 (testnet version `213a2832`, mainnet `baaeaae0`, both
+tagged `215cfb2`); before that, a refused relay simulation, payout or sweep on mainnet could log a full address or an amount.
 
 What this audit does not claim: the public ledger is public. Every deposit shows the sender's account,
 the amount and the time; every claim shows the account that received it. D2 changes what the link, the

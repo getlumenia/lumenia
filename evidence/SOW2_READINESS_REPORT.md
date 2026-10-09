@@ -290,7 +290,7 @@ and the nightly run against production on 2026-10-08
 "Private link preview (D2 leak audit, live half)". The release merged on 2026-10-09 adds four web
 changes to D2 (no sender name unless one is typed, the rich card only for a live drop or pool, v1
 practice beacons to the testnet Worker, /privacy brought up to date) and the sponsor's log redaction
-(leak audit rows 2, 5, 6, 10 and 11); they go live with the owner's next web and Worker deploys.
+(leak audit rows 2, 5, 6, 10 and 11); live since 2026-10-09: the web with the deploy of `00aa0a5`, and both Workers the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`.
 Still the owner's: the mainnet run (D2.5).
 
 ### D2.1 What a link carries now
@@ -407,9 +407,9 @@ chosen (the defaults). Until every row is filled, metric 2 is not met.
 Status: **code done, tested and deployed, 2026-10-08.** Every item below is held by an offline
 suite that runs in CI under the step "Hardening suite (D3 a-k)" (green, D3.2). Both Workers run this
 code since 2026-10-08 (the mainnet one with `PILOT_MODE=1` kept), and the live adversarial runs,
-the watchdog stamps and the heartbeat workflow's first runs are below. Still pending, the owner's
-steps: the KMS cutover (without it, metric 3 is not met), the rehearsal on the deployed testnet
-Worker, and the Worker deploys of the release merged on 2026-10-09 (D3.9);
+the watchdog stamps and the heartbeat workflow's first runs are below. The release merged on
+2026-10-09 is deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2` (D3.9). Still pending, the owner's steps: the KMS cutover
+(without it, metric 3 is not met) and the rehearsal on the deployed testnet Worker;
 [`SOW2_OPS_NOTE.md`](SOW2_OPS_NOTE.md) holds their exact commands, the scripts that run them, and the
 logs.
 
@@ -737,6 +737,12 @@ connection's testnet share for the day. That is the onboarding budget working, n
 failure: the per-source row (section b) was refused at its first call for the same reason, the rows
 that need a funded sender were skipped, and every other refusal probe passed again inside fee
 windows that did not move. Its rows repeat Run 3's and are not transcribed here.
+
+**Run 5: refusal-only against the live mainnet Worker after the 2026-10-09 deploy** (version `baaeaae0`, tagged
+`215cfb2`, 08:53 UTC): 25 rows, 0 failing; the same classes as Run 4 (junk claims refused, the classic
+`/feebump` inflated-fee refusal, the pilot gate, the rate limits), every refusal answered `request failed` with a
+reference and nothing charged against the fee budget (`fees.spentXlm` 0 before and after); the sponsor held
+239.6774337 XLM and 0 USDC before and after. Report `apps/sponsor/adversarial-out/adversarial-mainnet-refusal-only-2026-10-09T08-53-06-497Z.md`.
 
 ### D3.4 The retirement switch: dry runs done, the deployed rehearsal still to run
 
@@ -1081,16 +1087,15 @@ the professional review the gate for these two steps, not for the opening:
   is the owner's. The heartbeat workflow's alert path: no run has opened or updated an issue yet
   (every run so far was green; the scheduled run at 21:59 UTC ran its close job, with nothing to
   close); the `test_alert` drill (D3.5) is the owner's.
-- **Merged on 2026-10-09, not deployed yet** (each Worker changes only with the owner's next
-  `npx wrangler deploy`, and `--env mainnet` for real money): the mainnet log redaction (leak audit
+- **Merged and deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`**: the mainnet log redaction (leak audit
   row 11), held by `test:soroban-relay` 163 and `test:antidrain` 82; the subrequest budget of 45
   (D3.8); `/health` gaining `version {id, tag, timestamp}` from the `CF_VERSION_METADATA` binding;
   the watchdog writing the halt the moment a tripwire is raised, before the rest of its run
   (`test:watchdog-offline` 201); the approval mail carrying the real-money warning and the caps
   sentence; and `wrangler.toml` naming `SPONSOR_ACCOUNT_ID` (each network's existing sponsor account)
   and `KMS_REGION` eu-central-1 in both environments. With the env signer that changes no behaviour;
-  after the deploy `/health` reads `"accountSource": "SPONSOR_ACCOUNT_ID"`, which `ops/kms/cutover.sh`
-  checks before it starts.
+  `/health` reads `"accountSource": "SPONSOR_ACCOUNT_ID"` on both Workers since the deploy, which
+  `ops/kms/cutover.sh` checks before it starts.
 - Runs 1 and 2 used a local Worker and a local stand-in for the store: they prove the code and its
   answers, not the deployed configuration. Runs 3 and 4 are the deployed proof, without the
   store-dependent rows (seeded budgets, the store halt), which only Runs 1 and 2 show.

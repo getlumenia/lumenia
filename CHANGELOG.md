@@ -18,12 +18,13 @@ Everything since 0.2.1; nothing has been tagged since. The Instawards follow-on 
 2026-09-17 to 2026-10-16) is grouped by deliverable and dated, newest first. Its evidence,
 metric by metric, is in [EVIDENCE.md](EVIDENCE.md).
 
-### 2026-10-09: sponsor and web fixes (web live; Worker deploys pending)
+### 2026-10-09: sponsor and web fixes (live on the web and both Workers)
 
 Merged on 2026-10-09 and held by the offline gate on the merged tree (40 suites / 4,388
 assertions, all green). The web is live since 2026-10-09 (commit `00aa0a5`, CI run 37904651201 green; the live
-claim, private-preview and send checks passed against getlumenia.com). Each sponsor Worker changes
-only with its own next deploy, which is the owner's.
+claim, private-preview and send checks passed against getlumenia.com). Both sponsor Workers were
+deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`; `/health` on each shows the version and `accountSource: SPONSOR_ACCOUNT_ID`, and a
+refusal-only run against the live mainnet Worker afterwards refused all it sent and spent nothing.
 
 #### Changed (sponsor)
 

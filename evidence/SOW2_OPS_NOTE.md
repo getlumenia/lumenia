@@ -1,10 +1,10 @@
 # SOW 2 D3 operations note: the retirement switch, the KMS signer, the watchdog heartbeat
 
 Status: **2026-10-09. Code done and tested, and deployed on both Workers on 2026-10-08 (the mainnet
-one with `PILOT_MODE=1` kept); the watchdog heartbeat is live (section 3).** Still to run, all of it
-the owner's: the Worker deploys of the release merged on 2026-10-09 (it names each network's sponsor
-account, which the cutover script needs), the rehearsal on the deployed testnet Worker (section 1.3,
-one script), the KMS cutover (section 2.2, two scripts) and the heartbeat alert drill (section 3).
+one with `PILOT_MODE=1` kept); the watchdog heartbeat is live (section 3).** The release merged on
+2026-10-09 is deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`, so each Worker names its sponsor account as the cutover script
+needs, and the heartbeat alert drill ran (section 3). Still to run, the owner's: the rehearsal on the
+deployed testnet Worker (section 1.3, one script) and the KMS cutover (section 2.2, two scripts).
 Every step that touches a deployed Worker, AWS or the chain is marked "owner"
 below with the exact command, and each log has a row per step; rows still marked _pending_ are
 filled in when the owner runs them. Nothing here contains a secret: secrets are named, never shown,
@@ -264,9 +264,9 @@ one IAM user per network.
 
 **The recommended way: two scripts, one network at a time, testnet first.**
 
-- First, the Worker deploy of the merged tree (step 6 below): `wrangler.toml` already names each
-  network's existing sponsor account (`SPONSOR_ACCOUNT_ID`) and `KMS_REGION = "eu-central-1"`, and
-  after the deploy `/health` reads `"accountSource": "SPONSOR_ACCOUNT_ID"`. The cutover script stops
+- Done on 2026-10-09: both Workers run the merged tree, whose `wrangler.toml` names each network's
+  existing sponsor account (`SPONSOR_ACCOUNT_ID`) and `KMS_REGION = "eu-central-1"`; `/health` reads
+  `"accountSource": "SPONSOR_ACCOUNT_ID"` on both. The cutover script stops
   before anything else when it does not.
 - Step 1: `bash cloudshell-setup.sh testnet` (then `mainnet`) in AWS CloudShell, in eu-central-1, with
   `ops/kms/cloudshell-setup.sh` uploaded there. Per network it makes one KMS key

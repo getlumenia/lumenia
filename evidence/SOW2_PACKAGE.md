@@ -103,11 +103,11 @@ reading is taken from the dashboard before the package is sent.
 
 ## What remains, and who does it
 
-All five need the founder's keys, accounts or wallet. Each has a written procedure.
+All five need the founder's keys, accounts or wallet. Each has a written procedure. Done on 2026-10-09: the web and both sponsor Workers run the merged release (testnet `213a2832`, mainnet `baaeaae0`), a refusal-only run against the new mainnet Worker spent nothing, and the heartbeat alert drill opened and closed issue #46.
 
 | Step | Tool or procedure |
 |---|---|
-| Submit extension 0.1.3 to the Chrome Web Store and addons.mozilla.org; add the privacy-policy link on addons.mozilla.org | The built packages and the exact commands in [`apps/extension/README.md`](../apps/extension/README.md) |
+| Upload extension 0.1.3 to the Chrome Web Store (addons.mozilla.org: submitted 2026-10-09, in review); add the privacy-policy link on addons.mozilla.org | The built packages and the exact commands in [`apps/extension/README.md`](../apps/extension/README.md) |
 | Metric 2: one private mainnet link from getlumenia.com/send (no name typed), previews screenshotted in WhatsApp and Telegram, claimed in a browser with no Lumenia account | [readiness report D2.5](SOW2_READINESS_REPORT.md) |
 | Metric 1: one mainnet link from the store extension, claimed in a second clean browser, recorded in one take | [readiness report D1](SOW2_READINESS_REPORT.md) |
 | The KMS cutover, testnet then mainnet | [`ops/kms/cloudshell-setup.sh`](../ops/kms/cloudshell-setup.sh) in AWS CloudShell, then [`ops/kms/cutover.sh`](../ops/kms/cutover.sh) |
