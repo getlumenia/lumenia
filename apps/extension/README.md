@@ -8,9 +8,9 @@ This is the sender's surface only. It is a small Chrome MV3 / Firefox MV3 extens
 the website's own sender code (`apps/web/lib`) instead of re-implementing anything that moves
 money.
 
-This folder is version **0.1.3**. Both stores still serve 0.1.2 until 0.1.3 has been submitted and
-has passed their review; "Published builds" below says what each published version does
-differently from this source.
+This folder is version **0.1.3**. addons.mozilla.org serves 0.1.3 since 2026-10-09; the Chrome Web
+Store still serves 0.1.2 until 0.1.3 has been uploaded there and has passed its review. "Published
+builds" below says what each published version does differently from this source.
 
 ## Install
 

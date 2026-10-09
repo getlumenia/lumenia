@@ -86,7 +86,11 @@ The AMO listing links the privacy policy since 2026-10-09: its privacy-policy fi
 summary of the extension's section of the privacy page and a link to
 https://getlumenia.com/privacy#extension, set through AMO's API (`PATCH
 /api/v5/addons/addon/lumenia/eula_policy/`), and AMO's public API answers `has_privacy_policy: true`.
-The Chrome Web Store listing links https://getlumenia.com/privacy.
+The Chrome Web Store listing links https://getlumenia.com/privacy. The same day the AMO listing's
+screenshot strip was cleaned: it had held ten entries, the five screenshots and after each a
+duplicate whose image file answered 404 on AMO's servers; the five broken entries were removed
+through the same API (`DELETE .../previews/<id>/`, ids 418718 to 418722), and the listing now shows
+the five screenshots once each.
 
 ### D1.1 Security checklist
 
@@ -238,9 +242,6 @@ All four were read back from `horizon-testnet.stellar.org` as successful (ledger
   prompt and whether the six hosts are granted at install (a temporary add-on gets them without
   asking; the extension's "Allow Lumenia to reach its servers" screen is there for a person who
   withholds them), the toolbar popup, the right-click item, and the AMO-signed file itself.
-- **The AMO listing shows each screenshot twice**: it holds ten screenshot entries, the five
-  screenshots and, after each, a duplicate whose image file answers 404 on AMO's servers (checked
-  2026-10-09). Removing the five broken entries is a listing edit.
 - **Brave** installs the extension from the Chrome Web Store with its standard notice that Brave does
   not review extensions; that notice is Brave's for every extension outside its own vetted list.
 - **The Chrome Web Store's 0.1.2 makes links in the pre-D2 shape** (amount and name in the query),
@@ -294,8 +295,8 @@ day). Until every row is filled, metric 1 is not met.
 A 60 fps silent demo of extension 0.1.3 on practice money (Stellar testnet), recorded on 2026-10-09
 with a scripted Playwright capture: an account made in the extension, practice dollars arriving, a
 right-click paste into a chat box, the link itself (no amount, no name), the recipient claiming it in
-a browser that never saw Lumenia (testnet claim
-[`d956546a...681eb67`](https://stellar.expert/explorer/testnet/tx/d956546a50084b9d702759bcfe101fa5163f9da691ae6ac85d045bbaa681eb67)),
+a browser that never saw Lumenia (the link on screen is `778b978f...b84740`; testnet deposit
+[`c2fe32df...b9ca59`](https://stellar.expert/explorer/testnet/tx/c2fe32df12d1e3b26fbcb94ceca780d16952e757bffbbf85e01780eca3b9ca59), claim [`2d7deb6a...5514c8`](https://stellar.expert/explorer/testnet/tx/2d7deb6a3e8e378bcd11a204d03a1580ff0e397eb17717926c47dd41e55514c8)),
 the extension's list turning to Claimed, and the one-time Real money note. Automation cannot open
 Chrome's native context menu, so the right-click step is driven through the extension's own menu
 handler, the code the menu item calls; the menu itself is not on screen. The video is served at
