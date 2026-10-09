@@ -12,13 +12,13 @@ finding.
 
 | Deployment | Money | Who can use it |
 |---|---|---|
-| **Testnet** — `lumenia-sponsor.avakit.workers.dev` + the escrow at `CAMCI5VP…3HP3` (repointed to Circle testnet USDC on 2026-09-06; `CDVZN53V…ST6S` is exit-only) | Free-minted test USDC, no value | Anyone. This is where you should reproduce things. |
-| **Mainnet pilot** — `lumenia-sponsor-mainnet.avakit.workers.dev` + the escrow at `CAC5JYQ2…WGR4` | **Real Circle USDC** | An **owner-approved allowlist only**. Every wallet is admitted by hand; $5 per transfer, $50 per day, a per-wallet budget of 5 value operations, caps fail **closed**. As of 2026-08-28: 74 approved wallets, 69 accounts opened, 53 of them funded, 109 real-money transfers. Re-counted from Horizon on 2026-09-06: 76 accounts opened by the sponsor (72 still open, 51 holding real USDC today), 92 USDC-moving operations attributable to the sponsor between 2026-08-24 and 2026-08-30, about **$4.4 moved in total**, of which $2.76 was 69 person-to-person payments with a **median of $0.002** and a maximum of $1.00; 65 of those 69 landed on 2026-08-24 in a scripted coverage run. The counts are real and small: this is a mechanism proven with real money, not volume. |
-| **Open public mainnet** | — | **Not open.** Raising the caps or dropping the allowlist is gated on a professional audit and the key-custody work listed under *Current security posture*. |
+| **Testnet**: `lumenia-sponsor.avakit.workers.dev` + the escrow at `CAMCI5VP...3HP3` (repointed to Circle testnet USDC on 2026-09-06; `CDVZN53V...ST6S` is exit-only) | Free-minted test USDC, no value | Anyone. This is where you should reproduce things. |
+| **Mainnet pilot**: `lumenia-sponsor-mainnet.avakit.workers.dev` + the escrow at `CAC5JYQ2...WGR4` | **Real Circle USDC** | An **owner-approved allowlist only**. Every wallet is admitted by hand; $5 per transfer, up to $25 a day from one sender and $50 a day across the whole pilot, a per-wallet budget of 5 value operations, escrow caps that fail **closed**. As of 2026-08-28: 74 approved wallets, 69 accounts opened, 53 of them funded, 109 real-money transfers. Re-counted from Horizon on 2026-09-06: 76 accounts opened by the sponsor (72 still open, 51 holding real USDC today), 92 USDC-moving operations attributable to the sponsor between 2026-08-24 and 2026-08-30, about **$4.4 moved in total**, of which $2.76 was 69 person-to-person payments with a **median of $0.002** and a maximum of $1.00; 65 of those 69 landed on 2026-08-24 in a scripted coverage run. The counts are real and small: this is a mechanism proven with real money, not volume. |
+| **Open public mainnet** | - | **Not open.** Dropping the allowlist waits only for a written legal opinion; since 2026-10-08 it is one rehearsed configuration change (`PILOT_MODE`). Raising the caps materially, and renouncing the escrow's upgrade key, wait for a professional security review and a timelock (see *Current security posture*). |
 
 ## Reporting a vulnerability
 
-**Preferred — GitHub's private reporting** (enabled on this repository): the **Security** tab →
+**Preferred: GitHub's private reporting** (enabled on this repository): the **Security** tab ->
 **Report a vulnerability**.
 
 If you cannot use that channel, email **mericcintosunn@gmail.com** with `SECURITY` in the subject.
@@ -32,7 +32,7 @@ Please do **not** open a public issue for a vulnerability.
 
 **Testing guidance.** Reproduce against **testnet**, which exists for exactly this and where the
 same code paths run. Do **not** test against the mainnet deployment, and never touch funds or
-accounts that are not yours — if a finding only manifests on mainnet, describe it and we will
+accounts that are not yours. If a finding only manifests on mainnet, describe it and we will
 reproduce it ourselves rather than asking you to move real money.
 
 **Response targets:** acknowledgement within 3 business days; an initial assessment (severity
@@ -47,28 +47,29 @@ the contract audit lands.
 
 | In scope | Notes |
 |---|---|
-| **`contracts/lumen-drop` (the LumenDrop Soroban escrow)** — mainnet `CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4`, testnet `CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S` | **Explicitly in scope, and the highest-value target: it custodies escrowed USDC, including real USDC on mainnet.** The superseded testnet ids `CDYEDHBP…A2RF` and `CAKEJAGC…DIAB` are also in scope — they still hold exit-only drops. |
-| `apps/sponsor` (the relayer / fee sponsor) — **both** the testnet and the mainnet Worker | Cloudflare Worker; anti-drain validator, canary caps, pilot allowlist, rate-limit, channel pool, signer seam. |
+| **`contracts/lumen-drop` (the LumenDrop Soroban escrow)**: mainnet `CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4`, testnet `CAMCI5VPRLQUL6H4QKLZ6X7ASLVCEYBYWS7N3QG7JVOA25HCY2TN3HP3` | **Explicitly in scope, and the highest-value target: it custodies escrowed USDC, including real USDC on mainnet.** The superseded testnet ids `CDVZN53V...ST6S`, `CDYEDHBP...A2RF` and `CAKEJAGC...DIAB` are also in scope: they still hold exit-only drops. |
+| `apps/sponsor` (the relayer / fee sponsor), **both** the testnet and the mainnet Worker | Cloudflare Worker; anti-drain validator, canary caps, fee budget, pilot allowlist, rate-limit, channel pool, signer seam. |
 | `apps/web` claim + send + request + recovery flows | Especially anything that could leak a link secret (it lives only in the URL `#fragment`) or the encrypted recovery box. |
+| `apps/extension` (the sender-side browser extension) | Anything that could leak the account key or a link secret, or make the extension move money the person did not ask it to. |
 
 Out of scope: findings that require a compromised user device; social engineering; volumetric
 DoS against third-party infrastructure (Horizon, RPC providers, Cloudflare); missing best
 practices with no demonstrated impact; and anything about the testnet USDC issuer, which is a
-throwaway test asset.
+test asset with no value.
 
 ## Severity scale
 
 We use a standard four-level scale, judged by impact on user funds first. On the mainnet pilot
 these levels describe **real dollars**, bounded by the caps above.
 
-- **Critical** — direct theft or permanent loss of escrowed funds; forging a claim to an
+- **Critical**: direct theft or permanent loss of escrowed funds; forging a claim to an
   attacker-chosen payout; any path that lets a non-sender move another user's escrow.
-- **High** — funds temporarily unrecoverable (stranded escrow); bypass of the sender-reclaim or
+- **High**: funds temporarily unrecoverable (stranded escrow); bypass of the sender-reclaim or
   expiry gating; bypass of the pilot allowlist or the canary caps; sponsor key exposure or
   unbounded sponsor spend.
-- **Medium** — bounded fee-griefing; rate-limit or anti-drain bypass without fund loss; link
+- **Medium**: bounded fee-griefing; rate-limit or anti-drain bypass without fund loss; link
   secret exposure requiring an unusual precondition.
-- **Low** — informational, defense-in-depth, and hardening findings.
+- **Low**: informational, defense-in-depth, and hardening findings.
 
 ## Current security posture (stated honestly)
 
@@ -91,11 +92,14 @@ these levels describe **real dollars**, bounded by the caps above.
   audit** by shipping a final wasm with the upgrade entrypoint removed. The honest residual: an
   owner who shipped a malicious wasm would be the one way around that, so the mainnet owner has
   been a **2-of-3 multisig** since 2026-09-18, separate from the always-online sponsor key since
-  2026-08-08. What that does not mean, stated plainly: all three keys are held by the
-  founder today, one of them still has to move off the laptop, and there is **no timelock**, so an
-  owner upgrade is instant. A timelock in front of the multisig is the next governance step.
+  2026-08-08. What that does not mean, stated plainly: one person holds all three keys today, and
+  there is **no timelock**, so an owner upgrade is instant. A timelock in front of the multisig is
+  the next governance step.
 - The sponsor key is still an **environment hot key**. An AWS-KMS Ed25519 signer is code-complete
-  behind the same interface (13/13 offline tests) but the live AWS key is **not provisioned**.
+  behind the same interface (142/142 offline tests at `24d0f4e`), and since 2026-10-08 the sponsor
+  account is configured apart from its signer, so the cutover adds the KMS key to the existing
+  account with one SetOptions. The live AWS key is **not provisioned** yet; until `/health` on the
+  mainnet Worker reports `"kind": "kms"`, we do not call the sponsor KMS-backed.
 - Pausing can only stop NEW escrow. Claims and reclaims are never pausable, so escrowed funds
   can always exit.
 - The link secret that authorizes a claim lives only in the URL fragment and is never sent to
@@ -103,25 +107,58 @@ these levels describe **real dollars**, bounded by the caps above.
 
 ### Operational controls that are live today
 
+The controls marked "since 2026-10-08" came with the open-mainnet hardening of SOW 2 (D3), deployed
+to both Workers that day; each one, with the test that holds it, is in
+[`evidence/SOW2_READINESS_REPORT.md`](evidence/SOW2_READINESS_REPORT.md) section D3.
+
 - **Canary caps.** A hard per-drop and rolling-UTC-day ceiling on the escrow the sponsor will
   facilitate, enforced on both escrow-creating paths. The per-drop cap needs no network call, so
   an outage cannot disable it; the per-day total uses an atomic reserve-then-check so concurrent
-  requests cannot slip past it. Amounts come from the transaction XDR — what the ledger will
-  actually execute — not from a client-supplied field. On a store outage the caps fail open by
+  requests cannot slip past it. Amounts come from the transaction XDR, what the ledger will
+  actually execute, not from a client-supplied field. On a store outage the caps fail open by
   default; **the mainnet Worker runs `CAPS_FAIL_CLOSED=1`**, so there it creates no escrow at all
   rather than falling back to the per-drop cap alone. Live values: testnet 100 / 1000 USDC,
   mainnet **5 / 50**.
+- **Per-sender day cap** (since 2026-10-08). One sender may use at most 25 USDC of the mainnet
+  day's 50 (`MAX_DAY_USDC_PER_SENDER`), reserved and released with the day counter, so one wallet
+  or a looping client cannot close the day for everyone.
 - **Pilot allowlist.** On mainnet only owner-approved wallets may move value, each with a hard
   budget of ledger-confirmed value operations. It is fail-closed: an allowlist that cannot be
   read admits nobody.
 - **Onboarding budget.** A per-UTC-day ceiling on how many accounts the sponsor will create, so
-  the one value route with no per-account limit cannot drain the sponsor's reserve.
-- **Kill-switch.** Every value-moving sponsor endpoint can be halted at once.
+  the one value route with no per-account limit cannot drain the sponsor's reserve: on mainnet 60
+  a day and 8 per connection (since 2026-10-08), so two addresses cannot spend a day, and an honest
+  retry for the same recipient is free. If the counter store cannot be read, it falls back to a
+  per-isolate counter instead of refusing, so an outage never strands a recipient; across isolates
+  that is a soft bound.
+- **Per-day sponsor fee budget** (since 2026-10-08). Every route the sponsor signs counts the fee it
+  bids before signing, and past `MAX_DAY_FEE_XLM` (15 XLM on mainnet) refuses until the next UTC day;
+  a transaction that never reached a ledger gives its bid back, an included one counts the fee the
+  ledger charged, and an undecided one keeps its whole bid. It degrades to a per-isolate counter on a
+  store error, like the onboarding budget.
+- **Server-side simulation and fee bounds on the Soroban relays** (since 2026-10-08). A deposit or a
+  take-back is simulated before the sponsor signs, and refused when the simulation fails or when its
+  declared fee is more than the simulation needs plus a fixed margin; a deposit is simulated before
+  the caps and the fee budget, and must move the sender's own USDC. Nothing is spent on a refusal,
+  and a fee-bump bids at most twice the inner transaction's fee.
+- **Kill-switch.** Every value-moving sponsor endpoint can be halted at once, by environment
+  (`SPONSOR_HALT=1`, needs no store) or by a store key. A store that cannot be read counts as not
+  halted, so a store outage never strands recipients.
 - **Watchdog.** A cron job runs every 15 minutes on both sponsor Workers and alerts on: spendable
   sponsor capacity below a floor, any operation *sourced by* the sponsor that it should never
-  source (it should only ever create accounts and pay fees), and escrow governance activity —
+  source (it should only ever create accounts and pay fees), and escrow governance activity:
   pause/unpause/ownership events plus the deployed wasm hash, checked directly because an
   `upgrade` emits no event. A check that fails to run pages rather than passing quietly.
+- **Automatic halt on the watchdog's two tripwires** (since 2026-10-08). A sponsor-sourced
+  forbidden operation (the signature of a stolen key) or a changed escrow wasm halts the sponsor by
+  itself, for that network, with no person in the loop; everything else (a low float, a capacity
+  floor, a state-expiry warning, a governance event, a failed check) pages a person instead,
+  because a halt also stops the exit routes.
+- **Heartbeat stamp and a dead-man workflow** (since 2026-10-08). Every watchdog run writes a stamp,
+  and a second one only when every check completed; `/health` reports both. A GitHub workflow
+  (`.github/workflows/watchdog-heartbeat.yml`) reads both Workers' `/health` every 30 minutes from
+  outside Cloudflare and opens one issue when a stamp is older than 45 minutes, the full-run stamp
+  is older than 3 hours, or the mainnet Worker cannot send alerts.
 - **Migration safety net.** A drop can only be released by the contract holding it, so the
   sponsor and the web app read and exit superseded escrow contracts while new escrow only ever
   enters the current one. A contract repoint therefore cannot strand a link that was already sent.
