@@ -12,15 +12,15 @@ owner's, every item of it:**
 - **the KMS cutover on both Workers** (D3.6, ops note section 2.2: `ops/kms/cloudshell-setup.sh` in
   AWS CloudShell, then `ops/kms/cutover.sh` on each network). Until the mainnet Worker signs with
   KMS, metric 3 is not met.
-- **extension 0.1.3 in both stores** (D1, Published builds): built on 2026-10-09 and submitted to
-  addons.mozilla.org the same day (listed, in review); the Chrome Web Store upload is the owner's, as
-  is the privacy-policy field of the AMO listing (D1.4). Each store reviews the package before it
-  goes live.
+- **extension 0.1.3 in the Chrome Web Store** (D1, Published builds): built on 2026-10-09 and
+  public on addons.mozilla.org since 08:36 UTC that day; the Chrome Web Store upload is the owner's,
+  and that store reviews the package before it goes live.
 - **the Workers plan check** (D3.8): which Cloudflare plan the two Workers run on is not recorded.
 - **the firm for the written legal opinion** (D3.8 a): choosing the firm the request goes to.
 
-Everything else is done: D1's published builds, checklist, tests, testnet proof, the 0.1.3 build and
-its practice-money demo video; D2's code, live since 2026-10-07, its tests and the testnet commitment
+Everything else is done: D1's published builds (0.1.3 public on addons.mozilla.org since 2026-10-09,
+with the listing's privacy policy), checklist, tests, testnet proof in Chrome and in Firefox, the
+0.1.3 build and its practice-money demo video; D2's code, live since 2026-10-07, its tests and the testnet commitment
 spike with the Groth16 measurement; D3's hardening, green in CI and deployed on both Workers on
 2026-10-08, with the live adversarial runs, the first watchdog stamps and the heartbeat's first runs.
 On 2026-10-09 the release merged that day went live on the web and on both Workers (D3.9), the
@@ -45,8 +45,9 @@ that only the Worker's own log resolves.
 sender's own account and shows whether it was claimed. It reuses the website's sender code
 (`apps/web/lib`); the recipient side does not change. Published as version 0.1.2 on the Chrome Web
 Store and on addons.mozilla.org, both built from commit `062725f`. The next build, 0.1.3, was built
-on 2026-10-09 from the merged tree (commit `00aa0a5`) and submitted to addons.mozilla.org the same
-day (in review); its Chrome Web Store upload is the owner's.
+on 2026-10-09 from the merged tree (commit `00aa0a5`), submitted to addons.mozilla.org the same
+day and public there since 08:36 UTC; its Chrome Web Store upload is the owner's, so that store
+still serves 0.1.2.
 
 ### Published builds
 
@@ -55,7 +56,8 @@ day (in review); its Chrome Web Store upload is the owner's.
 | Chrome Web Store, public: https://chromewebstore.google.com/detail/lumenia-send-dollars-by-l/ccdnjnckaldkmjnlpgpmdmnbajmakhmn | 0.1.2 | 2026-10-06 (the store's "published" email, forwarded by the owner) | [`062725f`](https://github.com/getlumenia/lumenia/tree/062725f) | the package as the store served it on 2026-10-09: sha256 `0a62ccc9736aa6b2c40b0f2895ee099c184f9f61855b364f26f099bad43e85a7` |
 | addons.mozilla.org, public: https://addons.mozilla.org/en-US/firefox/addon/lumenia/ | 0.1.2 | 2026-10-07 (approved 14:10 UTC; the file was uploaded on 2026-10-04) | [`062725f`](https://github.com/getlumenia/lumenia/tree/062725f) | the AMO file, sha256 `988e3c69014d041b79288b06af5c56e24ede379a221a68d6753d7a12b15103a0` (AMO's public API gives the same hash) |
 | getlumenia.com/extension/lumenia-firefox.xpi, self-hosted, AMO-signed (unlisted) | 0.1.1 | 2026-10-04 | the signed file is in the repository, `apps/web/public/extension/lumenia-firefox.xpi` (added in `cea442d`); its code is the published 0.1.2's apart from the version string | sha256 `792667fbce088a10fe5e71287f27fc305dac49684486a53eda1e081764e2039e` |
-| Both stores, the next build (private link shape, the D3 client changes) | 0.1.3 | addons.mozilla.org: submitted 2026-10-09 (listed, validation passed, source uploaded; version 6557822), in review. Chrome Web Store: _pending: the owner's dashboard upload_ | commit `00aa0a5`, packed as `lumenia-extension-sources-0.1.3.zip`, sha256 `a4bbcb530ea164c6e8a374fb06626d51e98296d59a5f282a69f58c6cbea627b5` | `lumenia-chrome-0.1.3.zip` sha256 `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73`; `lumenia-firefox-0.1.3.zip` sha256 `7ddb559764c7c81aa151bcc06a65fb33cc879077de825ecca6246acf2547260d` |
+| addons.mozilla.org, public: https://addons.mozilla.org/en-US/firefox/addon/lumenia/ | 0.1.3 | 2026-10-09 (uploaded 08:30:48 UTC, reviewed 08:36:17 UTC; AMO version 6557822) | commit `00aa0a5`, packed as `lumenia-extension-sources-0.1.3.zip`, sha256 `a4bbcb530ea164c6e8a374fb06626d51e98296d59a5f282a69f58c6cbea627b5` | the signed file AMO serves, sha256 `17b2da7ee288d3c1a5570634bac5a466215c7447b3cabb0acbb2fdeb7ce07c3c` (AMO's public API), signed from the `dist/firefox` folder of `lumenia-firefox-0.1.3.zip` (sha256 `7ddb559764c7c81aa151bcc06a65fb33cc879077de825ecca6246acf2547260d`) |
+| Chrome Web Store, the next build | 0.1.3 | _pending: the owner's dashboard upload, then the store's review_ | commit `00aa0a5` (the same sources archive) | `lumenia-chrome-0.1.3.zip` sha256 `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73` |
 
 Both store packages hold the same `background.js` (sha256 `6999fb8eebd3a97302ea8eb3b63bc6a66ccb467370290c5b9e02b85bbe901024`)
 and `popup.js` (sha256 `e26584432d56755dc601f5bab80d7d744dd5bbc80a93a48771747d5759661623`).
@@ -79,6 +81,12 @@ and up to $25 a day from you ($50 a day across the whole pilot)"; a take-back an
 until the escrow confirms it; and the Links screen says of an unclaimed link "Nobody claimed it. Take
 it back now: until you do, whoever has the link can still claim it." (D1.4). When a store serves
 0.1.3, the hash of the package it serves goes into this table next to the one built here.
+
+The AMO listing links the privacy policy since 2026-10-09: its privacy-policy field holds a short
+summary of the extension's section of the privacy page and a link to
+https://getlumenia.com/privacy#extension, set through AMO's API (`PATCH
+/api/v5/addons/addon/lumenia/eula_policy/`), and AMO's public API answers `has_privacy_policy: true`.
+The Chrome Web Store listing links https://getlumenia.com/privacy.
 
 ### D1.1 Security checklist
 
@@ -203,29 +211,51 @@ and a fresh browser profile restoring the account to the same address (balance 0
 | The first link | [`802cb10d...3bc2f1`](https://stellar.expert/explorer/testnet/tx/802cb10d2f31955267c7dfd21426b5c5f5b06e45cbc75acdc16a2029f13bc2f1) | The new account's call into the escrow, fee paid by the sponsor. |
 | Claimed on getlumenia.com | [`f9d3b9f0...42860c`](https://stellar.expert/explorer/testnet/tx/f9d3b9f0cf2791c53e242d8fa9f591df18ae15369e88a05e33374e167642860c) | The claim, fee paid by the sponsor. |
 
+**The first run in Firefox (2026-10-09, 09:47 to 09:48 UTC).** The 0.1.3 Firefox package
+(`lumenia-firefox-0.1.3.zip`, the build behind the AMO upload, unsigned) installed as a temporary
+add-on in Firefox 155.0 (the Nightly build Playwright 1.62 ships, headless) and driven over
+Firefox's own Marionette protocol, the one geckodriver speaks: Get started, agree, "No, I'm new
+here", a password, $1.00 in practice dollars, a $0.25 link, the link claimed on getlumenia.com in a
+separate Chromium with no extension, and the Links screen reading Claimed
+([account made](firefox-0.1.3/account-created.png), [Links](firefox-0.1.3/links-claimed.png)). The
+link had the 0.1.3 shape, `/v2/c/<link id>?src=ext#<key>`: no amount and no name.
+
+| Step | Transaction |
+|---|---|
+| The account `GB7PABVI...` opened by the sponsor (through one of its channel accounts), 0 XLM of its own | [`f2843594...d7ef8f`](https://stellar.expert/explorer/testnet/tx/f284359478cec95e64206e54a6f8c1c2ec2035dcf9741e9ef05f582c06d7ef8f) |
+| Practice dollars from the faucet | [`b3c6bede...25e0ce`](https://stellar.expert/explorer/testnet/tx/b3c6bedea20f28b46bc0a53f36a4843d683cf5703c0c1a151450dff6a625e0ce) |
+| The $0.25 link, fee paid by the sponsor | [`96cdbc92...761978`](https://stellar.expert/explorer/testnet/tx/96cdbc927dca9a46b06c71bfa0e902f05bd334a99c73ffa5925e4521f0761978) |
+| Claimed on getlumenia.com, no extension | [`257c83b3...9d56c3`](https://stellar.expert/explorer/testnet/tx/257c83b356ae39a135559aed91f75078f0239225b192489dc96b85befe9d56c3) |
+
+All four were read back from `horizon-testnet.stellar.org` as successful (ledgers 5,103,133 to
+5,103,138). What this run does not cover is listed in D1.4.
+
 ### D1.4 Not verified yet, stated plainly
 
-- **No one has run the extension in Firefox yet.** The Firefox build passes `web-ext lint`, AMO
-  signed the unlisted 0.1.0 and 0.1.1 on 2026-10-04, and AMO's review approved the listed 0.1.2,
-  public since 2026-10-07 (see Published builds). That first run in Firefox is the owner's.
-- **The AMO listing does not link the privacy policy yet** (AMO's public API answered
-  `has_privacy_policy: false` on 2026-10-09); the Chrome Web Store listing links
-  getlumenia.com/privacy. Linking https://getlumenia.com/privacy#extension from the AMO listing's
-  privacy-policy field is the owner's step, still open after the 0.1.3 submission of 2026-10-09.
+- **Firefox as a person installs it.** The Firefox run in D1.3 used a temporary add-on in a headless
+  Nightly build and opened the popup page in a tab (Firefox lets only the browser's own side open an
+  extension page in a tab). Not seen yet: the install from the AMO page on release Firefox, with its
+  prompt and whether the six hosts are granted at install (a temporary add-on gets them without
+  asking; the extension's "Allow Lumenia to reach its servers" screen is there for a person who
+  withholds them), the toolbar popup, the right-click item, and the AMO-signed file itself.
+- **The AMO listing shows each screenshot twice**: it holds ten screenshot entries, the five
+  screenshots and, after each, a duplicate whose image file answers 404 on AMO's servers (checked
+  2026-10-09). Removing the five broken entries is a listing edit.
 - **Brave** installs the extension from the Chrome Web Store with its standard notice that Brave does
   not review extensions; that notice is Brave's for every extension outside its own vetted list.
-- **The published 0.1.2 makes links in the pre-D2 shape** (amount and name in the query), and it has
-  neither of the two rules added after it (see D1.1). The 0.1.3 build of 2026-10-09 has the private
-  shape and both rules; they reach users once each store has reviewed it (submitted to
-  addons.mozilla.org on 2026-10-09; the Chrome Web Store upload is the owner's; see the D2 section
-  and D3.8).
+- **The Chrome Web Store's 0.1.2 makes links in the pre-D2 shape** (amount and name in the query),
+  and it has neither of the two rules added after it (see D1.1). The 0.1.3 build of 2026-10-09 has
+  the private shape and both rules; addons.mozilla.org serves it since 2026-10-09, and it reaches
+  Chrome users once the Chrome Web Store has reviewed it (the upload is the owner's; see the D2
+  section and D3.8).
 - **No real-money send from the extension yet, so no recording of one.** Metric 1 (D1.5) needs a
   mainnet link made from the published extension and claimed; that send and its recording are the
   owner's, from an approved pilot wallet.
 - **Paste on the real chat sites is untested**: it was tested on a local page and on the public
   Lexical playground, not on WhatsApp Web, Telegram Web or Gmail themselves.
-- **Only Chromium was driven**: what a browser does to `activeTab` when the page navigates was not
-  tested, and the keep-alive timing is measured on Chrome 153 only.
+- **Only Chromium was driven through the paste path**: what a browser does to `activeTab` when the
+  page navigates was not tested, and the keep-alive timing is measured on Chrome 153 only. The
+  Firefox run (D1.3) covered the popup's own flows, not the right-click item.
 - **The escrow contract has not been reviewed by an outside security firm**, and its owner (on
   real money, a 2-of-3 multisig whose three keys one person holds today) can upgrade it. Its
   current code gives the owner no way to move escrowed money.
@@ -386,10 +416,9 @@ chosen (the defaults). Until every row is filled, metric 2 is not met.
 ### D2.6 Not verified yet, stated plainly
 
 - The mainnet run above is not done yet; until it is, metric 2 is not met.
-- The extension's published packages (Chrome Web Store 0.1.2 and AMO 0.1.2, both built from
-  `062725f`, and the self-hosted 0.1.1) were built before D2 and make links in the old shape until
-  0.1.3 replaces them: built on 2026-10-09 and submitted to addons.mozilla.org that day (in review);
-  its Chrome Web Store upload is the owner's.
+- The Chrome Web Store's package (0.1.2, built from `062725f`) and the self-hosted 0.1.1 were built
+  before D2 and make links in the old shape until 0.1.3 replaces them. addons.mozilla.org serves
+  0.1.3 since 2026-10-09 (08:36 UTC); the Chrome Web Store upload is the owner's.
 - Previews were checked with the chat apps' user agents, not inside every chat app; the cards on a
   real phone are the owner's screenshots.
 - A v1 practice link's key (from /try or /event) is also the key of the account it opens. Until
@@ -1061,11 +1090,11 @@ the professional review the gate for these two steps, not for the opening:
   scheduled run in its first 12 slots, D3.5) and disables a public repository's scheduled workflows
   after 60 days without activity. Its alert path (opening an issue) ran once on purpose on
   2026-10-09: the `test_alert` drill opened issue #46 and the next run closed it (D3.5).
-- **The published extension packages** (Chrome Web Store 0.1.2, AMO 0.1.2, the self-hosted 0.1.1) read
-  a 202 answer to a take-back from the D3 sponsor as landed, and have no backup rule for real money
+- **The extension packages before 0.1.3** (Chrome Web Store 0.1.2, the self-hosted 0.1.1) read a
+  202 answer to a take-back from the D3 sponsor as landed, and have no backup rule for real money
   (D1.1). The source keeps a 202 open and has the rule, and so does the 0.1.3 build of 2026-10-09,
-  submitted to addons.mozilla.org that day (in review); its Chrome Web Store upload is the owner's,
-  and the flip waits until it is live in both (ops note section 1.2).
+  public on addons.mozilla.org since that day; its Chrome Web Store upload is the owner's, and the
+  flip waits until it is live in both (ops note section 1.2).
 - **A direct payment's "do not pay again" lives in the page.** After a 202 on a payment to a known
   address the page says not to pay again and offers no button, and re-checks the ledger; a reload,
   or reopening the request link, loses that state and offers Pay again.

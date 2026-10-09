@@ -22,7 +22,8 @@ differently from this source.
 
 | Version | Where | Public since | Built from | Package sha256 | The links it makes |
 |---|---|---|---|---|---|
-| 0.1.3 | addons.mozilla.org (listed); Chrome Web Store next | AMO: submitted 2026-10-09, in review; Chrome Web Store: not uploaded yet | commit 00aa0a5 | recorded when each store publishes it | Private: `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<name>][&p=1]`. No amount anywhere in the link, and a name only when the sender types one, after the `#` |
+| 0.1.3 | addons.mozilla.org (listed) | 2026-10-09 | commit `00aa0a5` | signed file AMO serves: `17b2da7ee288d3c1a5570634bac5a466215c7447b3cabb0acbb2fdeb7ce07c3c` | Private: `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<name>][&p=1]`. No amount anywhere in the link, and a name only when the sender types one, after the `#` |
+| 0.1.3 | Chrome Web Store | not uploaded yet | commit `00aa0a5` | the package as built: `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73`; the served CRX's hash is recorded once the store publishes it | Private, as above |
 | 0.1.2 | Chrome Web Store | 2026-10-06 | commit `062725f` | CRX as served on 2026-10-09: `0a62ccc9736aa6b2c40b0f2895ee099c184f9f61855b364f26f099bad43e85a7` | Pre-D2: `/v2/c/<id>?a=<amount>&s=<name>[&p=1][&n=public]&src=ext#<key>`, the amount and the name in the query (the name is "Someone" when none was typed) |
 | 0.1.2 | addons.mozilla.org (listed) | 2026-10-07 | commit `062725f` | signed file AMO serves: `988e3c69014d041b79288b06af5c56e24ede379a221a68d6753d7a12b15103a0` | Pre-D2, as above |
 | 0.1.1 | Firefox, unlisted (signed by Mozilla), self-hosted at getlumenia.com/extension/lumenia-firefox.xpi | 2026-10-04 | commit `3d80c78`, the same code as 0.1.2 apart from its version string | `792667fbce088a10fe5e71287f27fc305dac49684486a53eda1e081764e2039e` | Pre-D2, as above |

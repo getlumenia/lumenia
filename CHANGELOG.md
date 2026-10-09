@@ -165,8 +165,8 @@ see the D3 entry below) and ends on version `32067caf`, the same release in its 
 - **0.1.2** (2026-10-04): the listing for a public addons.mozilla.org page, the same code as
   0.1.1. Public on the Chrome Web Store by 2026-10-06 and on addons.mozilla.org since
   2026-10-07. Its links still carry the amount and the sender's name in the query.
-- **0.1.3** (built 2026-10-09 from commit `00aa0a5`; **submitted to addons.mozilla.org on 2026-10-09**, in
-  review; the Chrome Web Store upload is the owner's): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
+- **0.1.3** (built 2026-10-09 from commit `00aa0a5`; **public on addons.mozilla.org since 2026-10-09**,
+  its listing's privacy-policy field filled the same day; the Chrome Web Store upload is the owner's): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
   no amount anywhere and no name unless one is typed; the From field starts empty, and the name
   0.1.2 saved is deleted at startup; the one-time real-money note "Real money on Lumenia is an
   early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so
@@ -181,7 +181,9 @@ see the D3 entry below) and ends on version `32067caf`, the same release in its 
   `lumenia-extension-sources-0.1.3.zip` sha256
   `a4bbcb530ea164c6e8a374fb06626d51e98296d59a5f282a69f58c6cbea627b5`; a clean-room rebuild from
   the sources archive is byte-identical to `dist/chrome` and `dist/firefox` (the zips differ only
-  in file times). It reaches each store after that store's review.
+  in file times). It reaches each store after that store's review. On 2026-10-09 the Firefox
+  package ran end to end in Firefox 155 on practice money: an account made, a $0.25 link claimed
+  on getlumenia.com in another browser, the Links screen reading Claimed (readiness report D1.3).
 
 ### Removed (2026-10-03)
 
