@@ -271,8 +271,8 @@ a browser that never saw Lumenia (testnet claim
 [`d956546a...681eb67`](https://stellar.expert/explorer/testnet/tx/d956546a50084b9d702759bcfe101fa5163f9da691ae6ac85d045bbaa681eb67)),
 the extension's list turning to Claimed, and the one-time Real money note. Automation cannot open
 Chrome's native context menu, so the right-click step is driven through the extension's own menu
-handler, the code the menu item calls; the menu itself is not on screen. The video will be served at
-https://getlumenia.com/media/lumenia-extension-demo.mp4 after the owner's next web deploy, not before.
+handler, the code the menu item calls; the menu itself is not on screen. The video is served at
+https://getlumenia.com/media/lumenia-extension-demo.mp4 since the web deploy of `00aa0a5` on 2026-10-09.
 It is not the metric-1 recording: that one is a real-money run, recorded
 continuously (D1.5).
 
@@ -345,7 +345,7 @@ The CI suites above ran green on `1bc2049`
   ledger shows, forever; what our sponsor sees; fresh accounts; what we never store; the browser
   extension; our website), linked from the site footer, /how-it-works, /terms and /extension. It
   carries its own "Last updated" date: 7 October 2026 at `24d0f4e`, and 9 October 2026 on the merged
-  tree, live with the owner's next web deploy. The 9 October text adds what the sponsor keeps for 48
+  tree, live since the web deploy of `00aa0a5` on 2026-10-09. The 9 October text adds what the sponsor keeps for 48
   hours (D3), the lookups a link id allows (leak audit row 22), log lines kept as one line with
   addresses cut to four characters and no amounts, the list of sent links living in the sending
   browser, and that request links are not private by design.
@@ -762,6 +762,8 @@ extension's `test:router` and `test:send`, and has not been driven in a browser 
 sponsor.
 
 ### D3.5 What `/health` says now
+
+The alert path, proven 2026-10-09: the heartbeat drill run [37905050169](https://github.com/getlumenia/lumenia/actions/runs/37905050169) opened [issue #46](https://github.com/getlumenia/lumenia/issues/46) (labelled `watchdog-heartbeat`), and the next normal run, [37905107528](https://github.com/getlumenia/lumenia/actions/runs/37905107528), closed it at 08:28:08 UTC.
 
 Read from the LIVE mainnet Worker at 18:02 UTC on 2026-10-08, after its deploy and its first
 watchdog run (18:00:36 UTC, a full run, nothing halted). The signer is still the environment key

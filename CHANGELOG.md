@@ -18,11 +18,12 @@ Everything since 0.2.1; nothing has been tagged since. The Instawards follow-on 
 2026-09-17 to 2026-10-16) is grouped by deliverable and dated, newest first. Its evidence,
 metric by metric, is in [EVIDENCE.md](EVIDENCE.md).
 
-### 2026-10-09: sponsor and web fixes (merged, deploy pending)
+### 2026-10-09: sponsor and web fixes (web live; Worker deploys pending)
 
 Merged on 2026-10-09 and held by the offline gate on the merged tree (40 suites / 4,388
-assertions, all green). Not in production yet: the web goes live with its next deploy, and each
-sponsor Worker changes only with its own next deploy; all three deploys are the owner's.
+assertions, all green). The web is live since 2026-10-09 (commit `00aa0a5`, CI run 37904651201 green; the live
+claim, private-preview and send checks passed against getlumenia.com). Each sponsor Worker changes
+only with its own next deploy, which is the owner's.
 
 #### Changed (sponsor)
 
@@ -63,7 +64,7 @@ sponsor Worker changes only with its own next deploy; all three deploys are the 
   both /pilot states; take-back copy everywhere now says a take-back is never automatic.
 - **/extension** reads `NEXT_PUBLIC_EXTENSION_CHROME_URL` and `NEXT_PUBLIC_EXTENSION_FIREFOX_URL`
   (set in Vercel production on 2026-10-09 to the Chrome Web Store and addons.mozilla.org listings;
-  live after the next web deploy). `NEXT_PUBLIC_REAL_MONEY_OPEN` (default off) retires the waitlist
+  live since 2026-10-09). `NEXT_PUBLIC_REAL_MONEY_OPEN` (default off) retires the waitlist
   calls to action at the opening flip.
 - **A lost Horizon reply no longer leaves a claim waiting.** The browser sends the sponsored
   onboarding to Horizon itself (the v1 claim, the v2 claim's new account, `prepareAccount`), and
