@@ -1315,7 +1315,12 @@ async function main() {
       Operation.accountMerge({ destination: home.publicKey(), source: throwaway.publicKey() }),
     ]).toXDR();
     const zero = await outcome(() => sweepHandler(horizonAnswering(rejected(400, result("txFailed", 400))), config, realSigner, { xdr: zeroSweep, throwawayPublicKey: throwaway.publicKey(), homePublicKey: home.publicKey(), amount: "0" }));
-    check("a sweep declaring a zero amount is refused before any charge", /amount 0.0000001 != expected 0|must be positive/.test(zero) && !selfKv.store.has(todayFeeKey), zero);
+    // The reason names the rule, never the amounts (they reach the mainnet error log: lib/anti-drain.ts).
+    check(
+      "a sweep declaring a zero amount is refused before any charge",
+      /sweep payment amount != the expected amount|must be positive/.test(zero) && !zero.includes("0.0000001") && !selfKv.store.has(todayFeeKey),
+      zero,
+    );
   }
   {
     /* A CLASSIC inner that declares Soroban resources: the SDK adds any declared fee to the fee-bump

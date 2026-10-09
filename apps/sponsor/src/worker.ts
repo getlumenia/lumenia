@@ -22,8 +22,9 @@ import { feebumpHandler } from "./lib/feebump.js";
 import { sendLinkHandler } from "./lib/send.js";
 import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
-import { relayClaimHandler, relayDepositHandler, relayReclaimHandler, isRelayBusy } from "./lib/soroban-relay.js";
+import { relayClaimHandler, relayDepositHandler, relayReclaimHandler, isRelayBusy, oneLogLine } from "./lib/soroban-relay.js";
 import { relayCctpHandler } from "./lib/cctp-relay.js";
+import { withSubrequestMeter } from "./lib/subrequests.js";
 import { faucetHandler } from "./lib/faucet.js";
 import { demoLinkHandler } from "./lib/demo-link.js";
 import { takeDemoLink, refillDemoPool } from "./lib/demo-pool.js";
@@ -285,7 +286,26 @@ export function resetHealthCache(): void {
   healthCache = null;
 }
 
-export default {
+/**
+ * Which deployed version is answering, from Cloudflare's version metadata binding (wrangler.toml,
+ * `[version_metadata]`, on both Workers): the version id, its tag and when it was created. It ties
+ * /health to a version an operator can match against `wrangler deployments list` with nothing to
+ * pass on each deploy. Undefined without the binding (a local run, a suite): /health then omits it.
+ */
+function deployedVersion(env: Env): { id: string | null; tag: string | null; timestamp: string | null } | undefined {
+  const meta = env.CF_VERSION_METADATA;
+  if (!meta || typeof meta !== "object") return undefined;
+  const field = (k: "id" | "tag" | "timestamp"): string | null => {
+    const v = (meta as Record<string, unknown>)[k];
+    return typeof v === "string" && v !== "" ? v : null;
+  };
+  return { id: field("id"), tag: field("tag"), timestamp: field("timestamp") };
+}
+
+/** The longest reason the mainnet error log keeps (one line; see the catch in `fetch`). */
+const LOG_REASON_MAX = 300;
+
+const handlers = {
   async fetch(
     request: Request,
     env: Env,
@@ -341,11 +361,14 @@ export default {
       if (method === "GET" && url === "/health") {
         const now = Date.now();
         const [halt, { stamps, fees, counters }] = await Promise.all([haltStatus(now), healthReadings(config.network, now)]);
+        const version = deployedVersion(env);
         return json(200, {
           // False only while the signer cannot be built (a KMS outage): every value route then fails.
           ok: !svc.degraded,
           service: "lumenia-sponsor",
           network: config.network,
+          // The deployed version (id, tag, created at), present when the Worker has the binding.
+          ...(version ? { version } : {}),
           sponsorPublicKey: config.sponsorAccountId,
           account: config.sponsorAccountId,
           // Where the account address came from: an explicit SPONSOR_ACCOUNT_ID (the KMS split), or
@@ -1067,7 +1090,12 @@ export default {
       if (isRelayBusy(e)) return json(503, { error: message });
       if (process.env.STELLAR_NETWORK === "mainnet") {
         const ref = crypto.randomUUID().slice(0, 8);
-        console.error(`[error ${ref}] ${new URL(request.url).pathname}: ${message}`);
+        /* The log keeps the reason, as ONE line: every full address in it cut to four characters,
+           nothing past the first line or LOG_REASON_MAX. The refusals that could carry an address,
+           a link id or an amount are trimmed where they are thrown (a simulation's event log in
+           lib/soroban-relay.ts and lib/cctp-relay.ts, the payout and sweep reasons in
+           lib/anti-drain.ts, Horizon's envelope in lib/stellar.ts); this is the belt behind them. */
+        console.error(`[error ${ref}] ${new URL(request.url).pathname}: ${oneLogLine(message, LOG_REASON_MAX)}`);
         return json(400, { error: "request failed", ref });
       }
       return json(400, { error: message });
@@ -1094,4 +1122,16 @@ export default {
     ctx.waitUntil(run);
     await run;
   },
+};
+
+export default {
+  /**
+   * Every request runs under the subrequest meter (lib/subrequests.ts): each fetch it makes is
+   * counted, and a relay stops polling while it still has room for what follows the poll, five
+   * under the 50 a Worker invocation may make on the Free plan.
+   */
+  fetch(request: Request, env: Env, ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
+    return withSubrequestMeter(() => handlers.fetch(request, env, ctx));
+  },
+  scheduled: handlers.scheduled,
 };

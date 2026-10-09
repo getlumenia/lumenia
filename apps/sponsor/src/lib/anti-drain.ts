@@ -364,6 +364,15 @@ export function validateInnerTransaction(
 
 export const ALLOWED_PAYOUT_OP_TYPES = new Set<string>(["payment"]);
 
+/**
+ * An address as a payout or sweep refusal may name it: four characters. Those refusals reach the
+ * mainnet error log (worker.ts), and they sit on money that is leaving: the reason says WHICH field
+ * did not match, never the address in full and never the amount (a refused payout used to log
+ * "payout amount 999 != declared 25.50" next to the destination). The caller sent both and already
+ * knows them; an operator reading the log needs the rule that tripped, not the money.
+ */
+const short = (address: string | undefined): string => (address ? `${address.slice(0, 4)}...` : String(address));
+
 export interface PayoutPolicy {
   /** The user's account: the tx source AND the payment's op source. */
   sender: string;
@@ -394,7 +403,7 @@ export function validatePayoutTransaction(tx: Transaction, policy: PayoutPolicy)
     return { ok: false, reason: `disallowed op type: ${op.type}` };
   }
   if (tx.source !== policy.sender) {
-    return { ok: false, reason: `unexpected tx source ${tx.source}` };
+    return { ok: false, reason: `unexpected tx source ${short(tx.source)}` };
   }
   const signerBad = signerRefusal(tx, policy, [["sender", policy.sender]]);
   if (signerBad) return signerBad;
@@ -403,22 +412,23 @@ export function validatePayoutTransaction(tx: Transaction, policy: PayoutPolicy)
     return { ok: false, reason: "payout payment sourced from sponsor (drain attempt)" };
   }
   if (src !== policy.sender) {
-    return { ok: false, reason: `payout payment must be sourced by the sender, got ${src}` };
+    return { ok: false, reason: `payout payment must be sourced by the sender, got ${short(src)}` };
   }
 
   const pay = op as { destination?: string; asset?: Asset; amount?: string };
   if (!pay.destination || pay.destination !== policy.expectedDestination) {
-    return { ok: false, reason: `payout destination ${pay.destination} != declared destination` };
+    return { ok: false, reason: `payout destination ${short(pay.destination)} != declared destination` };
   }
   if (!pay.asset || typeof (pay.asset as Asset).equals !== "function" || !policy.usdc.equals(pay.asset as Asset)) {
     return { ok: false, reason: "payout asset is not the expected USDC" };
   }
+  // The amounts stay out of both reasons (see `short`): the rule is what the log needs.
   const amount = Number.parseFloat(pay.amount ?? "0");
   if (!Number.isFinite(amount) || amount <= 0) {
-    return { ok: false, reason: `payout amount ${pay.amount} must be greater than zero` };
+    return { ok: false, reason: "payout amount must be greater than zero" };
   }
   if (amount !== Number.parseFloat(policy.expectedAmount)) {
-    return { ok: false, reason: `payout amount ${pay.amount} != declared ${policy.expectedAmount}` };
+    return { ok: false, reason: "payout amount != the declared amount" };
   }
 
   return { ok: true };
@@ -494,7 +504,7 @@ export function validateSweepTransaction(tx: Transaction, policy: SweepPolicy): 
     };
   }
   if (tx.source !== policy.throwaway) {
-    return { ok: false, reason: `unexpected tx source ${tx.source}` };
+    return { ok: false, reason: `unexpected tx source ${short(tx.source)}` };
   }
   const signerBad = signerRefusal(tx, policy, [
     ["throwaway", policy.throwaway],
@@ -520,7 +530,7 @@ export function validateSweepTransaction(tx: Transaction, policy: SweepPolicy): 
       return { ok: false, reason: `sweep op '${op.type}' sourced from sponsor (not allowed)` };
     }
     if (src !== policy.throwaway) {
-      return { ok: false, reason: `sweep op '${op.type}' must be sourced by the throwaway account, got ${src}` };
+      return { ok: false, reason: `sweep op '${op.type}' must be sourced by the throwaway account, got ${short(src)}` };
     }
   }
 
@@ -532,23 +542,25 @@ export function validateSweepTransaction(tx: Transaction, policy: SweepPolicy): 
       return { ok: false, reason: "sweep has a claim op but no expectedBalanceId set (strict mode)" };
     }
     if (claim.balanceId !== policy.expectedBalanceId) {
-      return { ok: false, reason: `sweep claim balanceId ${claim.balanceId} != expected` };
+      // A balance id reads back to its claimants and its amount on the ledger: it is cut like an address.
+      return { ok: false, reason: `sweep claim balanceId ${short(claim.balanceId)} != expected` };
     }
   }
 
   const pay = ops[off] as { destination?: string; asset?: Asset; amount?: string };
   if (pay.destination !== policy.home) {
-    return { ok: false, reason: `sweep payment destination ${pay.destination} != home` };
+    return { ok: false, reason: `sweep payment destination ${short(pay.destination)} != home` };
   }
   if (!pay.asset || typeof (pay.asset as Asset).equals !== "function" || !policy.usdc.equals(pay.asset as Asset)) {
     return { ok: false, reason: "sweep payment asset is not the expected USDC" };
   }
   // A zero payment is malformed too (core refuses it while validating), whatever the client declared.
+  // Neither reason names an amount (see `short`).
   if (!(Number.parseFloat(pay.amount ?? "0") > 0)) {
-    return { ok: false, reason: `sweep payment amount must be positive, got ${pay.amount}` };
+    return { ok: false, reason: "sweep payment amount must be positive" };
   }
   if (Number.parseFloat(pay.amount ?? "0") !== Number.parseFloat(policy.expectedAmount)) {
-    return { ok: false, reason: `sweep payment amount ${pay.amount} != expected ${policy.expectedAmount}` };
+    return { ok: false, reason: "sweep payment amount != the expected amount" };
   }
 
   const ct = ops[off + 1] as { line?: Asset; limit?: string };
@@ -557,12 +569,12 @@ export function validateSweepTransaction(tx: Transaction, policy: SweepPolicy): 
   }
   // limit MUST be 0 — the sweep only REMOVES the throwaway's trustline, never adds trust.
   if (Number.parseFloat(ct.limit ?? "-1") !== 0) {
-    return { ok: false, reason: `sweep changeTrust must remove the trustline (limit 0), got ${ct.limit}` };
+    return { ok: false, reason: "sweep changeTrust must remove the trustline (limit 0)" };
   }
 
   const merge = ops[off + 2] as { destination?: string };
   if (merge.destination !== policy.home) {
-    return { ok: false, reason: `sweep accountMerge destination ${merge.destination} != home` };
+    return { ok: false, reason: `sweep accountMerge destination ${short(merge.destination)} != home` };
   }
 
   return { ok: true };

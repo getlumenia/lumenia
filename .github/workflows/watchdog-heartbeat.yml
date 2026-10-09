@@ -24,12 +24,23 @@
 # One issue, updated by comment, rather than a new one every half hour: the pattern of
 # contract-security.yml and e2e.yml. The issue is closed again by this workflow when both
 # Workers are healthy.
+#
+# THE ALERT DRILL. Run it by hand with test_alert = true to exercise the issue path once on
+# purpose: the probe reads both Workers as usual and then adds ONE synthetic failure line, so the
+# job fails and the issue job runs (label, dedup, the notification to whoever watches the repo).
+# The issue it opens says in its title that it is a test. The next green run, scheduled or by hand
+# with test_alert left false, closes it through the resolve job. The schedule never sets it.
 name: Watchdog heartbeat
 
 on:
   schedule:
     - cron: "7,37 * * * *"
   workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Alert drill: add one synthetic failure line so the issue path runs once (the issue title says TEST; the next green run closes it)"
+        type: boolean
+        default: false
 
 concurrency:
   group: watchdog-heartbeat
@@ -45,10 +56,15 @@ jobs:
     timeout-minutes: 5
     outputs:
       report: ${{ steps.probe.outputs.report }}
+      # "1" when a REAL probe line failed (the drill's synthetic line does not count).
+      real_failed: ${{ steps.probe.outputs.real_failed }}
     steps:
       - name: Probe the two public /health endpoints
         id: probe
         shell: bash
+        env:
+          # True only for a manual run with the drill box ticked; a scheduled run has no inputs.
+          TEST_ALERT: ${{ github.event_name == 'workflow_dispatch' && inputs.test_alert == true }}
         # GitHub runs this with `bash -eo pipefail`: every command that may fail on a bad answer is
         # guarded, so one Worker's broken /health is a failure LINE and the other Worker is still
         # probed and the report still written. Stamps are parsed by jq, which accepts only the
@@ -148,6 +164,12 @@ jobs:
               ok "$label: $summary"
             fi
           done
+          real_failed=$failed
+          # The alert drill (see the header): one synthetic failure line, after the real ones.
+          if [ "${TEST_ALERT:-false}" = "true" ]; then
+            bad "TEST ALERT: a synthetic failure line from a manual run with test_alert=true, to exercise the issue path once on purpose. The lines above are the real probe of both Workers."
+          fi
+          echo "real_failed=$real_failed" >> "$GITHUB_OUTPUT"
           delim="HEARTBEAT_REPORT_$(date -u +%s)_$RANDOM"
           {
             echo "report<<$delim"
@@ -167,11 +189,20 @@ jobs:
       - uses: actions/github-script@v8
         env:
           REPORT: ${{ needs.heartbeat.outputs.report }}
+          TEST_ALERT: ${{ github.event_name == 'workflow_dispatch' && inputs.test_alert == true }}
+          REAL_FAILED: ${{ needs.heartbeat.outputs.real_failed }}
         with:
           script: |
-            const title = "Sponsor watchdog heartbeat check is failing";
+            // The drill (test_alert) says so in the title, but only when the probe recorded that no REAL
+            // line failed: a real failure, or a probe that never got as far as saying, reads as real.
+            const drill = process.env.TEST_ALERT === "true" && process.env.REAL_FAILED === "0";
+            const title = drill
+              ? "TEST: watchdog heartbeat alert drill (a manual run with test_alert, not a real failure)"
+              : "Sponsor watchdog heartbeat check is failing";
             const body = [
-              `The sponsor watchdog heartbeat check failed on ${new Date().toISOString()}.`,
+              drill
+                ? `TEST, not a real failure: a manual run with test_alert=true added one synthetic failure line on ${new Date().toISOString()}, to exercise this issue path once. The next green run of this workflow closes it.`
+                : `The sponsor watchdog heartbeat check failed on ${new Date().toISOString()}.`,
               "",
               `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               "",
@@ -193,6 +224,13 @@ jobs:
               state: "open", labels: "watchdog-heartbeat",
             });
             if (existing.data.length > 0) {
+              // A real failure that finds the drill's issue still open renames it, so it never reads as a test.
+              if (!drill && existing.data[0].title !== title) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: existing.data[0].number, title,
+                });
+              }
               await github.rest.issues.createComment({
                 owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: existing.data[0].number, body,

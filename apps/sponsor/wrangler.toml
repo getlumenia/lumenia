@@ -101,6 +101,12 @@ EVENTS_EXCLUDE_AIDS = ""
 CCTP_FORWARDER = "CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ"
 CCTP_IRIS_URL = "https://iris-api-sandbox.circle.com"
 
+# /health names the deployed version (worker.ts): Cloudflare's version metadata binding gives the
+# version id, its tag and when it was created, with nothing to pass on each deploy. Match the id
+# against `wrangler deployments list`. Declared again in [env.mainnet] below.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 # The watchdog (lib/watchdog.ts) — sponsor float + "sponsor sourced value" + escrow governance
 # calls. Alerts appear in `wrangler tail`; set RESEND_API_KEY + ALERT_NOTIFY_TO (secrets) to
 # also get email. Every 15 minutes is well inside the free plan's cron allowance.
@@ -191,6 +197,10 @@ SPONSOR_MIN_RECIPIENTS = "25"
 SPONSOR_MIN_TTL_DAYS = "21"
 # Pilot mode ON for mainnet: only owner-approved wallets may move value here.
 PILOT_MODE = "1"
+
+# The same version binding as the testnet Worker: /health names the deployed version.
+[env.mainnet.version_metadata]
+binding = "CF_VERSION_METADATA"
 
 [env.mainnet.triggers]
 crons = ["*/15 * * * *"]

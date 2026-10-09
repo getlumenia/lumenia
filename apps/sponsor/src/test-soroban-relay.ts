@@ -17,9 +17,11 @@
 import {
   Account,
   Address,
+  Asset,
   Contract,
   Keypair,
   Networks,
+  Operation,
   SorobanDataBuilder,
   TransactionBuilder,
   nativeToScVal,
@@ -39,10 +41,14 @@ import {
   relayClaimHandler,
   relayDepositHandler,
   relayReclaimHandler,
+  simErrorHead,
+  SIM_ERROR_HEAD_MAX,
   type RelayDeps,
   type RelayRpc,
 } from "./lib/soroban-relay.js";
-import { isSubmitUnconfirmed } from "./lib/stellar.js";
+import { extrasDetail, isSubmitUnconfirmed } from "./lib/stellar.js";
+import { resetServiceCache } from "./lib/service.js";
+import { subrequestsUsed, withSubrequestMeter } from "./lib/subrequests.js";
 import worker from "./worker.js";
 
 let pass = 0,
@@ -1004,6 +1010,224 @@ async function main() {
       check("/v2-reclaim when the RPC declines to queue: 503 busy", reclaimBusy.status === 503 && /network is busy/.test(String(reclaimBusy.body.error)), `${reclaimBusy.status} ${JSON.stringify(reclaimBusy.body)}`);
     } finally {
       Object.assign(proto, saved);
+    }
+  }
+
+  /* ------------------------------------------------------------------------------------------
+   * SOW 2, D2 (no amounts or full addresses in server logs). The RPC's simulation error is the
+   * HostError's first line and then its diagnostic event log, which replays the call's arguments:
+   * a read-only deposit simulation on testnet and mainnet returned the sender's full address four
+   * times, the link id and the amount. On mainnet that text was the error log's line.
+   * ------------------------------------------------------------------------------------------ */
+  const FULL_ADDRESS = /\b(?:[GC][A-Z2-7]{55}|M[A-Z2-7]{68})\b/;
+  const AMOUNT = "12345678";
+  const linkId = Buffer.from(Keypair.random().rawPublicKey()).toString("hex");
+  /** The shape of the RPC's error text for a refused deposit, with the address and the amount in it. */
+  const eventLogError = (who: string) =>
+    "HostError: Error(Contract, #13)\n\nEvent log (newest first):\n" +
+    `   0: [Diagnostic Event] contract:${CONTRACT}, topics:[error, Error(Contract, #13)], data:"escalating Ok(ScErrorType::Contract) frame-exit to Err"\n` +
+    `   1: [Diagnostic Event] topics:[fn_call, ${CONTRACT}, deposit], data:[${who}, Bytes(${linkId}), ${AMOUNT}, 1791746027]\n` +
+    `   2: [Diagnostic Event] topics:[fn_call, CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA, transfer], data:[${who}, ${CONTRACT}, ${AMOUNT}]`;
+  const oneLineNoMoney = (msg: string, who: string) =>
+    !/[\r\n]/.test(msg) && !msg.includes("Event log") && !msg.includes(who) && !FULL_ADDRESS.test(msg) && !msg.includes(AMOUNT) && !msg.includes(linkId);
+
+  console.log("[15] a refused simulation carries one line: no event log, no full address, no link id, no amount");
+  {
+    const dep = await relayDeposit(TESTNET, deposit("1000000"), undefined, depsFor({ sim: { error: eventLogError(sender.publicKey()) } }).deps);
+    check("/v2-deposit: refused with the HostError's first line", /^v2-deposit would fail: HostError: Error\(Contract, #13\)$/.test(dep.message), dep.message);
+    check("/v2-deposit: one line, nothing of the event log", oneLineNoMoney(dep.message, sender.publicKey()), dep.message);
+    const claim = await outcomeOf(() =>
+      relayClaimHandler(TESTNET, realSigner, claimInput(), undefined, depsFor({ sim: { error: eventLogError(stranger.publicKey()) } }).deps),
+    );
+    check("/v2-claim: refused with the first line only (the payout address stays out)", /^v2-claim simulation failed: HostError: Error\(Contract, #13\)$/.test(claim.message) && oneLineNoMoney(claim.message, stranger.publicKey()), claim.message);
+    const rec = await outcomeOf(() =>
+      relayReclaimHandler(TESTNET, realSigner, { xdr: buildReclaim({ fee: "1000000" }).toXDR(), senderPublicKey: sender.publicKey() }, depsFor({ sim: { error: eventLogError(sender.publicKey()) } }).deps),
+    );
+    check("/v2-reclaim: refused with the first line only", /^v2-reclaim would fail: HostError: Error\(Contract, #13\)$/.test(rec.message) && oneLineNoMoney(rec.message, sender.publicKey()), rec.message);
+    check("simErrorHead: Windows line ends cut the same way", simErrorHead("HostError: Error(Auth, InvalidAction)\r\nEvent log ...") === "HostError: Error(Auth, InvalidAction)");
+    const long = simErrorHead(`HostError: ${"x".repeat(1000)}`);
+    check(`simErrorHead: one long line is cut to ${SIM_ERROR_HEAD_MAX} characters`, long.length === SIM_ERROR_HEAD_MAX + 3 && long.endsWith("..."), String(long.length));
+    const inline = simErrorHead(`account not found: ${sender.publicKey()} (amount ${AMOUNT}?)`);
+    check("simErrorHead: a full address on the first line itself is cut to four characters", !inline.includes(sender.publicKey()) && inline.includes(`${sender.publicKey().slice(0, 4)}...`), inline);
+    check("simErrorHead: an empty or missing error stays empty", simErrorHead(undefined) === "" && simErrorHead("") === "");
+    const extras = { envelope_xdr: "AAAAAgAAAAD...", result_xdr: "AAAAAAAAAGT/////", result_codes: { transaction: "tx_failed", operations: ["op_underfunded"] } };
+    const detail = extrasDetail(extras);
+    check(
+      "a Horizon refusal keeps its result codes and drops the envelope and result XDR (the transaction, base64: every address and the amount)",
+      detail.includes("op_underfunded") && detail.includes("tx_failed") && !detail.includes("envelope_xdr") && !detail.includes("AAAAAgAAAAD") && !detail.includes("result_xdr"),
+      detail,
+    );
+  }
+
+  /* ------------------------------------------------------------------------------------------
+   * The poll window and the invocation's subrequest budget (lib/subrequests.ts). Each fake RPC call
+   * here makes one counted fetch, like the real client, and the store is the counting fake.
+   * ------------------------------------------------------------------------------------------ */
+  console.log("[16] the poll window stops inside the subrequest budget, with room for what follows it");
+  {
+    const store = installFakeKv();
+    const kvFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL, init?: { body?: string }) =>
+      String(url).startsWith("https://rpc.counted.test/")
+        ? ({ ok: true, status: 200, json: async () => ({}) } as unknown as Response)
+        : kvFetch(url as string, init as RequestInit)) as typeof fetch;
+    /** The fake RPC of the plan, every call one fetch, as the real client makes. */
+    const counted = (plan: Parameters<typeof fakeRpc>[0]) => {
+      const { factory, calls } = fakeRpc(plan);
+      const inner = factory("x");
+      const hop = (m: string) => fetch(`https://rpc.counted.test/${m}`);
+      const rpcFor = (_url: string): RelayRpc => ({
+        async getAccount(a) {
+          await hop("getAccount");
+          return inner.getAccount(a);
+        },
+        async simulateTransaction(t) {
+          await hop("simulateTransaction");
+          return inner.simulateTransaction(t);
+        },
+        async sendTransaction(t) {
+          await hop("sendTransaction");
+          return inner.sendTransaction(t);
+        },
+        async getTransaction(h) {
+          await hop("getTransaction");
+          return inner.getTransaction(h);
+        },
+      });
+      return { deps: { rpc: rpcFor, pollMs: 0, maxPolls: 40 } as RelayDeps, calls };
+    };
+    const LIMIT = 20;
+    const metered = <T>(run: () => Promise<T>) =>
+      withSubrequestMeter(async () => {
+        const out = await outcomeOf(run as () => Promise<{ hash: string; confirmed: boolean }>);
+        return { out, used: subrequestsUsed() };
+      }, LIMIT);
+
+    store.reset();
+    const never = counted({ get: ["NOT_FOUND"] });
+    const cut = await metered(() => relayDepositHandler(TESTNET, realSigner, { xdr: deposit("1000000").toXDR(), senderPublicKey: sender.publicKey() }, never.deps));
+    check(
+      `a deposit the RPC never shows stops polling with three subrequests still free (${LIMIT} allowed, ${cut.used} used, ${never.calls.get} polls)`,
+      cut.used === LIMIT - 3 && never.calls.get > 0 && never.calls.get < 41,
+      `${cut.used} used, ${never.calls.get} polls`,
+    );
+    check("and answers what a closed window answers: {confirmed:false} with the hash (the Worker's 202)", !!cut.out.returned && cut.out.returned.confirmed === false && /^[0-9a-f]{64}$/.test(cut.out.returned.hash), cut.out.message);
+    check("the day's budget stays reserved and the fee bid stays whole (undecided, as before)", store.dayReleases() === 0 && store.feeRefunds() === 0);
+
+    store.reset();
+    const polls = never.calls.get;
+    const lastPoll = counted({ get: [...Array.from({ length: polls - 1 }, () => "NOT_FOUND" as const), "FAILED"], charged: 31_000 });
+    const decided = await metered(() => relayDepositHandler(TESTNET, realSigner, { xdr: deposit("1000000").toXDR(), senderPublicKey: sender.publicKey() }, lastPoll.deps));
+    check(
+      "decided on the last poll the budget allowed: the fee settle and the cap release still fit inside it",
+      /tx FAILED/.test(decided.out.message) && decided.used <= LIMIT && store.dayReleases() === 1 && store.feeTotal() === 31_000n,
+      `${decided.used} used, ${decided.out.message}, ${store.dayReleases()} released, ${store.feeTotal()} counted`,
+    );
+
+    const pool = oneChannel();
+    const claimCut = counted({ get: ["NOT_FOUND"] });
+    const c = await metered(() => relayClaimHandler(TESTNET, realSigner, claimInput(), pool.manager, claimCut.deps));
+    check(
+      "a claim whose window the budget closed keeps its channel lease (it may still land before its 60 s timebound)",
+      !!c.out.returned && c.out.returned.confirmed === false && pool.state.leased === 1 && pool.state.released === 0 && c.used <= LIMIT - 2,
+      `${c.used} used, ${pool.state.released} released`,
+    );
+    const clockPool = oneChannel();
+    const clock = await outcomeOf(() => relayClaimHandler(TESTNET, realSigner, claimInput(), clockPool.manager, depsFor({ get: ["NOT_FOUND"] }).deps));
+    check("while a window the clock closed (no meter) frees it as before", !!clock.returned && clock.returned.confirmed === false && clockPool.state.released === 1);
+
+    store.reset();
+    const unmetered = counted({ get: ["NOT_FOUND"] });
+    await outcomeOf(() => relayDepositHandler(TESTNET, realSigner, { xdr: deposit("1000000").toXDR(), senderPublicKey: sender.publicKey() }, unmetered.deps));
+    check("outside a metered request the window is the relay's own: 1 + 40 polls", unmetered.calls.get === 41, `${unmetered.calls.get} polls`);
+    clearKv();
+  }
+
+  /* ------------------------------------------------------------------------------------------
+   * The mainnet error log itself, through worker.fetch: one line per refusal, no full address, no
+   * link id, no amount (the relays above, and the payout and sweep reasons from lib/anti-drain.ts).
+   * ------------------------------------------------------------------------------------------ */
+  console.log("[17] the mainnet error log: one line, no full address, no link id, no amount");
+  {
+    const proto = rpc.Server.prototype as unknown as Record<string, unknown>;
+    const saved = { ...Object.fromEntries(["getAccount", "simulateTransaction", "sendTransaction", "getTransaction"].map((k) => [k, proto[k]])) };
+    const restore = { network: process.env.STELLAR_NETWORK, issuer: process.env.USDC_ISSUER };
+    process.env.STELLAR_NETWORK = "mainnet";
+    process.env.USDC_ISSUER = issuer.publicKey();
+    resetServiceCache();
+    const lines: string[] = [];
+    const realError = console.error;
+    console.error = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+    const post = async (route: string, body: unknown) => {
+      lines.length = 0;
+      const res = await worker.fetch(
+        new Request(`https://sponsor.test${route}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "cf-connecting-ip": `198.51.100.${10 + Math.floor(Math.random() * 200)}` },
+          body: JSON.stringify(body),
+        }),
+        {},
+      );
+      return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown>, logged: lines.join("\n") };
+    };
+    const clean = (logged: string, who: string[]) =>
+      lines.length === 1 && !/[\r\n]/.test(logged) && !FULL_ADDRESS.test(logged) && who.every((w) => !logged.includes(w)) && !logged.includes(AMOUNT) && !logged.includes(linkId);
+    try {
+      // Fresh keys: the per-account rate limit has seen `sender` many times in this minute already.
+      const from = Keypair.random();
+      const payee = Keypair.random().publicKey();
+      const refusing = fakeRpc({ sim: { error: eventLogError(from.publicKey()) } }).factory("x");
+      proto.getAccount = refusing.getAccount;
+      proto.simulateTransaction = refusing.simulateTransaction;
+      const depTx = new TransactionBuilder(new Account(from.publicKey(), "1"), { fee: "1000000", networkPassphrase: Networks.PUBLIC })
+        .addOperation(new Contract(CONTRACT).call("deposit", Address.fromString(from.publicKey()).toScVal(), link(), i128(usdc(5)), expiry))
+        .setTimeout(180)
+        .build();
+      const dep = await post("/v2-deposit", { xdr: depTx.toXDR(), senderPublicKey: from.publicKey() });
+      check("/v2-deposit refused at simulation: the caller gets a reference only", dep.status === 400 && dep.body.error === "request failed" && typeof dep.body.ref === "string", JSON.stringify(dep.body));
+      check("and the log line is one line with the first line of the HostError, nothing of its event log", clean(dep.logged, [from.publicKey()]) && /\/v2-deposit: v2-deposit would fail: HostError: Error\(Contract, #13\)$/.test(dep.logged), dep.logged);
+      const refusingClaim = fakeRpc({ sim: { error: eventLogError(payee) } }).factory("x");
+      proto.simulateTransaction = refusingClaim.simulateTransaction;
+      const claim = await post("/v2-claim", { ...claimInput(), payout: payee });
+      check("/v2-claim refused at simulation: one clean line (no payout address)", claim.status === 400 && clean(claim.logged, [payee]), claim.logged);
+
+      // /payout and /sweep: anti-drain refusals, logged before any network call.
+      const payoutTx = new TransactionBuilder(new Account(from.publicKey(), "1"), { fee: "100", networkPassphrase: Networks.PUBLIC })
+        .addOperation(Operation.payment({ destination: payee, asset: new Asset("USDC", issuer.publicKey()), amount: "4.9876543", source: from.publicKey() }))
+        .setTimeout(180)
+        .build();
+      const payout = await post("/payout", { xdr: payoutTx.toXDR(), senderPublicKey: from.publicKey(), destination: payee, amount: "1.2345678" });
+      check(
+        "/payout with an amount that is not the declared one: one line naming the rule, neither amount, no full address",
+        payout.status === 400 && clean(payout.logged, [from.publicKey(), payee, "4.9876543", "1.2345678"]) && /payout amount != the declared amount/.test(payout.logged),
+        payout.logged,
+      );
+      const thief = Keypair.random().publicKey();
+      const elsewhere = await post("/payout", { xdr: payoutTx.toXDR(), senderPublicKey: from.publicKey(), destination: thief, amount: "4.9876543" });
+      check("/payout to another destination: one line, the address cut to four characters", elsewhere.status === 400 && clean(elsewhere.logged, [payee, thief, "4.9876543"]) && elsewhere.logged.includes(`${payee.slice(0, 4)}...`), elsewhere.logged);
+      const home = Keypair.random().publicKey();
+      const throwaway = Keypair.random();
+      const usdcMain = new Asset("USDC", issuer.publicKey());
+      const sweepTx = new TransactionBuilder(new Account(throwaway.publicKey(), "1"), { fee: "100", networkPassphrase: Networks.PUBLIC })
+        .addOperation(Operation.payment({ destination: home, asset: usdcMain, amount: "3.3333333", source: throwaway.publicKey() }))
+        .addOperation(Operation.changeTrust({ asset: usdcMain, limit: "0", source: throwaway.publicKey() }))
+        .addOperation(Operation.accountMerge({ destination: home, source: throwaway.publicKey() }))
+        .setTimeout(180)
+        .build();
+      const sweep = await post("/sweep", { xdr: sweepTx.toXDR(), throwawayPublicKey: throwaway.publicKey(), homePublicKey: home, amount: "2.2222222" });
+      check(
+        "/sweep with an amount that is not the expected one: one line naming the rule, neither amount, no full address",
+        sweep.status === 400 && clean(sweep.logged, [throwaway.publicKey(), home, "3.3333333", "2.2222222"]) && /sweep payment amount != the expected amount/.test(sweep.logged),
+        sweep.logged,
+      );
+    } finally {
+      console.error = realError;
+      Object.assign(proto, saved);
+      for (const [k, v] of [["STELLAR_NETWORK", restore.network], ["USDC_ISSUER", restore.issuer]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      resetServiceCache();
     }
   }
 

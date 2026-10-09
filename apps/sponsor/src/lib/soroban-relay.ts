@@ -15,6 +15,7 @@ import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { feeChargedOf, isSubmitUnconfirmed, SubmitUnconfirmedError } from "./stellar.js";
 import { CHANNEL_LEASE_TTL_SECONDS, type ChannelManager } from "./channels.js";
+import { subrequestsLeft } from "./subrequests.js";
 
 const ALLOWED_METHODS = new Set<string>(["claim", "claim_share"]);
 /**
@@ -146,6 +147,46 @@ export function isRelayBusy(e: unknown): boolean {
 const V2_SUBMIT_POLL_MS = 1500;
 const V2_SUBMIT_MAX_POLLS = 40;
 
+/** Test seam: the pause between polls of every relay, cctp-relay.ts included (null = each relay's own). */
+let pollMsOverride: number | null = null;
+
+/** Tests only: shorten the pause between polls, so a full poll window runs in milliseconds. */
+export function setRelayPollMsForTests(ms: number | null): void {
+  pollMsOverride = ms;
+}
+
+/** The most of a simulation's error text a refusal carries: its first line, at most this many characters. */
+export const SIM_ERROR_HEAD_MAX = 200;
+
+/** A full strkey: an account or contract address (G or C, 56 characters) or a muxed one (M, 69). */
+const FULL_STRKEY = /\b(?:[GC][A-Z2-7]{55}|M[A-Z2-7]{68})\b/g;
+
+/**
+ * One line of text as a log may keep it: the first line only, every full address in it cut to its
+ * first four characters, and at most `max` characters. The Worker's mainnet error log runs every
+ * reason through it (worker.ts), behind the sources that already trim their own (below, and the
+ * payout and sweep reasons in anti-drain.ts).
+ */
+export function oneLogLine(text: string | undefined, max: number): string {
+  const first = String(text ?? "").split(/\r?\n/, 1)[0]!.trim();
+  const short = first.replace(FULL_STRKEY, (k) => shortKey(k));
+  return short.length > max ? `${short.slice(0, max)}...` : short;
+}
+
+/**
+ * The part of a Soroban simulation error a refusal may carry.
+ *
+ * The RPC's error text is the HostError's first line, then its diagnostic event log, and that log
+ * replays the call's arguments: a read-only deposit simulation on testnet and on mainnet returned
+ * the sender's full address (four times), the link id and the amount. A refusal is logged on mainnet
+ * (worker.ts) and returned as is on testnet, so only the first line travels, for instance
+ * "HostError: Error(Contract, #13)", which still tells one refusal from another. Any full address
+ * left in it is cut to four characters, and the line to SIM_ERROR_HEAD_MAX.
+ */
+export function simErrorHead(error: string | undefined): string {
+  return oneLogLine(error, SIM_ERROR_HEAD_MAX);
+}
+
 /**
  * The fee-bump base for a Soroban inner transaction: its own inclusion fee per operation (the fee
  * minus the declared resource fee), never below the 100-stroop network minimum. That is the SDK's
@@ -251,11 +292,15 @@ function describeThrow(e: unknown): string {
  *     answers 202, and the client settles it against the ledger. Until 2026-10-08 this branch was a
  *     plain 400 that released both and told the sender "your money hasn't moved" for a deposit
  *     that could still land;
- *   - TRY_AGAIN_LATER raises RelayBusyError: 503, nothing queued.
+ *   - TRY_AGAIN_LATER raises RelayBusyError: 503, nothing queued;
+ *   - the poll window is also bounded by the invocation's subrequest budget (lib/subrequests.ts):
+ *     `window.reserve` is what the CALLER still fetches after this returns (a cap, pilot or channel
+ *     release), and the settle here is reserved on top of it.
  *
- * Returns the hash and the last poll answer: SUCCESS, FAILED, or NOT_FOUND after the window.
- * Throws a plain Error (or RelayBusyError) only when nothing reached the network, and
- * SubmitUnconfirmedError for everything undecided; `isSubmitUnconfirmed` tells the two apart.
+ * Returns the hash, the last poll answer (SUCCESS, FAILED, or NOT_FOUND after the window) and `cut`,
+ * true when the budget ended the window before the network decided (the transaction may then still
+ * land inside its timebound). Throws a plain Error (or RelayBusyError) only when nothing reached the
+ * network, and SubmitUnconfirmedError for everything undecided; `isSubmitUnconfirmed` tells the two apart.
  */
 export async function payAndSubmit(
   server: RelayRpc,
@@ -263,8 +308,8 @@ export async function payAndSubmit(
   tx: Transaction | FeeBumpTransaction,
   label: string,
   deps: RelayDeps,
-  window: { pollMs: number; maxPolls: number },
-): Promise<{ hash: string; got: rpc.Api.GetTransactionResponse }> {
+  window: { pollMs: number; maxPolls: number; reserve?: number },
+): Promise<{ hash: string; got: rpc.Api.GetTransactionResponse; cut: boolean }> {
   const charge = await chargeSponsorFee(tx.fee);
   await signCharged(charge, () => signer.sign(tx));
   const hash = tx.hash().toString("hex");
@@ -291,12 +336,13 @@ export async function payAndSubmit(
     throw new RelayBusyError();
   }
   // PENDING, or DUPLICATE: a transaction the RPC already holds is on the network just the same.
-  const got = await pollUntilDecided(server, sent.hash, deps, window);
+  // One subrequest is held back for the settle below, on top of what the caller asked for.
+  const { got, cut } = await pollUntilDecided(server, sent.hash, deps, { ...window, reserve: (window.reserve ?? 0) + 1 });
   if (got.status === rpc.Api.GetTransactionStatus.SUCCESS || got.status === rpc.Api.GetTransactionStatus.FAILED) {
     // Included, so it paid: the count drops from the bid to the fee its result names.
     await charge.settled(feeChargedOf((got as { resultXdr?: xdr.TransactionResult }).resultXdr));
   }
-  return { hash: sent.hash, got };
+  return { hash: sent.hash, got, cut };
 }
 
 /**
@@ -307,25 +353,45 @@ export async function payAndSubmit(
  * transaction may land a second later. It is raised as `SubmitUnconfirmedError` with the hash, the
  * same brand `lib/stellar.ts` uses for a Horizon answer that never came, and the worker turns that
  * into a 202 on every network (the mainnet redaction never touches it).
+ *
+ * The window has a second bound, the invocation's subrequest budget (lib/subrequests.ts): a poll is
+ * made only while one more subrequest still leaves `reserve` for what follows the window. A window
+ * the budget closed answers NOT_FOUND with `cut: true`, which every relay already reports as
+ * accepted and undecided (202 with the hash), exactly like a window the clock closed.
  */
 async function pollUntilDecided(
   server: RelayRpc,
   hash: string,
   deps: RelayDeps,
-  defaults: { pollMs: number; maxPolls: number },
-): Promise<rpc.Api.GetTransactionResponse> {
-  const pollMs = deps.pollMs ?? defaults.pollMs;
+  defaults: { pollMs: number; maxPolls: number; reserve: number },
+): Promise<{ got: rpc.Api.GetTransactionResponse; cut: boolean }> {
+  const pollMs = deps.pollMs ?? pollMsOverride ?? defaults.pollMs;
   const maxPolls = deps.maxPolls ?? defaults.maxPolls;
+  let got: rpc.Api.GetTransactionResponse = notFoundYet(hash);
   try {
-    let got = await server.getTransaction(hash);
-    for (let i = 0; i < maxPolls && got.status === rpc.Api.GetTransactionStatus.NOT_FOUND; i++) {
-      await sleep(pollMs);
+    // The first read at once, then up to `maxPolls` more, `pollMs` apart: 1 + maxPolls reads at most.
+    for (let i = 0; i <= maxPolls; i++) {
+      if (subrequestsLeft() < 1 + defaults.reserve) return { got, cut: true };
+      if (i > 0) await sleep(pollMs);
       got = await server.getTransaction(hash);
+      if (got.status !== rpc.Api.GetTransactionStatus.NOT_FOUND) break;
     }
-    return got;
+    return { got, cut: false };
   } catch (e) {
     throw new SubmitUnconfirmedError(`the RPC stopped answering while the transaction was being watched: ${(e as Error).message}`, hash);
   }
+}
+
+/** What a window that closed before its first read reports: not seen yet, which is all we know. */
+function notFoundYet(hash: string): rpc.Api.GetMissingTransactionResponse {
+  return {
+    status: rpc.Api.GetTransactionStatus.NOT_FOUND,
+    txHash: hash,
+    latestLedger: 0,
+    latestLedgerCloseTime: 0,
+    oldestLedger: 0,
+    oldestLedgerCloseTime: 0,
+  };
 }
 
 /**
@@ -486,7 +552,8 @@ export async function relayClaimHandler(
       .build();
 
     const sim = await server.simulateTransaction(tx);
-    if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-claim simulation failed: ${sim.error}`);
+    // The first line only: the rest is the event log, which carries the payout address in full.
+    if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-claim simulation failed: ${simErrorHead(sim.error)}`);
     const prepared = rpc.assembleTransaction(tx, sim).build();
 
     // The sponsor pays this fee, and until now nothing bounded it: the amount came straight out of
@@ -518,11 +585,17 @@ export async function relayClaimHandler(
 
     // Charge the bid, sign, send and watch (D3 items b, c, g). The confirm-wait is bounded to
     // V2_CLAIM_TIMEOUT_SECONDS (= the tx timebound), so a tx not yet in a ledger by then is already
-    // tx_too_late; the lease is freed only after this, and only for a decided outcome.
-    const { hash, got } = await payAndSubmit(server, signer, submitTx, "v2-claim", deps, {
+    // tx_too_late; the lease is freed only after this, and only for a decided outcome. One
+    // subrequest is reserved for that release (lib/subrequests.ts).
+    const { hash, got, cut } = await payAndSubmit(server, signer, submitTx, "v2-claim", deps, {
       pollMs: V2_CLAIM_POLL_MS,
       maxPolls: Math.ceil((V2_CLAIM_TIMEOUT_SECONDS * 1000) / V2_CLAIM_POLL_MS),
+      reserve: 1,
     });
+    /* A window the subrequest budget closed early ended BEFORE the timebound: the claim may still land
+     * on this channel's sequence, so its lease is kept and left to lapse, as for a send that went
+     * unanswered. A window the clock closed ended at the timebound, and the claim is past it. */
+    if (cut && got.status === rpc.Api.GetTransactionStatus.NOT_FOUND) keepLease = true;
     /* A group claim the ledger definitively REFUSED comes back as a named reason, not as a status
      * string. NOT_FOUND is deliberately left alone below: that transaction may still land, and
      * calling it a failure is the one thing this relay must never guess. */
@@ -649,14 +722,16 @@ export async function relayDepositHandler(
    * as /v2-reclaim does (D3 item a). A deposit the contract would reject (paused, a bad expiry, a
    * sender without the USDC) used to be fee-bumped unread and billed to the sponsor when it failed
    * on-ledger; a simulation that fails costs nothing and is refused here. The reason stays an
-   * ordinary Error: on mainnet it is redacted to a reference, because the contract's refusal text
-   * is an oracle on the caller's own account state and the validator, not a product rule.
+   * ordinary Error: on mainnet the RESPONSE is redacted to a reference, because the contract's
+   * refusal text is an oracle on the caller's own account state and the validator, not a product
+   * rule. The LOG line keeps the reason, so it carries the error's first line only (`simErrorHead`):
+   * the event log after it replays the sender's full address, the link id and the amount.
    *
    * Soroban RPC `simulateTransaction` (developers.stellar.org/docs/data/apis/rpc/api-reference/
    * methods/simulateTransaction): an error answer carries `error`; a success carries
    * `minResourceFee` as a string of stroops. Both as the SDK parses them (rpc.Api.*). */
   const sim = await server.simulateTransaction(inner);
-  if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-deposit would fail: ${sim.error}`);
+  if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-deposit would fail: ${simErrorHead(sim.error)}`);
   /* And the fee is what the invoke needs, not what the caller wrote. The inner fee is signed by
    * the sender and cannot be lowered here, so an inflated one is refused instead. A simulation
    * that names no numeric resource fee is refused too: `x > NaN` is false, so the bound would
@@ -701,10 +776,13 @@ export async function relayDepositHandler(
     /* Charge, sign, send and watch (`payAndSubmit`). It throws a plain Error, or RelayBusyError
      * (503), only when nothing reached the network: the fee budget refused, the signer threw, the
      * send was refused outright, ERROR, or TRY_AGAIN_LATER. Those are the branches that can
-     * honestly say the money did not move, and the catch below gives the cap back for them. */
+     * honestly say the money did not move, and the catch below gives the cap back for them. Two
+     * subrequests are reserved after the window: the cap release below and the pilot slot's
+     * (worker.ts, withPilotSlot), both for an on-ledger FAILED. */
     const { hash, got } = await payAndSubmit(server, signer, feeBump, "v2-deposit", deps, {
       pollMs: V2_SUBMIT_POLL_MS,
       maxPolls: V2_SUBMIT_MAX_POLLS,
+      reserve: 2,
     });
 
     if (got.status === rpc.Api.GetTransactionStatus.SUCCESS) return { hash, confirmed: true };
@@ -783,7 +861,9 @@ export async function relayReclaimHandler(
    * to the sender who made it, once, so the sponsor pays at most one fee per drop that sender was
    * allowed (and capped) to create. */
   const sim = await server.simulateTransaction(inner);
-  if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-reclaim would fail: ${sim.error}`);
+  // The first line only: when the refusal comes from the token transfer, the event log after it
+  // carries the sender's full address and the amount.
+  if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-reclaim would fail: ${simErrorHead(sim.error)}`);
   /* And the fee is what the invoke needs, not what the caller wrote. The inner fee is signed by
    * the sender and cannot be lowered here, so an inflated one is refused instead. The headroom is
    * the client's own inclusion fee (0.2 XLM, lib/lumendrop.ts) plus a little slack; a simulation

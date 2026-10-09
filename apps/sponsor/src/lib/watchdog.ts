@@ -274,6 +274,12 @@ interface Run {
   opsCursor?: { key: string; to: string; tripped: boolean };
   /** Set when the wasm tripwire fired: what the auto-halt page tells the operator to pin first. */
   wasmRepin?: { observed: string; source: "env" | "store"; storeKey: string };
+  /**
+   * Write the halt for the tripwires raised so far, NOW (runWatchdog). A check calls it the moment it
+   * raises one, before its next read: a run cut off later (the Free plan gives a cron run 10 ms of
+   * CPU and 50 subrequests) must not take the halt down with it.
+   */
+  haltNow?: () => Promise<void>;
 }
 
 /* --------------------------------- the checks --------------------------------- */
@@ -509,6 +515,8 @@ async function checkSponsorAccount(
       pages += 1;
       full = records.length >= OPS_PAGE_SIZE;
       if (next === from) break; // a page that does not move the cursor would be read again forever
+      // A page that raised the tripwire halts the sponsor before the next page is read.
+      if (tripped && full && pages < OPS_MAX_PAGES) await run.haltNow?.();
     } while (full && pages < OPS_MAX_PAGES);
     if (full) {
       const lagMs = run.now - Date.parse(reached);
@@ -1059,6 +1067,44 @@ export async function runWatchdog(
   };
   const readInstance = instanceReader(config, config.lumendropContract ?? "");
 
+  /* AUTO-HALT, on the two key-compromise tripwires and nothing else (see the constants), and only
+   * when the caller allows it (`autoHalt`, which only the Worker's scheduled run passes). The halt
+   * goes through the same store key the kill switch reads, namespaced to the network of the CONFIG,
+   * so a testnet watchdog can never stop the mainnet sponsor. A store without a key, or a store that
+   * refuses the write, leaves the page as the only answer, and the page says so.
+   *
+   * It is WRITTEN the moment a tripwire is raised, before any remaining read: right after the page
+   * of operations that raised it (checkSponsorAccount), and right after the check that raised it.
+   * On the Workers Free plan a cron run gets 10 ms of CPU and 50 subrequests, and the run that
+   * finds a theft is the long one (a backlog of pages, the wasm confirm read, the emails); written
+   * at the end, the halt died with any run cut off before it. The PAGE is still built at the end,
+   * from everything the run found. One write per distinct tripwire list: a second tripwire later in
+   * the run rewrites the halt so its reason names both, and a store that refuses is not asked again
+   * on every page (the next run retries, as before). */
+  let autoHalted = false;
+  let attemptedWhy = "";
+  let haltFailure = "";
+  /** The halt key before this run's first write (undefined: not read yet). A halt is NEW when it was absent. */
+  let before: boolean | null | undefined;
+  const tripwireWhy = (): string =>
+    [...new Set(alerts.filter((a) => isAutoHaltTripwire(a.title)).map((a) => a.title))].join("; ");
+  const haltNow = async (): Promise<void> => {
+    if (!opts.autoHalt) return;
+    const why = tripwireWhy();
+    if (!why || why === attemptedWhy) return;
+    attemptedWhy = why;
+    if (before === undefined) before = await storeHaltIsSet(network); // asked before the write
+    try {
+      if (await setHalt(network, `watchdog auto-halt: ${why}`, now)) {
+        autoHalted = true;
+        haltFailure = "";
+      }
+    } catch (e) {
+      haltFailure = (e as Error).message;
+    }
+  };
+  run.haltNow = haltNow;
+
   try {
     if (await checkSponsorAccount(config, sponsorPublicKey, alerts, run)) checked.push("sponsor-account");
   } catch (e) {
@@ -1068,6 +1114,7 @@ export async function runWatchdog(
       detail: `The sponsor float check or forbidden-op scan did not complete: ${(e as Error).message}`,
     });
   }
+  await haltNow(); // a forbidden operation halts before the next check reads anything
 
   try {
     if (await checkGovernance(config, alerts, run)) checked.push("escrow-governance");
@@ -1088,6 +1135,7 @@ export async function runWatchdog(
       detail: `An upgrade would go unnoticed until this clears: ${(e as Error).message}`,
     });
   }
+  await haltNow(); // a confirmed wasm change halts before the expiry and fee reads
 
   try {
     if (await checkStateExpiry(config, alerts, readInstance)) checked.push("escrow-ttl");
@@ -1109,13 +1157,11 @@ export async function runWatchdog(
     });
   }
 
-  /* AUTO-HALT, on the two key-compromise tripwires and nothing else (see the constants), and only
-   * when the caller allows it (`autoHalt`, which only the Worker's scheduled run passes). The halt
-   * goes through the same store key the kill switch reads, namespaced to the network of the CONFIG,
-   * so a testnet watchdog can never stop the mainnet sponsor. A store without a key, or a store that
-   * refuses the write, leaves the page as the only answer, and the page says so. */
-  let autoHalted = false;
-  let freshHalt = false;
+  /* The halt step's REPORT. Every write already happened as its tripwire was raised (`haltNow`);
+   * this call only covers a tripwire some later check might one day raise, and writes nothing new. */
+  await haltNow();
+  // A halt is NEW when its key was absent before this run wrote it (unknown counts as absent).
+  const freshHalt = autoHalted && before !== true;
   /* The forbidden-operation cursor moves only once the halt step is decided. Past a tripwire it
    * moves only after the halt has landed (or when this run was never going to halt), so a halt
    * write that failed is retried by the next run instead of being scanned past for good. */
@@ -1129,16 +1175,7 @@ export async function runWatchdog(
   };
   const tripped = alerts.filter((a) => isAutoHaltTripwire(a.title));
   if (tripped.length > 0 && opts.autoHalt) {
-    const why = tripped.map((a) => a.title).join("; ");
-    // Asked before the write: a halt is NEW when its key was absent (unknown counts as absent).
-    const before = await storeHaltIsSet(network);
-    let failure = "";
-    try {
-      autoHalted = await setHalt(network, `watchdog auto-halt: ${why}`, now);
-    } catch (e) {
-      failure = (e as Error).message;
-    }
-    freshHalt = autoHalted && before !== true;
+    const why = tripwireWhy();
     const scanMoved = autoHalted ? await moveOpsCursor() : false;
     alerts.push(
       autoHalted
@@ -1151,7 +1188,7 @@ export async function runWatchdog(
             severity: "page",
             title: AUTO_HALT_FAILED_TITLE,
             detail:
-              `The tripwire fired (${why}) but the halt could NOT be written (${failure || "no store configured"}), so the ` +
+              `The tripwire fired (${why}) but the halt could NOT be written (${haltFailure || "no store configured"}), so the ` +
               `sponsor is still running. Halt by hand NOW: SPONSOR_HALT=1 and deploy, or SET ${haltKey(network)} to 1 in ` +
               `the store. Every run until a halt lands finds the tripwire again and retries the write (the scan does not ` +
               `move past the operation before then). Runbook: ops/RUNBOOK_SPONSOR_KEY.md section 4.`,

@@ -257,6 +257,36 @@ export async function notifyPilotInterest(email: string, origin?: string): Promi
 }
 
 /**
+ * The real-money warning, word for word as every surface shows it (the web dialog, /pilot, the
+ * extension's one-time note, the store listings, and the approval mail below). Any cap sentence
+ * follows it separately.
+ */
+export const REAL_MONEY_WARNING =
+  "Real money on Lumenia is an early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so keep amounts small.";
+
+/**
+ * The pilot's caps in the wording every surface uses, read from the SAME env the enforcement reads
+ * (lib/caps.ts): the per-transfer cap, the per-sender day cap (`MAX_DAY_USDC_PER_SENDER`) and the
+ * day cap across the whole pilot. On the mainnet Worker that is "$5 a link and up to $25 a day from
+ * you ($50 a day across the whole pilot)", and `short` is "$5 a link, $25 a day". Where no per-sender
+ * cap is tighter than the day's (testnet leaves it unset), the day cap is the one a sender meets.
+ */
+export function pilotCaps(): { full: string; short: string } {
+  const caps = capsFromEnv();
+  const usd = (stroops: bigint) => `$${stroopsToUsdc(stroops)}`;
+  const link = usd(caps.maxDropStroops);
+  const day = usd(caps.maxDayStroops);
+  const sender = caps.maxDaySenderStroops ?? caps.maxDayStroops;
+  if (sender < caps.maxDayStroops) {
+    return {
+      full: `${link} a link and up to ${usd(sender)} a day from you (${day} a day across the whole pilot)`,
+      short: `${link} a link, ${usd(sender)} a day`,
+    };
+  }
+  return { full: `${link} a link and up to ${day} a day across the whole pilot`, short: `${link} a link, ${day} a day` };
+}
+
+/**
  * Tell an approved user they are in the mainnet pilot. Best-effort: logs (visible in
  * `wrangler tail`) when Resend isn't configured, so an approval is never blocked by mail.
  * Sending to a real user's inbox needs a VERIFIED sender domain (RESEND_FROM =
@@ -272,31 +302,32 @@ export async function notifyPilotApproved(pubkey: string, email: string): Promis
 
   const key = process.env.RESEND_API_KEY;
   if (!key) {
-    console.log(`[pilot:approved] ${pubkey} — ${clean} (no RESEND_API_KEY)`);
+    // The wallet only, as /privacy says of a failed answer mail: the address stays in the store.
+    console.log(`[pilot:approved] ${pubkey}: not mailed (no RESEND_API_KEY)`);
     return false;
   }
 
   const switchUrl = `${process.env.WEB_ORIGIN ?? "https://getlumenia.com"}/account?switch=mainnet`;
-  // The cap this mail quotes is read from the SAME env the enforcement reads (lib/caps.ts,
-  // MAX_DROP_USDC). It used to be a hardcoded "$1" — an aspirational number the mainnet Worker
-  // never enforced (it has run $5 since day one), so the welcome mail promised a protection
-  // the user did not have.
-  const cap = `$${stroopsToUsdc(capsFromEnv().maxDropStroops)}`;
-  const body =
-    "Your account is ready to use Lumenia with real money. When you're set, turn it on in " +
-    `one tap — and keep amounts small: every transfer in the pilot is capped at ${cap}, so you ` +
-    "can get comfortable safely.";
+  /* The caps this mail quotes are read from the SAME env the enforcement reads (lib/caps.ts). They
+     used to be a hardcoded "$1", an aspirational number the mainnet Worker never enforced (it has run
+     $5 since day one), so the welcome mail promised a protection the user did not have. The warning
+     comes first, word for word as everywhere else, and the caps in a sentence of their own. */
+  const caps = pilotCaps();
+  const ready = "Your account is ready to use Lumenia with real money. When you're set, turn it on in one tap.";
+  const limits = `Pilot limits: ${caps.full}.`;
 
   const html = renderEmail({
-    preheader: `Turn on real money in one tap. Every transfer is capped at ${cap} in the pilot.`,
+    preheader: `Turn on real money in one tap. Pilot limits: ${caps.short}.`,
     mascotFile: "mascot-celebrate-cut.webp",
     mascotAlt: "Confetti celebration",
     h1: "You're approved for real money",
-    bodyHtml: `<p style="margin:0;">${body}</p>`,
+    bodyHtml: [ready, REAL_MONEY_WARNING, limits]
+      .map((p, i, all) => `<p style="margin:0${i < all.length - 1 ? " 0 14px" : ""};">${esc(p)}</p>`)
+      .join("\n"),
     buttonUrl: switchUrl,
     buttonLabel: "Switch to real money",
     footer:
-      "You're getting this because you asked to join the Lumenia mainnet pilot. Reply to this email anytime — a real person reads it.",
+      "You're getting this because you asked to join the Lumenia mainnet pilot. Reply to this email anytime. A real person reads it.",
   });
 
   const res = await fetch("https://api.resend.com/emails", {
@@ -305,8 +336,8 @@ export async function notifyPilotApproved(pubkey: string, email: string): Promis
     body: JSON.stringify({
       from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
       to: [clean],
-      subject: "You're in — Lumenia is ready for real money",
-      text: `You're approved for real money.\n\n${body}\n\nSwitch to real money: ${switchUrl}\n\n— Lumenia\n`,
+      subject: "You're in: Lumenia is ready for real money",
+      text: `You're approved for real money.\n\n${ready}\n\n${REAL_MONEY_WARNING}\n\n${limits}\n\nSwitch to real money: ${switchUrl}\n\nLumenia\n`,
       html,
     }),
   });
@@ -326,25 +357,26 @@ export async function notifyPilotRejected(pubkey: string, email: string): Promis
 
   const key = process.env.RESEND_API_KEY;
   if (!key) {
-    console.log(`[pilot:rejected] ${pubkey} — ${clean} (no RESEND_API_KEY)`);
+    // The wallet only, as /privacy says of a failed answer mail: the address stays in the store.
+    console.log(`[pilot:rejected] ${pubkey}: not mailed (no RESEND_API_KEY)`);
     return false;
   }
 
   const homeUrl = `${process.env.WEB_ORIGIN ?? "https://getlumenia.com"}/home`;
   const p1 =
-    "We're not able to open a real-money spot for you just yet. This isn't a no — it's a " +
+    "We're not able to open a real-money spot for you just yet. This isn't a no, it's a " +
     "not-yet. We're letting people in slowly on purpose, so we can support everyone properly " +
     "while it's early.";
   const p2 =
     "You're still on the list, and we'll email you the moment your spot is ready. In the " +
-    "meantime, practice mode is open — it's the exact same Lumenia with no real money and no wait.";
+    "meantime, practice mode is open: it's the exact same Lumenia with no real money and no wait.";
   const p3 = "If something's holding you up, just reply to this email. A real person reads it.";
 
   const html = renderEmail({
-    preheader: "Not yet — but you're still on the list, and practice mode is open now.",
+    preheader: "Not yet, but you're still on the list, and practice mode is open now.",
     mascotFile: "avatar-heart-cut.webp",
     mascotAlt: "A warm heart",
-    h1: "Not yet — but you're still on the list",
+    h1: "Not yet, but you're still on the list",
     bodyHtml: `<p style="margin:0 0 14px;">${p1}</p>
 <p style="margin:0 0 14px;">${p2}</p>
 <p style="margin:0 0 20px;">${p3}</p>
@@ -359,7 +391,7 @@ export async function notifyPilotRejected(pubkey: string, email: string): Promis
       from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
       to: [clean],
       subject: "An update on your Lumenia pilot request",
-      text: `Not yet — but you're still on the list.\n\n${p1}\n\n${p2}\n\n${p3}\n\nOpen practice mode: ${homeUrl}\n\n— Lumenia\n`,
+      text: `Not yet, but you're still on the list.\n\n${p1}\n\n${p2}\n\n${p3}\n\nOpen practice mode: ${homeUrl}\n\nLumenia\n`,
       html,
     }),
   });

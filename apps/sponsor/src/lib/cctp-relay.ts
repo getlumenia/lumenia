@@ -30,7 +30,7 @@ import { rpc, Contract, StrKey, TransactionBuilder, xdr, type Transaction, type 
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { isSubmitUnconfirmed } from "./stellar.js";
-import { feeBumpBase, payAndSubmit, type RelayDeps, type RelayRpc } from "./soroban-relay.js";
+import { feeBumpBase, payAndSubmit, simErrorHead, type RelayDeps, type RelayRpc } from "./soroban-relay.js";
 import { CHANNEL_LEASE_TTL_SECONDS, type ChannelManager } from "./channels.js";
 
 /** Circle's CctpForwarder on Stellar testnet (developers.circle.com, CCTP on Stellar). */
@@ -163,9 +163,13 @@ export async function relayCctpHandler(
       .setTimeout(TIMEOUT_SECONDS)
       .build();
 
-    // A replayed nonce or a forged attestation fails here, before anything is signed or paid.
+    // A replayed nonce or a forged attestation fails here, before anything is signed or paid. The
+    // reason carries the error's first line only: the event log after it replays the call's
+    // arguments (the burn message, which names the recipient and the amount).
     const sim = await server.simulateTransaction(tx);
-    if (rpc.Api.isSimulationError(sim)) throw new Error(`cctp-relay simulation failed (already minted, or not mintable): ${sim.error}`);
+    if (rpc.Api.isSimulationError(sim)) {
+      throw new Error(`cctp-relay simulation failed (already minted, or not mintable): ${simErrorHead(sim.error)}`);
+    }
     const prepared = rpc.assembleTransaction(tx, sim).build();
     if (Number.parseInt(prepared.fee, 10) > CCTP_FEE_CAP) throw new Error(`cctp-relay fee ${prepared.fee} exceeds cap ${CCTP_FEE_CAP}`);
 
@@ -178,11 +182,16 @@ export async function relayCctpHandler(
     }
 
     // Charge the bid, sign, send and watch: the same single step as the LumenDrop relays, so the
-    // fee budget, the busy answer and the undecided answer cannot drift between them.
-    const { hash, got } = await payAndSubmit(server, signer, submitTx, "cctp-relay", relay, {
+    // fee budget, the busy answer and the undecided answer cannot drift between them. One
+    // subrequest is reserved for the lease release (lib/subrequests.ts).
+    const { hash, got, cut } = await payAndSubmit(server, signer, submitTx, "cctp-relay", relay, {
       pollMs: POLL_MS,
       maxPolls: Math.ceil((TIMEOUT_SECONDS * 1000) / POLL_MS),
+      reserve: 1,
     });
+    // A window the subrequest budget closed before the timebound: the mint may still land on this
+    // channel's sequence, so the lease is kept and left to lapse (the claim relay does the same).
+    if (cut && got.status === rpc.Api.GetTransactionStatus.NOT_FOUND) keepLease = true;
     if (got.status === rpc.Api.GetTransactionStatus.FAILED) throw new Error(`cctp-relay tx ${got.status}`);
     /* NOT_FOUND after the window is "accepted, undecided", not "failed": a mint reported as failed
      * would be relayed again by the client and refused by the forwarder as a replayed nonce, with

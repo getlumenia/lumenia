@@ -12,6 +12,11 @@
  * the real aws4fetch transport against a stubbed KMS endpoint (one retry, one deadline, no error
  * body in an answer), and add-signer's unsigned dry run and exact-file submit, end to end against
  * a Horizon on this machine. `fetch` is stubbed wherever it could be reached: nothing leaves it.
+ *
+ * Section [13]: the Workers Free plan's 50 subrequests per invocation, counted with a stubbed fetch
+ * through worker.fetch for every route that signs, at its worst case with KMS signing (each Sign one
+ * fetch plus its retry): the relays stop polling inside SUBREQUEST_BUDGET (lib/subrequests.ts) and
+ * answer 202, exactly as an unanswered poll window does.
  */
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync, rmdirSync, rmSync, statSync } from "node:fs";
@@ -31,6 +36,7 @@ import {
   Networks,
   Operation,
   SorobanDataBuilder,
+  StrKey,
   TimeoutInfinite,
   TransactionBuilder,
   nativeToScVal,
@@ -49,8 +55,11 @@ import { feebumpHandler } from "./lib/feebump.js";
 import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
 import { sendLinkHandler } from "./lib/send.js";
-import { relayClaimHandler, relayDepositHandler, relayReclaimHandler, type RelayRpc } from "./lib/soroban-relay.js";
+import { relayClaimHandler, relayDepositHandler, relayReclaimHandler, setRelayPollMsForTests, type RelayRpc } from "./lib/soroban-relay.js";
+import { CCTP_TESTNET_FORWARDER } from "./lib/cctp-relay.js";
 import { ChannelManager } from "./lib/channels.js";
+import { resetHaltCache } from "./lib/kill-switch.js";
+import { SUBREQUEST_BUDGET, WORKER_SUBREQUEST_LIMIT } from "./lib/subrequests.js";
 import worker from "./worker.js";
 import {
   buildSetOptionsRecord,
@@ -1184,6 +1193,295 @@ async function main() {
           /* not empty: someone's real record is there; leave it */
         }
       }
+    }
+  }
+
+  /* ------------------------------------------------------------------------------------------
+   * [13] The subrequest limit of ONE Worker invocation: 50 on the Workers Free plan, and a live
+   * testnet run already hit "Too many subrequests". Every route that signs runs through worker.fetch
+   * at its worst case with KMS signing: a cold isolate whose GetPublicKey needs its retry, every Sign
+   * answered 500 once (one fetch plus its retry), a stale halt cache, both rate-limit windows, the
+   * pilot slot, a channel lease found on the sixth try, and a transaction the RPC never shows
+   * (NOT_FOUND on every poll). The real aws4fetch transport, the real Soroban RPC and Horizon
+   * clients and the store all reach the stubbed fetch, which counts every request.
+   * ------------------------------------------------------------------------------------------ */
+  console.log(`[13] the ${WORKER_SUBREQUEST_LIMIT}-subrequest limit: every signing route stays at or under ${SUBREQUEST_BUDGET} with KMS, worst case`);
+  {
+    const accountKp = Keypair.random();
+    const ACCOUNT = accountKp.publicKey();
+    const kmsKey = Keypair.random();
+    const channel = Keypair.random();
+    const sender = Keypair.random();
+    const kv = new Map<string, string>();
+    /** Per route: the KMS answers still to come (500 = a failed attempt), and what was asked. */
+    const st = { gpk: [] as number[], sign: [] as number[], leaseTries: 0, leaseReleases: 0, polls: 0 };
+    const rpcJson = (result: unknown) =>
+      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), { status: 200, headers: { "content-type": "application/json" } });
+    const plainJson = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    const accountEntry = (accountId: xdr.AccountId) =>
+      xdr.LedgerEntryData.account(
+        new xdr.AccountEntry({
+          accountId,
+          balance: xdr.Int64.fromString("1000000000"),
+          seqNum: xdr.Int64.fromString("7"),
+          numSubEntries: 0,
+          inflationDest: null,
+          flags: 0,
+          homeDomain: "",
+          thresholds: Buffer.from([1, 0, 0, 0]),
+          signers: [],
+          ext: new xdr.AccountEntryExt(0),
+        }),
+      ).toXDR("base64");
+    /* A CCTP V2 message the relay accepts: Base (6) to Stellar (27), the forwarder as its caller. */
+    const header = Buffer.alloc(148);
+    header.writeUInt32BE(1, 0);
+    header.writeUInt32BE(6, 4);
+    header.writeUInt32BE(27, 8);
+    Buffer.alloc(32, 9).copy(header, 12);
+    Buffer.from(StrKey.decodeContract(CCTP_TESTNET_FORWARDER)).copy(header, 108);
+    header.writeUInt32BE(1000, 140);
+    header.writeUInt32BE(1000, 144);
+    const cctpMessage = `0x${Buffer.concat([header, Buffer.alloc(120, 3)]).toString("hex")}`;
+    const cctpAttestation = `0x${Buffer.alloc(130, 1).toString("hex")}`;
+
+    const route = async (s: Seen): Promise<Response> => {
+      const u = new URL(s.url);
+      if (u.hostname === "kms.eu-central-1.amazonaws.com") {
+        const status = (s.target === "TrentService.GetPublicKey" ? st.gpk : st.sign).shift() ?? 200;
+        if (status !== 200) return jsonResponse(status, { __type: "KMSInternalException" });
+        if (s.target === "TrentService.GetPublicKey") {
+          return jsonResponse(200, { KeySpec: "ECC_NIST_EDWARDS25519", PublicKey: Buffer.concat([ED25519_SPKI_PREFIX, kmsKey.rawPublicKey()]).toString("base64") });
+        }
+        return jsonResponse(200, { Signature: kmsKey.sign(Buffer.from(String(s.body?.Message), "base64")).toString("base64"), SigningAlgorithm: "ED25519_SHA_512" });
+      }
+      if (u.hostname === "kv.budget.test" && u.pathname === "/pipeline") {
+        const cmds = s.body as unknown as string[][];
+        return plainJson(
+          200,
+          cmds.map((cmd) => {
+            const [op, key, ...rest] = cmd as [string, string, ...string[]];
+            switch (op) {
+              case "GET":
+                return { result: kv.get(key) ?? null };
+              case "SET": {
+                if ((rest.includes("NX") && kv.has(key)) || (rest.includes("XX") && !kv.has(key))) return { result: null };
+                kv.set(key, String(rest[0]));
+                return { result: "OK" };
+              }
+              case "INCR":
+              case "INCRBY":
+              case "DECR": {
+                const delta = op === "INCR" ? 1n : op === "DECR" ? -1n : BigInt(rest[0]!);
+                const next = BigInt(kv.get(key) ?? "0") + delta;
+                kv.set(key, next.toString());
+                return { result: next.toString() };
+              }
+              case "EXPIRE":
+              case "PEXPIRE":
+                return { result: 1 };
+              case "DEL":
+                return { result: kv.delete(key) ? 1 : 0 };
+              case "EVAL": {
+                // `key` is the script here. The channel pool's one-round-trip lease takes on the 6th try.
+                if (key.includes("#KEYS")) return { result: ++st.leaseTries % 6 === 0 ? 1 : 0 };
+                if (key.includes("'del'")) st.leaseReleases++;
+                return { result: 1 };
+              }
+              default:
+                throw new TypeError(`budget store: unexpected command ${op}`);
+            }
+          }),
+        );
+      }
+      if (u.hostname === "rpc.budget.test") {
+        const call = s.body as { method?: string; params?: Record<string, unknown> } | null;
+        if (call?.method === "getLedgerEntries") {
+          const keyB64 = (call.params?.keys as string[])[0]!;
+          const accountId = xdr.LedgerKey.fromXDR(keyB64, "base64").account().accountId();
+          return rpcJson({ latestLedger: 100, entries: [{ key: keyB64, xdr: accountEntry(accountId), lastModifiedLedgerSeq: 1, liveUntilLedgerSeq: 1000 }] });
+        }
+        if (call?.method === "simulateTransaction") {
+          return rpcJson({
+            latestLedger: 100,
+            minResourceFee: "500000",
+            transactionData: new SorobanDataBuilder().setResourceFee(500_000).build().toXDR("base64"),
+            results: [{ auth: [], xdr: xdr.ScVal.scvVoid().toXDR("base64") }],
+            events: [],
+          });
+        }
+        if (call?.method === "sendTransaction") {
+          const sent = TransactionBuilder.fromXDR(String(call.params?.transaction), Networks.TESTNET);
+          return rpcJson({ status: "PENDING", hash: sent.hash().toString("hex"), latestLedger: 100, latestLedgerCloseTime: "0" });
+        }
+        if (call?.method === "getTransaction") {
+          st.polls++;
+          return rpcJson({ status: "NOT_FOUND", latestLedger: 100, latestLedgerCloseTime: "0", oldestLedger: 1, oldestLedgerCloseTime: "0" });
+        }
+      }
+      if (u.hostname === "horizon.budget.test" && u.pathname.startsWith("/accounts/")) {
+        const id = u.pathname.slice("/accounts/".length);
+        if (id !== ACCOUNT && id !== channel.publicKey()) {
+          return plainJson(404, { type: "https://stellar.org/horizon-errors/not_found", title: "Resource Missing", status: 404 });
+        }
+        return plainJson(200, { id, account_id: id, sequence: "7", subentry_count: 0, balances: [], signers: [], thresholds: {}, flags: {}, data: {}, paging_token: id });
+      }
+      if (u.hostname === "iris.budget.test") {
+        return plainJson(200, { messages: [{ status: "complete", message: cctpMessage, attestation: cctpAttestation }] });
+      }
+      throw new TypeError(`offline test: unexpected request to ${s.url}`);
+    };
+
+    const KMS_ENV: Record<string, string | undefined> = {
+      ...OFFLINE_BASE,
+      KV_REST_API_URL: "https://kv.budget.test",
+      KV_REST_API_TOKEN: "t",
+      KMS_KEY_ID: "arn:aws:kms:eu-central-1:000000000000:key/budget",
+      KMS_REGION: "eu-central-1",
+      AWS_ACCESS_KEY_ID: "AKIABUDGETCHECK0000X",
+      AWS_SECRET_ACCESS_KEY: "budget-secret",
+      SPONSOR_ACCOUNT_ID: ACCOUNT,
+      SOROBAN_RPC_URL: "https://rpc.budget.test",
+      HORIZON_URL: "https://horizon.budget.test",
+      LUMENDROP_CONTRACT: CONTRACT,
+      CHANNEL_SECRETS: channel.secret(),
+      PILOT_MODE: "1",
+      CCTP_FORWARDER: CCTP_TESTNET_FORWARDER,
+      CCTP_IRIS_URL: "https://iris.budget.test",
+      MAX_DAY_FEE_XLM: "100000",
+      MAX_DROP_USDC: "1000",
+      MAX_DAY_USDC: "100000",
+      MAX_DAY_USDC_PER_SENDER: "100000",
+    };
+    const restoreEnv = setEnv(KMS_ENV);
+    kv.set(`pilot:testnet:appr:${sender.publicKey()}`, "1");
+    setRelayPollMsForTests(1);
+    const net = stubFetch(route);
+
+    /** One request on a cold isolate with a stale halt cache; how many fetches it made, and its answer. */
+    const call = async (path: string, body: unknown, plan: { gpk: number[]; sign: number[] }) => {
+      resetServiceCache();
+      resetHaltCache();
+      st.gpk = [...plan.gpk];
+      st.sign = [...plan.sign];
+      st.leaseTries = 0;
+      st.leaseReleases = 0;
+      st.polls = 0;
+      net.seen.length = 0;
+      const res = await worker.fetch(
+        new Request(`https://sponsor.test${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "cf-connecting-ip": `203.0.113.${Math.floor(Math.random() * 200) + 1}` },
+          body: JSON.stringify(body),
+        }),
+        {},
+      );
+      const answer = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      return { status: res.status, answer, fetches: net.seen.length, polls: st.polls, leaseTries: st.leaseTries, leaseReleases: st.leaseReleases };
+    };
+    /** Cold KMS: GetPublicKey fails once, then every Sign fails once before its retry succeeds. */
+    const WORST = { gpk: [500, 200], sign: [500, 200, 500, 200] };
+
+    const depositTx = () => {
+      const t = new TransactionBuilder(new Account(sender.publicKey(), "11"), { fee: "1000000", networkPassphrase: Networks.TESTNET })
+        .addOperation(
+          new Contract(CONTRACT).call(
+            "deposit",
+            Address.fromString(sender.publicKey()).toScVal(),
+            xdr.ScVal.scvBytes(Buffer.from(Keypair.random().rawPublicKey())),
+            nativeToScVal(10_000_000n, { type: "i128" }),
+            nativeToScVal(BigInt(Math.floor(Date.now() / 1000) + 86_400), { type: "u64" }),
+          ),
+        )
+        .setTimeout(180)
+        .build();
+      t.sign(sender);
+      return t;
+    };
+    const reclaimTx = () => {
+      const t = new TransactionBuilder(new Account(sender.publicKey(), "12"), { fee: "1000000", networkPassphrase: Networks.TESTNET })
+        .addOperation(new Contract(CONTRACT).call("reclaim", xdr.ScVal.scvBytes(Buffer.alloc(32, 5))))
+        .setTimeout(180)
+        .build();
+      t.sign(sender);
+      return t;
+    };
+
+    try {
+      const dep = await call("/v2-deposit", { xdr: depositTx().toXDR(), senderPublicKey: sender.publicKey() }, WORST);
+      check(
+        `/v2-deposit, KMS, worst case: ${dep.fetches} subrequests (at most ${SUBREQUEST_BUDGET}; 41 polls on top of the same start made 54 before the budget)`,
+        dep.fetches <= SUBREQUEST_BUDGET && dep.fetches >= 40,
+        `${dep.fetches} fetches, ${dep.polls} polls`,
+      );
+      check(
+        "/v2-deposit: the budget, not the 40-poll window, ended the wait, and the answer is the undecided 202 with the hash",
+        dep.status === 202 && dep.answer.confirmed === false && /^[0-9a-f]{64}$/.test(String(dep.answer.hash)) && dep.polls > 0 && dep.polls < 41,
+        `${dep.status} ${JSON.stringify(dep.answer)} after ${dep.polls} polls`,
+      );
+      check(
+        "/v2-deposit: and three subrequests stayed free for what an on-ledger FAILED would still need (settle, cap, pilot slot)",
+        dep.fetches + 3 <= SUBREQUEST_BUDGET,
+        `${dep.fetches} + 3`,
+      );
+
+      const claim = await call("/v2-claim", { method: "claim", linkHex: "ab".repeat(32), payout: Keypair.random().publicKey(), sigHex: "cd".repeat(64) }, WORST);
+      check(
+        `/v2-claim, KMS, worst case (a channel found on the sixth try): ${claim.fetches} subrequests, at most ${SUBREQUEST_BUDGET}`,
+        claim.fetches <= SUBREQUEST_BUDGET && claim.leaseTries === 6,
+        `${claim.fetches} fetches, ${claim.leaseTries} lease tries, ${claim.polls} polls`,
+      );
+      check(
+        "/v2-claim: 202 with the hash after a poll window the budget closed",
+        claim.status === 202 && claim.answer.confirmed === false && claim.polls > 0 && claim.polls < 41,
+        `${claim.status} ${JSON.stringify(claim.answer)} after ${claim.polls} polls`,
+      );
+      check(
+        "/v2-claim: the channel lease is KEPT (the claim may still land before its 60 s timebound), never released early",
+        claim.leaseReleases === 0,
+        `${claim.leaseReleases} releases`,
+      );
+
+      const rec = await call("/v2-reclaim", { xdr: reclaimTx().toXDR(), senderPublicKey: sender.publicKey() }, WORST);
+      check(
+        `/v2-reclaim, KMS, worst case: ${rec.fetches} subrequests, at most ${SUBREQUEST_BUDGET}, and an undecided 202`,
+        rec.fetches <= SUBREQUEST_BUDGET && rec.status === 202 && rec.answer.confirmed === false && rec.polls < 41,
+        `${rec.fetches} fetches, ${rec.status} after ${rec.polls} polls`,
+      );
+
+      const mint = await call("/cctp-relay", { burnTxHash: `0x${"ef".repeat(32)}` }, WORST);
+      check(
+        `/cctp-relay, KMS, worst case: ${mint.fetches} subrequests, at most ${SUBREQUEST_BUDGET}, answered 202 {status:'minted', confirmed:false}`,
+        mint.fetches <= SUBREQUEST_BUDGET && mint.status === 202 && mint.answer.status === "minted" && mint.answer.confirmed === false && mint.leaseReleases === 0,
+        `${mint.fetches} fetches, ${mint.status} ${JSON.stringify(mint.answer)}, ${mint.leaseReleases} releases`,
+      );
+
+      /* /create-account has no poll, so its worst case is the channel path failing at its KMS Sign
+         (both attempts 500) and the sponsor path signing after one retry. */
+      const onboard = await call("/create-account", { recipientPublicKey: Keypair.random().publicKey() }, { gpk: [500, 200], sign: [500, 500, 500, 200] });
+      check(
+        `/create-account, KMS, worst case (the channel path's Sign fails twice, the sponsor path retries once): ${onboard.fetches} subrequests, at most ${SUBREQUEST_BUDGET}`,
+        onboard.fetches <= SUBREQUEST_BUDGET && onboard.status === 200 && onboard.answer.via === "sponsor" && onboard.leaseTries === 6,
+        `${onboard.fetches} fetches, ${onboard.status} via ${String(onboard.answer.via)}`,
+      );
+
+      /* The env signer makes no KMS call, so the same meter leaves its deposit more polls: the bound
+         takes from each signer only what its own spend requires. */
+      setEnv({ KMS_KEY_ID: undefined, KMS_REGION: undefined, AWS_ACCESS_KEY_ID: undefined, AWS_SECRET_ACCESS_KEY: undefined, SPONSOR_ACCOUNT_ID: undefined, SPONSOR_SECRET: accountKp.secret() });
+      const envDep = await call("/v2-deposit", { xdr: depositTx().toXDR(), senderPublicKey: sender.publicKey() }, { gpk: [], sign: [] });
+      check(
+        "/v2-deposit with the env signer: also at most the budget, with more polls than under KMS (no KMS fetch to pay for)",
+        envDep.fetches <= SUBREQUEST_BUDGET && envDep.status === 202 && envDep.polls > dep.polls,
+        `${envDep.fetches} fetches, ${envDep.polls} polls (KMS ${dep.polls})`,
+      );
+      check("nothing outside the stand-ins was reached", net.seen.every((s) => s.url.includes(".budget.test") || s.url.startsWith("https://kms.")));
+    } finally {
+      net.restore();
+      setRelayPollMsForTests(null);
+      resetServiceCache();
+      resetHaltCache();
+      restoreEnv();
     }
   }
 

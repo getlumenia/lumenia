@@ -217,7 +217,7 @@ async function main() {
     clearKv();
   }
 
-  console.log("[11] the welcome mail says whether Resend took it, and quotes the cap it is given");
+  console.log("[11] the welcome mail says whether Resend took it, carries the warning word for word, and quotes the caps it is given");
   {
     const sent: string[] = [];
     let status = 200;
@@ -226,14 +226,60 @@ async function main() {
       return { ok: status >= 200 && status < 300, status } as Response;
     }) as typeof fetch;
     delete process.env.RESEND_API_KEY;
-    check("no RESEND_API_KEY -> reported as not sent, nothing posted", (await notifyPilotApproved(W, "one@example.com")) === false && sent.length === 0);
+    const logged: string[] = [];
+    const realLog = console.log;
+    console.log = (...a: unknown[]) => void logged.push(a.map(String).join(" "));
+    let notSent: boolean;
+    let notSentDecline: boolean;
+    try {
+      notSent = (await notifyPilotApproved(W, "one@example.com")) === false;
+      notSentDecline = (await notifyPilotRejected(W, "one@example.com")) === false;
+    } finally {
+      console.log = realLog;
+    }
+    check("no RESEND_API_KEY -> reported as not sent, nothing posted", notSent && notSentDecline && sent.length === 0);
+    check(
+      "and the log line names the wallet only, as /privacy says of a failed answer mail (never the email)",
+      logged.length === 2 && logged.every((l) => l.includes(W) && !l.includes("one@example.com")),
+      logged.join(" | "),
+    );
     process.env.RESEND_API_KEY = "re_test";
+    // The mainnet Worker's own numbers (wrangler.toml [env.mainnet.vars]).
+    process.env.STELLAR_NETWORK = "mainnet";
     process.env.MAX_DROP_USDC = "5";
+    process.env.MAX_DAY_USDC = "50";
+    process.env.MAX_DAY_USDC_PER_SENDER = "25";
     check("Resend accepts -> reported as sent", (await notifyPilotApproved(W, "one@example.com")) === true);
-    check("the mail quotes the cap from MAX_DROP_USDC, not the code default", sent.length === 1 && sent[0]!.includes("capped at $5") && !sent[0]!.includes("$100"));
+    const mail = JSON.parse(sent[0] ?? "{}") as { subject?: string; text?: string; html?: string };
+    // Written out here, not imported: the test pins the agreed wording, not whatever the module says.
+    const WARNING = "Real money on Lumenia is an early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so keep amounts small.";
+    const CAPS = "$5 a link and up to $25 a day from you ($50 a day across the whole pilot)";
+    check("the text and the HTML both carry the real-money warning word for word", !!mail.text?.includes(WARNING) && !!mail.html?.includes(WARNING), mail.text?.slice(0, 160));
+    check(
+      "the caps follow it in a sentence of their own, from MAX_DROP_USDC, MAX_DAY_USDC_PER_SENDER and MAX_DAY_USDC",
+      !!mail.text?.includes(`Pilot limits: ${CAPS}.`) && mail.text!.indexOf(WARNING) < mail.text!.indexOf("Pilot limits:") && !!mail.html?.includes(CAPS),
+      mail.text,
+    );
+    check("the preheader carries the short form", !!mail.html?.includes("Pilot limits: $5 a link, $25 a day."));
+    check("no testnet default leaks into it ($100 a transfer, $1000 a day)", !sent[0]!.includes("$100") && !sent[0]!.includes("$1000"));
+    check(
+      "plain ASCII: no em or en dash and no curly quote in the subject, the text or the visible copy",
+      [mail.subject ?? "", mail.text ?? "", WARNING, CAPS].every((s) => !/[\u2013\u2014\u2018\u2019\u201C\u201D]/.test(s)) && !/[\u2013\u2014\u2018\u2019\u201C\u201D]/.test(mail.html ?? ""),
+      mail.subject,
+    );
+    // Without a per-sender cap tighter than the day's (testnet leaves it unset), the day cap is the one a sender meets.
+    delete process.env.STELLAR_NETWORK;
+    delete process.env.MAX_DAY_USDC;
+    delete process.env.MAX_DAY_USDC_PER_SENDER;
+    sent.length = 0;
+    await notifyPilotApproved(W, "one@example.com");
+    const plain = JSON.parse(sent[0] ?? "{}") as { text?: string };
+    check("with no per-sender cap the mail quotes the link cap and the day's", !!plain.text?.includes("Pilot limits: $5 a link and up to $1000 a day across the whole pilot."), plain.text);
     status = 403; // e.g. an unverified RESEND_FROM sending to a real inbox
     check("Resend refuses -> reported as NOT sent (the CLI must not print \"emailed\")", (await notifyPilotApproved(W, "one@example.com")) === false);
     check("the decline mail follows the same contract", (await notifyPilotRejected(W, "one@example.com")) === false);
+    const decline = JSON.parse(sent[sent.length - 1] ?? "{}") as { subject?: string; text?: string; html?: string };
+    check("the decline mail is plain ASCII too", !/[\u2013\u2014\u2018\u2019\u201C\u201D]/.test(`${decline.subject}${decline.text}${decline.html}`), decline.text?.slice(0, 60));
     delete process.env.RESEND_API_KEY;
     delete process.env.MAX_DROP_USDC;
   }
@@ -407,6 +453,17 @@ async function main() {
     resetHealthCache();
     const fresh = (await (await worker.fetch(new Request("https://sponsor.test/health"), {})).json()) as Record<string, any>;
     check("and a read after the window sees it", fresh.watchdog?.lastRun === "2026-10-08T00:00:00.000Z", String(fresh.watchdog?.lastRun));
+    // The deployed version, from Cloudflare's version metadata binding (wrangler.toml [version_metadata]).
+    check("without the version binding (a local run) /health has no version key", !("version" in h) && !("version" in fresh));
+    const META = { id: "7bfebe3e-5c2f-4d0e-9a54-3d7a0c2e8f11", tag: "", timestamp: "2026-10-09T10:00:00.000Z", extra: "dropped" };
+    const withVersion = (await (await worker.fetch(new Request("https://sponsor.test/health"), { CF_VERSION_METADATA: META })).json()) as Record<string, any>;
+    check(
+      "with the binding it reports exactly {id, tag, timestamp} (an empty tag as null, nothing else from the binding)",
+      JSON.stringify(withVersion.version) === JSON.stringify({ id: META.id, tag: null, timestamp: META.timestamp }),
+      JSON.stringify(withVersion.version),
+    );
+    const tagged = (await (await worker.fetch(new Request("https://sponsor.test/health"), { CF_VERSION_METADATA: { ...META, tag: "6b6b98c" } })).json()) as Record<string, any>;
+    check("a deploy tagged with its commit shows the tag", tagged.version?.tag === "6b6b98c", JSON.stringify(tagged.version));
     delete process.env.PILOT_MODE;
     clearKv();
   }

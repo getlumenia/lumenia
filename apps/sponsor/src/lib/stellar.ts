@@ -213,7 +213,19 @@ function outcomeUnknown(e: unknown): boolean {
 }
 
 /**
- * Submit a tx, surfacing Horizon's `extras` (the useful part) on failure.
+ * Horizon's `extras` as an error message may carry them: the result codes and whatever else Horizon
+ * says, never `envelope_xdr` or `result_xdr`. The envelope is the whole transaction in base64 (every
+ * address and the amount, one decode away), and on mainnet a refusal's message goes to the Worker's
+ * error log (worker.ts). The codes are what a reader, and the web's error screens, key on.
+ */
+export function extrasDetail(extras: unknown): string {
+  if (!extras || typeof extras !== "object") return JSON.stringify(extras);
+  const { envelope_xdr: _envelope, result_xdr: _result, ...rest } = extras as Record<string, unknown>;
+  return JSON.stringify(rest);
+}
+
+/**
+ * Submit a tx, surfacing Horizon's `extras` (the useful part, its result codes) on failure.
  *
  * With `charge` (the day's fee budget entry for this transaction, lib/caps.ts) the answer also
  * settles the charge: an included transaction counts the fee its result names, a refusal core made
@@ -229,7 +241,7 @@ export async function submit(
     res = await server.submitTransaction(tx);
   } catch (e: unknown) {
     const extras = (e as { response?: { data?: { extras?: unknown } } })?.response?.data?.extras;
-    const detail = extras ? JSON.stringify(extras) : (e as Error).message;
+    const detail = extras ? extrasDetail(extras) : (e as Error).message;
     if (outcomeUnknown(e)) {
       let hash: string | undefined;
       try {

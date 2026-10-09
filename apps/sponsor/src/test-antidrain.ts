@@ -845,6 +845,46 @@ check(
   true,
 );
 
+/* ---- LOG REDACTION: a refused /payout or /sweep reason reaches the mainnet error log (worker.ts),
+   so it names the rule that tripped and never the money: no amount, no full address, no full balance
+   id, one line. The caller sent all of it and already knows it (SOW 2, D2: no amounts in server logs). */
+const FULL_ADDRESS = /\b(?:[GC][A-Z2-7]{55}|M[A-Z2-7]{68})\b/;
+function checkRedacted(name: string, got: { ok: boolean; reason?: string }, reasonIncludes: string, forbidden: string[]) {
+  try {
+    const reason = got.reason ?? "";
+    assert.equal(got.ok, false, `${name}: expected a refusal, got ok=${got.ok}`);
+    assert.ok(reason.toLowerCase().includes(reasonIncludes.toLowerCase()), `${name}: reason "${reason}" should include "${reasonIncludes}"`);
+    assert.ok(!/[\r\n]/.test(reason), `${name}: reason "${reason}" spans more than one line`);
+    assert.ok(!FULL_ADDRESS.test(reason), `${name}: reason "${reason}" carries a full address`);
+    for (const f of forbidden) assert.ok(!reason.includes(f), `${name}: reason "${reason}" carries "${f}"`);
+    console.log(`  ✔ ${name}  → "${reason}"`);
+    passed++;
+  } catch (e) {
+    console.error(`  ✗ ${name}: ${(e as Error).message}`);
+    failed++;
+  }
+}
+checkRedacted("LOG-1 a payout amount mismatch names neither amount", validatePayoutTransaction(buildTx(recipient.publicKey(), payoutOps({ amount: "999.1234567" })), payoutPolicy), "declared", ["999", "25.5"]);
+{
+  const tx = buildTx(recipient.publicKey(), payoutOps());
+  (tx.operations[0] as { amount?: string }).amount = "-3.3";
+  checkRedacted("LOG-2 a non-positive payout amount is not echoed", validatePayoutTransaction(tx, payoutPolicy), "greater than zero", ["3.3"]);
+}
+checkRedacted("LOG-3 a payout destination mismatch shortens the address it names", validatePayoutTransaction(buildTx(recipient.publicKey(), payoutOps({ dest: attacker.publicKey() })), payoutPolicy), "destination", [attacker.publicKey().slice(4)]);
+checkRedacted(
+  "LOG-4 a muxed payout destination mismatch is shortened too",
+  validatePayoutTransaction(buildTx(recipient.publicKey(), payoutOps({ dest: exchangeMuxed })), payoutPolicy),
+  "destination",
+  [exchangeMuxed.slice(4)],
+);
+checkRedacted("LOG-5 a payout from another tx source shortens it", validatePayoutTransaction(buildTx(attacker.publicKey(), payoutOps()), payoutPolicy), "tx source", [attacker.publicKey().slice(4)]);
+checkRedacted("LOG-6 a sweep amount mismatch names neither amount", validateSweepTransaction(buildTx(throwaway.publicKey(), sweepOps({ payAmount: "7.7777777" })), sweepPolicy), "amount", ["7.7777777", SWEEP_AMOUNT]);
+checkRedacted("LOG-7 a sweep payment to another destination shortens it", validateSweepTransaction(buildTx(throwaway.publicKey(), sweepOps({ payDest: attacker.publicKey() })), sweepPolicy), "destination", [attacker.publicKey().slice(4)]);
+checkRedacted("LOG-8 a sweep merge to another destination shortens it", validateSweepTransaction(buildTx(throwaway.publicKey(), sweepOps({ mergeDest: attacker.publicKey() })), sweepPolicy), "destination", [attacker.publicKey().slice(4)]);
+checkRedacted("LOG-9 a sweep claiming another balance shortens the balance id", validateSweepTransaction(buildTx(throwaway.publicKey(), sweepOps({ balanceId: OTHER_BALANCE_ID })), sweepPolicy), "balanceid", [OTHER_BALANCE_ID.slice(4)]);
+checkRedacted("LOG-10 a sweep trustline that is not removed does not echo its limit", validateSweepTransaction(buildTx(throwaway.publicKey(), sweepOps({ ctLimit: "1000" })), sweepPolicy), "limit 0", ["1000"]);
+checkRedacted("LOG-11 a sweep from another tx source shortens it", validateSweepTransaction(buildTx(attacker.publicKey(), sweepOps()), sweepPolicy), "tx source", [attacker.publicKey().slice(4)]);
+
 console.log("\n============================================================");
 console.log(failed === 0 ? ` ✅ ANTI-DRAIN TESTS PASS (${passed}/${passed + failed})` : ` ❌ ANTI-DRAIN TESTS FAIL (${failed} failed)`);
 console.log("============================================================");

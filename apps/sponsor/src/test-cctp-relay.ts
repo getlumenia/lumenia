@@ -293,6 +293,43 @@ async function main(): Promise<void> {
     ok("a decided mint frees it", freed.state.released === 1);
     ok("and its fee-bump bids 2 x 1,000,000 + 400,000 (the inner's inclusion fee as the base)", viaChannel.signed[0] === "2400000", viaChannel.signed.join(","));
     {
+      /* A refused simulation carries the HostError's first line only (lib/soroban-relay.ts,
+         simErrorHead): the event log after it replays the call's arguments and the transfer it
+         reached, the recipient's full address and the amount among them, and on mainnet the reason
+         is the error log's line. */
+      const recipientG = Keypair.random().publicKey();
+      const refusing = (url: string): RelayRpc => ({
+        ...fakeRpc("PENDING", ["SUCCESS"])(url),
+        async simulateTransaction() {
+          return {
+            _parsed: true,
+            latestLedger: 1,
+            events: [],
+            error:
+              "HostError: Error(Contract, #4)\n\nEvent log (newest first):\n" +
+              `   0: [Diagnostic Event] topics:[fn_call, ${CCTP_TESTNET_FORWARDER}, mint_and_forward], data:[Bytes(${MESSAGE_HEX.slice(2, 66)}), Bytes(01)]\n` +
+              `   1: [Diagnostic Event] topics:[transfer, ${recipientG}], data:7654321`,
+          } as unknown as rpc.Api.SimulateTransactionResponse;
+        },
+      });
+      store.clear();
+      feeMoves.length = 0;
+      const rec = recording();
+      let refused = "";
+      try {
+        await relayCctpHandler(cfg, rec.signer, { burnTxHash: BURN }, { forwarder: CCTP_TESTNET_FORWARDER, fetchImpl: complete, relay: { rpc: refusing, pollMs: 1, maxPolls: 2 } });
+      } catch (e) {
+        refused = (e as Error).message;
+      }
+      ok("a mint the simulation refuses is refused with the HostError's first line", /simulation failed .*HostError: Error\(Contract, #4\)$/.test(refused), refused);
+      ok(
+        "one line: no event log, no full address, no amount, no message bytes",
+        !/[\r\n]/.test(refused) && !refused.includes("Event log") && !refused.includes(recipientG) && !/\b[GC][A-Z2-7]{55}\b/.test(refused) && !refused.includes("7654321") && !refused.includes(MESSAGE_HEX.slice(2, 66)),
+        refused,
+      );
+      ok("and nothing was charged or signed", feeMoves.length === 0 && rec.signed.length === 0);
+    }
+    {
       /* After the KMS cutover the account and the signer are two addresses (D3 item h). The mint must
          be built on the ACCOUNT (its sequence, its fee) and only signed by the signer. */
       const ACCOUNT = Keypair.random().publicKey();

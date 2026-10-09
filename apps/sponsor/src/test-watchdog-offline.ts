@@ -179,6 +179,12 @@ const horizonRequests: string[] = [];
 const opsRequests: string[] = [];
 /** When each read of the escrow instance happened (ms). */
 const instanceReads: number[] = [];
+/** Every request the run made, in order, as a short label (the early-halt section reads the order). */
+const trace: string[] = [];
+/** Each reason a halt write carried, in order. */
+const haltReasons: string[] = [];
+/** Whether the halt key was already set when the run's first Soroban RPC request left. */
+let haltedAtFirstRpc: boolean | null = null;
 
 function instanceEntryXdr(hashHex: string): string {
   return xdr.LedgerEntryData.contractData(
@@ -223,6 +229,7 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
 
   if (u.startsWith("https://horizon.fake/")) {
     horizonRequests.push(u);
+    trace.push(/\/operations\?/.test(u) ? "horizon:ops" : "horizon:account");
     if (world.down.has("horizon")) return text("error code: 502", 502);
     if (/\/operations\?/.test(u)) {
       opsRequests.push(u);
@@ -246,11 +253,18 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
   }
 
   if (u.startsWith("https://rpc.fake")) {
+    if (haltedAtFirstRpc === null) haltedAtFirstRpc = kv.get(haltKey("testnet")) === "1";
     if (world.down.has("rpc")) return text("error code: 1015");
     const req = JSON.parse(String(init?.body ?? "{}")) as {
       method: string;
       params?: { keys?: string[]; startLedger?: number; pagination?: { limit?: number } };
     };
+    const firstKey = req.params?.keys?.[0];
+    trace.push(
+      req.method === "getLedgerEntries" && firstKey
+        ? `rpc:getLedgerEntries:${xdr.LedgerKey.fromXDR(firstKey, "base64").switch().name === "contractData" ? "instance" : "code"}`
+        : `rpc:${req.method}`,
+    );
     if (req.method === "getLatestLedger") return json({ jsonrpc: "2.0", id: 1, result: { sequence: world.latest } });
     if (req.method === "getEvents") {
       // Ascending, from startLedger, at most `limit`: the shape the governance scan relies on.
@@ -280,6 +294,8 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
     if (path === "/pipeline") {
       const cmds = JSON.parse(String(init?.body ?? "[]")) as string[][];
       storePipelines++;
+      trace.push(`kv:pipeline ${cmds.map(([op, key]) => `${op} ${key}`).join(", ")}`);
+      for (const [op, key, value] of cmds) if (op === "SET" && key === haltReasonKey("testnet")) haltReasons.push(String(value));
       if (cmds[0]?.[0] === "GET" && world.readHangs) {
         const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
         await new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted"))));
@@ -307,6 +323,7 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
     const get = path.match(/^\/get\/(.+)$/);
     if (get) {
       const key = decodeURIComponent(get[1]!);
+      trace.push(`kv:get ${key}`);
       if (world.getFails?.test(key)) return text("store blip", 500);
       if (key === feeDayKey(Date.now())) {
         // `null` in the world means "the store cannot answer for this key", not "zero".
@@ -317,6 +334,7 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
     }
     const set = path.match(/^\/set\/([^/]+)\/(.*)$/);
     if (set) {
+      trace.push(`kv:set ${decodeURIComponent(set[1]!)}`);
       kv.set(decodeURIComponent(set[1]!), decodeURIComponent(set[2]!));
       return json({ result: "OK" });
     }
@@ -359,6 +377,9 @@ function quiet(): void {
   horizonRequests.length = 0;
   opsRequests.length = 0;
   instanceReads.length = 0;
+  trace.length = 0;
+  haltReasons.length = 0;
+  haltedAtFirstRpc = null;
   resetHaltCache();
   delete process.env.SPONSOR_HALT;
   delete process.env.RESEND_API_KEY;
@@ -1096,6 +1117,74 @@ async function main() {
     check(
       "the scheduled run wrote both heartbeat stamps (it must call runWatchdog with heartbeat: true)",
       !!kv.get(lastRunKey("testnet")) && !!kv.get(lastFullRunKey("testnet")),
+    );
+  }
+
+  /* On the Workers Free plan a cron run gets 10 ms of CPU and 50 subrequests, and the run that finds
+     a theft is the long one. The halt used to be written after every check, so a run cut off after
+     its tripwire wrote nothing; it is now written the moment the tripwire is raised. */
+  console.log("[28] a tripwire halts at once, before the run's remaining reads (a run cut off later keeps its halt)");
+  const haltWrites = () => trace.map((t, i) => (t.startsWith("kv:pipeline") && t.includes(`SET ${haltKey("testnet")}`) ? i : -1)).filter((i) => i >= 0);
+  const indexesOf = (label: string) => trace.map((t, i) => (t === label ? i : -1)).filter((i) => i >= 0);
+  quiet();
+  process.env.LUMENDROP_WASM_HASH = WASM;
+  kv.set(OPS_CURSOR, "0");
+  world.ops = [op("set_options", SPONSOR, 1), ...Array.from({ length: 299 }, (_, i) => op("payment", stranger.publicKey(), i + 2))];
+  {
+    const r = await runWatchdog(config, SPONSOR, WORKER);
+    const writes = haltWrites();
+    const pages = indexesOf("horizon:ops");
+    const firstRpc = trace.findIndex((t) => t.startsWith("rpc:"));
+    check("a forbidden operation on the first of several full pages halts the run", r.autoHalted && halted() && pages.length >= 3, `${pages.length} pages`);
+    check(
+      "the halt is written right after the page that raised it, BEFORE the next page is read",
+      writes.length === 1 && writes[0]! > pages[0]! && writes[0]! < pages[1]!,
+      `halt at ${writes.join(",")}, pages at ${pages.join(",")}`,
+    );
+    check("and before any other check reads anything: the halt was in the store when the first RPC read left", writes[0]! < firstRpc && haltedAtFirstRpc === true, `rpc at ${firstRpc}`);
+    check("the scan still read on to the newest page and moved its cursor past the operation", kv.get(OPS_CURSOR) === "300", kv.get(OPS_CURSOR));
+  }
+  quiet();
+  process.env.LUMENDROP_WASM_HASH = WASM;
+  world.runningWasm = OTHER_WASM;
+  {
+    const r = await runWatchdog(config, SPONSOR, WORKER);
+    const writes = haltWrites();
+    const instance = indexesOf("rpc:getLedgerEntries:instance");
+    const code = trace.indexOf("rpc:getLedgerEntries:code");
+    const fee = trace.findIndex((t) => t.startsWith("kv:get caps:testnet:fees:"));
+    check(
+      "a confirmed wasm change halts right after its confirming read, before the expiry check's code read and the fee read",
+      r.autoHalted && writes.length === 1 && instance.length === 2 && writes[0]! > instance[1]! && writes[0]! < code && writes[0]! < fee,
+      `halt at ${writes.join(",")}, instance ${instance.join(",")}, code ${code}, fee ${fee}`,
+    );
+  }
+  bothTripwires();
+  {
+    const r = await runWatchdog(config, SPONSOR, WORKER);
+    check(
+      "two tripwires in one run: halted at the first, then the halt's reason rewritten to name both",
+      r.autoHalted &&
+        haltReasons.length === 2 &&
+        /watchdog auto-halt: Sponsor SOURCED a forbidden operation$/.test(haltReasons[0]!) &&
+        haltReasons[1]!.includes(TRIPWIRE_FORBIDDEN_OP) &&
+        haltReasons[1]!.includes(TRIPWIRE_WASM_CHANGED),
+      haltReasons.join(" | "),
+    );
+    check("the stored reason and the page name both", (kv.get(haltReasonKey("testnet")) ?? "").includes(TRIPWIRE_WASM_CHANGED) && detail(r.alerts, AUTO_HALT_TITLE).includes(TRIPWIRE_WASM_CHANGED));
+  }
+  quiet();
+  process.env.LUMENDROP_WASM_HASH = WASM;
+  mailOn();
+  kv.set(OPS_CURSOR, "0");
+  world.ops = [op("set_options", SPONSOR, 1), op("payment", SPONSOR, 2), ...Array.from({ length: 298 }, (_, i) => op("payment", stranger.publicKey(), i + 3))];
+  world.pipelineSetFails = true;
+  {
+    const r = await runWatchdog(config, SPONSOR, WORKER);
+    check(
+      "a store that refuses the halt is asked ONCE per run, not again on every page (the next run retries)",
+      haltWrites().length === 1 && !r.autoHalted && has(r.alerts, AUTO_HALT_FAILED_TITLE) && kv.get(OPS_CURSOR) === "0",
+      `${haltWrites().length} writes, cursor ${kv.get(OPS_CURSOR)}`,
     );
   }
 

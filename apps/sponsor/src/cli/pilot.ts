@@ -33,7 +33,7 @@ import {
   listPilot,
   type PilotState,
 } from "../lib/pilot.js";
-import { notifyPilotApproved, notifyPilotRejected } from "../lib/pilot-request.js";
+import { notifyPilotApproved, notifyPilotRejected, pilotCaps } from "../lib/pilot-request.js";
 
 const COMMANDS = ["approve", "reject", "revoke", "status", "list", "notify", "reset"] as const;
 type Command = (typeof COMMANDS)[number];
@@ -75,10 +75,12 @@ function walletsFrom(args: string[]): string[] {
 }
 
 /**
- * The welcome mail quotes the per-transfer cap from MAX_DROP_USDC (lib/caps.ts). The Worker has it
- * from wrangler.toml; an owner shell usually does not, and the code default (100) would promise a
- * cap the mainnet Worker does not run (5). So no approval mail leaves this CLI unless the cap is
- * set explicitly in this shell.
+ * The welcome mail quotes the pilot's caps from the env (lib/pilot-request.ts `pilotCaps`: MAX_DROP_USDC,
+ * MAX_DAY_USDC_PER_SENDER and MAX_DAY_USDC, through lib/caps.ts). The Worker has them from
+ * wrangler.toml; an owner shell usually does not, and the testnet defaults (100 a transfer) would
+ * promise caps the mainnet Worker does not run (5). So no approval mail leaves this CLI unless the
+ * per-transfer cap is set explicitly in this shell (with STELLAR_NETWORK=mainnet the two day caps
+ * default to the pilot's 25 and 50); the output prints the caps the mail quoted.
  */
 function mailCap(): string | null {
   const v = process.env.MAX_DROP_USDC?.trim();
@@ -105,7 +107,7 @@ async function approveOne(pubkey: string, net: string): Promise<void> {
     return;
   }
   if (await notifyPilotApproved(pubkey, email)) {
-    console.log(`  emailed:  ${email}`);
+    console.log(`  emailed:  ${email} (quoting: ${pilotCaps().full})`);
   } else {
     console.log(`  (mail NOT sent: Resend refused it, see the [pilot:approved] line above; run \`pilot notify ${pubkey}\` once fixed)`);
   }
@@ -174,7 +176,7 @@ async function main(): Promise<void> {
         );
         process.exit(1);
       }
-      console.log(`emailed the approval (quoting a ${cap} USDC cap) to ${email} for ${pubkey}`);
+      console.log(`emailed the approval (quoting: ${pilotCaps().full}) to ${email} for ${pubkey}`);
       break;
     }
     case "reject": {
