@@ -34,6 +34,7 @@ export function LinkReadyCard({
   locked = false,
   account,
   seeded = false,
+  group = false,
 }: {
   link: string;
   balanceId: string;
@@ -45,6 +46,8 @@ export function LinkReadyCard({
   account?: string;
   /** the team funded this link for the event; it carries a public `seeded=1` marker. */
   seeded?: boolean;
+  /** a group link (a pot of shares): it closes at its own time, not after 7 days. */
+  group?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [fellBack, setFellBack] = useState(false);
@@ -141,15 +144,17 @@ export function LinkReadyCard({
         </button>
       </div>
 
+      {/* Nothing comes back by itself: the take-back is the sender's to do, from where they sent it,
+          and until then the link still pays out (lib/copy.ts `link`). */}
       {locked ? (
         <p className="text-xs text-ink-soft">
           Now send them the password a different way: a call, or another app. In the same chat as
-          the link, it protects nothing. If nobody claims it, the money comes back to you after 7 days.
+          the link, it protects nothing. {group ? uiCopy.link.groupTakeBack : uiCopy.link.takeBack}
         </p>
       ) : (
         <p className="text-xs text-ink-soft">
           Share it privately with the person it&apos;s for. Whoever holds the link can claim it, like cash in an
-          envelope. If nobody claims it, the money comes back to you after 7 days.
+          envelope. {group ? uiCopy.link.groupTakeBack : uiCopy.link.takeBack}
         </p>
       )}
       <Link href={`/sent/${sentId}`} className="text-sm font-semibold text-money underline-offset-2 hover:underline">

@@ -20,9 +20,12 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   const { id } = await params;
   const ask = parseAsk(id, await searchParams);
   return {
-    title: ask
-      ? `${ask.name} is asking for ${formatUsd(ask.amount)} | Lumenia`
-      : "Money request | Lumenia",
+    /* `absolute`: the (app) layout's "%s | Lumenia" template would otherwise add a second suffix
+       ("... | Lumenia | Lumenia"). A request link is not private by design (it carries the amount
+       and the asker's name, and holds no money): /privacy says so. */
+    title: {
+      absolute: ask ? `${ask.name} is asking for ${formatUsd(ask.amount)} | Lumenia` : "Money request | Lumenia",
+    },
     description: copy.pay.sub,
     robots: { index: false },
   };

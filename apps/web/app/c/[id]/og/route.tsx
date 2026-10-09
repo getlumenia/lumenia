@@ -3,12 +3,14 @@
  * `opengraph-image` file convention only receives `params`, never the query, and the card's inputs
  * ride in the query.
  *
- * It paints ONLY for a link whose sender chose to show the amount and their name (`preview=rich`)
- * and only for a real link id (`l`, 64 hex). Even then the amount is read from the ledger here,
- * never taken from an `a=` (lib/claim-metadata.ts richCard), and a ledger that does not answer in
- * time leaves the name alone on the card. Everything else, every private link and every pre-D2
- * `?a=..&s=..` card URL still cached in a chat, is a 307 to the fixed /og.png: this route never
- * draws a figure or a name that only a query string vouches for.
+ * It paints ONLY for a link whose sender chose to show the amount and their name (`preview=rich`),
+ * only for a real link id (`l`, 64 hex), and only when the ledger answers with a LIVE drop or pool
+ * behind that id (lib/claim-metadata.ts `ogCard`). The amount is read from the ledger here, never
+ * taken from an `a=`. The name can only come from the query (the sender typed it, nothing can verify
+ * it), which is exactly why it is drawn only next to money the ledger vouches for: a made-up id, a
+ * spent link or an escrow that cannot be read gets the fixed /og.png, so nobody can mint a
+ * "<any name> sent you money" card on our domain with no money behind it. Every private link and
+ * every pre-D2 `?a=..&s=..` card URL still cached in a chat is a 307 to /og.png as well.
  *
  * satori has no system fonts, so we embed one weight (Plus Jakarta Sans Bold, which covers Turkish
  * sender names). Referenced from the v2 page's generateMetadata, made absolute by metadataBase.
@@ -16,7 +18,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";
-import { ogDecision, richCard } from "@/lib/claim-metadata";
+import { ogCard } from "@/lib/claim-metadata";
 import { PRIVATE_PREVIEW_IMAGE } from "@/lib/link-preview";
 
 export const runtime = "nodejs";
@@ -29,16 +31,28 @@ export const size = { width: 1200, height: 630 };
 // beside the compiled route module.
 const FONT_PATH = join(process.cwd(), "assets", "PlusJakartaSans-Bold.ttf");
 
+/**
+ * The fixed card. 307, not 308: what this URL answers can change (a link that has just been funded
+ * becomes readable, a sender may still turn previews on), so no client is told to remember it for
+ * good. Kept at the edge for a minute, so a burst of requests for made-up ids is answered there
+ * instead of becoming one ledger read each.
+ */
+function staticCard(requestUrl: URL): Response {
+  return new Response(null, {
+    status: 307,
+    headers: {
+      location: new URL(PRIVATE_PREVIEW_IMAGE.url, requestUrl).toString(),
+      "cache-control": "public, max-age=60, s-maxage=60",
+    },
+  });
+}
+
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const decision = ogDecision(url.searchParams);
-  if (decision.kind === "static") {
-    // 307, not 308: what this URL answers can change (a sender may still turn previews on), so no
-    // client should be told to remember the redirect for good.
-    return Response.redirect(new URL(PRIVATE_PREVIEW_IMAGE.url, url), 307);
-  }
+  const card = await ogCard(url.searchParams);
+  if (card.kind === "static") return staticCard(url);
 
-  const [card, font] = await Promise.all([richCard(decision), readFile(FONT_PATH)]);
+  const font = await readFile(FONT_PATH);
   const line = card.group ? `${card.name} sent money to a group` : `${card.name} sent you money`;
 
   return new ImageResponse(
@@ -56,29 +70,23 @@ export async function GET(request: Request): Promise<Response> {
           padding: 80,
         }}
       >
-        <div style={{ display: "flex", fontSize: card.usd ? 46 : 64, color: "#67626E" }}>{line}</div>
-        {card.usd ? (
-          <div style={{ display: "flex", fontSize: 168, color: "#6E5FCE", marginTop: 6, letterSpacing: -4 }}>
-            {card.usd}
-          </div>
-        ) : null}
-        {card.usd && card.group ? (
-          <div style={{ display: "flex", fontSize: 32, color: "#67626E" }}>each share</div>
-        ) : null}
+        <div style={{ display: "flex", fontSize: 46, color: "#67626E" }}>{line}</div>
+        <div style={{ display: "flex", fontSize: 168, color: "#6E5FCE", marginTop: 6, letterSpacing: -4 }}>
+          {card.usd}
+        </div>
+        {card.group ? <div style={{ display: "flex", fontSize: 32, color: "#67626E" }}>each share</div> : null}
         <div style={{ display: "flex", fontSize: 32, color: "#6E5FCE", marginTop: 40 }}>
-          {"Tap to claim \u00B7 Lumenia"}
+          {"Tap to claim · Lumenia"}
         </div>
       </div>
     ),
     {
       ...size,
       fonts: [{ name: "Jakarta", data: font, weight: 700, style: "normal" }],
-      /* A card that carries the ledger amount can be kept: an escrow record's amount never changes.
-         One the ledger did not answer for is kept for one minute only, so the next fetch after that
-         can still get the amount, while a burst of requests for made-up link ids is served from the
-         edge instead of becoming one RPC simulation each. (Left alone, this route answers
-         `max-age=0, must-revalidate` either way.) */
-      headers: { "cache-control": card.usd ? "public, max-age=86400" : "public, max-age=60, s-maxage=60" },
+      /* Drawn only for a live link, with the escrow record's own amount, which never changes. The
+         link may be claimed later; the card then still says what was sent, which stays true. (Left
+         alone, this route answers `max-age=0, must-revalidate`.) */
+      headers: { "cache-control": "public, max-age=86400" },
     },
   );
 }

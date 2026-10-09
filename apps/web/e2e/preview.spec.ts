@@ -128,8 +128,11 @@ test("a private link: bots see no amount and no name, the page shows the ledger'
   await page.getByRole("link", { name: /send money to someone/i }).click();
   await expect(page).toHaveURL(/\/send/);
   await page.getByPlaceholder("0.00").fill(ONWARD);
-  await page.getByText(/sent as .* change/i).click();
+  // D3: the field starts empty ("Sent as Someone"), so the name is typed on purpose, and the line
+  // under the field says where it goes.
+  await page.getByText(/sent as someone, change/i).click();
   await page.getByPlaceholder(/e\.g\./).fill(NAME);
+  await expect(page.getByText(/your name travels inside the link, after the #/i)).toBeVisible();
   await page.getByRole("button", { name: /create a money link/i }).click();
   await expect(page.getByText(/your money link is ready/i)).toBeVisible({ timeout: 120_000 });
   const link = (await page.getByTestId("money-link").textContent())?.trim() ?? "";

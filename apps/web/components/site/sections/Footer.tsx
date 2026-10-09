@@ -11,9 +11,14 @@ import { AvatarReveal } from "./AvatarReveal";
 import { AmbientVideo } from "../AmbientVideo";
 import { FeedbackDialog } from "../../FeedbackDialog";
 import { copy } from "../../../lib/copy";
+import { realMoneyOpen, waitlistCta } from "../../../lib/real-money";
+
+/* The waitlist entry follows the retirement switch (lib/real-money.ts): /start once real money is
+   open to everyone, and never a waitlist for something already open. */
+const WAITLIST: [string, string] = [realMoneyOpen() ? "Get started" : "Waitlist", waitlistCta().href];
 
 const COLS = [
-  { title: "Product", links: [["How it works", "/how-it-works"], ["See it work", "/try"], ["Browser extension", "/extension"], ["Tools", "/tools"], ["Waitlist", "/waitlist"], ["Cash-out", "/cash-out"]] },
+  { title: "Product", links: [["How it works", "/how-it-works"], ["See it work", "/try"], ["Browser extension", "/extension"], ["Tools", "/tools"], WAITLIST, ["Cash-out", "/cash-out"]] },
   { title: "Company", links: [["About", "/about"], ["Roadmap", "/roadmap"], ["Live numbers", "/stats"], ["Developers", "/developers"], ["Brand", "/brand"]] },
   { title: "Legal", links: [["Privacy", "/privacy"], ["Terms", "/terms"]] },
 ];

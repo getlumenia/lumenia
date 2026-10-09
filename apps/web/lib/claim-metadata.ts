@@ -12,10 +12,13 @@
  *     and the amount READ FROM THE LEDGER on the server. Never from `a=`: a figure anyone can edit in
  *     a URL is not proof of anything, and this card carries our domain.
  *
- * The ledger read is bounded (LEDGER_READ_TIMEOUT_MS). A preview fetcher gives up after a few seconds
- * and then shows nothing at all, so a slow RPC degrades the title to "<name> sent you money" instead
- * of costing the whole card. A read that throws, a network this deployment cannot serve, or an
- * escrow that holds nothing all degrade the same way, and none of them may crash the page.
+ * THE LEDGER GATES THE NAME. The name on a rich card can only ever come from the query: the sender
+ * typed it, and nothing can verify it. So it is drawn only next to an amount the ledger vouches for,
+ * for a link that can still pay out (a live drop or pool, `readLiveAmount`). A made-up link id, a
+ * link already claimed or taken back, a closed pot, an escrow that cannot be read, a network this
+ * deployment cannot serve, or a read slower than LEDGER_READ_TIMEOUT_MS all get the private card
+ * instead, and none of them may crash the page. Before this, any 64-hex id with `preview=rich` got
+ * "<any name> sent you money" drawn on our domain, with no money behind it.
  *
  * The readers are injectable (`deps`) so lib/claim-metadata.selftest.ts can hold every branch
  * without a network.
@@ -24,10 +27,10 @@ import type { Metadata } from "next";
 import { formatUsd } from "./money";
 import { RICH_PREVIEW_PARAM, RICH_PREVIEW_VALUE, readClaimQuery } from "./link-fragment";
 import { PRIVATE_PREVIEW_IMAGE, privateClaimMetadata } from "./link-preview";
-import { loadDrop, loadPool } from "./lumendrop";
+import { loadDrop, loadPool, type PoolStatus } from "./lumendrop";
 import { resolveNetwork, type NetworkConfig } from "./network";
 
-/** How long a preview may wait on the ledger before it settles for "sent you money". */
+/** How long a preview may wait on the ledger before it settles for the private card. */
 export const LEDGER_READ_TIMEOUT_MS = 2500;
 
 /**
@@ -45,8 +48,9 @@ const LINK_HEX = /^[0-9a-f]{64}$/i;
 
 /** The ledger readers, swappable for the self-test. Defaults are the real ones. */
 export interface LedgerDeps {
-  loadDrop: (linkHex: string, opts: { net: NetworkConfig }) => Promise<{ amount: string } | null>;
-  loadPool: (linkHex: string, opts: { net: NetworkConfig }) => Promise<{ perShare: string } | null>;
+  /** `claimed` is the escrow's one flag for both exits: claimed, or taken back by the sender. */
+  loadDrop: (linkHex: string, opts: { net: NetworkConfig }) => Promise<{ amount: string; claimed: boolean } | null>;
+  loadPool: (linkHex: string, opts: { net: NetworkConfig }) => Promise<{ perShare: string; status: PoolStatus } | null>;
   resolveNetwork: (param?: string | null) => NetworkConfig;
   timeoutMs: number;
 }
@@ -61,14 +65,16 @@ const DEFAULT_DEPS: LedgerDeps = {
 type Search = URLSearchParams | Record<string, string | string[] | undefined>;
 
 /**
- * The amount the escrow holds behind a link, as 7dp USDC, or null for every answer that is not one:
- * a malformed id, a network this deployment cannot serve, an unreachable escrow, no record, a
- * non-positive amount, or no answer inside the timeout.
+ * The amount a LIVE escrow record holds behind a link, as 7dp USDC: a drop nobody has claimed or
+ * taken back yet, or a pool still open for shares. Null for every other answer: a malformed id, a
+ * network this deployment cannot serve, an unreachable escrow, no record (a made-up id), a drop
+ * already claimed or taken back, a pool that is full or closed, a non-positive amount, or no answer
+ * inside the timeout.
  *
  * `group` asks the pool and returns ONE share (`perShare`): that is what a claimant receives, and
  * the pot is not carried anywhere on the ledger.
  */
-async function readLedgerAmount(
+async function readLiveAmount(
   linkHex: string,
   where: { group: boolean; mainnet: boolean },
   deps: LedgerDeps,
@@ -84,8 +90,8 @@ async function readLedgerAmount(
   let read: Promise<string | null>;
   try {
     read = where.group
-      ? deps.loadPool(linkHex, { net }).then((p) => p?.perShare ?? null)
-      : deps.loadDrop(linkHex, { net }).then((d) => d?.amount ?? null);
+      ? deps.loadPool(linkHex, { net }).then((p) => (p && p.status === "open" ? p.perShare : null))
+      : deps.loadDrop(linkHex, { net }).then((d) => (d && d.claimed === false ? d.amount : null));
   } catch {
     return null; // a reader that throws before it even returns a promise
   }
@@ -124,9 +130,10 @@ function richImageUrl(linkHex: string, name: string, slots: number | null, mainn
  * The metadata of /v2/c/[linkHex].
  *
  * Private (the default, and every link without `preview=rich`): `privateClaimMetadata()`, untouched
- * by anything in the query. Rich: "<name> sent you <amount>" with the amount from the ledger, or
- * "<name> sent you money" when the ledger did not answer with one; a fixed description; the card
- * image from the OG route, which reads the ledger itself; and no indexing either way.
+ * by anything in the query. Rich, AND the ledger answers with a live drop or pool for this id:
+ * "<name> sent you <amount>" with the amount from the ledger, a fixed description, the card image
+ * from the OG route (which reads the ledger again itself), and no indexing. Rich without that answer
+ * is the private card too: the name is never drawn on its own (see the note at the top).
  */
 export async function v2ClaimMetadata(
   linkHex: string,
@@ -136,9 +143,10 @@ export async function v2ClaimMetadata(
   const q = readClaimQuery(searchParams);
   if (!q.rich) return privateClaimMetadata();
   const d = { ...DEFAULT_DEPS, ...deps };
+  const amount = await readLiveAmount(linkHex, { group: q.slots !== null, mainnet: q.mainnet }, d);
+  if (!amount) return privateClaimMetadata();
   const name = q.queryName ?? NO_NAME;
-  const amount = await readLedgerAmount(linkHex, { group: q.slots !== null, mainnet: q.mainnet }, d);
-  const title = amount ? `${name} sent you ${formatUsd(amount)}` : `${name} sent you money`;
+  const title = `${name} sent you ${formatUsd(amount)}`;
   const image = {
     url: richImageUrl(linkHex, name, q.slots, q.mainnet),
     width: PRIVATE_PREVIEW_IMAGE.width,
@@ -160,9 +168,10 @@ export type OgDecision =
   | { kind: "rich"; linkHex: string; name: string; slots: number | null; mainnet: boolean };
 
 /**
- * Paint, or send the fixed card? Only `preview=rich` with a 64-hex `l` is painted. Everything else,
- * a pre-D2 `?a=..&s=..` card URL included, is the static image: the route never draws a name or a
- * figure that only a query string vouches for.
+ * The query half of the OG route's decision: only `preview=rich` with a 64-hex `l` may be painted.
+ * Everything else, a pre-D2 `?a=..&s=..` card URL included, is the static image. A "rich" answer
+ * here is not yet a card: `richCard` still has to find a live drop or pool behind the id (`ogCard`
+ * puts the two halves together, and the route uses that).
  */
 export function ogDecision(search: Search): OgDecision {
   const q = readClaimQuery(search);
@@ -172,16 +181,42 @@ export function ogDecision(search: Search): OgDecision {
   return { kind: "rich", linkHex: l.toLowerCase(), name: q.queryName ?? NO_NAME, slots: q.slots, mainnet: q.mainnet };
 }
 
-/** The words on a rich card: the name, and the ledger amount formatted, or null when unread. */
+/** The words on a rich card. */
+export interface RichCard {
+  name: string;
+  /** the ledger's amount, formatted: the whole drop, or ONE share of a pool */
+  usd: string;
+  group: boolean;
+}
+
+/**
+ * The words on a rich card: the name, and the amount the ledger holds behind a LIVE drop or pool.
+ * Null when the ledger does not vouch for one (see `readLiveAmount`): then nothing is drawn at all.
+ */
 export async function richCard(
   decision: Extract<OgDecision, { kind: "rich" }>,
   deps?: Partial<LedgerDeps>,
-): Promise<{ name: string; usd: string | null; group: boolean }> {
+): Promise<RichCard | null> {
   const group = decision.slots !== null;
-  const amount = await readLedgerAmount(
+  const amount = await readLiveAmount(
     decision.linkHex,
     { group, mainnet: decision.mainnet },
     { ...DEFAULT_DEPS, ...deps },
   );
-  return { name: decision.name, usd: amount ? formatUsd(amount) : null, group };
+  return amount ? { name: decision.name, usd: formatUsd(amount), group } : null;
+}
+
+/**
+ * What the OG route at /c/[id]/og answers, whole: the static image, or a rich card. A card is drawn
+ * only for `preview=rich` with a 64-hex link id AND a live drop or pool behind it; a made-up id, a
+ * spent link, an unreadable escrow and every other query get the static image.
+ */
+export async function ogCard(
+  search: Search,
+  deps?: Partial<LedgerDeps>,
+): Promise<{ kind: "static" } | ({ kind: "rich" } & RichCard)> {
+  const decision = ogDecision(search);
+  if (decision.kind === "static") return decision;
+  const card = await richCard(decision, deps);
+  return card ? { kind: "rich", ...card } : { kind: "static" };
 }

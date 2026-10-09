@@ -17,24 +17,24 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://getlumenia.com";
  * timestamp (that claims every page changed on every deploy).
  */
 const MODIFIED: Record<string, string> = {
-  "/": "2026-07-15",
+  "/": "2026-10-09", // FAQ: an unclaimed link is taken back, it does not come back by itself
   "/how-it-works": "2026-07-15",
   "/try": "2026-07-15",
-  "/extension": "2026-10-03",
+  "/extension": "2026-10-09", // both store listings live, no "coming soon"
   "/learn": "2026-07-15",
   "/about": "2026-07-16",
   "/developers": "2026-07-16",
-  "/roadmap": "2026-07-15",
+  "/roadmap": "2026-10-09", // the take-back line
   "/stats": "2026-07-18",
   "/tools": "2026-07-16",
   "/tools/verify": "2026-07-16",
-  "/tools/link-check": "2026-07-16",
+  "/tools/link-check": "2026-10-09", // the take-back line
   "/tools/usd-try": "2026-07-18", // live ECB reference rate replaced the stale constant
   "/tools/cost": "2026-07-18", // World Bank citation + copy soften
   "/cash-out": "2026-07-16",
   "/waitlist": "2026-07-16",
   "/brand": "2026-07-16",
-  "/privacy": "2026-10-07", // T-D2-07 rewrite
+  "/privacy": "2026-10-09", // T-D2-07 rewrite, then the D3 records and no name by default
   "/terms": "2026-10-04", // privacy cross-link
 };
 

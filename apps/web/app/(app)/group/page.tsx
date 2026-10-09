@@ -20,12 +20,17 @@
  * the same amount each, only to an address the link signed for, and nothing after the deadline.
  * The shared word keeps the link inside the group; it is not a headcount either.
  *
- * PRACTICE NETWORK ONLY, and the route still renders on real money rather than 404ing, with the
- * button off and the reason stated. Each share claimed opens a fresh sponsored account (about 1.5
- * XLM of reserve that nothing returns), so a full pot is a large bite out of a float measured in
- * tens of onboardings - and the per-transfer cap binds the POT, not the share, so a small pool
- * passes it cleanly. `createV2GroupLink` refuses mainnet itself and so does the sponsor relay; this
- * is the half a person sees.
+ * REAL MONEY TOO, BOUNDED (owner decision, 2026-09-20). Every sender reaches this screen from /send,
+ * on either network. On real money the pot is capped at the pilot's per-transfer figure (the cap
+ * binds the POT, not the share) and holds at most MAINNET_MAX_POOL_SLOTS shares, because each share
+ * claimed opens a fresh sponsored account (about 1.5 XLM of reserve that nothing returns).
+ * `createV2GroupLink` and the sponsor relay enforce the same bounds again; this is the half a person
+ * sees.
+ *
+ * NOT TEAM-FUNDED BY DEFAULT. A link is marked `seeded=1` (the public "the team funded this" marker,
+ * counted apart and never as adoption) only when it really is the team's: the event build
+ * (NEXT_PUBLIC_EVENT_MODE) or the team's own `/group?seeded=1`, the same flag /send reads. It used
+ * to mark every pot, so a real sender's real money was filed as the team's.
  */
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -49,7 +54,8 @@ import { sendEvent } from "../../../lib/events";
 import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
 import { netKey } from "../../../lib/scoped-store";
 import { activeNetwork } from "../../../lib/network";
-import { handleOf } from "../../../lib/handles";
+import { eventMode } from "../../../lib/event-mode";
+import { copy } from "../../../lib/copy";
 import { rememberLink } from "../../../lib/sent-links";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
@@ -155,6 +161,12 @@ export default function GroupPage() {
   const [word, setWord] = useState("");
   /** Chat previews may show the share and the sender's name. Off unless the sender turns it on. */
   const [richPreview, setRichPreview] = useState(false);
+  /**
+   * The team funded this pot ("try it with $2 from us"): the event build, or the team's own
+   * `/group?seeded=1`. Read after mount from the address, like /send reads it. Nothing else marks a
+   * link team-funded, so a pot a person pays for themselves counts as theirs.
+   */
+  const [seeded, setSeeded] = useState(false);
   const [balance, setBalance] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -201,6 +213,7 @@ export default function GroupPage() {
        same reason `now` is: the network is this device's localStorage flag, invisible to the
        server render, and the form is not on screen yet, so this never overrides a choice. */
     setWantWord(activeNetwork().isMainnet);
+    setSeeded(eventMode() || new URLSearchParams(window.location.search).get("seeded") === "1");
     setNow(Date.now());
     // "Tonight" moves as the evening does, and a deadline printed an hour ago is not the one that
     // would be signed now.
@@ -221,16 +234,8 @@ export default function GroupPage() {
     };
   }, [accounts]);
 
-  const namedFrom = useRef(false);
-  useEffect(() => {
-    if (!account || namedFrom.current) return;
-    namedFrom.current = true;
-    void handleOf(account.address)
-      .then((name) => name && setFrom((current) => current || name))
-      .catch(() => {
-        /* no registry, no name, the claim page says "Someone", which is true */
-      });
-  }, [account]);
+  /* No name is filled in for the sender (D3, as on /send): a pot carries a name only when the
+     sender types one, and the claim page says "Someone" otherwise. */
 
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
 
@@ -336,7 +341,8 @@ export default function GroupPage() {
         router.push("/unlock?next=/group");
         return;
       }
-      const senderName = from.trim() || "Someone";
+      // Empty when nothing was typed: the link then carries no name at all (D3).
+      const senderName = from.trim();
       void sendEvent("send_started", account!.address, account!.address);
 
       const result = await createV2GroupLink({
@@ -348,10 +354,10 @@ export default function GroupPage() {
         webOrigin: window.location.origin,
         expiry: at,
         password: wantWord ? word : undefined,
-        /* EVERY link this screen makes carries the public `seeded=1` marker. It is the team's event
-           tool, and a pot the team funded must never be read as somebody adopting the product. The
-           marker is in the query where anyone can see it, and the sponsor counts that cohort apart. */
-        seeded: true,
+        /* The public `seeded=1` marker only on a pot the team really funded (see `seeded` above).
+           A pot the team funded must never read as somebody adopting the product, and a pot a
+           person funded must never read as the team's: the sponsor counts the two apart. */
+        seeded,
         preview: richPreview ? "rich" : "private",
       });
 
@@ -429,7 +435,7 @@ export default function GroupPage() {
             balanceId: u.linkHex,
             hasLink: true,
             amount: u.total,
-            from: from.trim() || "Someone",
+            from: from.trim(),
             at: new Date().toISOString(),
             slots: u.slots,
           });
@@ -490,17 +496,16 @@ export default function GroupPage() {
           <h1 className="text-xl font-bold text-ink">
             Done. One link, {ready.slots} shares of {formatUsd(ready.perShare)}
           </h1>
-          <p className="mt-1 text-sm text-ink-soft">
-            The link closes at {closingLabel(ready.expiry)}. Anything nobody takes comes back to you
-            then, and not before.
-          </p>
+          {/* What happens to the leftover is said once, on the card below. */}
+          <p className="mt-1 text-sm text-ink-soft">The link closes at {closingLabel(ready.expiry)}.</p>
         </header>
         <LinkReadyCard
           link={ready.link}
           balanceId={ready.linkHex}
           locked={ready.locked}
           account={account.address}
-          seeded
+          seeded={seeded}
+          group
         />
         <p className="text-xs text-ink-soft">
           What the ledger holds you to: at most {ready.slots} shares, exactly {formatUsd(ready.perShare)}{" "}
@@ -573,9 +578,9 @@ export default function GroupPage() {
         </p>
       )}
 
-      {/* WHO IT IS FROM is not a question this screen needs to ask: the account's own name is
-          already the answer, and the claim page says "Someone" when there isn't one, which is true.
-          Editable one tap away, out of the main line of the form, the same way /send offers it. */}
+      {/* WHO IT IS FROM starts EMPTY (D3), as on /send: the claim page says "Someone", which is
+          true and puts no name in the link. A name is one tap away, out of the main line of the
+          form, and once one is typed the line under the field says where it goes. */}
       <details className="text-sm text-ink-soft">
         <summary className="cursor-pointer list-none underline-offset-2 hover:underline [&::-webkit-details-marker]:hidden">
           Sent as {from.trim() || "Someone"}, change
@@ -587,6 +592,7 @@ export default function GroupPage() {
           aria-label="Your name"
           className="mt-2 w-full rounded-[14px] border border-line bg-surface px-3 py-3 text-ink"
         />
+        {from.trim() && <p className="mt-2 text-xs text-ink-soft">{copy.link.nameNote}</p>}
       </details>
 
       <fieldset className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface p-4">
@@ -615,8 +621,7 @@ export default function GroupPage() {
             the person deciding is the one who needs to see which. */}
         {expiry > 0 && (
           <p className="mt-1 text-xs text-ink-soft">
-            The link closes at {closingLabel(expiry)}. Anything nobody takes comes back to you then,
-            and not before.
+            The link closes at {closingLabel(expiry)}. {copy.link.groupTakeBack}
           </p>
         )}
       </fieldset>
@@ -659,8 +664,8 @@ export default function GroupPage() {
             />
             <p className="text-xs text-ink-soft">
               Tell them the word some other way: out loud, or a call. In the same chat as the link it
-              protects nothing. Forget it and the money isn&apos;t stuck, it comes back to you when
-              the link closes.
+              protects nothing. Forget it and the money isn&apos;t stuck: whatever nobody takes is
+              yours to take back after the link closes.
             </p>
           </>
         )}

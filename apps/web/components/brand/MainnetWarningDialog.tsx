@@ -21,8 +21,8 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { PrimaryButton } from "./PrimaryButton";
+import { REAL_MONEY_WARNING, pilotCapsSentence } from "../../lib/real-money";
 
-const PILOT_TX_CAP_USD = process.env.NEXT_PUBLIC_PILOT_TX_CAP_USD ?? "5";
 const SEEN_KEY = "lumenia.mainnet.warned.v1";
 
 /** Has this device acknowledged the real-money warning? Blocked storage reads as "not yet". */
@@ -109,11 +109,9 @@ export function MainnetWarningDialog({
           <X className="size-4" aria-hidden="true" />
         </button>
         <h2 className="app-modal-t">{title}</h2>
-        <p className="app-modal-s">
-          Real money on Lumenia is an early pilot. It has not been reviewed by an outside security
-          firm, so keep amounts small, and never send what you cannot afford to lose. Transfers are
-          capped at ${PILOT_TX_CAP_USD} each.
-        </p>
+        {/* The warning verbatim (lib/real-money.ts, decision D1), then the caps as their own sentence. */}
+        <p className="app-modal-s">{REAL_MONEY_WARNING}</p>
+        <p className="app-modal-s">{pilotCapsSentence()}</p>
         <div className="mt-3 flex flex-col gap-2">
           <PrimaryButton ref={firstRef} onClick={onConfirm}>
             I understand

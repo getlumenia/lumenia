@@ -129,7 +129,7 @@ function settledCopy(
            not. The money is not lost: it is the sender's to take back, and only theirs. */
         return {
           title: "This link has closed",
-          body: `Shares stopped at the closing time, and whatever was left goes back to ${sender}. Ask them to open another one.`,
+          body: `Shares stopped at the closing time, and whatever was left is ${sender}'s to take back. Ask them to open another one.`,
           home: false,
         };
       }
@@ -793,7 +793,7 @@ export default function V2ClaimButton({
       case "already-yours":
         return "Your share is already in the account this phone made for it. Open your money to see it.";
       case "expired":
-        return `This link closed, so it can't pay out any more. Whatever was left goes back to ${sender}.`;
+        return `This link closed, so it can't pay out any more. Whatever was left is ${sender}'s to take back.`;
       case "link-mismatch":
         return `This link doesn't match the money it points at. Ask ${sender} for a new one.`;
       case "group-failed":

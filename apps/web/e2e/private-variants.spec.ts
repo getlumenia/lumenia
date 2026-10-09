@@ -8,7 +8,12 @@ import { mintClaimLink, usd } from "./mintLink";
  * The claim page reads their amount from the escrow (a locked link before the password is typed, a
  * pot's per-share figure), shows the lock line from the fragment, and claims.
  *
- * On demand, not nightly: it spends a practice link and three escrow transactions.
+ * And the one link that is NOT private, by the sender's explicit choice: a rich-preview link. A bot
+ * gets "<name> sent you $X" with the LEDGER's figure, and the card image is drawn, because the link
+ * is live; the same card URL for a made-up link id is the fixed /og.png (lib/claim-metadata.ts
+ * ogCard). Nothing else checks the rich preview against a deployed build.
+ *
+ * On demand, not nightly: it spends a practice link and four escrow transactions.
  *   WEB_URL=http://localhost:3000 SPONSOR_URL=https://lumenia-sponsor.avakit.workers.dev:443 \
  *     pnpm --filter @lumenia/web exec playwright test e2e/private-variants.spec.ts
  */
@@ -18,6 +23,17 @@ const BAKED_SPONSOR = "https://lumenia-sponsor.avakit.workers.dev";
 const PASSWORD = "tangerine-lighthouse-47";
 const LOCKED = "0.10";
 const SHARE = "0.10";
+const RICH = "0.10";
+/** A sender name that appears nowhere else on the site, so finding it in a preview proves where it came from. */
+const RICH_NAME = "Quillonberg";
+
+/** A preview tag's content, with the HTML entities Next writes in attributes undone. */
+function metaContent(html: string, key: string): string | null {
+  const re = new RegExp(`<meta[^>]+(?:property|name)="${key}"[^>]*content="([^"]*)"|<meta[^>]+content="([^"]*)"[^>]*(?:property|name)="${key}"`, "i");
+  const m = re.exec(html);
+  const raw = m ? (m[1] ?? m[2] ?? null) : null;
+  return raw === null ? null : raw.replace(/&amp;/g, "&");
+}
 
 /** See preview.spec.ts: a local run reaches the live sponsor from Node, because its CORS pins getlumenia.com. */
 async function proxySponsorForLocalRuns(context: BrowserContext): Promise<void> {
@@ -34,7 +50,7 @@ async function proxySponsorForLocalRuns(context: BrowserContext): Promise<void> 
   });
 }
 
-test("a password-locked link and a group link: private shape, ledger amount, lock line, claimed", async ({ browser }) => {
+test("a password-locked link and a group link: private shape, ledger amount, lock line, claimed; a rich link: drawn from the ledger", async ({ browser }) => {
   test.setTimeout(420_000);
 
   // Money to send from: a practice link claimed into a fresh account.
@@ -58,8 +74,9 @@ test("a password-locked link and a group link: private shape, ledger amount, loc
   const locked = (await page.getByTestId("money-link").textContent())?.trim() ?? "";
   const lockedQuery = new URL(locked.split("#")[0]!).searchParams;
   expect(lockedQuery.has("a") || lockedQuery.has("s") || lockedQuery.has("p"), `query of ${locked.split("#")[0]}`).toBe(false);
-  // The seed (base64url) first, then the name if one was set, then the lock marker; no password anywhere.
-  expect(locked.split("#")[1] ?? "").toMatch(/^p1\.[A-Za-z0-9_-]+(&s=[^&#]+)?&p=1$/);
+  // The seed (base64url) first, then the lock marker; no password anywhere, and no name (D3: none was
+  // typed, so the fragment carries none).
+  expect(locked.split("#")[1] ?? "").toMatch(/^p1\.[A-Za-z0-9_-]+&p=1$/);
   expect(locked.includes(PASSWORD)).toBe(false);
 
   const r1 = await browser.newContext();
@@ -91,7 +108,40 @@ test("a password-locked link and a group link: private shape, ledger amount, loc
   const potQuery = new URL(pot.split("#")[0]!).searchParams;
   expect(potQuery.get("g"), `query of ${pot.split("#")[0]}`).toBe("2");
   expect(potQuery.has("a") || potQuery.has("s")).toBe(false);
-  expect(pot.split("#")[1] ?? "").toMatch(/^S[A-Z2-7]{55}(&s=[^&#]+)?&g=2$/);
+  expect(pot.split("#")[1] ?? "").toMatch(/^S[A-Z2-7]{55}&g=2$/);
+  // A pot a person pays for is not team-funded (seeded=1 only from the event build or /group?seeded=1).
+  expect(potQuery.has("seeded"), `query of ${pot.split("#")[0]}`).toBe(false);
+
+  // 3. A rich link: the sender types a name and chooses to show it and the amount in chat previews.
+  await page.goto(`${WEB}/send`, { waitUntil: "domcontentloaded" });
+  await page.getByPlaceholder("0.00").fill(RICH);
+  await page.getByText(/sent as someone, change/i).click();
+  await page.getByPlaceholder(/e\.g\./).fill(RICH_NAME);
+  await page.getByText("Show the amount and my name in chat previews").click();
+  await page.getByRole("button", { name: /create a money link/i }).click();
+  await expect(page.getByText(/your money link is ready/i)).toBeVisible({ timeout: 120_000 });
+  const rich = (await page.getByTestId("money-link").textContent())?.trim() ?? "";
+  const richAddress = rich.split("#")[0]!;
+  const richQuery = new URL(richAddress).searchParams;
+  expect(richQuery.get("preview"), `query of ${richAddress}`).toBe("rich");
+  expect(richQuery.get("s")).toBe(RICH_NAME);
+  // What a chat app's preview bot gets: the name it was given, the amount the LEDGER holds. Polled:
+  // the server reads the escrow through an RPC that can be a ledger behind a brand-new deposit, and
+  // until it answers the card stays private.
+  const asBot = async () => (await fetch(richAddress, { headers: { "user-agent": "WhatsApp/2.23.20.0" } })).text();
+  await expect.poll(asBot, { timeout: 30_000, intervals: [2_000] }).toContain(`<title>${RICH_NAME} sent you ${usd(RICH)}</title>`);
+  const tag = metaContent(await asBot(), "og:image") ?? "";
+  expect(tag, "the card image is the rich card route").toMatch(/\/c\/x\/og\?preview=rich&l=[0-9a-f]{64}&s=/);
+  // The tag is absolute on the site's public origin (metadataBase); ask the build under test.
+  const card = new URL(tag, WEB).pathname + new URL(tag, WEB).search;
+  const drawn = await fetch(new URL(card, WEB), { redirect: "manual" });
+  expect(drawn.status, `GET ${card}`).toBe(200);
+  expect(drawn.headers.get("content-type") ?? "").toMatch(/^image\/png/);
+  // The same card URL for a link id with no money behind it: the fixed image, nothing drawn.
+  const madeUp = card.replace(/l=[0-9a-f]{64}/, `l=${"cd".repeat(32)}`);
+  const fixed = await fetch(new URL(madeUp, WEB), { redirect: "manual" });
+  expect(fixed.status, `GET ${madeUp}`).toBe(307);
+  expect(fixed.headers.get("location") ?? "").toMatch(/\/og\.png$/);
   await sender.close();
 
   const r2 = await browser.newContext();
@@ -103,5 +153,5 @@ test("a password-locked link and a group link: private shape, ledger amount, loc
   await claimShare.getByRole("button", { name: /take my share/i }).click();
   await expectMoneyLanded(claimShare);
   await r2.close();
-  console.log(`\nprivate variants OK: locked ${locked.split("#")[0]}#<seed> and pot ${pot.split("#")[0]}#<key> both read from the ledger and claimed`);
+  console.log(`\nprivate variants OK: locked ${locked.split("#")[0]}#<seed> and pot ${pot.split("#")[0]}#<key> both read from the ledger and claimed; rich ${richAddress}#<key> drawn from the ledger`);
 });

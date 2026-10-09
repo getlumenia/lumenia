@@ -23,6 +23,13 @@
  *   [f] sendEvent from a worker: the same body through a `keepalive` fetch when there is no
  *       sendBeacon AND no page, `src: "ext"` only when asked, and never a URL or a fragment. A page
  *       whose sendBeacon was switched off still sends nothing.
+ *   [g] the same beacon from the v1 practice claim route (app/c/[id]/ClaimButton.tsx): on a device
+ *       switched to real money, its three claim counters still go to the TESTNET Worker, where the
+ *       link's money is, because the route passes its own network. Without it they went to the
+ *       real-money Worker and counted a practice claim there.
+ *   [h] where the website sends people to install the extension (lib/extension-install.ts, read by
+ *       /extension): both public store listings, the env var when it is set, and never a disabled
+ *       "coming soon" button for a store that lists it.
  *
  * RUN: pnpm --filter @lumenia/web test:extseam   (offline, no keys, no network)
  */
@@ -42,6 +49,9 @@ import {
   type Operation,
   type Transaction,
 } from "@stellar/stellar-sdk";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { NetworkConfig } from "./network";
 import type { PreparedDeposit, V2LinkParts } from "./lumendrop";
 
@@ -160,6 +170,8 @@ const FLAVORS = [
 
 const WEB = "https://getlumenia.com";
 const SPONSOR = "https://sponsor.ext-seam.test";
+/** The real-money Worker of the deployment [g] stands up (see [a]). */
+const MAINNET_SPONSOR = "https://mainnet-sponsor.ext-seam.test";
 const HASH = "ab".repeat(32);
 const EXPIRY = 1_900_000_000;
 
@@ -222,6 +234,11 @@ async function main() {
   // The default network is read from the build environment when network.ts loads, and [e] asserts
   // against the testnet default. A developer's shell must not be able to change what it asserts.
   delete process.env.NEXT_PUBLIC_STELLAR_NETWORK;
+  // [g] needs a deployment that serves real money, so that a device switched to it really is on
+  // mainnet. Test values, set before network.ts loads (it reads them once). Nothing in [a] to [f]
+  // reads the mainnet config, and the device default above stays testnet.
+  process.env.NEXT_PUBLIC_LUMENDROP_CONTRACT_MAINNET = StrKey.encodeContract(Buffer.alloc(32, 9));
+  process.env.NEXT_PUBLIC_SPONSOR_URL_MAINNET = MAINNET_SPONSOR;
   const G = globalThis as unknown as Record<string, unknown>;
   for (const name of ["window", "localStorage", "document"]) {
     Reflect.deleteProperty(G, name);
@@ -1241,6 +1258,100 @@ async function main() {
     globalThis.fetch = realFetch;
     if (navDesc) Object.defineProperty(globalThis, "navigator", navDesc);
     else Reflect.deleteProperty(globalThis, "navigator");
+  }
+
+  /* ---------------------------------------- [g] ---------------------------------------- */
+  console.log("\n[g] the v1 practice claim's counters go to the testnet Worker, on a device switched to real money too");
+  {
+    const navBefore = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    const stored = new Map<string, string>([["lumenia.network", "public"]]);
+    const page = {
+      localStorage: {
+        getItem: (k: string) => stored.get(k) ?? null,
+        setItem: (k: string, v: string) => void stored.set(k, String(v)),
+        removeItem: (k: string) => void stored.delete(k),
+      },
+    };
+    const beaconed: string[] = [];
+    Object.defineProperty(globalThis, "window", { value: page, configurable: true, writable: true });
+    setNavigator({
+      sendBeacon(url: string) {
+        beaconed.push(url);
+        return true;
+      },
+    });
+    try {
+      const device = network.activeNetwork();
+      ok("precondition: this device is switched to real money, on a deployment that serves it", device.isMainnet && device.sponsorUrl === MAINNET_SPONSOR, `${device.id} ${device.sponsorUrl}`);
+      // What app/c/[id]/ClaimButton.tsx pins its claim to: the network a v1 practice link lives on.
+      const claimNetwork = network.resolveNetwork(null);
+      ok("  ...and the v1 claim route's network is the test network", !claimNetwork.isMainnet && claimNetwork.sponsorUrl === testnet.sponsorUrl);
+      const fired: [string, string | undefined][] = [
+        ["claim_opened", undefined],
+        ["claim_succeeded", Keypair.random().publicKey()],
+        ["claim_failed", undefined],
+      ];
+      for (const [event, acct] of fired) {
+        beaconed.length = 0;
+        await events.sendEvent(event, "v1-practice-claim", acct, { net: claimNetwork, seeded: true });
+        ok(`${event}: one beacon, to the testnet Worker and not this device's real-money one`, beaconed.length === 1 && beaconed[0] === `${testnet.sponsorUrl}/events`, beaconed.join(", "));
+      }
+      beaconed.length = 0;
+      await events.sendEvent("claim_opened", "v1-practice-claim");
+      ok("  ...where, without the link's network, it went to the real-money Worker (the bug this holds shut)", beaconed[0] === `${MAINNET_SPONSOR}/events`, beaconed.join(", "));
+
+      // And the route passes that network on every beacon it sends.
+      const webRoot = fileURLToPath(new URL("..", import.meta.url));
+      const route = readFileSync(join(webRoot, "app", "c", "[id]", "ClaimButton.tsx"), "utf8");
+      const calls = route.match(/sendEvent\([^;]*\);/g) ?? [];
+      ok("app/c/[id]/ClaimButton.tsx pins CLAIM_NETWORK to resolveNetwork(null), the test network", /const CLAIM_NETWORK = resolveNetwork\(null\);/.test(route));
+      ok(
+        "  ...and passes { net: CLAIM_NETWORK } on each of its three beacons (opened, succeeded, failed)",
+        calls.length === 3 && ["claim_opened", "claim_succeeded", "claim_failed"].every((e) => calls.some((c) => c.includes(`"${e}"`) && c.includes("net: CLAIM_NETWORK"))),
+        calls.join(" | "),
+      );
+    } finally {
+      Reflect.deleteProperty(globalThis, "window");
+      if (navBefore) Object.defineProperty(globalThis, "navigator", navBefore);
+      else Reflect.deleteProperty(globalThis, "navigator");
+    }
+  }
+
+  /* ---------------------------------------- [h] ---------------------------------------- */
+  console.log("\n[h] where /extension sends people to install: both public listings, never 'coming soon'");
+  {
+    const install = await import("./extension-install");
+    const env = process.env as Record<string, string | undefined>;
+    const saved = { chrome: env.NEXT_PUBLIC_EXTENSION_CHROME_URL, firefox: env.NEXT_PUBLIC_EXTENSION_FIREFOX_URL };
+    const set = (chrome: string | undefined, firefox: string | undefined) => {
+      if (chrome === undefined) delete env.NEXT_PUBLIC_EXTENSION_CHROME_URL;
+      else env.NEXT_PUBLIC_EXTENSION_CHROME_URL = chrome;
+      if (firefox === undefined) delete env.NEXT_PUBLIC_EXTENSION_FIREFOX_URL;
+      else env.NEXT_PUBLIC_EXTENSION_FIREFOX_URL = firefox;
+    };
+    try {
+      ok(
+        "the two public listings are the ones checked on 2026-10-09",
+        install.CHROME_WEB_STORE_URL === "https://chromewebstore.google.com/detail/lumenia-send-dollars-by-l/ccdnjnckaldkmjnlpgpmdmnbajmakhmn" &&
+          install.AMO_LISTING_URL === "https://addons.mozilla.org/firefox/addon/lumenia/",
+      );
+      set(undefined, undefined);
+      const unset = install.extensionInstallLinks();
+      ok("no env vars: Add to Chrome is the public listing, and Firefox is left to the page's fallback", unset.chrome === install.CHROME_WEB_STORE_URL && unset.firefox === null);
+      set("https://chromewebstore.google.com/detail/elsewhere/abc", install.AMO_LISTING_URL);
+      const both = install.extensionInstallLinks();
+      ok("both set: each button goes exactly where its env var says", both.chrome === "https://chromewebstore.google.com/detail/elsewhere/abc" && both.firefox === install.AMO_LISTING_URL);
+      set("javascript:alert(1)", "http://addons.mozilla.org/firefox/addon/lumenia/");
+      const bad = install.extensionInstallLinks();
+      ok("an env value that is not https (javascript:, plain http) counts as unset", bad.chrome === install.CHROME_WEB_STORE_URL && bad.firefox === null);
+    } finally {
+      set(saved.chrome, saved.firefox);
+    }
+    const page = readFileSync(join(fileURLToPath(new URL("..", import.meta.url)), "app", "(site)", "extension", "page.tsx"), "utf8");
+    ok(
+      "the page: no 'coming soon' and no disabled install button, and Firefox falls back to the hosted file, then the AMO listing",
+      !/coming to (chrome|firefox) soon/i.test(page) && !/\bdisabled\b/.test(page) && /env\.firefox \?\? hostedXpi\(\) \?\? AMO_LISTING_URL/.test(page),
+    );
   }
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"} EXT SEAM SELF-TEST ${passed}/${passed + failed}`);

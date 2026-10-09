@@ -37,7 +37,6 @@ import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
 import { netKey } from "../../../lib/scoped-store";
 import { activeNetwork } from "../../../lib/network";
 import { copy } from "../../../lib/copy";
-import { handleOf } from "../../../lib/handles";
 import { rememberLink } from "../../../lib/sent-links";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { AmountDisplay } from "../../../components/brand/AmountDisplay";
@@ -289,19 +288,20 @@ export default function SendPage() {
   }, []);
 
   /**
-   * Two things this screen used to ASK for, which it can simply know.
-   *
    * PRACTICE MONEY: a sender with $0 on the test network cannot send, so the screen offered a
    * button to go and get some. That is a step, a decision and an explanation in front of money
    * that is not real. It now tops itself up on arrival — once, guarded by a ref, and only on
    * practice money with a zero balance. Real money is untouched: nothing can conjure that.
    *
-   * WHO IT IS FROM: if the account has a name, that is the answer. Asking again is asking somebody
-   * to type something we already have.
+   * WHO IT IS FROM is NOT filled in for the sender any more (D3, 2026-10-09). It used to be the
+   * account's @name, read from the public registry, which put a real name inside every link by
+   * default: after the '#', so no server or preview saw it, but in the chat message for anyone who
+   * could read it. A link now carries a name only when the sender types one; the claim page says
+   * "Someone" otherwise.
    *
-   * BOTH HOOKS SIT ABOVE THE EARLY RETURNS, and must stay there. Written below them they ran only
+   * THE HOOK SITS ABOVE THE EARLY RETURNS, and must stay there. Written below them it ran only
    * once the wallet had loaded, so a cold /send rendered twelve hooks and then sixteen — React #310,
-   * a white screen for anyone whose keys had not hydrated by first paint. The bodies already guard
+   * a white screen for anyone whose keys had not hydrated by first paint. The body already guards
    * on `account`, so the position costs nothing and buys the crash back.
    */
   const toppedUp = useRef(false);
@@ -315,17 +315,6 @@ export default function SendPage() {
     topUp.current = getTestMoney();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account, balance, faucetBusy]);
-
-  const namedFrom = useRef(false);
-  useEffect(() => {
-    if (!account || namedFrom.current) return;
-    namedFrom.current = true;
-    void handleOf(account.address)
-      .then((name) => name && setFrom((current) => current || name))
-      .catch(() => {
-        /* no registry, no name — the claim page says "Someone", which is true */
-      });
-  }, [account]);
 
   /**
    * "GET STARTED" LANDS HERE, AND OPENS THE ACCOUNT ON ARRIVAL.
@@ -493,8 +482,10 @@ export default function SendPage() {
     /* No name, no problem. This used to refuse the send — which was fine while the form ASKED for
        a name, and became a dead end the moment it stopped: the field is collapsed now, so the
        person would have been blocked by something they could not see. An unnamed sender is a
-       legitimate thing to be, and the claim page has always had a word for it. */
-    const senderName = from.trim() || "Someone";
+       legitimate thing to be, and the claim page has always had a word for it ("Someone").
+       Passed EMPTY rather than as that word (D3): an empty name writes no `s=` into the link at
+       all, so a link made with the defaults carries no name anywhere. */
+    const senderName = from.trim();
     const lockWith = !directTo && wantPassword ? password : "";
     if (!directTo && wantPassword) {
       const problem = claimPasswordProblem(password);
@@ -993,15 +984,15 @@ export default function SendPage() {
           {/* Paying straight to a returning asker's account needs no sender name —
               nothing ever displays it. The bearer-link path still does (the claim
               page says "<from> sent you money"). */}
-          {/* WHO IT IS FROM is not a question this screen needs to ask. If the account has a
-              name it is already the answer; if it does not, the claim page says "Someone sent you
-              money", which is true and costs nobody a keystroke. It stays editable — one tap, out
-              of the main line of the form — because a person sending to their mother may well want
-              to be "Mum's daughter" rather than @simon. */}
+          {/* WHO IT IS FROM starts EMPTY (D3): the claim page says "Someone sent you money", which
+              is true and puts no name in the link. A name is the sender's own choice, one tap away
+              and out of the main line of the form, and the moment one is typed the line under the
+              field says where it goes: inside the link, after the #, readable by anyone who can
+              read the chat. */}
           {!request?.to && (
             <details className="text-sm text-ink-soft">
               <summary className="cursor-pointer list-none underline-offset-2 hover:underline [&::-webkit-details-marker]:hidden">
-                Sent as {from.trim() || "Someone"} — change
+                Sent as {from.trim() || "Someone"}, change
               </summary>
               <input
                 value={from}
@@ -1010,6 +1001,7 @@ export default function SendPage() {
                 aria-label="Your name"
                 className="mt-2 w-full rounded-[14px] border border-line bg-surface px-3 py-3 text-ink"
               />
+              {from.trim() && <p className="mt-2 text-xs text-ink-soft">{copy.link.nameNote}</p>}
             </details>
           )}
           {/* Optional lock. Only for a bearer LINK — a direct pay already lands in one
@@ -1060,7 +1052,7 @@ export default function SendPage() {
                     wouldn&apos;t guess: whoever gets hold of the link can keep trying.
                   </p>
                   <p className="text-xs text-ink-soft">
-                    Forget it and the money isn&apos;t stuck. It comes back to you after 7 days.
+                    Forget it and the money isn&apos;t stuck. {copy.link.takeBack}
                   </p>
                 </>
               )}

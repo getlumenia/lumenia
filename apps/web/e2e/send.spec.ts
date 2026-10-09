@@ -58,9 +58,9 @@ test("claim → send part of it onward → the onward link is claimable (loop cl
   await page.getByRole("link", { name: /send money to someone/i }).click();
   await expect(page).toHaveURL(/\/send/);
   await page.getByPlaceholder("0.00").fill(ONWARD);
-  // Deliberately NOT naming the sender. The name is optional now — the field is folded away behind
-  // "Sent as … — change" — and this is the shortest real path through the screen, so it is the one
-  // worth guarding. request.spec covers opening that fold and typing a name.
+  // Deliberately NOT naming the sender. The name is optional, folded away behind "Sent as Someone,
+  // change", and since D3 (2026-10-09) it starts EMPTY: this is the default path, and the link it
+  // makes must carry no name at all. request.spec and preview.spec cover typing one.
   await page.getByRole("button", { name: /create a money link/i }).click();
   await expect(page.getByText(/your money link is ready/i)).toBeVisible({ timeout: 120_000 });
 
@@ -74,6 +74,9 @@ test("claim → send part of it onward → the onward link is claimable (loop cl
   expect(onwardUrl.searchParams.has("a"), "a private link carries no amount").toBe(false);
   expect(onwardUrl.searchParams.has("s"), "a private link carries no name in its query").toBe(false);
   expect(onwardUrl.hash, "the key comes right after the '#'").toMatch(/^#S[A-Z2-7]{55}(&|$)/);
+  // D3: nothing was typed, so no name anywhere, after the '#' included (a practice one-to-one link
+  // with no password: the fragment is the key and nothing else).
+  expect(onwardUrl.hash, "a link made with the defaults carries no name, not even after the '#'").toMatch(/^#S[A-Z2-7]{55}$/);
   await page.goto(onward, { waitUntil: "domcontentloaded" });
   // The figure is read from the ESCROW in the browser now (the URL has none to offer), so it is
   // given time to arrive: a link opened seconds after its deposit can reach an RPC that is a ledger
@@ -81,6 +84,7 @@ test("claim → send part of it onward → the onward link is claimable (loop cl
   // two elements. The headline is the value-first promise, so that is the one asserted.
   await expect(page.getByText(usd(ONWARD), { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Verified on the ledger")).toBeVisible();
+  await expect(page.getByText("Someone sent you money")).toBeVisible();
   await page.waitForFunction(() => window.location.hash === "", null, { timeout: 20_000 });
   await page.getByRole("button", { name: /claim my money|^take \$/i }).click();
   await expectMoneyLanded(page);

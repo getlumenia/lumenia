@@ -9,7 +9,8 @@
  * render: its metadata, its HTML and the RSC payload inside it. Until D2 all three named the sender
  * and printed the amount, taken from the query, for every link. Now:
  *   - the metadata is lib/claim-metadata.ts v2ClaimMetadata: the fixed private card unless the
- *     sender chose `preview=rich`, and then the amount comes from the ledger, never from `a=`;
+ *     sender chose `preview=rich` AND the ledger answers with a live drop or pool for this id, and
+ *     then the amount comes from the ledger, never from `a=`;
  *   - the body carries no name and no amount for ANY link. The client component gets the link id,
  *     the `g` share-count hint and the network marker, and nothing else, because every prop handed
  *     to it is serialised into the HTML. It reads the name from the #fragment (or, on a legacy or

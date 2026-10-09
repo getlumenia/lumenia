@@ -1,15 +1,17 @@
 /**
  * /privacy - plain language: what a link carries, what the public ledger shows, and what our
- * servers see and keep. Rewritten for SOW D2 (T-D2-07); this URL is the privacy policy both
- * extension store listings quote.
+ * servers see and keep. Rewritten for SOW D2 (T-D2-07), brought up to date with D3 on 2026-10-09
+ * (the sponsor's new two-day records, the per-sender day total, no name in a link by default).
+ * This URL is the Chrome Web Store listing's privacy policy, and the addons.mozilla.org listing
+ * links to it.
  *
  * Every sentence here was checked against the code that does the thing it describes, and each one
  * names a fact, not an intention. When the code changes (a retention, a log line, a new store),
  * this page changes in the same commit, or it starts lying to the people it is written for.
  *
- * "What a link carries" describes the PRIVATE link shape (key, name, share count and lock marker
- * after the #; only non-personal markers in the query; no amount anywhere). The claim pages and
- * lib/link-fragment.ts must keep matching it.
+ * "What a link carries" describes the PRIVATE link shape (key, then a name only if the sender typed
+ * one, share count and lock marker after the #; only non-personal markers in the query; no amount
+ * anywhere). The claim pages, lib/link-fragment.ts and the send screens must keep matching it.
  *
  * Keep id="extension": the Chrome Web Store and addons.mozilla.org listings link to #extension.
  */
@@ -58,7 +60,7 @@ export default function Privacy() {
             and keep.
           </p>
           <p>
-            Last updated: <time dateTime="2026-10-07">7 October 2026</time>.
+            Last updated: <time dateTime="2026-10-09">9 October 2026</time>.
           </p>
 
           <h2 id="link">What a link carries</h2>
@@ -66,11 +68,10 @@ export default function Privacy() {
           <ul>
             <li>
               <strong>After the #</strong>, at the end of the link: the key that opens the money, the
-              sender&apos;s name (their @name if they have one, unless they change it before sending, or
-              a name they type), the number of shares in a group link, and a marker if the link needs a
-              password. Browsers never send this part to a website, and neither does a
-              chat app when it fetches a preview. Our claim page reads it inside your browser, then
-              removes it from the address bar.
+              sender&apos;s name only if they typed one, the number of shares in a group link, and a
+              marker if the link needs a password. Browsers never send this part to a website, and
+              neither does a chat app when it fetches a preview. Our claim page reads it inside your
+              browser, then removes it from the address bar.
             </li>
             <li>
               <strong>The path</strong>: the link&apos;s id. It is a public code, and the public ledger
@@ -87,13 +88,26 @@ export default function Privacy() {
             link is opened, and so does a chat app that builds a preview.
           </p>
           <p>
+            <strong>No name unless the sender adds one.</strong> Since 9 October 2026 our website fills
+            in no name for you: a link you make carries none, and the person who opens it sees
+            &quot;Someone sent you money&quot;. If you type a name, it travels inside the link, after the
+            #, so anyone who can read the chat can read it. (Before that date the website filled in
+            your @name, if you had one, unless you changed it.)
+          </p>
+          <p>
             <strong>By default, the amount is not in the link at all.</strong> The claim page reads it
             from the ledger, so a link that has been edited to show a bigger number cannot fool the page.
             The other side of that: the ledger is public, so anyone who has the link&apos;s id can look
             the amount up the same way.
           </p>
           <p>
-            <strong>Older links carry more.</strong> Links made on our website before this update, and
+            <strong>The link&apos;s id leads to the sender.</strong> The id is public on the ledger,
+            next to the amount and the sender&apos;s account. If that account has a @name, anyone who
+            has the id can look the name up too. So the part after the # keeps a name out of previews
+            and logs, not out of reach.
+          </p>
+          <p>
+            <strong>Older links carry more.</strong> Links made on our website before 7 October 2026, and
             links made by our browser extension up to version 0.1.2 (the version in the stores
             today), also carry the amount and the sender&apos;s name after the ?, where our website&apos;s
             host and a chat app that builds a preview can read them. The claim page still ignores that
@@ -117,11 +131,12 @@ export default function Privacy() {
             whoever can read that chat can read the key.
           </p>
           <p>
-            <strong>Two other kinds of link.</strong> A request link, which asks someone to pay you,
-            holds no money, and it is not private: its address carries the amount you ask for, your name
-            and, if you already have an account, your account address, because the payer&apos;s app needs
-            them, and its chat preview shows your name and the amount. Practice links from our try-it
-            page and event page use an older shape, whose address also carries the practice
+            <strong>Two other kinds of link.</strong> A request link (getlumenia.com/r/...), which asks
+            someone to pay you, holds no money, and it is not private, by design: its address carries
+            the amount you ask for, your name and, if you already have an account, your account address,
+            because the payer&apos;s app needs them, and its chat preview shows your name and the
+            amount. Everything said above about private links is about money links only. Practice
+            links from our try-it page and event page use an older shape, whose address also carries the practice
             money&apos;s id on the ledger (practice money sits in a claimable balance, not the escrow
             contract).
           </p>
@@ -176,23 +191,31 @@ export default function Privacy() {
               We use them to stop floods, and the counts they feed expire after about a minute. When a
               new account is opened, your IP address (or the block of addresses it belongs to) also goes
               into that day&apos;s count of new accounts, which is deleted two days after the last
-              account opened from that address that day. No count keeps an
-              IP address next to an account. If the database cannot be reached, the server counts in its
-              own memory instead, which empties when it restarts.
+              account opened from that address that day. If the same new account is asked for again
+              that day (a retry), the repeat is counted under that account&apos;s address together with
+              your IP address or its block, so that one address cannot use up somebody else&apos;s
+              retries; that count is deleted two days after the last repeat. If the database cannot be
+              reached, the server counts in its own memory instead, which empties when it restarts.
             </li>
             <li>
               <strong>When you send a link:</strong> the transaction you signed. It names your account,
-              the link&apos;s id, the amount and the date you can take it back. On real money the sponsor
-              reads the amount to hold the pilot limits, $5 a transfer and $50 a day across everyone, and
-              counts the transfer against your pilot allowance. Those are running totals, not a list of
-              transfers. Paying an account directly, or sending money out to an exchange, works the same
-              way: the sponsor sees what that transaction names.
+              the link&apos;s id, the amount and the date you can take it back. The sponsor reads the
+              amount to hold its limits. On real money those are $5 a link and up to $25 a day from you
+              ($50 a day across the whole pilot), and the transfer also counts against your pilot
+              allowance. To hold the daily limit for each sender, both servers keep a running total of
+              what your account sent that day, filed under your account&apos;s address and deleted two
+              days after your last send that day. These are running totals, not a list of transfers.
+              Paying an account directly, or sending money out to an exchange, works the same way: the
+              sponsor sees what that transaction names.
             </li>
             <li>
               <strong>When someone claims:</strong> the link&apos;s id and the brand-new account that
               receives the money. The ledger already shows anyone which account claimed which link, so
               the sponsor learns nothing new about who claimed what, apart from the IP address of the
-              moment. Beyond the hashed counters below, it keeps no record of claims.
+              moment. Each time it opens a new account, for a claim or for anyone starting out, it keeps
+              that account&apos;s address for two days as a marker that the account was already opened,
+              so a retry costs nothing. Beyond those markers and the hashed counters below, it keeps no
+              record of claims.
             </li>
             <li>
               <strong>When your app moves money home</strong> (see Fresh accounts below): the claim
@@ -222,7 +245,8 @@ export default function Privacy() {
               can produce. Your email address itself is used only to send you a 6-digit code, through our
               email provider, Resend, and is not kept. The code is kept, hashed, for 10 minutes, and a
               count of codes asked for and tried, under the same hash, for an hour. The backup has no end
-              date: it is your way back if you lose your phone. Backup and restore always go to the
+              date: it is your way back if you lose your phone. It brings back your account, not the
+              list of links you sent (see Our website below). Backup and restore always go to the
               practice-money server, for both kinds of money, so one backup serves both.
             </li>
             <li>
@@ -235,7 +259,8 @@ export default function Privacy() {
             <li>
               <strong>A @name, if you pick one:</strong> the name and the account it points to are
               public, because that is how people pay you by name. Anyone can look it up, and it ties that
-              account&apos;s whole history on the ledger to the name. If you release it, nobody can take
+              account&apos;s whole history on the ledger to the name, including every link it sends:
+              anyone who has a link&apos;s id can find its sender&apos;s @name. If you release it, nobody can take
               it for 30 days, and for those 30 days we keep the record of which account held it.
             </li>
             <li>
@@ -250,7 +275,7 @@ export default function Privacy() {
               us, and if that email cannot be sent, the server writes your wallet address and email
               address into its log instead, so the application is not lost. Our answer, approve or
               decline, is emailed to you through Resend; if that email fails, the server logs the wallet
-              address.
+              address, and your email address too if the mail service is not set up.
             </li>
             <li>
               <strong>The waitlist:</strong> if you ask us to tell you when real money or cash-out opens,
@@ -267,9 +292,12 @@ export default function Privacy() {
             <li>
               <strong>Log lines:</strong> our servers print short lines for us to read. A counter line
               carries only the hashed ids above. On the real-money server, an error line names the part of
-              the server that failed and why, and the reason can include an account address. If the
-              database cannot be reached, a waitlist sign-up or a report goes into the log instead, so it
-              is not lost.
+              the server that failed, with a short reference and the reason, and the reason can name the
+              account or address of a refused transaction. A refused link deposit, claim or take-back is
+              logged without its amount and without a full account address. If the database cannot be
+              reached, a waitlist sign-up or a report goes into the log instead, so it is not lost.
+              Cloudflare, which runs these servers, stores log lines only if its log storage (Workers
+              Logs) is switched on for them, and then deletes them after 3 days, or 7 on a paid plan.
             </li>
           </ul>
           <p>
@@ -323,8 +351,8 @@ export default function Privacy() {
           </p>
           <p>
             Version 0.1.2 and earlier put the amount and your sender name in the link&apos;s address,
-            after the ?. The next version makes the same links as the website: the name after the #, and
-            no amount anywhere in the link.
+            after the ?. The next version makes the same links as the website: no amount anywhere in the
+            link, and a name only if you type one, after the #.
           </p>
 
           <p>What it sends:</p>
@@ -394,8 +422,10 @@ export default function Privacy() {
               password, so it can be stored the moment you give an email.
             </li>
             <li>
-              Your list of links (for each: the amount, the sender name you used, its link ID, network,
-              dates, transaction IDs and status) and your settings, including your default sender name.
+              Your list of links (for each: the amount, the sender name you used if any, its link ID,
+              network, dates, transaction IDs and status) and your settings. Version 0.1.2 also keeps the
+              last sender name you used and fills it in next time; the next version starts with no name
+              every time.
             </li>
             <li>
               Each full link with its secret, encrypted with a key derived from your account key, so it
@@ -434,9 +464,16 @@ export default function Privacy() {
 
           <h2 id="website">Our website</h2>
           <p>
+            <strong>The links you send are listed only in the browser you sent them from.</strong> The
+            list (amount, name and link id) sits in that browser&apos;s storage, and each full link, key
+            included, is kept there encrypted, so the page can show it again. Nothing of it is on our
+            servers. Your backup brings back your account, not that list: if nobody claims a link in 7
+            days, take it back from the browser you sent it from. It does not come back by itself.
+          </p>
+          <p>
             Our website runs on Vercel. Like any web host, it sees your IP address and the address of each
             page you open, up to the #, and keeps those request logs for a short time (one hour to one
-            day, depending on the plan). Before this update a claim page&apos;s address carried the
+            day, depending on the plan). Before 7 October 2026 a claim page&apos;s address carried the
             amount and the sender&apos;s name, so those logs did too. The claim pages tell your browser
             never to pass their address on to another site.
           </p>

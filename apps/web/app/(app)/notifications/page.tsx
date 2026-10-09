@@ -175,7 +175,7 @@ export default function NotificationsPage() {
            about money coming back must not end on a screen the person never asked for, with no
            sentence anywhere saying why they are there. */
         if (isNeedsPassword(e)) {
-          setError("Set a password to finish — until then, this money can't come back to you.");
+          setError("Set a password to finish. Until then, you can't take this money back.");
           setNeedsPassword(true);
           return;
         }
@@ -240,7 +240,7 @@ export default function NotificationsPage() {
     <div className="flex flex-col gap-4 py-4">
       <header>
         <h1 className="text-xl font-bold text-ink">Notifications</h1>
-        <p className="mt-1 text-sm text-ink-soft">Money in, waiting, and coming back to you, all from the public record.</p>
+        <p className="mt-1 text-sm text-ink-soft">Money in, money waiting, and money you can take back, all from the public record.</p>
       </header>
 
       {/* Said once, after the take-back landed, and with no count beside it: a closed pool reads
@@ -279,7 +279,7 @@ export default function NotificationsPage() {
                 </p>
                 {n.kind === "reclaimable" ? (
                   <p className="text-xs text-ink-soft">
-                    {pool ? "The link has closed. Whatever nobody took is yours again." : copy.recover.hint}
+                    {pool ? "The link has closed. Whatever nobody took is yours to take back." : copy.recover.hint}
                   </p>
                 ) : n.at ? (
                   <p className="text-xs text-ink-soft">{whenText(n.at)}</p>

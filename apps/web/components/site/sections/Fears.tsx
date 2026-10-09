@@ -33,7 +33,7 @@ const FEARS = [
   {
     worry: "“What if it gets lost? Is it safe?”",
     lead: "Only you can open it",
-    rest: ", or it comes back to the sender after seven days. Every transfer is public to check, and your money is never ours.",
+    rest: ". If nobody claims it in 7 days, the sender can take it back. Every transfer is public to check, and your money is never ours.",
     icon: "/brand-kit-assets/icon-shield.webp",
   },
 ];

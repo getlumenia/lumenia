@@ -153,7 +153,7 @@ test("first-time asker: request with no account → payer sends the link back �
   await expect(payerPage.getByPlaceholder("0.00")).toHaveValue(Number(ASK).toFixed(2));
   // The name lives behind a fold now, so naming the sender means opening it first — which is also
   // the only coverage that the fold OPENS at all. It stayed shut for a whole test run once.
-  await payerPage.getByText(/sent as .* — change/i).click();
+  await payerPage.getByText(/sent as .*, change/i).click();
   await payerPage.getByPlaceholder(/e\.g\./).fill("Meric");
   await payerPage.getByRole("button", { name: /pay zeynep/i }).click();
   await expect(payerPage.getByText(/send this link back to zeynep/i)).toBeVisible({ timeout: 120_000 });

@@ -13,8 +13,27 @@
  * leaves (backupBlocksRealMoney), and the once-per-device real-money warning (mainnetWarningPlan),
  * including the arrival on real money that never passes through the switch.
  *
+ * And the WORDS of that warning (lib/real-money.ts, decisions D1 and D2): the one sentence set,
+ * verbatim and plain ASCII, the caps sentence after it, and every surface of this app that shows it
+ * reading it from there rather than keeping a variant of its own. Plus the switch that retires the
+ * public waitlist (`realMoneyOpen`, `waitlistCta`) and the four places that follow it.
+ *
  * RUN: pnpm --filter @lumenia/web test:pilotaccess   (offline, no keys, no network)
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  PILOT_DAY_CAP_USD,
+  PILOT_SENDER_DAY_CAP_USD,
+  PILOT_TX_CAP_USD,
+  REAL_MONEY_WARNING,
+  pilotCaps,
+  pilotCapsShort,
+  pilotCapsSentence,
+  realMoneyOpen,
+  waitlistCta,
+} from "./real-money";
 import {
   arrivalDismissTarget,
   askPilotStatus,
@@ -164,6 +183,65 @@ function backupAndWarning(): void {
   ok("switching back to practice money: never shown", !mainnetWarningPlan({ trigger: "switch", network: "testnet", seen: false }).show);
 }
 
+/** apps/web, for the checks that read the screens themselves. */
+const WEB_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const source = (...parts: string[]): string => readFileSync(join(WEB_ROOT, ...parts), "utf8");
+
+function warningWords(): void {
+  console.log("\n[9] the real-money warning's words (D1) and the caps after it (D2)");
+  ok(
+    "the warning is D1, word for word",
+    REAL_MONEY_WARNING ===
+      "Real money on Lumenia is an early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so keep amounts small.",
+  );
+  ok("  ...and carries all four things: early pilot, no outside review, you can lose money, keep amounts small", ["early pilot", "outside security firm", "You can lose money", "keep amounts small"].every((w) => REAL_MONEY_WARNING.includes(w)));
+  const ascii = (t: string) => /^[\x20-\x7E]*$/.test(t);
+  ok("  ...in plain ASCII (no curly quotes, no dashes), like the caps sentence", ascii(REAL_MONEY_WARNING) && ascii(pilotCapsSentence()));
+  ok("the defaults are the mainnet Worker's caps today: $5 a link, $25 per sender a day, $50 a day in all", PILOT_TX_CAP_USD === "5" && PILOT_SENDER_DAY_CAP_USD === "25" && PILOT_DAY_CAP_USD === "50");
+  ok("D2 long form", pilotCaps() === "$5 a link and up to $25 a day from you ($50 a day across the whole pilot)", pilotCaps());
+  ok("D2 short form", pilotCapsShort() === "$5 a link, $25 a day", pilotCapsShort());
+  ok("the caps sentence is its own sentence, after the warning, never folded into it", pilotCapsSentence().startsWith("The pilot caps") && !REAL_MONEY_WARNING.includes("$"));
+
+  const surfaces: [string, string][] = [
+    ["the sheet before the first switch", source("components", "brand", "MainnetWarningDialog.tsx")],
+    ["/pilot", source("app", "(app)", "pilot", "page.tsx")],
+    ["the ask-to-join sheet", source("components", "brand", "JoinPilotDialog.tsx")],
+  ];
+  for (const [name, src] of surfaces) {
+    ok(`${name} shows REAL_MONEY_WARNING from lib/real-money.ts`, /import \{[^}]*\bREAL_MONEY_WARNING\b[^}]*\} from "[./]+lib\/real-money"/.test(src) && /\{REAL_MONEY_WARNING\}/.test(src));
+    ok(
+      `  ...and keeps no older variant of its own ("early preview", "keep amounts tiny", "afford to lose")`,
+      !/early preview|keep amounts tiny|afford to lose/.test(src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")),
+    );
+  }
+  const pilot = source("app", "(app)", "pilot", "page.tsx");
+  ok("/pilot shows it in both of its states (pilot on, pilot retired), each followed by the caps", (pilot.match(/\{REAL_MONEY_WARNING\}/g) ?? []).length === 2 && (pilot.match(/\{pilotCapsSentence\(\)\}/g) ?? []).length === 2);
+
+  console.log("\n[10] the waitlist's retirement switch (NEXT_PUBLIC_REAL_MONEY_OPEN)");
+  const env = process.env as Record<string, string | undefined>;
+  const before = env.NEXT_PUBLIC_REAL_MONEY_OPEN;
+  try {
+    delete env.NEXT_PUBLIC_REAL_MONEY_OPEN;
+    ok("unset (today): real money is not open, and a waitlist call to action is the waitlist", !realMoneyOpen() && waitlistCta().href === "/waitlist" && waitlistCta().label === "Join the waitlist");
+    env.NEXT_PUBLIC_REAL_MONEY_OPEN = "true";
+    ok("  ...anything but the exact value 1 is still off", !realMoneyOpen());
+    env.NEXT_PUBLIC_REAL_MONEY_OPEN = "1";
+    ok("set to 1: open, and every waitlist call to action points at /start instead", realMoneyOpen() && waitlistCta().href === "/start" && waitlistCta().label === "Get started");
+  } finally {
+    if (before === undefined) delete env.NEXT_PUBLIC_REAL_MONEY_OPEN;
+    else env.NEXT_PUBLIC_REAL_MONEY_OPEN = before;
+  }
+  const followers: [string, string][] = [
+    ["the /waitlist page", source("app", "(site)", "waitlist", "page.tsx")],
+    ["the landing's closing band", source("components", "site", "sections", "CloseCTA.tsx")],
+    ["the footer", source("components", "site", "sections", "Footer.tsx")],
+    ["/roadmap", source("app", "(site)", "roadmap", "page.tsx")],
+  ];
+  for (const [name, src] of followers) {
+    ok(`${name} follows the switch (lib/real-money.ts) and hard-codes no waitlist link of its own`, /from "[./]+lib\/real-money"/.test(src) && /realMoneyOpen\(\)|waitlistCta\(\)/.test(src) && !/href=\{?"\/waitlist"\}?/.test(src) && !/\["Waitlist", "\/waitlist"\]/.test(src));
+  }
+}
+
 async function main(): Promise<void> {
   console.log("============================================================");
   console.log(" SELF-TEST: who may switch to real money (pilot on, pilot retired)");
@@ -212,6 +290,7 @@ async function main(): Promise<void> {
 
   await asks();
   backupAndWarning();
+  warningWords();
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"} PILOT ACCESS SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

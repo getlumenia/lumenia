@@ -55,14 +55,14 @@ export function LinkCheckForm() {
       {state === "pending" && (
         <div className="tool-card">
           <p className="tool-note">
-            ⏳ Still waiting to be claimed. If nobody claims it, it comes back to the sender after 7 days.
+            ⏳ Still waiting to be claimed. If nobody claims it in 7 days, the sender can take it back. It does not happen by itself: until they do, whoever holds the link can still claim it.
           </p>
         </div>
       )}
       {state === "settled" && (
         <div className="tool-card">
           <p className="tool-note">
-            ✓ This link is done. The money has been claimed or returned to the sender.
+            ✓ This link is done. The money has been claimed, or the sender took it back.
           </p>
         </div>
       )}

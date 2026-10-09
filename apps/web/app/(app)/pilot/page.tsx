@@ -3,9 +3,10 @@
 /**
  * /pilot — ask to be an early mainnet pilot user.
  *
- * Honest by construction: it says out loud that this is an early preview, not reviewed by an
- * outside security firm, and capped per transfer at the configured pilot cap ($5 today, via
- * `NEXT_PUBLIC_PILOT_TX_CAP_USD` — see PILOT_TX_CAP_USD below). It also ENFORCES the safety rule the
+ * Honest by construction: in both of its states it shows the real-money warning verbatim (an early
+ * pilot, not reviewed by an outside security firm, you can lose money, keep amounts small:
+ * lib/real-money.ts, decision D1) and then the pilot's caps (per link, per sender per day, and for
+ * the whole pilot per day, the mainnet Worker's own numbers). It also ENFORCES the safety rule the
  * pilot depends on before it will let you ask in: your money must be locked to a password
  * (Phase 2), Face ID optional — a pilot user's real money must never sit under a device key
  * anyone holding the phone could spend.
@@ -28,17 +29,16 @@ import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { PilotStatusBadge } from "../../../components/brand/PilotStatusBadge";
 import { mainnetConfig } from "../../../lib/network";
 import { hasBackup } from "../../../lib/recovery-api";
+import { REAL_MONEY_WARNING, pilotCapsSentence } from "../../../lib/real-money";
 
 const SPONSOR_URL = process.env.NEXT_PUBLIC_SPONSOR_URL ?? "https://lumenia-sponsor.avakit.workers.dev";
 
-/**
- * The per-transfer cap this page PROMISES, which must equal MAX_DROP_USDC on the mainnet Worker.
- * It read "$1" here while the Worker enforced 5 — the page was describing a protection the user
- * did not actually have. The number lives in one named constant so the next drift is a one-line
- * fix, and `NEXT_PUBLIC_PILOT_TX_CAP_USD` lets a deploy override it without a code change.
- * Raising the Worker's cap without raising this is a promise broken, so change both together.
+/*
+ * The caps this page PROMISES must equal the mainnet Worker's. The per-transfer one read "$1" here
+ * while the Worker enforced 5: the page was describing a protection the user did not actually have.
+ * The numbers now live in lib/real-money.ts, one env var each, so raising a Worker cap is one change
+ * there, made together with the Worker's.
  */
-const PILOT_TX_CAP_USD = process.env.NEXT_PUBLIC_PILOT_TX_CAP_USD ?? "5";
 
 export default function PilotPage() {
   const { status, account, pilotState } = useWallet();
@@ -93,10 +93,9 @@ export default function PilotPage() {
     return (
       <div className="flex flex-col gap-4 py-8">
         <h1 className="text-xl font-bold text-ink">Real money is open to everyone</h1>
-        <p className="text-ink-soft">
-          No invite needed any more. It is still an early preview, not yet reviewed by an outside
-          security firm, so keep amounts small. Every transfer is capped at ${PILOT_TX_CAP_USD}.
-        </p>
+        <p className="text-ink-soft">No invite needed any more.</p>
+        <p className="text-ink-soft">{REAL_MONEY_WARNING}</p>
+        <p className="text-ink-soft">{pilotCapsSentence()}</p>
         {lockedToYou ? (
           <PilotStatusBadge />
         ) : (
@@ -157,9 +156,10 @@ export default function PilotPage() {
         <p className="mt-1 text-sm text-ink-soft">
           Lumenia is in a pilot. If you&apos;d like to be among the first to use it with real
           money and help us make it better, ask to join here. Be honest with yourself about what
-          that means: it&apos;s an early preview, not yet reviewed by an outside security firm, so
-          keep amounts tiny. The pilot caps every transfer at ${PILOT_TX_CAP_USD}.
+          that means:
         </p>
+        <p className="mt-2 text-sm font-medium text-ink">{REAL_MONEY_WARNING}</p>
+        <p className="mt-2 text-sm text-ink-soft">{pilotCapsSentence()}</p>
         {/* Said BEFORE they opt in, not after. An earlier draft of this said conversion was "not
             possible yet", which was wrong and contradicted our own /cash-out page: the route works
             and has been walked end to end with real money. What is true is that the last leg happens

@@ -7,11 +7,13 @@
  * messenger is the hero because it is also the first thing the extension shows when it opens, so
  * the page and the popup start on the same beat.
  *
- * A button is a link only once its listing exists; until then it renders disabled with a plain line
- * saying so. The addresses come from lib/extension-install.ts, and nothing here guesses one. One
- * exception needs no address at all: the Firefox add-on is self-hosted (AMO's unlisted channel), so
- * when the signed file is committed at public/extension/lumenia-firefox.xpi, its presence at build
- * time is what turns "Add to Firefox" on. next.config.ts serves it as application/x-xpinstall.
+ * Both stores list it publicly (the Chrome Web Store and addons.mozilla.org, checked 2026-10-09), so
+ * both buttons are links, and nothing here says "coming soon". The addresses come from
+ * lib/extension-install.ts: "Add to Chrome" is NEXT_PUBLIC_EXTENSION_CHROME_URL, or the public listing
+ * when it is unset; "Add to Firefox" is NEXT_PUBLIC_EXTENSION_FIREFOX_URL (the AMO listing, where
+ * updates come from), and only when that is unset the AMO-signed file committed at
+ * public/extension/lumenia-firefox.xpi (served as application/x-xpinstall by next.config.ts), and
+ * failing that the AMO listing itself. Both values are read at build time: the page is static.
  */
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -20,7 +22,8 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { Mascot } from "../../../components/brand/Mascot";
 import { Footer } from "../../../components/site/sections/Footer";
-import { extensionInstallLinks } from "../../../lib/extension-install";
+import { AMO_LISTING_URL, extensionInstallLinks } from "../../../lib/extension-install";
+import { realMoneyOpen } from "../../../lib/real-money";
 import "../../../components/site/page.css";
 import "./extension.css";
 
@@ -63,29 +66,16 @@ const STEPS: Array<{ key: string; t: ReactNode; b: string }> = [
 ];
 
 /**
- * One install button. With no listing to send anyone to, it is a disabled button rather than a link
- * to nowhere, and the line under it says why. A plain <a> when live, not next/link: the Firefox
- * target is a file that Firefox installs, not a route to navigate to.
+ * One install button. A plain <a>, not next/link: the Firefox target may be a file that Firefox
+ * installs, and a store page is another site, neither a route to navigate to.
  */
-function Install({ id, label, href, pending, primary }: { id: string; label: string; href: string | null; pending: string; primary: boolean }) {
+function Install({ label, href, primary }: { label: string; href: string; primary: boolean }) {
   const cls = `pg-btn ${primary ? "pg-btn-primary" : "pg-btn-ghost"}`;
-  if (href) {
-    return (
-      <div className="ex-install">
-        <a className={cls} href={href}>
-          {label}
-        </a>
-      </div>
-    );
-  }
   return (
     <div className="ex-install">
-      <button type="button" className={cls} disabled aria-describedby={id}>
+      <a className={cls} href={href}>
         {label}
-      </button>
-      <p id={id} className="ex-status">
-        {pending}
-      </p>
+      </a>
     </div>
   );
 }
@@ -96,7 +86,7 @@ const hostedXpi = (): string | null => (existsSync(path.join(process.cwd(), "pub
 
 export default function ExtensionPage() {
   const env = extensionInstallLinks();
-  const links = { chrome: env.chrome, firefox: env.firefox ?? hostedXpi() };
+  const links = { chrome: env.chrome, firefox: env.firefox ?? hostedXpi() ?? AMO_LISTING_URL };
   return (
     <div className="pg">
       {/* Nothing in the hero fades in: Chrome will not make an element an LCP candidate if its
@@ -115,8 +105,8 @@ export default function ExtensionPage() {
               needs no app and pays no gas.
             </p>
             <div className="ex-installs">
-              <Install id="ex-chrome" label="Add to Chrome" href={links.chrome} pending="Coming to Chrome soon." primary />
-              <Install id="ex-firefox" label="Add to Firefox" href={links.firefox} pending="Coming to Firefox soon." primary={false} />
+              <Install label="Add to Chrome" href={links.chrome} primary />
+              <Install label="Add to Firefox" href={links.firefox} primary={false} />
             </div>
           </div>
           <div className="ex-hero-art">
@@ -140,7 +130,8 @@ export default function ExtensionPage() {
           </ol>
           <div className="ex-close">
             <p>
-              It starts on practice money. Real money is invite-only for now.{" "}
+              It starts on practice money.{" "}
+              {realMoneyOpen() ? "Real money is open to everyone." : "Real money is invite-only for now."}{" "}
               <Link href="/privacy#extension">What it sends, what it keeps, and what it never collects.</Link>
             </p>
           </div>

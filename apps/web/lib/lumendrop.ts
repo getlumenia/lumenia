@@ -198,7 +198,11 @@ export interface V2LinkParts {
   linkHex: string;
   /** `a=`, on a rich link only: the whole amount of a one-to-one link, ONE share of a group link. A private link never carries it. */
   amount: string;
-  /** The sender's display name: `&s=` after the '#' of a private link, `s=` in the query of a rich one. */
+  /**
+   * The sender's display name: `&s=` after the '#' of a private link, `s=` in the query of a rich one.
+   * Empty (after trimming) is no name at all, and then no `s=` is written in either shape: since D3
+   * (2026-10-09) a new link carries a name only when the sender typed one.
+   */
   from: string;
   /** The key material, first in the fragment: the S... secret, or `p1.<seed>` for a password-locked link. Never the password. */
   fragment: string;
@@ -253,7 +257,10 @@ function assertLinkSrc(src: unknown): void {
  *   - The NAME moves after the '#', next to the key (lib/link-fragment.ts claimFragment). A fragment
  *     is never sent in an HTTP request, so no server on the way to the claim page sees it and no
  *     preview is built from it. Anyone who holds the whole link still reads it: this keeps the name
- *     out of previews and logs, not out of the chat.
+ *     out of previews and logs, not out of the chat. So since D3 (2026-10-09) there is no name unless
+ *     the sender typed one: the send screens start the field empty, an empty name writes no `s=` at
+ *     all, and every claim page prints "Someone" for a link without one. A link that carries `s=`
+ *     keeps working as before.
  *   - `p=1` moves after the '#' too. It still lets the claim screen ask for the password before it
  *     touches the key, so a recipient sees "this one needs the password" rather than a button that
  *     quietly fails.
@@ -261,7 +268,9 @@ function assertLinkSrc(src: unknown): void {
  * RICH, only when the sender explicitly chose it (`preview: "rich"`): the pre-D2 link byte for byte
  * (`a=`, `s=`, then `g`, `p`, `n`, `seeded` in the query, and `<key>[&g=N]` after the '#'), with
  * `preview=rich` inserted before `src`. That flag is what licenses a preview card to name the sender,
- * and the amount on that card is still read from the ledger, never from `a=`.
+ * and the amount on that card is still read from the ledger, never from `a=`. The one difference
+ * from the pre-D2 link: a sender with no name gets no `s=` (the old one wrote `s=` empty, or a
+ * placeholder the claim page prints anyway).
  *
  * What stays where it was, and why:
  *   - `g=` (group only) is the share count, and it rides in the fragment as well as the query: chat
@@ -284,8 +293,10 @@ export function v2LinkUrl(p: V2LinkParts): string {
   const origin = p.webOrigin.replace(/\/$/, "");
   const group = p.slots !== undefined;
   if (p.preview === "rich") {
+    // A name is written as given (the pre-D2 bytes), and only when there is one to write.
+    const named = (p.from ?? "").trim() !== "";
     const q =
-      `a=${encodeURIComponent(p.amount)}&s=${encodeURIComponent(p.from)}` +
+      `a=${encodeURIComponent(p.amount)}${named ? `&s=${encodeURIComponent(p.from)}` : ""}` +
       `${group ? `&g=${p.slots}` : ""}${p.passwordLocked ? "&p=1" : ""}${p.mainnet ? "&n=public" : ""}` +
       `${p.seeded ? "&seeded=1" : ""}&${RICH_PREVIEW_PARAM}=${RICH_PREVIEW_VALUE}` +
       `${p.src !== undefined ? `&src=${p.src}` : ""}`;
@@ -315,7 +326,11 @@ export function v2LinkUrl(p: V2LinkParts): string {
 export async function createV2Link(opts: {
   signer: Signer;
   amount: string;
-  /** display name shown as "<from> sent you money" on the claim screen (it rides after the '#', see `v2LinkUrl`) */
+  /**
+   * display name shown as "<from> sent you money" on the claim screen (it rides after the '#', see
+   * `v2LinkUrl`). Pass what the sender typed, "" when they typed nothing: the link then carries no
+   * name and the claim screen says "Someone".
+   */
   from: string;
   webOrigin: string;
   sponsorUrl: string;
@@ -492,7 +507,7 @@ export async function createV2GroupLink(opts: {
   perShare: string;
   /** how many equal shares, 2..MAX_POOL_SLOTS */
   slots: number;
-  /** display name shown as "<from> sent you money" on the claim screen (it rides after the '#', see `v2LinkUrl`) */
+  /** display name shown on the claim screen, "" for none (see `createV2Link`) */
   from: string;
   webOrigin: string;
   sponsorUrl: string;

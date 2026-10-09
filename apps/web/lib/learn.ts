@@ -12,12 +12,13 @@ export interface Guide {
 
 /**
  * REAL content dates for the guide set (all guides shipped in one commit:
- * a71741e, 2026-07-12; unchanged since). Used by the Article JSON-LD and the
+ * a71741e, 2026-07-12; the take-back sentence was corrected on 2026-10-09: unclaimed
+ * money never comes back by itself). Used by the Article JSON-LD and the
  * sitemap. When a guide's copy meaningfully changes, bump GUIDES_UPDATED (or
  * promote these to per-guide fields) — never fabricate freshness.
  */
 export const GUIDES_PUBLISHED = "2026-07-12";
-export const GUIDES_UPDATED = "2026-07-12";
+export const GUIDES_UPDATED = "2026-10-09";
 
 export const GUIDES: Guide[] = [
   {
@@ -27,7 +28,7 @@ export const GUIDES: Guide[] = [
     body: [
       "You choose an amount and get a link. You share that link on WhatsApp, just like you'd share anything else. That's the transfer. No forms, no account numbers.",
       "Your recipient taps the link and sees the money right away, before creating anything. Then they claim it in their browser with their face or a password they choose.",
-      "The exact amount arrives, held in dollars. Receiving is free. If nobody claims the link within 7 days, the money comes back to you.",
+      "The exact amount arrives, held in dollars. Receiving is free. If nobody claims the link within 7 days, you can take it back from the browser or extension you sent it from. It does not happen by itself: until you take it back, whoever holds the link can still claim it.",
     ],
   },
   {

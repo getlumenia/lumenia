@@ -124,7 +124,10 @@ export default function ClaimButton({
     // A team-funded practice link (the event board's QR) carries a public seeded=1 marker, so the
     // funnel can count it apart from money people send each other.
     seededRef.current = isSeededLink(window.location.search);
-    void sendEvent("claim_opened", claimId, undefined, { seeded: seededRef.current });
+    /* Counted on the Worker of the LINK's network (testnet, see CLAIM_NETWORK), never the device's:
+       a device switched to real money that opens a practice link must not add a testnet claim to
+       the real-money counters. lib/ext-seam.selftest.ts [g] holds all three beacons to this. */
+    void sendEvent("claim_opened", claimId, undefined, { net: CLAIM_NETWORK, seeded: seededRef.current });
   }, [claimId, seenKey]);
 
   async function onClaim() {
@@ -152,7 +155,7 @@ export default function ClaimButton({
       await Promise.race([settled, new Promise((r) => setTimeout(r, SETTLE_WAIT_MS))]);
       setHash(result.hash);
       setState("done");
-      void sendEvent("claim_succeeded", claimId, Keypair.fromSecret(bearerSecret).publicKey(), { seeded: seededRef.current });
+      void sendEvent("claim_succeeded", claimId, Keypair.fromSecret(bearerSecret).publicKey(), { net: CLAIM_NETWORK, seeded: seededRef.current });
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
     } catch (err) {
       // Bind it. The old `catch {}` discarded the cause, so every failure — already claimed, rate
@@ -171,7 +174,7 @@ export default function ClaimButton({
       // Safe to log: classifyClaimError never carries the bearer key, and this is the only place a
       // developer or a reporting user can see what actually happened.
       console.warn("[claim] failed:", info.kind, "—", info.detail);
-      void sendEvent("claim_failed", claimId);
+      void sendEvent("claim_failed", claimId, undefined, { net: CLAIM_NETWORK, seeded: seededRef.current });
     } finally {
       clearTimeout(slowTimer);
     }

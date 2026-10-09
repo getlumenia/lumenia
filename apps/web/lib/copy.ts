@@ -4,8 +4,32 @@
  * Vocabulary law (FRONTEND_PLAN §8): product UI shows only money + people —
  * NEVER wallet / crypto / USDC / Stellar / blockchain / gas / on-chain. Approved:
  * money, send, receive, claim, link, held in dollars, "we cover the network cost",
- * "public record" / "publicly verifiable", reclaim / "comes back to you after 7 days".
+ * "public record" / "publicly verifiable", "take it back" (see `link.takeBack`).
+ *
+ * NOT approved any more: "comes back to you after 7 days". Unclaimed money never moves by
+ * itself. After 7 days the sender MAY take it back, from the browser or extension they sent it
+ * from, and until they do the link can still be claimed (the escrow has no expiry on a one-to-one
+ * claim). Every screen says it with the sentences in `link` below.
  */
+
+/**
+ * What a sender is told about a money link they made. One sentence per fact, used everywhere it is
+ * said, so the landing page, the send screens and the status pages can never disagree.
+ */
+const LINK_COPY = {
+  /** Next to the "Sent as" field once a name is typed (D3): where a typed name goes. */
+  nameNote: "Your name travels inside the link, after the #. Anyone who can read the chat can read it.",
+  /** A one-to-one link nobody claimed. Nothing moves by itself, and the list lives where it was sent from. */
+  takeBack:
+    "If nobody claims it in 7 days, you can take it back from the browser or extension you sent it from. It does not happen by itself: until you take it back, whoever holds the link can still claim it.",
+  /** A group link stops paying out when it closes; what is left waits for its sender. */
+  groupTakeBack:
+    "Whatever nobody takes is yours to take back after it closes, from the browser you made it in. It does not come back by itself.",
+  /** A payment straight to someone's account: found again from the account, on any device. */
+  directTakeBack:
+    "If they don't collect it in 7 days, you can take it back. It does not happen by itself: until you take it back, they can still collect it.",
+} as const;
+
 export const copy = {
   appName: "Lumenia",
   landing: {
@@ -107,8 +131,10 @@ export const copy = {
     ownRequestBody: "Share the link with the person you're asking. When they pay, the money shows up on your home screen.",
     directNote: (name: string, tail: string) => `Goes straight to ${name}'s account (ending ${tail}).`,
     paidDirectTitle: "Paid, and on its way",
+    // A direct pay is found again from the account itself (the ledger lists it), so unlike a link
+    // it can be taken back from any device that holds the account.
     paidDirectBody: (name: string) =>
-      `${name} will find it waiting the next time they open Lumenia. If it isn't collected, it comes back to you after 7 days.`,
+      `${name} will find it waiting the next time they open Lumenia. ${LINK_COPY.directTakeBack}`,
     sendBackTitle: (name: string) => `Now send this link back to ${name}`,
     sendBackWaText: (link: string) => `Here's the money you asked for 💸 Tap to receive it: ${link}`,
   },
@@ -120,17 +146,17 @@ export const copy = {
     row: (amount: string) => `${amount} is waiting for you`,
   },
   /**
-   * Money YOU sent that came back — a link no one claimed, past the 7-day window (the
-   * approved "comes back to you after 7 days"). Take it back gaslessly, no jargon.
-   * ADDITIVE block (copy.ts is in the frozen claim route's import graph — existing keys
-   * above never change).
+   * Money YOU sent that nobody claimed, past the 7-day window. It has NOT come back: it is the
+   * sender's to take back (gasless, no jargon), and until they do it can still be claimed. The row
+   * used to say "came back to you" while the link holder could still take it.
    */
   recover: {
-    row: (amount: string) => `${amount} you sent came back to you`,
-    hint: "No one claimed it, so it's yours again.",
+    row: (amount: string) => `${amount} you sent has not been claimed`,
+    hint: "It's yours to take back. Until you do, it can still be claimed.",
     take: "Take it back",
     taking: "Taking it back…",
   },
+  link: LINK_COPY,
   /**
    * Delegated cash-out placeholder (Instawards SOW note): conversion to local
    * currency is handled by a licensed provider, never by Lumenia. UI placeholder

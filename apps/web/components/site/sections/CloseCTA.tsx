@@ -1,6 +1,9 @@
 /**
  * CloseCTA — section 7, the close CTA band over the bg-cta living video. Dual CTA (live demo +
  * waitlist) over a periwinkle scrim. Followed by the Footer below it in the page composition.
+ *
+ * The second CTA follows the waitlist's retirement switch (lib/real-money.ts): the waitlist while
+ * real money is a hand-approved pilot, /start once it is open to everyone.
  */
 "use client";
 
@@ -8,8 +11,10 @@ import Link from "next/link";
 import { motion } from "motion/react";
 import { AvatarReveal } from "./AvatarReveal";
 import { AmbientVideo } from "../AmbientVideo";
+import { realMoneyOpen, waitlistCta } from "../../../lib/real-money";
 
 export function CloseCTA() {
+  const second = waitlistCta();
   return (
     <section className="close">
       {/* This was the one ambient video with no poster: until it loaded (and it is preload="none",
@@ -35,11 +40,14 @@ export function CloseCTA() {
         <h2 className="close-h">See it for yourself.</h2>
         <p className="close-p">
           Send yourself a real money link. No wallet, no signup, and we cover the network cost for
-          you. Or join the waitlist and we’ll tell you the moment it’s live for real.
+          you.{" "}
+          {realMoneyOpen()
+            ? "Or get started now: real money is open to everyone."
+            : "Or join the waitlist and we'll tell you the moment it's live for real."}
         </p>
         <div className="close-cta">
           <Link href="/try" className="op-btn op-btn-primary">See it work</Link>
-          <Link href="/waitlist" className="op-btn op-btn-ghost">Join the waitlist</Link>
+          <Link href={second.href} className="op-btn op-btn-ghost">{second.label}</Link>
         </div>
       </motion.div>
     </section>

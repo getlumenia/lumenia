@@ -14,8 +14,9 @@
  *   - WITH AN ACCOUNT the request carries that account's address, and /pilot's precondition holds:
  *     real money must never sit under a device-only key, so an account that is not locked AND
  *     backed up is sent to do that first rather than being quietly let in. This dialog states the
- *     rule and hands over; it does not restate the pilot's own honest warnings, which is why the
- *     full page still exists.
+ *     rule and hands over. Before the ask it shows the real-money warning verbatim (lib/real-money.ts,
+ *     decision D1), the same words as /pilot and the sheet before the first switch; /pilot keeps
+ *     the full page.
  *
  * A repeat ask is idempotent on the server (`already: true`), and is reported as reassurance rather
  * than as a fresh submission.
@@ -27,6 +28,7 @@ import { X } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { hasBackup } from "../../lib/recovery-api";
 import { mainnetConfig, activeNetwork } from "../../lib/network";
+import { REAL_MONEY_WARNING } from "../../lib/real-money";
 import { PrimaryButton } from "./PrimaryButton";
 
 type View = "form" | "sent" | "already";
@@ -201,9 +203,10 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
   ) : (
     <>
       <h2 className="app-modal-t">Ask for real money</h2>
+      <p className="app-modal-s">{REAL_MONEY_WARNING}</p>
       <p className="app-modal-s">
-        Real money is an early pilot, opened one account at a time by hand. Leave your email and
-        we&apos;ll tell you when yours is ready.
+        We open it one account at a time, by hand. Leave your email and we&apos;ll tell you when
+        yours is ready.
       </p>
       <form onSubmit={submit} className="mt-3 flex flex-col gap-2">
         <input

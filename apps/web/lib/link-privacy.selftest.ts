@@ -10,11 +10,21 @@
  *       never as a parameter.
  *   [b] the beacon. What lib/events.ts sends about a claim or a send: an event name, hashed ids and
  *       counters, never a URL, a fragment, a name or an amount, whatever the caller hands it.
+ *       Since D3 (2026-10-09) a link carries a name only when the sender typed one: an empty name
+ *       writes no `s=` in either shape, and the send screens start the field empty (a source check
+ *       on app/(app)/send and app/(app)/group holds that).
  *   [c] the headers. The claim routes answer no-referrer and noindex (next.config.ts), so a claim page
- *       never hands its URL to a third party and never lands in a search index.
+ *       never hands its URL to a third party and never lands in a search index. And the policy every
+ *       page gets, the claim routes included (leak audit row 14): no remote script, a connect-src
+ *       limited to our two Workers and the public Stellar servers, no remote image host.
+ *   [d] the analytics scope (leak audit row 9): only the public site's layout, app/(site)/layout.tsx,
+ *       imports a Vercel analytics package, so the claim routes and the money screens never load it.
  *
  * RUN: pnpm --filter @lumenia/web test:linkprivacy   (offline, no keys, no network)
  */
+import { readFileSync, readdirSync } from "node:fs";
+import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Keypair } from "@stellar/stellar-sdk";
 import nextConfig from "../next.config";
 import { makeLinkSeed, parseLinkFragment, passwordFragment } from "./claim-password";
@@ -52,6 +62,9 @@ function threw(fn: () => unknown): boolean {
 
 const hex = (b: Uint8Array): string => Buffer.from(b).toString("hex");
 
+/** apps/web, for the checks that read the source itself. */
+const WEB_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
 /* ------------------------------------ [a] the references ------------------------------------
  * Written out by hand from SPEC section 1 / the v2LinkUrl doc comment. If this test and v2LinkUrl
  * disagree, v2LinkUrl is the one that is wrong; do not edit these to follow it.
@@ -84,10 +97,14 @@ function privateRef(o: Shape): string {
   return `${o.webOrigin.replace(/\/$/, "")}/v2/c/${o.linkHex}${q ? `?${q}` : ""}#${fragment}`;
 }
 
-/** RICH: the pre-D2 query, then `preview=rich`, then `src`; the pre-D2 fragment (the key and the `g` copy). */
+/**
+ * RICH: the pre-D2 query, then `preview=rich`, then `src`; the pre-D2 fragment (the key and the `g`
+ * copy). One change since, decided in D3 (2026-10-09): a sender with no name (empty after trimming)
+ * gets no `s=` at all. A name is still written exactly as given.
+ */
 function richRef(o: Shape): string {
   const q =
-    `a=${encodeURIComponent(o.amount)}&s=${encodeURIComponent(o.from)}` +
+    `a=${encodeURIComponent(o.amount)}${o.from.trim() ? `&s=${encodeURIComponent(o.from)}` : ""}` +
     `${o.slots !== undefined ? `&g=${o.slots}` : ""}${o.locked ? "&p=1" : ""}${o.mainnet ? "&n=public" : ""}${o.seeded ? "&seeded=1" : ""}` +
     `&preview=rich${o.src !== undefined ? `&src=${o.src}` : ""}`;
   const fragment = o.slots !== undefined ? `${o.key}&g=${o.slots}` : o.key;
@@ -226,6 +243,27 @@ function sectionA() {
     "an empty or blank name puts no &s= in the fragment",
     priv.filter((b) => b.name.from.trim() === "").every((b) => !afterHash(b.url).includes("&s=")),
   );
+  // D3: what /send and /group make when the sender types nothing, which is now the default.
+  const unnamed = built.filter((b) => b.name.from.trim() === "");
+  ok(
+    `a link made with no name typed (${unnamed.length} of them, private and rich) has no s= anywhere: not in the query, not after the '#'`,
+    unnamed.length > 0 && unnamed.every((b) => !new URL(b.url).searchParams.has("s") && !/[#&]s=/.test(afterHash(b.url)) && !b.url.includes("Someone")),
+  );
+  {
+    const kp = Keypair.random();
+    const plain = lumendrop.v2LinkUrl({ webOrigin: "https://getlumenia.com", linkHex: hex(kp.rawPublicKey()), amount: "2.50", from: "", fragment: kp.secret() });
+    ok(
+      "the default private link, exactly: /v2/c/<id>#<key> and nothing else",
+      plain === `https://getlumenia.com/v2/c/${hex(kp.rawPublicKey())}#${kp.secret()}` && !afterHash(plain).includes("s="),
+      plain.replace(kp.secret(), "<key>"),
+    );
+    ok("  ...and its claim screen reads no name from it (it prints \"Someone\")", parseClaimFragment(new URL(plain).hash).from === null);
+  }
+  // A link that carries a name keeps working: the reader still gets it back (old links included).
+  ok(
+    "a link that carries s= still reads back its name (private: after the '#', rich: from the query)",
+    built.filter((b) => b.name.shown !== null).every((b) => (b.c.rich ? readClaimQuery(new URL(b.url).search).queryName : parseClaimFragment(new URL(b.url).hash).from) === b.name.shown),
+  );
 
   // --- what every link must hold to ---
   ok(
@@ -249,11 +287,11 @@ function sectionA() {
     }),
   );
   ok(
-    "the query is g, n, seeded, src (private) or a, s, g, p, n, seeded, preview, src (rich): in that order, each only when it applies",
+    "the query is g, n, seeded, src (private) or a, s, g, p, n, seeded, preview, src (rich): in that order, each only when it applies (s only with a name)",
     built.every((b) => {
       const c = b.c;
       const want = c.rich
-        ? ["a", "s", ...(c.group ? ["g"] : []), ...(c.locked ? ["p"] : []), ...(c.mainnet ? ["n"] : []), ...(c.seeded ? ["seeded"] : []), "preview", ...(c.src ? ["src"] : [])]
+        ? ["a", ...(b.name.from.trim() ? ["s"] : []), ...(c.group ? ["g"] : []), ...(c.locked ? ["p"] : []), ...(c.mainnet ? ["n"] : []), ...(c.seeded ? ["seeded"] : []), "preview", ...(c.src ? ["src"] : [])]
         : [...(c.group ? ["g"] : []), ...(c.mainnet ? ["n"] : []), ...(c.seeded ? ["seeded"] : []), ...(c.src ? ["src"] : [])];
       return [...new URL(b.url).searchParams.keys()].join(",") === want.join(",");
     }),
@@ -400,6 +438,16 @@ function sectionA() {
     "lumendrop re-exports the pool bounds and parseSlots from link-fragment, unchanged",
     lumendrop.parseSlots === parseSlots && lumendrop.MIN_POOL_SLOTS === MIN_POOL_SLOTS && lumendrop.MAX_POOL_SLOTS === MAX_POOL_SLOTS && MIN_POOL_SLOTS === 2 && MAX_POOL_SLOTS === 30,
   );
+
+  // D3, on the screens themselves: the name field starts empty and an empty one is passed as empty.
+  for (const screen of ["send", "group"]) {
+    const src = readFileSync(join(WEB_ROOT, "app", "(app)", screen, "page.tsx"), "utf8");
+    ok(
+      `app/(app)/${screen}: the "Sent as" field is never filled in for the sender (no @name lookup, no fallback name)`,
+      !/\bhandleOf\b/.test(src) && !/from\.trim\(\)\s*\|\|\s*"Someone"\s*;/.test(src) && /const senderName = from\.trim\(\);/.test(src) && /const \[from, setFrom\] = useState\(""\);/.test(src),
+    );
+    ok(`  ...and it shows where a typed name goes, the moment one is typed`, /from\.trim\(\) && <p[^>]*>\{copy\.link\.nameNote\}<\/p>/.test(src));
+  }
 }
 
 /* ---------------------------------------- [b] ---------------------------------------- */
@@ -485,7 +533,104 @@ async function sectionC() {
       at >= 0 ? JSON.stringify(Object.fromEntries(h)) : "missing",
     );
     ok("  ...and it comes after the baseline, so its Referrer-Policy is the one that stands", at > baseline);
+    ok("  ...and it sets no Content-Security-Policy of its own, so the baseline policy below is the one it gets", !h.has("content-security-policy"));
   }
+
+  /* The policy every page gets, the claim routes included (leak audit row 14). Read as it ships
+     (NODE_ENV=production) and as `next dev` serves it: the two differ only by the development hosts. */
+  const allowedConnect = new Set(
+    [
+      "'self'",
+      "https://lumenia-sponsor.avakit.workers.dev",
+      "https://lumenia-sponsor-mainnet.avakit.workers.dev",
+      "https://horizon-testnet.stellar.org",
+      "https://horizon.stellar.org",
+      "https://soroban-testnet.stellar.org",
+      "https://mainnet.sorobanrpc.com",
+      // A deployment that repoints a backend through the same env vars lib/network.ts reads.
+      ...["NEXT_PUBLIC_SPONSOR_URL", "NEXT_PUBLIC_SPONSOR_URL_MAINNET", "NEXT_PUBLIC_HORIZON", "NEXT_PUBLIC_HORIZON_MAINNET", "NEXT_PUBLIC_SOROBAN_RPC", "NEXT_PUBLIC_SOROBAN_RPC_MAINNET"]
+        .map((k) => process.env[k])
+        .filter((v): v is string => Boolean(v))
+        .map((v) => {
+          try {
+            return new URL(v).origin;
+          } catch {
+            return v; // not a URL: left as written, so the check below names it
+          }
+        }),
+    ],
+  );
+  for (const mode of ["production", "development"] as const) {
+    const csp = await cspAs(mode);
+    const dir = (name: string): string[] | undefined => csp.get(name);
+    const script = dir("script-src") ?? [];
+    ok(`${mode}: script-src is exactly 'self' 'unsafe-inline' 'wasm-unsafe-eval' (no remote script origin, no eval)`, script.join(" ") === "'self' 'unsafe-inline' 'wasm-unsafe-eval'", script.join(" "));
+    const connect = dir("connect-src") ?? [];
+    const extra = connect.filter((t) => !allowedConnect.has(t) && !(mode === "development" && t === "https://friendbot.stellar.org"));
+    ok(`${mode}: connect-src is only our two Workers and the public Stellar servers (Horizon and RPC, both networks)`, connect.length > 1 && extra.length === 0, extra.join(" ") || connect.join(" "));
+    ok(`${mode}: img-src names no remote host ('self', data: and blob: only)`, (dir("img-src") ?? []).every((t) => ["'self'", "data:", "blob:"].includes(t)) && (dir("img-src") ?? []).length > 0);
+    ok(
+      `${mode}: default-src 'self'; object-src, base-uri and frame-ancestors 'none'; no 'unsafe-eval' anywhere`,
+      dir("default-src")?.join(" ") === "'self'" && ["object-src", "base-uri", "frame-ancestors"].every((d) => dir(d)?.join(" ") === "'none'") && ![...csp.values()].some((v) => v.includes("'unsafe-eval'")),
+    );
+    if (mode === "production") {
+      ok(
+        "production: no development host anywhere in the policy (friendbot, Fontshare, Google Fonts)",
+        ![...csp.values()].flat().some((t) => /friendbot|fontshare|googleapis|gstatic/.test(t)),
+      );
+    }
+  }
+}
+
+/** The Content-Security-Policy next.config.ts sends on every path, as built under `NODE_ENV=mode`, split into directives. */
+async function cspAs(mode: "production" | "development"): Promise<Map<string, string[]>> {
+  const env = process.env as Record<string, string | undefined>;
+  const before = env.NODE_ENV;
+  env.NODE_ENV = mode;
+  try {
+    const entries = (await nextConfig.headers?.()) ?? [];
+    const baseline = entries.find((e) => e.source === "/:path*");
+    const value = baseline?.headers.find((x) => x.key.toLowerCase() === "content-security-policy")?.value ?? "";
+    return new Map(
+      value
+        .split(";")
+        .map((d) => d.trim().split(/\s+/))
+        .filter((parts) => parts[0])
+        .map((parts) => [parts[0]!, parts.slice(1)] as [string, string[]]),
+    );
+  } finally {
+    if (before === undefined) delete env.NODE_ENV;
+    else env.NODE_ENV = before;
+  }
+}
+
+/* ---------------------------------------- [d] ---------------------------------------- */
+function sectionD() {
+  console.log("\n[d] the analytics scope: only the public site's layout loads Vercel's analytics");
+  const ANALYTICS = /from\s+["']@vercel\/(analytics|speed-insights)(\/[^"']*)?["']|require\(\s*["']@vercel\/(analytics|speed-insights)/;
+  const importers: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.name === ".next" || entry.name.startsWith(".")) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(tsx?|jsx?|mjs|cjs)$/.test(entry.name) && ANALYTICS.test(readFileSync(full, "utf8"))) {
+        importers.push(relative(WEB_ROOT, full).split(sep).join("/"));
+      }
+    }
+  };
+  for (const top of ["app", "components", "lib"]) walk(join(WEB_ROOT, top));
+  ok(
+    "exactly one file imports @vercel/analytics or @vercel/speed-insights: app/(site)/layout.tsx",
+    importers.length === 1 && importers[0] === "app/(site)/layout.tsx",
+    importers.join(", ") || "none",
+  );
+  const site = readFileSync(join(WEB_ROOT, "app", "(site)", "layout.tsx"), "utf8");
+  ok("  ...and that layout mounts <Analytics />", /<Analytics\s*\/>/.test(site));
+  ok(
+    "  ...and the claim routes are not under it (they live in app/c and app/v2, outside the (site) group)",
+    readdirSync(join(WEB_ROOT, "app")).includes("c") && readdirSync(join(WEB_ROOT, "app")).includes("v2") && !readdirSync(join(WEB_ROOT, "app", "(site)")).some((d) => d === "c" || d === "v2"),
+  );
 }
 
 async function main() {
@@ -495,6 +640,7 @@ async function main() {
   sectionA();
   await sectionB();
   await sectionC();
+  sectionD();
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"} LINK PRIVACY SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);
 }

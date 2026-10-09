@@ -6,16 +6,20 @@
  *
  *   [a] private: every link without `preview=rich` gets privateClaimMetadata() exactly, whatever its
  *       query says, and the ledger is not even asked.
- *   [b] rich: the name from the query, the amount from the LEDGER (never `a=`), "sent you money" on
- *       every answer that is not an amount, a fixed description, the card URL, noindex.
- *   [c] the OG route's decision: paint only `preview=rich` with a 64-hex `l`; everything else static.
- *   [d] the OG card's words.
+ *   [b] rich: the name from the query and the amount from the LEDGER (never `a=`), a fixed
+ *       description, the card URL, noindex, but ONLY when the ledger answers with a live drop or
+ *       pool for the id. Every other answer (a made-up id, a spent link, a closed pot, an unreadable
+ *       or slow escrow) is the private card: a name is never drawn on its own.
+ *   [c] the OG route's query half: only `preview=rich` with a 64-hex `l` goes on to the ledger.
+ *   [d] the OG card, whole (`ogCard`, what the route answers): drawn only for a live drop or pool,
+ *       the static image for a made-up id and everything else, and `a=` never drawn.
  *
  * RUN: pnpm --filter @lumenia/web exec tsx lib/claim-metadata.selftest.ts
  */
 import {
   LEDGER_READ_TIMEOUT_MS,
   RICH_PREVIEW_DESCRIPTION,
+  ogCard,
   ogDecision,
   richCard,
   v2ClaimMetadata,
@@ -41,11 +45,11 @@ function fake(over: Partial<LedgerDeps> = {}) {
   const deps: LedgerDeps = {
     loadDrop: async (linkHex, { net }) => {
       calls.push({ fn: "loadDrop", linkHex, net: net.id });
-      return { amount: "0.2000000" };
+      return { amount: "0.2000000", claimed: false };
     },
     loadPool: async (linkHex, { net }) => {
       calls.push({ fn: "loadPool", linkHex, net: net.id });
-      return { perShare: "5.0000000" };
+      return { perShare: "5.0000000", status: "open" };
     },
     resolveNetwork: (param) => {
       calls.push({ fn: "resolveNetwork", param });
@@ -126,15 +130,18 @@ async function main() {
     ok("a hostile name is sanitised and percent-encoded on the card URL", titleOf(m) === "Ay&p=1 evil sent you $0.20" && imageUrl(m).endsWith("&s=Ay%26p%3D1%20evil"), `${titleOf(m)} | ${imageUrl(m)}`);
   }
 
-  const degraded: [string, Partial<LedgerDeps>][] = [
-    ["the escrow holds nothing (null)", { loadDrop: async () => null }],
+  /* No live drop or pool behind the id: the private card, exactly. The name is never drawn on its
+     own, so a made-up id with `preview=rich&s=<anything>` gets nothing a stranger could use. */
+  const notLive: [string, Partial<LedgerDeps>][] = [
+    ["a made-up id: the escrow holds no record (null)", { loadDrop: async () => null }],
+    ["a drop already claimed or taken back", { loadDrop: async () => ({ amount: "0.2000000", claimed: true }) }],
     ["the escrow could not be asked (throw)", { loadDrop: async () => { throw new Error("rpc down"); } }],
     ["the reader throws before returning a promise", { loadDrop: () => { throw new Error("sync"); } }],
     ["a mainnet link on a deployment without mainnet (resolveNetwork throws)", { resolveNetwork: () => { throw new Error("mainnet not configured"); } }],
-    ["a zero amount", { loadDrop: async () => ({ amount: "0.0000000" }) }],
-    ["a garbage amount", { loadDrop: async () => ({ amount: "NaN" }) }],
+    ["a zero amount", { loadDrop: async () => ({ amount: "0.0000000", claimed: false }) }],
+    ["a garbage amount", { loadDrop: async () => ({ amount: "NaN", claimed: false }) }],
   ];
-  for (const [label, over] of degraded) {
+  for (const [label, over] of notLive) {
     const { deps } = fake(over);
     let m: Awaited<ReturnType<typeof v2ClaimMetadata>> | null = null;
     try {
@@ -142,7 +149,12 @@ async function main() {
     } catch {
       m = null;
     }
-    ok(`${label}: "Ayse sent you money", no crash, no 999`, !!m && titleOf(m) === "Ayse sent you money" && !text(m).includes("999"), m ? titleOf(m) : "threw");
+    ok(`${label}: exactly the private card, no crash, no name, no 999`, !!m && text(m) === privateRef && !/Ayse|999/.test(text(m)), m ? titleOf(m) : "threw");
+  }
+  for (const status of ["full", "expired", "closed"] as const) {
+    const { deps } = fake({ loadPool: async () => ({ perShare: "5.0000000", status }) });
+    const m = await v2ClaimMetadata(HEX, { a: "1", s: "Ayse", g: "3", preview: "rich" }, deps);
+    ok(`a pot that is ${status}: the private card`, text(m) === privateRef, titleOf(m));
   }
   {
     // Slow: the reader never answers. The page must not wait on it past the timeout.
@@ -154,18 +166,18 @@ async function main() {
     const t0 = Date.now();
     const m = await v2ClaimMetadata(HEX, { s: "Ayse", preview: "rich", a: "1" }, deps);
     const took = Date.now() - t0;
-    ok('a slow ledger: "sent you money" inside the timeout', titleOf(m) === "Ayse sent you money" && took < 250, `${took} ms`);
+    ok("a slow ledger: the private card, inside the timeout", text(m) === privateRef && took < 250, `${took} ms`);
     await new Promise((r) => setTimeout(r, 350));
     ok("  ...and its late rejection is swallowed (no unhandled rejection)", settledLate && !unhandled);
   }
   {
     const { deps, calls } = fake();
     const m = await v2ClaimMetadata("not-a-link", { s: "Ayse", preview: "rich", a: "1" }, deps);
-    ok("a path that is not a 64-hex id: no read at all, \"sent you money\"", titleOf(m) === "Ayse sent you money" && !calls.some((c) => c.fn === "loadDrop" || c.fn === "loadPool"));
+    ok("a path that is not a 64-hex id: no read at all, the private card", text(m) === privateRef && !calls.some((c) => c.fn === "loadDrop" || c.fn === "loadPool"));
   }
   ok("the default timeout is ~2500 ms", LEDGER_READ_TIMEOUT_MS === 2500);
 
-  console.log("\n[c] the OG route's decision");
+  console.log("\n[c] the OG route's query half");
   const sp = (q: string) => new URLSearchParams(q);
   ok("legacy ?a=999&s=Mallory: static", ogDecision(sp("a=999&s=Mallory")).kind === "static");
   ok("no query: static", ogDecision(sp("")).kind === "static");
@@ -182,17 +194,39 @@ async function main() {
   const fromRecord = ogDecision({ preview: "rich", l: HEX });
   ok("a searchParams record works too, and no s is \"Someone\"", fromRecord.kind === "rich" && fromRecord.name === "Someone" && fromRecord.slots === null && !fromRecord.mainnet);
 
-  console.log("\n[d] the OG card's words");
+  console.log("\n[d] the OG card, whole: drawn only for a live drop or pool");
   if (rich.kind === "rich") {
     const { deps, calls } = fake();
     const card = await richCard(rich, deps);
-    ok("pot on mainnet: the per-share figure from loadPool", card.usd === "$5.00" && card.group && card.name === "Mallory" && calls.some((c) => c.fn === "loadPool" && c.net === "public"), text(card));
+    ok("pot on mainnet: the per-share figure from loadPool", card?.usd === "$5.00" && card.group && card.name === "Mallory" && calls.some((c) => c.fn === "loadPool" && c.net === "public"), text(card));
   }
   if (fromRecord.kind === "rich") {
     const { deps } = fake();
     ok("one-to-one: the drop's figure", text(await richCard(fromRecord, deps)) === text({ name: "Someone", usd: "$0.20", group: false }));
     const { deps: down } = fake({ loadDrop: async () => { throw new Error("rpc down"); } });
-    ok("unread: the name alone (usd null)", text(await richCard(fromRecord, down)) === text({ name: "Someone", usd: null, group: false }));
+    ok("unread: no card at all (null), never the name alone", (await richCard(fromRecord, down)) === null);
+  }
+  {
+    // What the route itself answers (app/c/[id]/og/route.tsx draws only `kind: "rich"`).
+    const madeUp = `preview=rich&l=${"cd".repeat(32)}&s=Mallory&a=999`;
+    let reads = 0;
+    const card = await ogCard(sp(madeUp), fake({ loadDrop: async () => { reads++; return null; } }).deps);
+    ok("a made-up 64-hex id with preview=rich: the static image, after asking the ledger once", card.kind === "static" && reads === 1, `${text(card)}, ${reads} reads`);
+    const spent = await ogCard(sp(madeUp), fake({ loadDrop: async () => ({ amount: "0.2000000", claimed: true }) }).deps);
+    ok("a spent link: the static image", spent.kind === "static");
+    const slow = await ogCard(sp(madeUp), fake({ timeoutMs: 50, loadDrop: () => new Promise(() => {}) }).deps);
+    ok("a ledger that does not answer in time: the static image", slow.kind === "static");
+    const { deps: quiet, calls: asked } = fake();
+    const legacy = await ogCard(sp("a=999&s=Mallory"), quiet);
+    ok("a pre-D2 ?a=999&s=Mallory card URL: the static image, and the ledger is not even asked", legacy.kind === "static" && asked.length === 0);
+    const live = await ogCard(sp(`preview=rich&l=${HEX}&s=Mallory&a=999`), fake().deps);
+    ok(
+      "a live drop: drawn with the LEDGER's figure, the name from the query, and a=999 nowhere",
+      live.kind === "rich" && live.usd === "$0.20" && live.name === "Mallory" && !live.group && !text(live).includes("999"),
+      text(live),
+    );
+    const hostile = await ogCard(sp(`preview=rich&l=${HEX}&s=${encodeURIComponent("Ay\u202Eevil\u0000")}`), fake().deps);
+    ok("the name sanitiser still runs on a live card (bidi and control characters gone)", hostile.kind === "rich" && hostile.name === "Ayevil", text(hostile));
   }
 
   console.log(`\nclaim-metadata: ${passed}/${passed + failed} passed`);

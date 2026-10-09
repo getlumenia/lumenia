@@ -16,6 +16,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Footer } from "../../../components/site/sections/Footer";
+import { realMoneyOpen, waitlistCta } from "../../../lib/real-money";
 import "../../../components/site/page.css";
 import "../../../components/site/editorial.css";
 
@@ -49,7 +50,7 @@ const GROUPS: Array<{ title: string; tone: "done" | "building" | "next"; label: 
       "Send money by a link; the recipient claims it walletless, with no app and no account.",
       "The recipient pays nothing to receive; we cover the network cost.",
       "Send money onward with a link of your own.",
-      "Every transfer is publicly verifiable; unclaimed links come back after 7 days.",
+      "Every transfer is publicly verifiable; the sender can take back a link nobody claimed in 7 days.",
       "Ask someone to pay you with a link, and split a bill between several people.",
       "Lock your money to you with a password, and unlock it with Face ID.",
     ],
@@ -70,12 +71,14 @@ const GROUPS: Array<{ title: string; tone: "done" | "building" | "next"; label: 
     items: [
       "Turning dollars into local currency through licensed partners.",
       "Spending directly with a card.",
-      "Real money, open to everyone.",
+      // Retired with the waitlist (lib/real-money.ts): once it is true, it is not "next".
+      ...(realMoneyOpen() ? [] : ["Real money, open to everyone."]),
     ],
   },
 ];
 
 export default function Roadmap() {
+  const second = waitlistCta();
   return (
     <div className="pg ed">
       <header className="pg-hero pg-glow">
@@ -123,8 +126,8 @@ export default function Roadmap() {
             <Link className="pg-btn pg-btn-primary" href="/try">
               See it work
             </Link>
-            <Link className="pg-btn pg-btn-ghost" href="/waitlist">
-              Join the waitlist
+            <Link className="pg-btn pg-btn-ghost" href={second.href}>
+              {second.label}
             </Link>
           </div>
         </div>

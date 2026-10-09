@@ -12,6 +12,7 @@ import { useParams } from "next/navigation";
 import { loadLinkStatus } from "../../../../lib/horizon";
 import { recallLink } from "../../../../lib/sent-links";
 import { formatUsd } from "../../../../lib/money";
+import { copy as uiCopy } from "../../../../lib/copy";
 import { netKey } from "../../../../lib/scoped-store";
 import { loadPool, loadV2DropStatus, type PoolState } from "../../../../lib/lumendrop";
 import { useWallet } from "../../../../lib/wallet";
@@ -203,8 +204,8 @@ export default function SentPage() {
           ) : pool.status === "open" ? (
             <p className="text-sm text-ink">
               {pool.taken} of {pool.slots} taken. {formatUsd(pool.remaining)} still on the link. It
-              closes at {closingLabel(pool.expiry)}, and whatever nobody takes comes back to you
-              then, and not before.
+              closes at {closingLabel(pool.expiry)}. Whatever nobody takes is yours to take back
+              then, from this browser. It does not come back by itself.
             </p>
           ) : pool.status === "full" ? (
             <p className="text-sm text-ink">
@@ -278,7 +279,7 @@ export default function SentPage() {
           />
         ) : (
           // The ledger read only says the held money is GONE — for a direct pay
-          // that is "collected by them" OR "came back to you after 7 days", and
+          // that is "collected by them" OR "taken back by you after 7 days", and
           // we cannot tell which, so the pill must not claim "Received".
           <StatusPill status="received" label={rec.toName ? "Settled" : "Received"} />
         )}
@@ -288,14 +289,17 @@ export default function SentPage() {
           live, and the sender is the only person who can share it again. */}
       {(linkStatus === "pending" || linkStatus === "unknown" || linkStatus === "no-account") && (
         <MoneyCard className="p-5">
+          {/* Nothing comes back by itself (lib/copy.ts `link`): a link stays claimable until the
+              sender takes it back, and a payment to an account until its owner collects it or the
+              sender takes it back. */}
           <p className="text-sm text-ink-soft">
             {linkStatus === "no-account"
-              ? "We can't check this one on this device — that check runs from your account, and there isn't one on this phone right now. It doesn't change the money: if it isn't collected, it comes back to you 7 days after you sent it. Bring your account back onto this phone and this page can tell you where it stands."
+              ? `We can't check this one on this device: that check runs from your account, and there isn't one on this phone right now. It doesn't change the money. ${rec.toName ? uiCopy.link.directTakeBack : uiCopy.link.takeBack} Bring your account back onto this phone and this page can tell you where it stands.`
               : linkStatus === "unknown"
-                ? "We couldn't check on this one just now — that's about the connection, not your money. Nothing about it has changed: if it isn't collected, it comes back to you 7 days after you sent it. Open this again in a moment."
+                ? `We couldn't check on this one just now. That's about the connection, not your money, and nothing about it has changed. ${rec.toName ? uiCopy.link.directTakeBack : uiCopy.link.takeBack} Open this again in a moment.`
                 : rec.toName
-                  ? `Waiting for ${rec.toName} to add it to their money. If it isn't collected, it comes back to you 7 days after you sent it.`
-                  : "Still waiting to be claimed. If nobody claims it, the money comes back to you 7 days after you sent it."}
+                  ? `Waiting for ${rec.toName} to add it to their money. ${uiCopy.link.directTakeBack}`
+                  : `Still waiting to be claimed. ${uiCopy.link.takeBack}`}
           </p>
           {/* a pay-to-address send has no bearer link — nothing to re-copy */}
           {link && (
@@ -312,7 +316,7 @@ export default function SentPage() {
       {linkStatus === "settled" && (
         <p className="text-center text-ink-soft">
           {rec.toName
-            ? `This is settled. ${rec.toName} collected it, or it came back to you after 7 days. Nothing more to do.`
+            ? `This is settled. ${rec.toName} collected it, or you took it back after 7 days. Nothing more to do.`
             : "This money has been received. Nothing more to do."}
         </p>
       )}
