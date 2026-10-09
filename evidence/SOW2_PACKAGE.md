@@ -3,7 +3,8 @@
 For the Stellar Turkiye ambassador chapter lead. Status as of **2026-10-09**; the rows marked
 _pending_ are filled in before the package is sent on 2026-10-16. Every link below is public:
 the code and the evidence files are in this repository, every transaction opens on stellar.expert,
-and every CI run opens on GitHub.
+and every CI run opens on GitHub. Screenshots of the public pages cited here, taken on 2026-10-09 and
+each checked for secrets, are in [`evidence/sow2-screenshots/`](sow2-screenshots/) with an index.
 
 ## In one paragraph
 
