@@ -228,7 +228,7 @@ function noteFor(r: LinkRecord, pill: Pill): string {
     case "closed":
       return "It was claimed, or your take-back went through. We can't tell which from here; your balance shows it.";
     case "reclaimable":
-      return "Nobody claimed it. Take it back within three weeks: after that, this extension can't do it for you.";
+      return "Nobody claimed it. Take it back now: until you do, whoever has the link can still claim it.";
     case "waiting":
       return `Waiting to be claimed. You can take it back from ${dayWords(r.expiry)}.`;
   }

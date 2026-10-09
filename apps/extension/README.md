@@ -223,9 +223,10 @@ none at all, and testnet and ui that a typed name rides after the `#`. Their las
   "Reclaimed" needs this extension's own confirmed take-back; "Claimed" means the money left the
   escrow and no take-back of ours can be involved; "Closed" means one of the two happened and we
   cannot tell which (a take-back was sent and its answer was lost). Your balance shows which.
-- Take an unclaimed link back within three weeks of its expiry. After that the ledger archives the
-  untouched entry (about 30 days after sending on practice money, longer on real money), and this
-  version cannot restore it to take the money back.
+- A take-back is never automatic. After the expiry the list offers it; until you press it, whoever
+  holds the link can still claim it. The ledger archives an untouched entry after its time to live
+  (about 7 days on practice money, about 120 days on real money), and since protocol 23 a later
+  take-back restores the entry automatically in the same transaction (measured on testnet).
 - From 0.1.3, the amount is not in the link at all: the claim page reads it from the escrow. A link
   carries a name only when you type one in From, which starts empty for every link; the claim page
   then says "Someone". A typed name rides in the `#fragment` next to the secret, which a browser
