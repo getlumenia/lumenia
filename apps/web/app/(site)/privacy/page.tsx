@@ -108,8 +108,8 @@ export default function Privacy() {
           </p>
           <p>
             <strong>Older links carry more.</strong> Links made on our website before 7 October 2026, and
-            links made by our browser extension up to version 0.1.2 (the version in the stores
-            today), also carry the amount and the sender&apos;s name after the ?, where our website&apos;s
+            links made by our browser extension up to version 0.1.2 (what the stores serve until version
+            0.1.3 passes their review), also carry the amount and the sender&apos;s name after the ?, where our website&apos;s
             host and a chat app that builds a preview can read them. The claim page still ignores that
             amount and reads the real one from the ledger, and keeps the chat preview plain.
           </p>
@@ -292,9 +292,9 @@ export default function Privacy() {
             <li>
               <strong>Log lines:</strong> our servers print short lines for us to read. A counter line
               carries only the hashed ids above. On the real-money server, an error line names the part of
-              the server that failed, with a short reference and the reason, and the reason can name the
-              account or address of a refused transaction. A refused link deposit, claim or take-back is
-              logged without its amount and without a full account address. If the database cannot be
+              the server that failed, with a short reference and the reason. The reason is one line,
+              every account or contract address in it is cut to its first four characters, and a refused
+              deposit, claim, take-back, payout or sweep is logged without its amount. If the database cannot be
               reached, a waitlist sign-up or a report goes into the log instead, so it is not lost.
               Cloudflare, which runs these servers, stores log lines only if its log storage (Workers
               Logs) is switched on for them, and then deletes them after 3 days, or 7 on a paid plan.
@@ -351,8 +351,9 @@ export default function Privacy() {
           </p>
           <p>
             Version 0.1.2 and earlier put the amount and your sender name in the link&apos;s address,
-            after the ?. The next version makes the same links as the website: no amount anywhere in the
-            link, and a name only if you type one, after the #.
+            after the ?. Version 0.1.3, which reaches each store after that store&apos;s review, makes the
+            same links as the website: no amount anywhere in the link, and a name only if you type one,
+            after the #.
           </p>
 
           <p>What it sends:</p>
@@ -424,8 +425,8 @@ export default function Privacy() {
             <li>
               Your list of links (for each: the amount, the sender name you used if any, its link ID,
               network, dates, transaction IDs and status) and your settings. Version 0.1.2 also keeps the
-              last sender name you used and fills it in next time; the next version starts with no name
-              every time.
+              last sender name you used and fills it in next time; version 0.1.3 deletes that saved name and
+              starts with no name every time.
             </li>
             <li>
               Each full link with its secret, encrypted with a key derived from your account key, so it
