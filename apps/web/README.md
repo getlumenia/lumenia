@@ -17,7 +17,7 @@ The app is split into three worlds that never share chrome:
 |---|---|---|
 | `(site)` | `/`, `/how-it-works`, `/demo`, `/learn` (+guides), `/about`, `/roadmap`, `/developers`, `/tools/*`, `/waitlist`, `/cash-out`, `/brand`, `/privacy`, `/terms`, `/claimed` | **Periwinkle**, indexed, self-hosted Sentient + Switzer, `next-themes` light/dark |
 | `(app)` | `/home`, `/send`, `/sent/[id]`, `/request`, `/r/[id]`, `/account`, `/activity`, `/contacts`, `/notifications`, `/split`, `/unlock` | Periwinkle via the `.app-pw` token scope; real money surfaces; **all `noindex`** |
-| root | `/c/[id]` · `/v2/c/[linkHex]` | `/c/[id]` = the **FROZEN** v1 classic claim (Instawards grant evidence; webfont-free + Motion-free, proven per-route; never restyle it). `/v2/c/[linkHex]` = the v2 Soroban LumenDrop claim — the default shareable link-send is now v2. |
+| root | `/c/[id]`, `/v2/c/[linkHex]` | `/c/[id]` = the v1 classic claim, the route the SOW 1 claim used (no longer frozen: D2 changed it to read the amount from the ledger; it stays webfont-free and Motion-free, and the live-claim regression gates every change). `/v2/c/[linkHex]` = the v2 Soroban LumenDrop claim; the default shareable link-send is now v2. |
 
 Internal-only: `app/brand-kit/*` (design workspace) and `app/dev` are **404 in production** (a
 `NODE_ENV` guard); `app/spike` is a key-lifecycle harness kept for a deferred device measurement.
@@ -55,21 +55,21 @@ move to a shared `packages/core` when a second consumer exists); **web-only** = 
 resolve `workspace:*` deps (this is exactly why `packages/shared` sits orphaned). A shared package
 would need a prebundle (committed dist + `file:`/copy) proven against a real Vercel build — worth
 doing when the mobile app starts and there is a second consumer to validate against, not before.
-Moving any module the frozen `/c/[id]` imports (`copy`, `money`, `rate`, `sponsor`, `keystore`,
-`events`) also requires re-export shims so the frozen route's import paths stay byte-identical.
+Moving any module the v1 `/c/[id]` imports (`copy`, `money`, `rate`, `sponsor`, `keystore`,
+`events`) also requires re-export shims so the v1 route's import paths keep working.
 
 ## CSS load order (who paints what)
 
 There is no bundler magic here — order and scope are the whole system:
 
-- **`app/globals.css`** — Tailwind v4 `@theme` + the `:root` **legacy** tokens the FROZEN `/c/[id]`
+- **`app/globals.css`**: Tailwind v4 `@theme` + the `:root` **legacy** tokens the v1 `/c/[id]`
   still renders against. **Do not repurpose these globals**; the claim route depends on them.
 - **`components/site/pw-tokens.css`** — the `--pw-*` Periwinkle palette on `.op` (landing) + `.pg`
   (every other `(site)` page). Token scope and page root are the **same class** on purpose (a page
   rooted at `.pg` without the palette silently renders unstyled — a real trap that cost hours).
 - **`components/site/app-theme.css`** — the `.app-pw` scope. It **re-points the legacy token vars**
   (`--money`, `--ink`…) to Periwinkle **inside the `(app)` group only**, so the money components
-  render on-brand without a rewrite AND the global `:root` stays untouched for the frozen route.
+  render on-brand without a rewrite AND the global `:root` stays untouched for the v1 route.
   This trick is load-bearing.
 - **`page.css` / `editorial.css` / `tools.css`** — shared `(site)` layout, prose, tool primitives.
 - **`landing.css` / `demo.css` / `how-it-works.css`** — co-located per-surface styles.

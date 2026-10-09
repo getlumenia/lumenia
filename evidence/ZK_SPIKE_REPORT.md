@@ -115,7 +115,8 @@ claim the payout account. The commitment hides nothing that the transaction does
   its claim. On chain, the spike contract's 10 events (5 deposits and 5 claims, ledgers 5,057,518 to
   5,057,535) pair one to one by link (read with `getEvents` on 2026-10-09).
 - **The sponsor keeps reading amounts.** The sponsor reads the amount at deposit time from the
-  transaction it fee-bumps; the $5 per transfer and $50 per day caps are unaffected.
+  transaction it fee-bumps; the caps ($5 a link, $25 a day per sender, $50 a day across the whole
+  pilot) are unaffected.
 - **No ZK or commitment contract on mainnet.** Mainnet contract changes wait for the professional
   security review; the production escrow (`contracts/lumen-drop`) is unchanged by this spike.
 

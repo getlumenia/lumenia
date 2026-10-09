@@ -18,6 +18,70 @@ Everything since 0.2.1; nothing has been tagged since. The Instawards follow-on 
 2026-09-17 to 2026-10-16) is grouped by deliverable and dated, newest first. Its evidence,
 metric by metric, is in [EVIDENCE.md](EVIDENCE.md).
 
+### 2026-10-09: sponsor and web fixes (merged, deploy pending)
+
+Merged on 2026-10-09 and held by the offline gate on the merged tree (40 suites / 4,388
+assertions, all green). Not in production yet: the web goes live with its next deploy, and each
+sponsor Worker changes only with its own next deploy; all three deploys are the owner's.
+
+#### Changed (sponsor)
+
+- **The mainnet error log is redacted.** A refused Soroban simulation on `/v2-deposit`,
+  `/v2-claim`, `/v2-reclaim` and `/cctp-relay` carries only the HostError's first line, at most
+  200 characters; `/payout` and `/sweep` refusals name the rule, never the amount; every full G, C
+  or M address in a mainnet error line is cut to four characters; Horizon refusals drop
+  `envelope_xdr` and `result_xdr`. Held by `test:soroban-relay` (163) and `test:antidrain` (82).
+- **A subrequest budget of 45 per request** (the Workers Free plan allows 50). Measured worst cases
+  with KMS signing: `/v2-deposit` 42 (54 before), `/v2-claim` 43, `/v2-reclaim` 44, `/cctp-relay` 43,
+  `/create-account` 24. A poll skipped for the budget answers 202, as an unanswered poll did.
+- **`/health` names the deployed version** (`version {id, tag, timestamp}`, from the
+  `CF_VERSION_METADATA` binding).
+- **The watchdog writes the halt the moment a tripwire is raised**, before the rest of its run
+  (`test:watchdog-offline` 201).
+- **The approval mail carries the real-money warning and the caps sentence.**
+- **`wrangler.toml` names `SPONSOR_ACCOUNT_ID`** (each network's existing sponsor account) and
+  `KMS_REGION` eu-central-1 in both environments. No behaviour change with the env signer; after the
+  deploy `/health` reads `"accountSource": "SPONSOR_ACCOUNT_ID"`.
+- **The heartbeat workflow has a manual drill**, `test_alert`, which opens an issue titled TEST
+  through the real issue path; the next green run closes it. The labels `watchdog-heartbeat`,
+  `live-claim` and `contract-security` were created in the repository on 2026-10-09.
+
+#### Changed (web)
+
+- **No sender name unless one is typed**: /send and /group start the name empty, and an empty name
+  writes no `s=`.
+- **/group sets `seeded=1` only for team-funded links.**
+- **v1 practice-claim beacons go to the testnet Worker**, even on a device set to Real money
+  (`test:extseam` 175).
+- **The rich preview card is drawn only for a live drop or pool**; a made-up id gets a 307 to
+  `/og.png` (`test:claimmeta` 65).
+- **/privacy updated 2026-10-09**: what the sponsor keeps for 48 hours (D3), the lookups a link id
+  allows, log lines as one line with addresses cut to four characters and no amounts, the list of
+  sent links living in the browser, and request links not private by design.
+- **The real-money warning** ("Real money on Lumenia is an early pilot. It has not been reviewed by
+  an outside security firm yet. You can lose money, so keep amounts small.") in the web dialog and
+  both /pilot states; take-back copy everywhere now says a take-back is never automatic.
+- **/extension** reads `NEXT_PUBLIC_EXTENSION_CHROME_URL` and `NEXT_PUBLIC_EXTENSION_FIREFOX_URL`
+  (set in Vercel production on 2026-10-09 to the Chrome Web Store and addons.mozilla.org listings;
+  live after the next web deploy). `NEXT_PUBLIC_REAL_MONEY_OPEN` (default off) retires the waitlist
+  calls to action at the opening flip.
+- **A lost Horizon reply no longer leaves a claim waiting.** The browser sends the sponsored
+  onboarding to Horizon itself (the v1 claim, the v2 claim's new account, `prepareAccount`), and
+  on 2026-10-09 a reply was lost while the transaction landed (testnet `f6530217...ef1070`, in a
+  ledger three seconds after it was sent): the claim screen waited on it. `lib/submit.ts`
+  `submitOrConfirm` now races the submission against a read of the transaction's own outcome:
+  Horizon's answer decides when it comes, a transaction the ledger shows succeeded is done, a
+  4xx is thrown as before, and nothing is ever sent twice. Held by `test:horizon` (71). The
+  extension bundles the same code, so 0.1.3 carries it.
+
+#### Added (owner tooling, `ops/`)
+
+- `ops/kms/cloudshell-setup.sh` (AWS CloudShell: one KMS key `ECC_NIST_EDWARDS25519`, one sign-only
+  IAM user and one access key per network) and `ops/kms/cutover.sh` (steps 2 to 9 of the ops note's
+  section 2.2 in one guided run, then `--finish` for step 12).
+- `ops/rehearsal/run-testnet-rehearsal.sh` (the ops note's section 1.3, steps 1 to 11, in one run
+  that ends with a normal deploy).
+
 ### SOW 2, D3: open-mainnet readiness (deployed to both Workers on 2026-10-08)
 
 #### Added
@@ -31,12 +95,14 @@ metric by metric, is in [EVIDENCE.md](EVIDENCE.md).
   before the caps, the fee budget and the signature, and refused above what the simulation
   needs plus a fixed margin; a take-back carries the same bound.
 - **The watchdog's heartbeat and automatic halt.** Each run stamps `/health`; a GitHub
-  workflow (`watchdog-heartbeat.yml`) reads both Workers every 30 minutes and opens an issue
-  on a stale stamp; the sponsor halts itself on the watchdog's two theft tripwires (a
+  workflow (`watchdog-heartbeat.yml`) is scheduled to read both Workers every 30 minutes (GitHub
+  has started this repository's schedules hours late; the first scheduled run is 37850573340)
+  and opens an issue on a stale stamp; the sponsor halts itself on the watchdog's two theft tripwires (a
   sponsor-sourced forbidden operation, a changed escrow wasm).
 - **The allowlist's retirement behind one variable** (`PILOT_MODE`): unset, `/pilot-status`
-  answers "open" and every cap stays. Rehearsed on a local Worker against the testnet ledger
-  (`pnpm --filter @lumenia/sponsor rehearse`).
+  answers "open" and every cap stays. Dry-run on a local Worker against the testnet ledger
+  (`pnpm --filter @lumenia/sponsor rehearse`); the run on the deployed testnet Worker is the
+  owner's (`ops/rehearsal/run-testnet-rehearsal.sh`).
 - **A scripted adversarial runner** (`pnpm --filter @lumenia/sponsor adversarial`): full mode
   on testnet or a local Worker, refusal-only against a live mainnet Worker, with a stand-in
   store for the store-dependent probes (`fake-kv`).
@@ -93,10 +159,23 @@ metric by metric, is in [EVIDENCE.md](EVIDENCE.md).
 - **0.1.2** (2026-10-04): the listing for a public addons.mozilla.org page, the same code as
   0.1.1. Public on the Chrome Web Store by 2026-10-06 and on addons.mozilla.org since
   2026-10-07. Its links still carry the amount and the sender's name in the query.
-- **0.1.3** (the release after `24d0f4e`): the private link shape, a take-back answered 202
-  kept open instead of read as landed, the real-money warning the website shows, the pilot
-  cap as "$5 a link, $25 a day", and no sender name unless the sender types one. It reaches
-  each store after that store's review.
+- **0.1.3** (built 2026-10-09 from the merged tree; **submission to both stores pending**, the
+  owner's): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
+  no amount anywhere and no name unless one is typed; the From field starts empty, and the name
+  0.1.2 saved is deleted at startup; the one-time real-money note "Real money on Lumenia is an
+  early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so
+  keep amounts small."; the caps as "$5 a link and up to $25 a day from you ($50 a day across the
+  whole pilot)"; a take-back answered 202 stays open until the escrow confirms it; and the Links
+  screen says "Nobody claimed it. Take it back now: until you do, whoever has the link can still
+  claim it." (the old "within three weeks" was wrong: since protocol 23 a later take-back
+  restores an archived entry automatically). Packages: `lumenia-chrome-0.1.3.zip` sha256
+  `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73`,
+  `lumenia-firefox-0.1.3.zip` sha256
+  `7ddb559764c7c81aa151bcc06a65fb33cc879077de825ecca6246acf2547260d`,
+  `lumenia-extension-sources-0.1.3.zip` sha256
+  `a4bbcb530ea164c6e8a374fb06626d51e98296d59a5f282a69f58c6cbea627b5`; a clean-room rebuild from
+  the sources archive is byte-identical to `dist/chrome` and `dist/firefox` (the zips differ only
+  in file times). It reaches each store after that store's review.
 
 ### Removed (2026-10-03)
 

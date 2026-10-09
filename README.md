@@ -1,6 +1,6 @@
 # Lumenia
 
-**Send dollars by link; the recipient needs no wallet, no app and no XLM, and unclaimed money comes back.**
+**Send dollars by link; the recipient needs no wallet, no app and no XLM, and the sender can take back what nobody claims.**
 
 Built during the Rise In x Stellar Pro Hackathon (Scale Track, Istanbul, 19-20 Sept 2026). **Submitted at `5e73e3d`** (20 Sept 2026, 11:55 Istanbul); the event commits run from `af0aa8b` to it, and everything up to and including `abf1c3e` was written before the event and pushed during it. See [What was built here](#what-was-built-here-19-20-sept-2026). Work that landed after the submission deadline is listed on its own, under [After the submission](#after-the-submission-20-24-sept-2026), and was not part of what was judged. The work since then, the Instawards follow-on with the browser extension, private links and the open-mainnet hardening, is under [Since the event](#since-the-event-the-instawards-follow-on-sow-2-2026-09-17-to-2026-10-16).
 
@@ -37,7 +37,7 @@ A sender-side extension for Chrome and Firefox ([`apps/extension`](apps/extensio
 - Chrome Web Store: https://chromewebstore.google.com/detail/lumenia-send-dollars-by-l/ccdnjnckaldkmjnlpgpmdmnbajmakhmn
 - Firefox Add-ons: https://addons.mozilla.org/en-US/firefox/addon/lumenia/
 
-Practice money (testnet) by default. Real money only for a wallet the pilot approved, with a password-locked account, after a one-time warning: $5 a link and up to $25 a day from you ($50 a day across the whole pilot). It never holds money, loads no remote code, and has no content scripts and no analytics library; what it stores and sends, and to whom, is in its README. Both stores list 0.1.2, built before private links, so its links still carry the amount and the sender's name in the query; 0.1.3, built from this repository, makes the private shape and reaches each store after that store's review. Tests: `pnpm --filter @lumenia/extension test` (9 suites, run in CI with both builds and the Firefox lint).
+Practice money (testnet) by default. Real money only for a wallet the pilot approved, with a password-locked account, after a one-time warning: $5 a link and up to $25 a day from you ($50 a day across the whole pilot). It never holds money, loads no remote code, and has no content scripts and no analytics library; what it stores and sends, and to whom, is in its README. Both stores list 0.1.2, built before private links, so its links still carry the amount and the sender's name in the query. 0.1.3 was built on 2026-10-09 from this repository: no amount anywhere in the link and no name unless one is typed; its submission to both stores is pending, and it reaches each store after that store's review (hashes in [evidence/SOW2_READINESS_REPORT.md](evidence/SOW2_READINESS_REPORT.md), Published builds). A 60 fps demo of 0.1.3 on practice money will be served at https://getlumenia.com/media/lumenia-extension-demo.mp4 after the next web deploy. Tests: `pnpm --filter @lumenia/extension test` (9 suites, 2,173 assertions on the merged tree of 2026-10-09, run in CI with both builds and the Firefox lint).
 
 ### Private links
 
@@ -45,7 +45,7 @@ A link carries no amount: the claim page reads it from the escrow on the ledger,
 
 ### Open-mainnet readiness
 
-Deployed on both Workers on 2026-10-08 and held in CI by the step "Hardening suite (D3 a-k)": the Soroban relays simulate a deposit or a take-back before the sponsor signs and refuse a fee above what it needs; a per-day sponsor fee budget (15 XLM on mainnet); a per-sender day cap ($25 of the $50 day); a per-connection onboarding share (8 of the 60 sponsored accounts a day); single-shot cap accounting, so a failed deposit gives its reservation back once and never twice; an unconfirmed submission answered as unconfirmed rather than as a failure that invites a second spend; a watchdog that halts the sponsor by itself on its two theft tripwires and stamps a heartbeat that a GitHub workflow reads every 30 minutes; and the allowlist's retirement behind one variable, rehearsed on a local Worker against the testnet ledger. A scripted adversarial run against the live mainnet Worker refused everything it sent and spent nothing; it was refusal-only, because the exhaustion probes would lock real recipients out until UTC midnight. Still to come: the KMS cutover. Mainnet keeps `PILOT_MODE=1` until the written legal opinion is in hand.
+Deployed on both Workers on 2026-10-08 and held in CI by the step "Hardening suite (D3 a-k)": the Soroban relays simulate a deposit or a take-back before the sponsor signs and refuse a fee above what it needs; a per-day sponsor fee budget (15 XLM on mainnet); a per-sender day cap ($25 of the $50 day); a per-connection onboarding share (8 of the 60 sponsored accounts a day); single-shot cap accounting, so a failed deposit gives its reservation back once and never twice; an unconfirmed submission answered as unconfirmed rather than as a failure that invites a second spend; a watchdog that halts the sponsor by itself on its two theft tripwires and stamps a heartbeat that a GitHub workflow is scheduled to read every 30 minutes (GitHub has started this repository's schedules hours late; the first scheduled run is 37850573340); and the allowlist's retirement behind one variable, dry-run on a local Worker against the testnet ledger. A scripted adversarial run against the live mainnet Worker refused everything it sent and spent nothing; it was refusal-only, because the exhaustion probes would lock real recipients out until UTC midnight. Still to come, all the owner's: the KMS cutover (`ops/kms/`), the rehearsal on the deployed testnet Worker (`ops/rehearsal/`), and the Worker deploys of the release merged on 2026-10-09 (the mainnet log redaction, a subrequest budget per request, `/health` version, the halt written as soon as a tripwire is raised). Mainnet keeps `PILOT_MODE=1` until the written legal opinion is in hand.
 
 ## What was built here (19-20 Sept 2026)
 
@@ -224,7 +224,7 @@ There is no timelock yet, so an owner upgrade is instant; a timelock is the next
 
 ## Design decisions and challenges
 
-- **Every relay route is fail-closed, each by its own policy.** A sponsor that fee-bumps strangers' transactions is a drain target, so `apps/sponsor/src/lib/anti-drain.ts` checks operation type, operation source and the sensitive parameters before any signature: the sponsor may source only `beginSponsoringFutureReserves` and `createAccount`; `startingBalance` must be 0; `changeTrust` must name the pinned USDC and be recipient-sourced; a `payment` is refused unless its destination is allow-listed; a missing constraint means reject. Every new route gets its own tight policy and no existing allowlist is widened: the CCTP relay built at the event reads only a burn hash, pins the forwarder contract and `mint_and_forward`, checks the message header (source domain 6, destination 27, caller equal to the forwarder) before it simulates, and caps the fee. 71 cases in `test:antidrain` and 55 in `test:cctp` at commit `24d0f4e`.
+- **Every relay route is fail-closed, each by its own policy.** A sponsor that fee-bumps strangers' transactions is a drain target, so `apps/sponsor/src/lib/anti-drain.ts` checks operation type, operation source and the sensitive parameters before any signature: the sponsor may source only `beginSponsoringFutureReserves` and `createAccount`; `startingBalance` must be 0; `changeTrust` must name the pinned USDC and be recipient-sourced; a `payment` is refused unless its destination is allow-listed; a missing constraint means reject. Every new route gets its own tight policy and no existing allowlist is widened: the CCTP relay built at the event reads only a burn hash, pins the forwarder contract and `mint_and_forward`, checks the message header (source domain 6, destination 27, caller equal to the forwarder) before it simulates, and caps the fee. 82 cases in `test:antidrain` and 58 in `test:cctp` on the merged tree of 2026-10-09.
 - **Sponsored reserves, and what a 0-XLM account costs the sponsor.** A claim is free for the recipient and not for us: the sponsor locks about 1.5 XLM of reserves per new account (the account entry plus the USDC trustline entry) and pays the fees, and that reserve does not scale with the amount, which is why there is a minimum escrow (`MIN_DROP_USDC`) and a per-day onboarding budget: on mainnet 60 sponsored accounts a day and 8 per connection, so two addresses cannot spend a day, and an honest retry for the same recipient is free. The float is finite: the watchdog pages below 25 recipients of remaining capacity. On mainnet the escrow caps and the pilot allowlist fail closed when the counter store is unreachable; the onboarding and fee budgets fall back to per-isolate counters instead (a soft bound across isolates), so a store outage never strands a recipient.
 - **Two escrow paths on purpose.** A link uses the Soroban contract (LumenDrop) because the recipient is unknown and the payout address is chosen at claim time. A send to a known address uses a Claimable Balance (CAP-23) with the recipient as the unconditional claimant and the sender as the reclaim claimant after seven days: protocol-native, no contract and no upgrade key involved. They are not unified, and on either path reclaim is an explicit action by the sender, never automatic.
 - **One link for a group, with no change to the contract.** Six people in a chat is the same problem as one person with no wallet, six times over, so the pot had to live in the escrow that already works. Every entrypoint it needs was already in the deployed wasm, which is the only reason it could ship in a day and the reason the escrow a judge inspects is the one that has been on testnet since 6 Sept: rebuilding the contract changes the wasm hash and orphans every link already minted. The record is a versioned `PoolEntry::V1` in persistent storage beside the single-drop record, the claim message is domain-separated by a tag so a signature for one shape is not a signature for the other, and `claim_share` dedupes on the payout address rather than on anything about a person, because a contract cannot see people. Two numbers a screen shows are read from the chain and never derived: the pool carries no total, and a take-back sets the remaining amount to zero and the claimed count to the full share count in the same call, so any count derived from what is left reports a take-back as a full payout.
@@ -249,19 +249,19 @@ The three-step testnet path is under [Demo](#demo). The gate:
 ```bash
 pnpm install
 
-# The offline gate: no network, no keys. The list CI runs is .github/workflows/ci.yml; counts at commit 24d0f4e (2026-10-09).
-pnpm test:antidrain                                  # 71    anti-drain validator (claim, send, payout, sweep, sequence, golden policy, muxed, the account and signer split)
-pnpm --filter @lumenia/sponsor test:kms              # 142   external Ed25519 signer path, byte parity, the account and signer split, add-signer
+# The offline gate: no network, no keys. The list CI runs is .github/workflows/ci.yml; counts on the merged tree, 2026-10-09.
+pnpm test:antidrain                                  # 82    anti-drain validator (claim, send, payout, sweep, sequence, golden policy, muxed, the account and signer split, the log redaction)
+pnpm --filter @lumenia/sponsor test:kms              # 153   external Ed25519 signer path, byte parity, the account and signer split, add-signer, subrequests per signing route
 pnpm --filter @lumenia/sponsor test:caps             # 274   per-drop, per-day and per-sender caps, the onboarding and fee budgets
 pnpm --filter @lumenia/sponsor test:channels         # 29    channel-account lease
 pnpm --filter @lumenia/sponsor test:events           # 80    event allowlist, funnel, seeded cohort, buckets, unknown fields dropped
-pnpm --filter @lumenia/sponsor test:cctp             # 55    the CCTP relay route on Circle's real message bytes
-pnpm --filter @lumenia/sponsor test:pilot            # 80    mainnet allowlist, per-wallet budget, the retirement switch
+pnpm --filter @lumenia/sponsor test:cctp             # 58    the CCTP relay route on Circle's real message bytes
+pnpm --filter @lumenia/sponsor test:pilot            # 90    mainnet allowlist, per-wallet budget, the retirement switch, the approval mail
 pnpm --filter @lumenia/sponsor test:recovery-store   # 35    ciphertext-only recovery box store
 pnpm --filter @lumenia/sponsor test:identity         # 66    names and ways-back-in registries
 pnpm --filter @lumenia/sponsor test:identity-routes  # 39    the same through worker.fetch
-pnpm --filter @lumenia/sponsor test:soroban-relay    # 141   the relay guard on the LumenDrop invokes: simulation, fee bounds, share count, per-share floor, unconfirmed submissions
-pnpm --filter @lumenia/sponsor test:watchdog-offline # 193   every watchdog tripwire, the automatic halt, the heartbeat stamps
+pnpm --filter @lumenia/sponsor test:soroban-relay    # 163   the relay guard on the LumenDrop invokes: simulation, fee bounds, share count, per-share floor, unconfirmed submissions, the log redaction, the poll budget
+pnpm --filter @lumenia/sponsor test:watchdog-offline # 201   every watchdog tripwire, the automatic halt, the heartbeat stamps
 pnpm --filter @lumenia/sponsor fake-kv --selftest    # 35    the stand-in store the adversarial run uses
 pnpm --filter @lumenia/web test:recovery             # 18    recovery crypto
 pnpm --filter @lumenia/web test:claimpw              # 13    claim-password derivation
@@ -274,19 +274,20 @@ pnpm --filter @lumenia/web test:money                # 36    amount parsing and 
 pnpm --filter @lumenia/web test:cctp-web             # 24    the browser half of CCTP, golden-tested against the bytes that minted
 pnpm --filter @lumenia/web test:group                # 84    group links: the share hint, exact-multiple pots, the four pool states, the device latch
 pnpm --filter @lumenia/web test:swap                 # 88    conversion: quote reading, the price bound, the guard on the signed transaction, the failure map
-pnpm --filter @lumenia/web test:extseam              # 162   the extension's seam into apps/web/lib, beacons routed by the network named
+pnpm --filter @lumenia/web test:extseam              # 175   the extension's seam into apps/web/lib, beacons routed by the network named
 pnpm --filter @lumenia/web test:walletkit            # 16    the Stellar Wallets Kit adapter (behind a flag, off in production)
 pnpm --filter @lumenia/web test:agentmcp             # 30    the agent-as-sender MCP server
-pnpm --filter @lumenia/web test:linkprivacy          # 51    what a link, its beacon and the claim routes' headers may reveal
-pnpm --filter @lumenia/web test:claimmeta            # 55    private and rich chat previews, the card's amount read from the ledger
+pnpm --filter @lumenia/web test:linkprivacy          # 74    what a link, its beacon, the send screens, the claim routes' headers and CSP may reveal
+pnpm --filter @lumenia/web test:claimmeta            # 65    private and rich chat previews, the card's amount read from the ledger, only for a live link
 pnpm --filter @lumenia/web test:claimledger          # 17    what the claim screen may say about the amount
 pnpm --filter @lumenia/web test:claimhome            # 22    a practice link's key never becomes the home account
-pnpm --filter @lumenia/web test:pilotaccess          # 62    the real-money access rules once the allowlist retires
-pnpm --filter @lumenia/extension test                # 1,927 the browser extension's 9 suites
+pnpm --filter @lumenia/web test:pilotaccess          # 83    the real-money access rules once the allowlist retires, the warning words
+pnpm --filter @lumenia/extension test                # 2,173 the browser extension's 9 suites
 (cd contracts/lumen-drop && cargo test)              # 29    unit and property tests over the 14-invariant spec
+(cd contracts/lumen-drop-commit && cargo test)       # 22    the testnet commitment spike
 ```
 
-At `24d0f4e`, every suite green on 2026-10-09: sponsor 12 suites / 1,205 assertions plus the stand-in store's 35, web 19 / 869, extension 9 / 1,927, and the contract's 29 tests. CI also runs the escrow's strict clippy, `cargo-audit`, `cargo-deny` and a 90 percent line-coverage gate, the spike contract's tests, the web lint and production build, and the extension's typecheck, both builds and the Firefox lint. Counts move as checks are added; the per-suite table for the open-mainnet hardening is in [evidence/SOW2_READINESS_REPORT.md](evidence/SOW2_READINESS_REPORT.md) section D3.2.
+On the merged tree, 2026-10-09, every suite green: sponsor 12 suites / 1,270 assertions plus the stand-in store's 35, web 19 / 945, extension 9 / 2,173 (40 suites / 4,388), the escrow contract's 29 tests and the spike contract's 22; three typechecks clean, the web lint at 0 warnings, the web and extension builds, and `web-ext lint` with 0 errors. CI also runs the escrow's strict clippy, `cargo-audit`, `cargo-deny` and a 90 percent line-coverage gate, the spike contract's tests, the web lint and production build, and the extension's typecheck, both builds and the Firefox lint. Counts move as checks are added; the per-suite table for the open-mainnet hardening is in [evidence/SOW2_READINESS_REPORT.md](evidence/SOW2_READINESS_REPORT.md) section D3.2.
 
 CCTP inbound, live, from the terminal (network, testnet only, spends nothing real):
 

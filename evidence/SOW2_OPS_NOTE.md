@@ -1,9 +1,11 @@
 # SOW 2 D3 operations note: the retirement switch, the KMS signer, the watchdog heartbeat
 
 Status: **2026-10-09. Code done and tested, and deployed on both Workers on 2026-10-08 (the mainnet
-one with `PILOT_MODE=1` kept); the watchdog heartbeat is live (section 3).** Two steps are still to
-run, both the owner's: the rehearsal on the deployed testnet Worker (section 1.3) and the KMS
-cutover (section 2). Every step that touches a deployed Worker, AWS or the chain is marked "owner"
+one with `PILOT_MODE=1` kept); the watchdog heartbeat is live (section 3).** Still to run, all of it
+the owner's: the Worker deploys of the release merged on 2026-10-09 (it names each network's sponsor
+account, which the cutover script needs), the rehearsal on the deployed testnet Worker (section 1.3,
+one script), the KMS cutover (section 2.2, two scripts) and the heartbeat alert drill (section 3).
+Every step that touches a deployed Worker, AWS or the chain is marked "owner"
 below with the exact command, and each log has a row per step; rows still marked _pending_ are
 filled in when the owner runs them. Nothing here contains a secret: secrets are named, never shown,
 and every command that needs one reads it first with `read -rs NAME && export NAME` and removes it
@@ -111,9 +113,10 @@ below is what the owner confirms on the day it arrives, before step 1.
 
 The flip:
 
-0. The web from the D3 commit is live in production. A web build from before it reads the answer
-   `"state": "open"` as no state at all and shows everyone "Join the pilot", so the Worker must not
-   flip first.
+0. The web from the D3 commit is live in production, and extension 0.1.3 or later is live in both
+   stores (the checklist above). A web build from before D3 reads the answer `"state": "open"` as no
+   state at all and shows everyone "Join the pilot", and the published 0.1.2 reads it as approved
+   with no backup rule, so the Worker must not flip first.
 1. Delete the line `PILOT_MODE = "1"` from `[env.mainnet.vars]` in `wrangler.toml`.
 2. `npx wrangler deploy --env mainnet`
 3. `curl -s https://lumenia-sponsor-mainnet.avakit.workers.dev/health` shows `"pilotMode": false`.
@@ -136,6 +139,17 @@ send, and proves the caps and the halt still refuse. `pnpm --filter @lumenia/spo
 each phase's probes and appends them, stamped, to a log. Two throwaway testnet wallets are written to
 the log folder before they are funded, and every deposit's link key before the deposit is posted, so
 step 11 can take every deposit back.
+
+**The recommended way: one script.** From the repository root, `bash ops/rehearsal/run-testnet-rehearsal.sh`
+runs steps 1 to 11 below in one guided run against the deployed testnet Worker, testnet only: each
+deploy with its `--var`, each probe, the approval of W1 (it asks for the store's REST URL, and for its
+token at a hidden prompt), and the take-back of every rehearsal deposit once they have expired. It
+always ends with a plain `npx wrangler deploy`, so the testnet Worker is left in its normal
+configuration even when a probe fails. Each deploy ships the code of the checkout it runs from, so
+run from the merged tree it also puts the release merged on 2026-10-09 on the testnet Worker. Its log
+lands in `apps/sponsor/adversarial-out/rehearsal-deployed-<date>/rehearsal-log.md` (gitignored); its
+rows go into section 1.4. The timing advice below applies to it unchanged. The table is what it runs,
+for a run by hand.
 
 Owner steps, testnet only (each `wrangler deploy` replaces the vars of the deploy before it, so the
 `--var` flag is the whole switch and `wrangler.toml` is not edited):
@@ -214,7 +228,8 @@ current tool's reclaim phase took all three back at 14:52 UTC: [`4169a9b2...4a5b
 No rehearsal deposit is left in the testnet escrow.
 
 **On the deployed testnet Worker (owner, section 1.3):** _pending: not run yet (checked 2026-10-09,
-00:20 UTC)_. Paste `rehearsal-log.md` here with its timestamps. Until this row is filled, the switch
+00:20 UTC)_. Run `bash ops/rehearsal/run-testnet-rehearsal.sh` and paste its `rehearsal-log.md` here
+with its timestamps. Until this row is filled, the switch
 has been dry-run on a local Worker against the live testnet ledger, not rehearsed on a deployed one.
 
 ---
@@ -247,6 +262,33 @@ The 2-of-3 owner multisig is a different account (the escrow contract's owner) a
 Detailed in [`../ops/RUNBOOK_SPONSOR_KEY.md`](../ops/RUNBOOK_SPONSOR_KEY.md) section 2. One KMS key and
 one IAM user per network.
 
+**The recommended way: two scripts, one network at a time, testnet first.**
+
+- First, the Worker deploy of the merged tree (step 6 below): `wrangler.toml` already names each
+  network's existing sponsor account (`SPONSOR_ACCOUNT_ID`) and `KMS_REGION = "eu-central-1"`, and
+  after the deploy `/health` reads `"accountSource": "SPONSOR_ACCOUNT_ID"`. The cutover script stops
+  before anything else when it does not.
+- Step 1: `bash cloudshell-setup.sh testnet` (then `mainnet`) in AWS CloudShell, in eu-central-1, with
+  `ops/kms/cloudshell-setup.sh` uploaded there. Per network it makes one KMS key
+  (`ECC_NIST_EDWARDS25519`, `SIGN_VERIFY`), one IAM user with no console access whom the key policy
+  lets call only `kms:Sign`, `kms:GetPublicKey` and `kms:DescribeKey`, and one access key for that
+  user; it prints the three values the next script asks for and the CloudTrail lookup for step 11.
+  Run again, it reuses the user, the key and the alias.
+- Steps 2 to 9: `bash ops/kms/cutover.sh testnet` (then `mainnet`, which asks for the word MAINNET
+  first) from the repository root. It runs `kms-check`, writes the SetOptions dry run and submits
+  exactly that transaction after a typed yes, waits up to 20 minutes for the expected automatic halt
+  (section 4) and clears it, puts the two AWS secrets and then the key id, and checks `/health` from
+  outside; on testnet it then runs the live claim of step 10, and on mainnet the next real-money
+  claim is the first KMS-signed transaction. Each secret is typed at a prompt, never on a command
+  line: the access key pair, the sponsor's secret and the store token at hidden prompts; the key ARN
+  and the store's REST URL at visible ones. It stops at the first problem.
+- Step 12: `bash ops/kms/cutover.sh testnet --finish` (then `mainnet`), only after one real
+  KMS-signed transaction has landed on that network; it refuses while `/health` does not say `kms`.
+
+What the script records (the KMS address, the SetOptions file and its hash, the times) lands in
+`apps/sponsor/.cutover/` (gitignored), and goes into section 2.4. The table is the same cutover step
+by step, for a run by hand.
+
 | # | Step | Command or action |
 |---|---|---|
 | 1 | Create the key (`ECC_NIST_EDWARDS25519`, `SIGN_VERIFY`), the IAM user (`kms:Sign`, `kms:GetPublicKey`, `kms:DescribeKey` on that key only), CloudTrail on | AWS console or CLI |
@@ -254,7 +296,7 @@ one IAM user per network.
 | 3 | Dry run: the UNSIGNED SetOptions, its hash and the account's signers and thresholds, written to a gitignored file; no secret needed | in `apps/sponsor`: `pnpm run add-signer --network testnet --account <sponsor G> --signer <KMS G> --out .cutover/testnet-setoptions.json` |
 | 4 | Read the file, record the hash, then submit exactly that transaction | `read -rs SPONSOR_SECRET && export SPONSOR_SECRET`, `pnpm run add-signer --network testnet --submit --in .cutover/testnet-setoptions.json --hash <hash>`, `unset SPONSOR_SECRET` (mainnet also needs `I_UNDERSTAND_MAINNET=1`) |
 | 5 | Expect the watchdog to page and halt within 15 minutes (section 4); confirm the hash, then clear the halt | `read -rs KV_REST_API_URL && export KV_REST_API_URL`, `read -rs KV_REST_API_TOKEN && export KV_REST_API_TOKEN`, then `curl -H "authorization: Bearer $KV_REST_API_TOKEN" "$KV_REST_API_URL/del/sponsor:halt:testnet"` and the same for `sponsor:halt:testnet:reason` (`mainnet` in both keys on mainnet), then `unset KV_REST_API_URL KV_REST_API_TOKEN` |
-| 6 | Name the account first (vars) and deploy | in the network's block of `wrangler.toml`: `KMS_REGION = "eu-central-1"`, `SPONSOR_ACCOUNT_ID = "<sponsor G>"`; `npx wrangler deploy` (or `--env mainnet`) |
+| 6 | Name the account first (vars) and deploy | done in the merged `wrangler.toml` for both networks: `SPONSOR_ACCOUNT_ID` (each network's existing sponsor account) and `KMS_REGION = "eu-central-1"`; it takes effect with `npx wrangler deploy` (or `--env mainnet`), and `/health` then reads `"accountSource": "SPONSOR_ACCOUNT_ID"`. With the scripts this deploy comes first |
 | 7 | The credentials (secrets, names only) | `npx wrangler secret put AWS_ACCESS_KEY_ID` and `npx wrangler secret put AWS_SECRET_ACCESS_KEY` (`--env mainnet` for mainnet) |
 | 8 | The key id LAST: this is the switch, and `secret put` deploys at once | `npx wrangler secret put KMS_KEY_ID` (the ARN; a secret because it names the AWS account) |
 | 9 | Verify from outside | `/health`: `"signer": {"kind": "kms", "publicKey": "<KMS G>"}`, `"account": "<sponsor G>"` and `"accountSource": "SPONSOR_ACCOUNT_ID"` |
@@ -310,10 +352,20 @@ reports it and passes). Only the Worker's scheduled run halts or writes: `runWat
 `{ autoHalt: true, heartbeat: true }` is read-only, which is what the local smoke test uses.
 
 `.github/workflows/watchdog-heartbeat.yml` is scheduled to read both `/health` pages from outside
-Cloudflare twice an hour (at minutes 7 and 37) and fails when a page cannot be fetched or its stamp
+Cloudflare twice an hour (at minutes 7 and 37; GitHub has started this repository's schedules hours
+late, see below; the first scheduled run is 37850573340) and fails when a page cannot be fetched or its stamp
 is missing or older than 45 minutes (three missed runs). A failure opens one issue labelled
 `watchdog-heartbeat`, or comments on the open one; the next healthy run closes it. It also runs on
 demand (Actions, "Run workflow").
+
+**The alert drill.** From the release merged on 2026-10-09 the workflow has a manual input,
+`test_alert`. Run by hand with it ticked, the workflow probes both Workers as usual, then adds one
+synthetic failure line, so the job fails and the issue path runs once on purpose: it opens an issue
+labelled `watchdog-heartbeat` whose title says TEST (or comments on the open one). The next green run,
+scheduled or by hand without the box, closes it. A schedule never sets it. The labels the alerting
+workflows use (`watchdog-heartbeat`, `live-claim`, `contract-security`) were created in the repository
+on 2026-10-09. The drill is the owner's, once the merged workflow is pushed (the input exists only in
+the workflow on the default branch).
 
 What GitHub itself says about scheduled workflows, and what it means here: they run only on the
 default branch, the shortest interval is 5 minutes, runs can be delayed or dropped under load, and in a
@@ -332,7 +384,7 @@ Log:
 | First scheduled run | [run 37850573340](https://github.com/getlumenia/lumenia/actions/runs/37850573340), created at 21:59:43 UTC on 2026-10-08: green (it read both pages at 22:00:21 to 22:00:27 UTC; its close job ran with nothing to close, and its open-or-update job was skipped). It was the only scheduled run in the first 12 slots (17:07 to 22:37 UTC), and still the only one when read at 00:18 UTC on 2026-10-09, after 15 slots |
 | `/health` stamp on the testnet Worker | 18:00:36 UTC, as read at 18:13 UTC on 2026-10-08 (the stamp the readiness report's D3.5 records for both Workers). Not its first: this Worker ran the D3 code from about 17:03 UTC, and its earlier full runs, read during the live adversarial runs, were at 17:15:34, 17:30:38 and 17:45:31 UTC. Read again at 00:16 UTC on 2026-10-09: 00:16:05 UTC |
 | `/health` stamp on the mainnet Worker | 18:00:36 UTC, its first: `null` at 17:54 UTC right after the deploy, then 18:00:36, read at 18:02 UTC (readiness report D3.5). Read again at 00:16 UTC on 2026-10-09: 00:16:10 UTC |
-| The alert path (an issue opened, commented on, then closed) | not run yet: every run so far was green |
+| The alert path (an issue opened, commented on, then closed) | not run yet: every run so far was green. The drill (`test_alert`, above) is the owner's: _pending_ |
 
 Rollback: disable the workflow in the Actions tab. The stamp costs one store write per run.
 
@@ -361,7 +413,9 @@ halts both networks at once when an operator means exactly that.
 The KMS cutover's own `SetOptions` is a sponsor-sourced `set_options`, so it trips the first finding by
 design (section 2.2, step 5). That is the live proof of the auto-halt; the cutover log records it.
 The auto-halt has not fired on a deployed Worker yet: the testnet cutover will be its first live
-firing.
+firing. From the release merged on 2026-10-09 the run writes the halt the moment a tripwire is
+raised, before its remaining reads (`test:watchdog-offline` 201); it takes effect with each Worker's
+next deploy.
 
 To resume after confirming the finding was expected: read the store's address and token first with
 `read -rs KV_REST_API_URL && export KV_REST_API_URL` and `read -rs KV_REST_API_TOKEN && export

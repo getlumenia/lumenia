@@ -4,7 +4,7 @@
 > lavender warmed into a consumer periwinkle. Type LOCKED: **Sentient + Switzer**.
 > Build scope: the **whole site is Periwinkle** now — the landing plus every `(site)` and `(app)`
 > surface. Two things stay distinct: the `(app)` money group (Periwinkle via a scoped token
-> override) and the frozen claim route `/c/[id]` (grant evidence — its mechanics are frozen; it
+> override) and the v1 claim route `/c/[id]` (the route the SOW 1 claim used; no longer frozen since D2, but kept lean; it
 > was recolored to Periwinkle via a `.claim-pw` scope and is never restructured from here).
 > Live workspace: `/brand-kit` (13 explored directions) · `/brand-kit/system` (this kit rendered).
 > Repo language policy: this doc is English.
@@ -106,7 +106,7 @@ A warm modern serif display + a clean humanist sans body — the fastest non-cry
 - **Radii:** 10–16px, never pill-sized.
 - **Funder echo (optional):** Stellar's own pairing is **Lora + Inter**. Available on `/brand-kit`
   as a 4th specimen — instant Stellar alignment, but Inter is the generic default we avoid. Not our pick.
-- Fonts load across the product (the `(site)` and `(app)` groups); the frozen claim route stays webfont-free.
+- Fonts load across the product (the `(site)` and `(app)` groups); the v1 claim route stays webfont-free.
 
 ## 6. Logo / wordmark
 - **Wordmark:** “Lumenia” set in **Sentient** (600). Lowercase-friendly, warm.
@@ -216,6 +216,6 @@ Imagen** (invisible SynthID only). Lock ONE style reference first.
 6. **Close** — one CTA band.
 
 ## 13. Production discipline (don't burn tokens)
-The site is built out (landing + `(site)` + the `(app)` money surfaces); the claim route stays frozen.
+The site is built out (landing + `(site)` + the `(app)` money surfaces); the v1 claim route stays lean and webfont-free.
 Iterate in `/brand-kit`. Direction is locked (Periwinkle + Sentient). Keep to two or three signature
 components, not a whole new library.

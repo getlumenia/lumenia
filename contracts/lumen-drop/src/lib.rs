@@ -35,13 +35,17 @@ use stellar_macros::{only_owner, when_not_paused};
 // SEP-46 contract metadata; `binver` per SEP-49 so explorers can show the deployed version.
 contractmeta!(key = "binver", val = "0.2.0");
 
-/// Persistent-storage TTL bumps (~1 day threshold, ~30 days extend at 5s ledgers).
+/// Persistent-storage TTL bumps (~1 day threshold, ~30 days extend at 5s ledgers). A new entry
+/// starts at the network's minimum persistent TTL (testnet 120,960 ledgers, about 7 days; mainnet
+/// 2,073,600, about 120 days), which is above the threshold, so the bump only fires on an entry
+/// that is read close to its end (measured on testnet, 2026-10-09).
 const TTL_THRESHOLD: u32 = 17_280;
 const TTL_EXTEND: u32 = 518_400;
 
-/// Upper bound on how far in the future a drop's `expiry` may sit (seconds). Keeps every
-/// drop's whole life inside the ~30-day persistent-TTL window bumped at deposit, so a live
-/// (claimable) drop can never hit archival before it is either claimed or reclaimable.
+/// Upper bound on how far in the future a drop's `expiry` may sit (seconds). On mainnet the
+/// minimum persistent TTL outlives it; on testnet an untouched drop can be archived first, and
+/// since protocol 23 a later claim or take-back restores it automatically in the same
+/// transaction, so archival delays nothing and loses nothing.
 const MAX_EXPIRY_HORIZON: u64 = 30 * 24 * 60 * 60;
 
 /// Domain-separation tags folded into the signed message so a signature for one drop kind

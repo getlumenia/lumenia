@@ -33,7 +33,7 @@ verbatim:
 
 | Metric | Status on 2026-10-09 | What is still missing |
 |---|---|---|
-| 1. A send from the published extension, claimed on mainnet | **Pending** | The owner's real-money run from an approved pilot wallet: the deposit and claim hashes, and the demo video. |
+| 1. A send from the published extension, claimed on mainnet | **Pending** | The owner's real-money run from an approved pilot wallet, claimed in a browser with no Lumenia account and recorded continuously: the deposit and claim hashes and the recipient account. (The practice-money demo video of 0.1.3 is done; see below.) |
 | 2. A private-by-default link, claimed on mainnet | **Pending** | The owner's real-money run: the link with its key redacted, the deposit and claim hashes, the chat preview screenshots, and what a preview bot received. |
 | 3. Open-mainnet readiness | **Pending: the KMS cutover** | The CI part and the adversarial-run part are done (below). The production signer is still the environment key. |
 
@@ -49,10 +49,11 @@ wording, it is under [SOW 2: deviations from the SOW as written](#sow-2-deviatio
 |---|---|
 | Store listings (public) | Chrome Web Store: <https://chromewebstore.google.com/detail/lumenia-send-dollars-by-l/ccdnjnckaldkmjnlpgpmdmnbajmakhmn> (0.1.2, public by 2026-10-06). Firefox Add-ons: <https://addons.mozilla.org/en-US/firefox/addon/lumenia/> (0.1.2, public since 2026-10-07). |
 | Public repo | [`apps/extension`](apps/extension) and [its README](apps/extension/README.md): what it does, what it never does, what it stores and sends. The published 0.1.2 was built from `062725f`, before D2 and D3; 0.1.3 is built from the later source (deviation c). The recipient never needs the extension. |
-| Security checklist, tests and builds | Readiness report D1.1 and D1.2: 29 rules, each with the file and line that enforces it. `pnpm --filter @lumenia/extension test`: 9 suites, 1,927 assertions at `24d0f4e`, run in CI (job `extension`), which also builds both packages and runs the Firefox lint. |
+| Extension 0.1.3, built 2026-10-09 | From the merged working tree (the owner commits it): `lumenia-chrome-0.1.3.zip` sha256 `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73`, `lumenia-firefox-0.1.3.zip` sha256 `7ddb559764c7c81aa151bcc06a65fb33cc879077de825ecca6246acf2547260d`, `lumenia-extension-sources-0.1.3.zip` sha256 `a4bbcb530ea164c6e8a374fb06626d51e98296d59a5f282a69f58c6cbea627b5`. A clean-room rebuild from the sources archive is byte-identical to `dist/chrome` and `dist/firefox` (the zips differ only in file times). Links `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`: no amount anywhere, no name unless one is typed. **Submission to both stores: pending** (the owner's Chrome Web Store upload and AMO `web-ext sign --channel=listed`). Readiness report, Published builds. |
+| Security checklist, tests and builds | Readiness report D1.1 and D1.2: 29 rules, each with the file and line that enforces it. `pnpm --filter @lumenia/extension test`: 9 suites, 2,173 assertions on the merged tree of 2026-10-09 (1,927 at `24d0f4e`), run in CI (job `extension`), which also builds both packages and runs the Firefox lint. |
 | Live proof on testnet | Readiness report D1.3: links made in the extension and claimed on getlumenia.com in a browser with no extension, for example the send [`017bef46...c1ec71`](https://stellar.expert/explorer/testnet/tx/017bef46e84e1875d5eb7ec147de0fb25b7c6f0e38aaa5067172ab8206c1ec71) and its claim [`c0669dc4...26c3fc`](https://stellar.expert/explorer/testnet/tx/c0669dc474f3897624eda460618d61ef0df71dc3bcb119620a24a001c326c3fc), a take-back after expiry, and an account made in the extension, end to end. |
 | Metric 1: the mainnet send and its claim | _Pending the owner's run_: the deposit hash and the claim hash. |
-| Demo video | _Pending._ |
+| Demo video (practice money) | A 60 fps silent demo of extension 0.1.3 on Stellar testnet, recorded 2026-10-09 with a scripted Playwright capture: an account made in the extension, practice dollars arriving, a right-click paste into a chat box, the link (no amount, no name), the recipient claiming in a browser that never saw Lumenia (testnet claim [`d956546a...681eb67`](https://stellar.expert/explorer/testnet/tx/d956546a50084b9d702759bcfe101fa5163f9da691ae6ac85d045bbaa681eb67)), the extension's list turning to Claimed, and the Real money note. Automation cannot open Chrome's native context menu, so the right-click is driven through the extension's own menu handler. It will be served at <https://getlumenia.com/media/lumenia-extension-demo.mp4> after the owner's next web deploy. Readiness report D1.6. It is not the metric-1 recording. |
 | Not verified yet | Readiness report D1.4: the first run in Firefox, a paste on the real chat sites, a real-money send. |
 
 ### Metric 2 and D2: private links and the commitment spike
@@ -63,7 +64,7 @@ wording, it is under [SOW 2: deviations from the SOW as written](#sow-2-deviatio
 | Live in production | Since the `1bc2049` deploy on 2026-10-07, about 18:12 UTC. The nightly live run [37774557675](https://github.com/getlumenia/lumenia/actions/runs/37774557675) (2026-10-08, against https://getlumenia.com) passed its step "Private link preview (D2 leak audit, live half)": four chat-preview bot user agents saw no amount and no name, an edited `?a=` never reached the page, the page showed the amount read from the ledger, the claim page's counters carried no amount, URL or name, and the link was claimed. |
 | The privacy page | <https://getlumenia.com/privacy>: what a link, the ledger and our sponsor can each see. |
 | The leak audit | [`evidence/LEAK_AUDIT.md`](evidence/LEAK_AUDIT.md): one row per channel a link, its amount or a sender's name can travel through, each with the file, the test or the production output that holds it, and what it does not claim (the ledger is public). |
-| The commitment spike (testnet only) | [`evidence/ZK_SPIKE_REPORT.md`](evidence/ZK_SPIKE_REPORT.md): contract [`CAGWIGEG...ILCXA`](https://stellar.expert/explorer/testnet/contract/CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA), one deposit [`78183bfa...2ec2b`](https://stellar.expert/explorer/testnet/tx/78183bfa875d264f42bdda6e92b1809bc79651cc0ef0898ca3b900cb9952ec2b) and its claim [`f478345c...139a3`](https://stellar.expert/explorer/testnet/tx/f478345c357c103e44f3e6c9e700e2dc6597bd402eccc475b71a0f9acac139a3), 21 tests in CI (job "Spike contract (testnet only)"), the fee and latency measurements, and every place the amount stays public. It does not hide the amount (deviation a). |
+| The commitment spike (testnet only) | [`evidence/ZK_SPIKE_REPORT.md`](evidence/ZK_SPIKE_REPORT.md): contract [`CAGWIGEG...ILCXA`](https://stellar.expert/explorer/testnet/contract/CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA), one deposit [`78183bfa...2ec2b`](https://stellar.expert/explorer/testnet/tx/78183bfa875d264f42bdda6e92b1809bc79651cc0ef0898ca3b900cb9952ec2b) and its claim [`f478345c...139a3`](https://stellar.expert/explorer/testnet/tx/f478345c357c103e44f3e6c9e700e2dc6597bd402eccc475b71a0f9acac139a3), 22 tests in CI (job "Spike contract (testnet only)"), the fee and latency measurements, the Groth16 verification measured on testnet with the upstream example (deviation e), and every place the amount stays public. It does not hide the amount (deviation a). |
 | Metric 2: a private link claimed on mainnet | _Pending the owner's run_: the link with its key redacted, the deposit and claim hashes, the WhatsApp and Telegram preview screenshots, and what a preview bot received (`curl -A`). |
 
 ### Metric 3 and D3: open-mainnet readiness
@@ -71,13 +72,13 @@ wording, it is under [SOW 2: deviations from the SOW as written](#sow-2-deviatio
 | Evidence | Where |
 |---|---|
 | The hardening suite, green in CI | CI run [37813352621](https://github.com/getlumenia/lumenia/actions/runs/37813352621) on `227db3f` (2026-10-08), with the step "Hardening suite (D3 a-k)", which names the suites that hold each item (readiness report D3.2). Every later push runs it too, for example [37821341438](https://github.com/getlumenia/lumenia/actions/runs/37821341438) on `24d0f4e`. |
-| Deployed | Both Workers, 2026-10-08: testnet at about 17:03 UTC and again at 17:48 UTC, mainnet at 17:54 UTC with `PILOT_MODE=1` kept (readiness report D3.9). |
+| Deployed | Both Workers, 2026-10-08: testnet at about 17:03 UTC and again at 17:48 UTC, mainnet at 17:54 UTC with `PILOT_MODE=1` kept (readiness report D3.9). The release merged on 2026-10-09 (the mainnet log redaction, a subrequest budget of 45 per request, `/health` version, the halt written as soon as a tripwire is raised, the named sponsor account) is not deployed yet: both Worker deploys are the owner's. |
 | A scripted adversarial run against the live mainnet sponsor | Readiness report D3.3, Run 4 (2026-10-08, 17:54 UTC, refusal-only, deviation b): 25 probes, 16 pass, 0 fail, 9 skipped; the mainnet sponsor held 239.6774337 XLM and 0 USDC before the run and the same after it. Runs 1 to 3 hold the probes that a run against a live mainnet Worker must not make. |
 | What each item changed, and the test that holds it | Readiness report D3.1, items a to k. |
-| The watchdog heartbeat | Both Workers stamped their first full watchdog run at 2026-10-08 18:00:36 UTC; the heartbeat workflow's first run was green ([37821047843](https://github.com/getlumenia/lumenia/actions/runs/37821047843)). `/health` on each Worker reports the stamps (readiness report D3.5). |
-| The retirement switch | One variable, `PILOT_MODE`. Rehearsed on a local Worker against the live testnet ledger (readiness report D3.4); the run on the deployed testnet Worker is the owner's (ops note section 1.3). |
+| The watchdog heartbeat | Both Workers stamped their first full watchdog run at 2026-10-08 18:00:36 UTC; the heartbeat workflow's first run was green ([37821047843](https://github.com/getlumenia/lumenia/actions/runs/37821047843)). `/health` on each Worker reports the stamps (readiness report D3.5). The workflow is scheduled every 30 minutes, but GitHub has started this repository's schedules hours late; the first scheduled run is [37850573340](https://github.com/getlumenia/lumenia/actions/runs/37850573340). Its alert path has not run yet; the `test_alert` drill merged on 2026-10-09 is the owner's. |
+| The retirement switch | One variable, `PILOT_MODE`. Dry-run on a local Worker against the live testnet ledger (readiness report D3.4); the run on the deployed testnet Worker is the owner's, one script (`ops/rehearsal/run-testnet-rehearsal.sh`, ops note section 1.3). |
 | The operations note | [`evidence/SOW2_OPS_NOTE.md`](evidence/SOW2_OPS_NOTE.md): the retirement switch, the KMS signer and the heartbeat, each with its exact commands. |
-| The production signer on KMS | _Pending the owner's cutover_ (readiness report D3.6). Until `/health` on the mainnet Worker reports `"signer": {"kind": "kms"}`, this file does not call the sponsor KMS-backed. |
+| The production signer on KMS | _Pending the owner's cutover_ (readiness report D3.6), two scripts: `ops/kms/cloudshell-setup.sh` in AWS CloudShell, then `ops/kms/cutover.sh` (ops note section 2.2). Until `/health` on the mainnet Worker reports `"signer": {"kind": "kms"}`, this file does not call the sponsor KMS-backed. |
 | What still gates opening | Only the written legal opinion that the Customer Development Plan names (section 7.4). A professional security review and a timelock gate two other steps: raising the caps materially and renouncing the escrow's upgrade key. |
 
 ## SOW 2: deviations from the SOW as written
@@ -97,7 +98,7 @@ only the commitment would let a dishonest reveal pay out of other people's drops
 what was escrowed.
 *What was proven instead:* the escrow half of amount hiding. A record that releases the right amount
 without trusting the reveal, a reveal bound to the claim signature, and solvency held by a property
-test over honest and dishonest commitments (21 tests, in CI). Real amount hiding needs a
+test over honest and dishonest commitments (22 tests, in CI). Real amount hiding needs a
 confidential token as the escrowed asset, and Stellar's confidential tokens are a developer preview,
 unaudited and not for real assets. Testnet only; nothing from the spike touched mainnet.
 
@@ -128,8 +129,9 @@ offline suites in CI; Run 4 shows the live mainnet Worker's own answers.
 amount and the sender's name in the query, and it reads a 202 answer to a take-back from the D3
 sponsor as landed. The claim page treats such a link as legacy: the fixed preview, the amount read
 from the ledger, the name from the query for display only (leak audit row 19). 0.1.3, built from this
-repository, makes the private shape and keeps a take-back answered 202 open; it reaches each store
-after that store's review.
+repository, makes the private shape and keeps a take-back answered 202 open. It was built on
+2026-10-09 (hashes in the D1 table above); its submission to both stores is pending, the owner's, and
+it reaches each store after that store's review.
 
 **(d) "26 people approved during this sprint".**
 *SOW (D3 note):* "the 26 people who have already requested access are approved onto the allowlist
@@ -139,8 +141,19 @@ and it cannot be reproduced from the pilot store. On 2026-09-27 the store held o
 application, and it was approved that day, by hand, inside the existing model and caps. No other
 application was waiting in the store.
 
-**(e) Groth16 (the stretch goal).** _Placeholder, to be written before the package is sent: one
-sentence on the Groth16 range-proof stretch goal and what was done in its place._
+**(e) Groth16 (the stretch goal) was measured with the upstream example, not built as a range proof.**
+*SOW D2 (stretch):* "a Groth16 range-proof variant on Stellar's live BLS12-381 host functions".
+*Done:* no circuit of our own was written. In its place the upstream BLS12-381 Groth16 verifier from
+soroban-examples was deployed on testnet
+([`CBMYSVI2KCESZC6BNAKDTKHJKIA22EKXLOILPYVPQYIGVJ44R7PL75MD`](https://stellar.expert/explorer/testnet/contract/CBMYSVI2KCESZC6BNAKDTKHJKIA22EKXLOILPYVPQYIGVJ44R7PL75MD))
+and called once with the upstream circom proof: `verify_proof` returned true in
+[`7a024510...48d6`](https://stellar.expert/explorer/testnet/tx/7a02451038580d5759466647bc04082a5674218511ef66ae2bcb6167fd9648d6),
+at 41,460,357 CPU instructions and a fee of 0.0039623 XLM. That is the upstream example circuit, not
+a range proof of ours, and it proves nothing about a Lumenia payment. The spike still does not hide the
+amount: the record keeps `escrowed` next to the commitment, and the token transfer publishes the
+amount. The spike's testnet entries were extended on 2026-10-09 to about ledger 8,206,700 (about
+2027-04-07); [`evidence/ZK_SPIKE_REPORT.md`](evidence/ZK_SPIKE_REPORT.md) has the seven extension
+transactions and the measurement.
 
 **(f) A sender's name travels after the `#` only when the sender adds one.**
 *SOW D2 metric:* "a private-by-default link whose chat preview and URL carry no amount and no sender
@@ -226,7 +239,7 @@ valid evidence; both transactions still resolve on testnet.
 | Evidence | Where |
 |---|---|
 | Validator gating every live `/feebump` | [`apps/sponsor/src/lib/anti-drain.ts`](apps/sponsor/src/lib/anti-drain.ts): an allowlist over op **types, sources and parameters**, strict-by-default (a missing constraint rejects) |
-| Unit tests | **60/60** at the 2026-08-31 capture, `pnpm --filter @lumenia/sponsor test:antidrain` (no network; the same module the deployed Worker uses). Breakdown: **18 claim + 7 send + 12 sweep + 12 payout + 4 op-sequence + 4 golden-policy + 3 muxed-address**. The SOW cited 14/14; the suite grew to 60/60 (see the growth note below). Re-running at `24d0f4e` prints **71/71**: SOW 2's D3 added 11 cases on 2026-10-08, the split between the sponsor account and its signer among them. |
+| Unit tests | **60/60** at the 2026-08-31 capture, `pnpm --filter @lumenia/sponsor test:antidrain` (no network; the same module the deployed Worker uses). Breakdown: **18 claim + 7 send + 12 sweep + 12 payout + 4 op-sequence + 4 golden-policy + 3 muxed-address**. The SOW cited 14/14; the suite grew to 60/60 (see the growth note below). Re-running at `24d0f4e` prints **71/71**: SOW 2's D3 added 11 cases on 2026-10-08, the split between the sponsor account and its signer among them. On the merged tree of 2026-10-09 it prints **82/82**: 11 more came with the mainnet log redaction. |
 | Integration tests | **6/6**, `pnpm --filter @lumenia/sponsor test:integration` (real HTTP: happy claim lands 20 USDC at 0 XLM, a 0-XLM onward send creates a sponsored CB, a malicious payment is rejected 400, a burst 429s) |
 | Live drain rejection (deployed service) | A sponsor-sourced `payment` inner tx POSTed to the **production** `/feebump` returns `400 {"error":"anti-drain rejected the inner tx: op 'payment' sourced from sponsor (drain attempt)"}` (2026-07-11) |
 | Plain-language write-up | [ANTI_DRAIN.md](ANTI_DRAIN.md) |
@@ -238,7 +251,7 @@ valid evidence; both transactions still resolve on testnet.
 > **golden-policy** snapshot added 7 (37 -> 44); a **`/payout` policy** (the user sends their own dollars to
 > an address they name) plus its golden-allowlist case added 13 (44 -> 57); and three **muxed-address
 > (M...) rejection** cases, added 2026-08-08, closed the muxed-source bypass class (57 -> 60). SOW 2's D3
-> added 11 more on 2026-10-08 (60 -> 71). The claim allowlist was never widened: the count went up because
+> added 11 more on 2026-10-08 (60 -> 71), and the log redaction 11 more on 2026-10-09 (71 -> 82). The claim allowlist was never widened: the count went up because
 > coverage went up, and no SOW-era test was removed or weakened. The capture below is a full 60/60 run
 > from 2026-08-31; the earlier 44/44 and 25/25 captures were dropped once they no longer matched what the
 > suite prints.
@@ -409,10 +422,10 @@ wasm in this table (`38941538...ec6a`, the hash the mainnet watchdog pins).
 | Escrow, on-chain (deposit -> late-bound claim -> relayer cannot redirect) | **7/7** real testnet txs | `USDC_ISSUER_SECRET=S... pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-onchain-proof.ts` |
 | Relayer handler (the same code the deployed `/v2-claim` runs) | **5/5** real testnet txs | `SPONSOR_SECRET=S... USDC_ISSUER_SECRET=S... pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-relay-test.ts` |
 | **Governance, on-chain (new)** | **10/10** real testnet txs | `USDC_ISSUER_SECRET=S... OWNER_SECRET=S... LUMENDROP_CONTRACT=C... WASM_HASH=... pnpm --filter @lumenia/sponsor exec tsx src/lumendrop-governance-proof.ts` |
-| Anti-drain validator | **60/60** then, **71/71** at `24d0f4e` (offline) | `pnpm --filter @lumenia/sponsor test:antidrain` |
+| Anti-drain validator | **60/60** then, **71/71** at `24d0f4e`, **82/82** on the merged tree of 2026-10-09 (offline) | `pnpm --filter @lumenia/sponsor test:antidrain` |
 | Sponsor integration (real HTTP) | **6/6** (testnet) | `pnpm --filter @lumenia/sponsor test:integration` |
-| KMS Ed25519 signer (offline; byte-parity with the SDK's own signing) | **13/13** then, **142/142** at `24d0f4e` | `pnpm --filter @lumenia/sponsor test:kms` |
-| **Canary caps (new)**: per-drop + rolling-UTC-day escrow ceiling on both escrow-creating paths | **28/28** then, **274/274** at `24d0f4e` (offline) | `pnpm --filter @lumenia/sponsor test:caps` |
+| KMS Ed25519 signer (offline; byte-parity with the SDK's own signing) | **13/13** then, **142/142** at `24d0f4e`, **153/153** on the merged tree of 2026-10-09 | `pnpm --filter @lumenia/sponsor test:kms` |
+| **Canary caps (new)**: per-drop + rolling-UTC-day escrow ceiling on both escrow-creating paths | **28/28** then, **274/274** at `24d0f4e` and on the merged tree of 2026-10-09 (offline) | `pnpm --filter @lumenia/sponsor test:caps` |
 | **Legacy-contract fallback (new)**: claim/reclaim a drop held by a superseded contract | **9/9** real testnet txs | `SPONSOR_SECRET=S... USDC_ISSUER_SECRET=S... pnpm --filter @lumenia/sponsor test:legacy` |
 | **Watchdog (new)**: cron tripwire smoke test | **3/3** (testnet) | `pnpm --filter @lumenia/sponsor test:watchdog` |
 
@@ -469,7 +482,7 @@ weekly job records that it could not run; see [SECURITY.md](SECURITY.md).)
 
 - **AWS-KMS Ed25519 signer**: code-complete behind the existing signer interface, **13/13**
   offline tests then (**142/142** at `24d0f4e`, after SOW 2's D3 split the sponsor account from its
-  signer). **Live AWS provisioning has not happened** as of 2026-10-09: both deployed Workers still
+  signer; **153/153** on the merged tree of 2026-10-09). **Live AWS provisioning has not happened** as of 2026-10-09: both deployed Workers still
   sign with an environment key. The cutover is the last open part of SOW 2's metric 3.
 - **Kill-switch**: can halt every value-moving endpoint.
 - **Canary caps** (`apps/sponsor/src/lib/caps.ts`): a per-drop and a rolling-UTC-day ceiling on the
@@ -487,7 +500,8 @@ weekly job records that it could not run; see [SECURITY.md](SECURITY.md).)
   pinned in `LUMENDROP_WASM_HASH` and must be updated on every intentional upgrade. Alerts go to
   `wrangler tail`, plus email when `RESEND_API_KEY` + `ALERT_NOTIFY_TO` are set. (Since 2026-10-08,
   SOW 2's D3: it halts the sponsor by itself on its two theft tripwires and stamps a heartbeat that a
-  GitHub workflow reads every 30 minutes.)
+  GitHub workflow is scheduled to read every 30 minutes; GitHub has started this repository's
+  schedules hours late, and the first scheduled run is 37850573340.)
 - **OpenZeppelin Monitor configs** remain in `ops/monitor/` as a documented, **not-deployed** richer
   alternative. A key-custody runbook exists (`ops/RUNBOOK_SPONSOR_KEY.md`).
 - **Next.js bumped to 16.2.11**, closing 4 high and 6 moderate advisories (including a middleware
@@ -509,16 +523,16 @@ automation and abuse-at-scale handling.
 
 ## Re-run everything
 
-Counts at `24d0f4e` (2026-10-09). The offline suites CI runs on every push are listed in
+Counts on the merged tree, 2026-10-09 (run locally; it is not pushed yet). The offline suites CI runs on every push are listed in
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and in the README's quickstart; the testnet
 rows are the counts of their last recorded runs.
 
 ```bash
 git clone https://github.com/getlumenia/lumenia && cd lumenia
 pnpm install
-pnpm --filter @lumenia/sponsor test:antidrain     # 71/71, no network
+pnpm --filter @lumenia/sponsor test:antidrain     # 82/82, no network
 pnpm --filter @lumenia/sponsor test:integration   # 6/6, testnet (friendbot; can be slow if friendbot rate-limits)
-pnpm --filter @lumenia/sponsor test:kms           # 142/142 KMS signer tests, no network, no AWS
+pnpm --filter @lumenia/sponsor test:kms           # 153/153 KMS signer tests, no network, no AWS
 pnpm --filter @lumenia/sponsor test:caps          # 274/274 canary caps and budgets, no network
 pnpm --filter @lumenia/sponsor test:legacy        # 9/9 legacy-contract fallback, testnet (needs SPONSOR_SECRET + USDC_ISSUER_SECRET)
 pnpm --filter @lumenia/sponsor test:watchdog      # 3/3 watchdog smoke test, testnet
@@ -532,7 +546,8 @@ cd apps/sponsor && npx wrangler deploy
 ```
 
 On 2026-08-31 the whole offline gate was **17 suites / 539 assertions / 0 failures** (the capture
-below). It has grown since: at `24d0f4e` it is 40 suites (sponsor 12 suites / 1,205 assertions, web
-19 / 869, extension 9 / 1,927), plus the contract's 29 tests.
+below). It has grown since: on the merged tree of 2026-10-09 it is 40 suites / 4,388 assertions, all
+green (sponsor 12 suites / 1,270 plus the stand-in store's self-test 35, web 19 / 945, extension 9 /
+2,173), plus the escrow contract's 29 tests and the spike contract's 22.
 
 ![The offline test gate on 2026-08-31: 17 suites, 539 assertions, zero failures](evidence/offline-gate-17-suites-539.png)

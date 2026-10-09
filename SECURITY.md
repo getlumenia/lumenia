@@ -96,9 +96,10 @@ these levels describe **real dollars**, bounded by the caps above.
   there is **no timelock**, so an owner upgrade is instant. A timelock in front of the multisig is
   the next governance step.
 - The sponsor key is still an **environment hot key**. An AWS-KMS Ed25519 signer is code-complete
-  behind the same interface (142/142 offline tests at `24d0f4e`), and since 2026-10-08 the sponsor
-  account is configured apart from its signer, so the cutover adds the KMS key to the existing
-  account with one SetOptions. The live AWS key is **not provisioned** yet; until `/health` on the
+  behind the same interface (153/153 offline tests on the merged tree of 2026-10-09), and since
+  2026-10-08 the sponsor account is configured apart from its signer, so the cutover adds the KMS key
+  to the existing account with one SetOptions. The cutover is scripted (`ops/kms/cloudshell-setup.sh`,
+  `ops/kms/cutover.sh`) and is the owner's step. The live AWS key is **not provisioned** yet; until `/health` on the
   mainnet Worker reports `"kind": "kms"`, we do not call the sponsor KMS-backed.
 - Pausing can only stop NEW escrow. Claims and reclaims are never pausable, so escrowed funds
   can always exit.
@@ -156,9 +157,19 @@ to both Workers that day; each one, with the test that holds it, is in
   because a halt also stops the exit routes.
 - **Heartbeat stamp and a dead-man workflow** (since 2026-10-08). Every watchdog run writes a stamp,
   and a second one only when every check completed; `/health` reports both. A GitHub workflow
-  (`.github/workflows/watchdog-heartbeat.yml`) reads both Workers' `/health` every 30 minutes from
-  outside Cloudflare and opens one issue when a stamp is older than 45 minutes, the full-run stamp
-  is older than 3 hours, or the mainnet Worker cannot send alerts.
+  (`.github/workflows/watchdog-heartbeat.yml`) is scheduled to read both Workers' `/health` every 30
+  minutes from outside Cloudflare and opens one issue when a stamp is older than 45 minutes, the
+  full-run stamp is older than 3 hours, or the mainnet Worker cannot send alerts. GitHub has started
+  this repository's schedules hours late (the first scheduled run is 37850573340), so detection can
+  take hours, not 45 minutes. Its alert path has not run yet; a manual drill (`test_alert`, merged on
+  2026-10-09) opens a TEST issue on purpose, and running it is the owner's.
 - **Migration safety net.** A drop can only be released by the contract holding it, so the
   sponsor and the web app read and exit superseded escrow contracts while new escrow only ever
   enters the current one. A contract repoint therefore cannot strand a link that was already sent.
+
+Merged on 2026-10-09 and **not live yet** (each Worker changes with its next deploy, which is the
+owner's): a redacted mainnet error log (one line, every full address cut to four characters, a
+refused simulation kept to its first line, payout and sweep refusals without amounts, Horizon
+refusals without the transaction envelope), a budget of 45 subrequests per request under the Workers
+Free plan's 50, `/health` naming the deployed version, and the watchdog writing its halt the moment a
+tripwire is raised. Until those deploys, the running Workers are the 2026-10-08 code.
