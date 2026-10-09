@@ -35,6 +35,10 @@ USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
 # /v2-claim and /v2-reclaim relayers. SOROBAN_RPC_URL defaults to the testnet RPC.
 # CURRENT (v0.2.0, hardened: versioned storage + owner-gated pause/upgrade). All NEW escrow.
 LUMENDROP_CONTRACT = "CAMCI5VPRLQUL6H4QKLZ6X7ASLVCEYBYWS7N3QG7JVOA25HCY2TN3HP3"
+# The sponsor ACCOUNT, named explicitly ahead of the KMS cutover (ops/kms/cutover.sh). With the
+# env signer this is the signer's own address, so nothing changes; KMS mode refuses to start without it.
+SPONSOR_ACCOUNT_ID = "GDQFGINJ4PMEX4GN53OHFFO657P5APN5BYEEDKRTNYC74FXUBCQTXDLL"
+KMS_REGION = "eu-central-1"
 # SUPERSEDED escrows that may still hold live drops. EXIT-ONLY: claim/reclaim are relayed for
 # these so links already in the wild keep working; deposits never go here. Drop an id from this
 # list once its drops have all expired and been reclaimed (a drop lives at most 7 days).
@@ -145,6 +149,10 @@ USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 # Deployed 2026-07-26 (wasm upload 22.41 XLM + instance 0.05 XLM — mainnet rent is far higher
 # than testnet's, budget accordingly).
 LUMENDROP_CONTRACT = "CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4"
+# The sponsor ACCOUNT, named explicitly ahead of the KMS cutover (ops/kms/cutover.sh). With the
+# env signer this is the signer's own address, so nothing changes; KMS mode refuses to start without it.
+SPONSOR_ACCOUNT_ID = "GBLBAKFVTS2GSEOUK3AKOZAO3I6T34YHNJPG4DMF5JODVWJDJIPDYZZ2"
+KMS_REGION = "eu-central-1"
 LUMENDROP_LEGACY_CONTRACTS = ""
 # The wasm the escrow is expected to run; the watchdog pages if the deployed bytecode differs.
 LUMENDROP_WASM_HASH = "38941538b964af2110a6fd2fae4c1c3de2ff6585ef0da5d1a59de2ce29edec6a"

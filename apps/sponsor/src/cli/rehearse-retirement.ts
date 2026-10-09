@@ -377,7 +377,7 @@ async function main(): Promise<void> {
     record("a real 0.05 USDC deposit from W2", "403, not on the allowlist", shown(d2), refusedWith(d2, 403));
     const d1 = await deposit("w1", w1, contract, 500_000n);
     record("a real 0.05 USDC deposit from W1 before its approval", "403, not on the allowlist", shown(d1), refusedWith(d1, 403));
-    console.log(`\nNEXT (owner): approve W1 in the TESTNET namespace, then run --phase approved:\n  STELLAR_NETWORK=testnet KV_REST_API_URL=... KV_REST_API_TOKEN=... pnpm --filter @lumenia/sponsor pilot approve ${w1.publicKey()}`);
+    console.log(`\nNEXT (owner): approve W1 in the TESTNET namespace (the token is read hidden, never typed on the command line), then run --phase approved:\n  read -r KV_REST_API_URL && read -rs KV_REST_API_TOKEN && export KV_REST_API_URL KV_REST_API_TOKEN\n  STELLAR_NETWORK=testnet pnpm --filter @lumenia/sponsor pilot approve ${w1.publicKey()}\n  unset KV_REST_API_TOKEN`);
   }
 
   if (PHASE === "approved") {

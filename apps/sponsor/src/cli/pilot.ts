@@ -7,8 +7,9 @@
  * mainnet Worker uses, or you'll write to the testnet namespace by mistake (the output names
  * the network so you can catch that).
  *
- *   RUN:  STELLAR_NETWORK=mainnet KV_REST_API_URL=... KV_REST_API_TOKEN=... \
- *           pnpm --filter @lumenia/sponsor pilot approve G...
+ *   RUN:  read -r KV_REST_API_URL && read -rs KV_REST_API_TOKEN && export KV_REST_API_URL KV_REST_API_TOKEN
+ *         STELLAR_NETWORK=mainnet pnpm --filter @lumenia/sponsor pilot approve G...
+ *         (the token is read hidden, never typed on a command line; unset KV_REST_API_TOKEN afterwards)
  *         ...pilot approve G... G... G...        several at once
  *         ...pilot approve --file wallets.txt    one G... per line, # comments allowed
  *         ...pilot list [pending|approved|rejected|none|all]   (default: pending)

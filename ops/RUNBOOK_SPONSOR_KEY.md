@@ -62,7 +62,7 @@ Steps 2 to 4 run in `apps/sponsor`.
    (step 4).
 2. **Verify the live key before it touches any account:**
    ```
-   read -r KMS_KEY_ID && export KMS_KEY_ID            # the key ARN
+   read -rs KMS_KEY_ID && export KMS_KEY_ID           # the key ARN (hidden: it names the AWS account)
    read -rs AWS_ACCESS_KEY_ID && export AWS_ACCESS_KEY_ID
    read -rs AWS_SECRET_ACCESS_KEY && export AWS_SECRET_ACCESS_KEY
    KMS_REGION=eu-central-1 pnpm run kms-check
