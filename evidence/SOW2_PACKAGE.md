@@ -32,7 +32,7 @@ keys and accounts; the tools for each are in the repository.
 | Deliverable | Evidence | Where |
 |---|---|---|
 | D1 | Public repository | [`apps/extension`](../apps/extension/) with its [README](../apps/extension/README.md) (what it does, every permission, what it sends and keeps, the published builds and how to rebuild them) |
-| D1 | Store listing or signed package | Chrome Web Store and addons.mozilla.org, both public at 0.1.2; 0.1.3 packages built 2026-10-09, a clean-room rebuild from the sources archive is byte-identical; submission _pending_ |
+| D1 | Store listing or signed package | Chrome Web Store and addons.mozilla.org, both public at 0.1.2; 0.1.3 packages built 2026-10-09, a clean-room rebuild from the sources archive is byte-identical; submitted to addons.mozilla.org on 2026-10-09 (in review), Chrome Web Store upload _pending_ |
 | D1 | Demo video | A 47-second silent demo of 0.1.3 on practice money: make an account, paste a link into a chat box, the recipient claims in a browser that never saw Lumenia, the sender's list shows Claimed, real money waits for a backup and an approval. Served at https://getlumenia.com/media/lumenia-extension-demo.mp4 since 2026-10-09. The right-click step is driven through the extension's own menu handler, because automation cannot open Chrome's native context menu |
 | D1 | Mainnet transaction hash | _pending_ (metric 1) |
 | D2 | Live private link, its claim hash, the preview proof | _pending_ (metric 2) |

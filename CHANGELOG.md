@@ -160,8 +160,8 @@ only with its own next deploy, which is the owner's.
 - **0.1.2** (2026-10-04): the listing for a public addons.mozilla.org page, the same code as
   0.1.1. Public on the Chrome Web Store by 2026-10-06 and on addons.mozilla.org since
   2026-10-07. Its links still carry the amount and the sender's name in the query.
-- **0.1.3** (built 2026-10-09 from the merged tree; **submission to both stores pending**, the
-  owner's): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
+- **0.1.3** (built 2026-10-09 from commit `00aa0a5`; **submitted to addons.mozilla.org on 2026-10-09**, in
+  review; the Chrome Web Store upload is the owner's): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
   no amount anywhere and no name unless one is typed; the From field starts empty, and the name
   0.1.2 saved is deleted at startup; the one-time real-money note "Real money on Lumenia is an
   early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so
