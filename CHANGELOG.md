@@ -25,6 +25,8 @@ assertions, all green). The web is live since 2026-10-09 (commit `00aa0a5`, CI r
 claim, private-preview and send checks passed against getlumenia.com). Both sponsor Workers were
 deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`; `/health` on each shows the version and `accountSource: SPONSOR_ACCOUNT_ID`, and a
 refusal-only run against the live mainnet Worker afterwards refused all it sent and spent nothing.
+The testnet Worker then ran the retirement-switch rehearsal (08:57 to 09:03 UTC, every step passed;
+see the D3 entry below) and ends on version `32067caf`, the same release in its normal configuration.
 
 #### Changed (sponsor)
 
@@ -46,7 +48,8 @@ refusal-only run against the live mainnet Worker afterwards refused all it sent 
   deploy `/health` reads `"accountSource": "SPONSOR_ACCOUNT_ID"`.
 - **The heartbeat workflow has a manual drill**, `test_alert`, which opens an issue titled TEST
   through the real issue path; the next green run closes it. The labels `watchdog-heartbeat`,
-  `live-claim` and `contract-security` were created in the repository on 2026-10-09.
+  `live-claim` and `contract-security` were created in the repository on 2026-10-09. Drilled on
+  2026-10-09: run 37905050169 opened issue #46 and run 37905107528 closed it.
 
 #### Changed (web)
 
@@ -102,9 +105,10 @@ refusal-only run against the live mainnet Worker afterwards refused all it sent 
   and opens an issue on a stale stamp; the sponsor halts itself on the watchdog's two theft tripwires (a
   sponsor-sourced forbidden operation, a changed escrow wasm).
 - **The allowlist's retirement behind one variable** (`PILOT_MODE`): unset, `/pilot-status`
-  answers "open" and every cap stays. Dry-run on a local Worker against the testnet ledger
-  (`pnpm --filter @lumenia/sponsor rehearse`); the run on the deployed testnet Worker is the
-  owner's (`ops/rehearsal/run-testnet-rehearsal.sh`).
+  answers "open" and every cap stays. Dry-run on a local Worker against the testnet ledger on
+  2026-10-08 (`pnpm --filter @lumenia/sponsor rehearse`), then rehearsed on the deployed testnet
+  Worker on 2026-10-09 with `ops/rehearsal/run-testnet-rehearsal.sh`: six phases, 22 logged steps,
+  all passed, and every deposit that landed taken back (ops note section 1.4).
 - **A scripted adversarial runner** (`pnpm --filter @lumenia/sponsor adversarial`): full mode
   on testnet or a local Worker, refusal-only against a live mainnet Worker, with a stand-in
   store for the store-dependent probes (`fake-kv`).

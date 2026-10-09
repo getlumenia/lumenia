@@ -8,14 +8,16 @@ and every CI run opens on GitHub.
 ## In one paragraph
 
 SOW 2 asked for three things. **D1**, a sender-side browser extension: built, in both stores
-(Chrome Web Store public since 2026-10-06, addons.mozilla.org public since 2026-10-07), with a
-version 0.1.3 built and waiting to be submitted. **D2**, private links: live on getlumenia.com
+(Chrome Web Store public since 2026-10-06, addons.mozilla.org public since 2026-10-07), with
+version 0.1.3 built, submitted to addons.mozilla.org on 2026-10-09 (in review) and waiting for its
+Chrome Web Store upload. **D2**, private links: live on getlumenia.com
 since 2026-10-07 (no amount and no name in a link, the claim page reads the amount from the
 ledger, a plain chat preview, a password by default for real money), with a public privacy page,
 a written leak audit and a testnet commitment spike. **D3**, open-mainnet readiness: the hardened
 sponsor is deployed on both networks since 2026-10-08, held by a CI step named "Hardening suite
-(D3 a-k)", and a scripted adversarial run against the live mainnet sponsor refused everything it
-sent and spent nothing. What is not done yet: the two real-money runs (metrics 1 and 2) and the
+(D3 a-k)", a scripted adversarial run against the live mainnet sponsor refused everything it
+sent and spent nothing, and on 2026-10-09 the retirement of the allowlist was rehearsed on the
+deployed testnet Worker, every step passing. What is not done yet: the two real-money runs (metrics 1 and 2) and the
 move of the production signer to AWS KMS (metric 3, third part). All three need the founder's own
 keys and accounts; the tools for each are in the repository.
 
@@ -41,7 +43,7 @@ keys and accounts; the tools for each are in the repository.
 | D2 | Spike report and testnet contract id | [`evidence/ZK_SPIKE_REPORT.md`](ZK_SPIKE_REPORT.md): contract `CAGWIGEG...ILCXA` on testnet, kept live to about April 2027; a negative result stated first (below) |
 | D3 | Hardening suite in public CI | The step "Hardening suite (D3 a-k)" in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
 | D3 | Readiness report of the adversarial run against the live mainnet sponsor | [`evidence/SOW2_READINESS_REPORT.md`](SOW2_READINESS_REPORT.md), D3.3 |
-| D3 | Operations note: the KMS switch, the watchdog heartbeat, the rehearsed retirement switch | [`evidence/SOW2_OPS_NOTE.md`](SOW2_OPS_NOTE.md); the deployed-testnet rehearsal and the KMS cutover logs are _pending_ |
+| D3 | Operations note: the KMS switch, the watchdog heartbeat, the rehearsed retirement switch | [`evidence/SOW2_OPS_NOTE.md`](SOW2_OPS_NOTE.md); the rehearsal on the deployed testnet Worker (2026-10-09, every step PASS) is logged in its section 1.4; the KMS cutover log is _pending_ |
 
 ## Suggested reading of the SOW checklist (section 6.2)
 
@@ -103,7 +105,7 @@ reading is taken from the dashboard before the package is sent.
 
 ## What remains, and who does it
 
-All five need the founder's keys, accounts or wallet. Each has a written procedure. Done on 2026-10-09: the web and both sponsor Workers run the merged release (testnet `213a2832`, mainnet `baaeaae0`), a refusal-only run against the new mainnet Worker spent nothing, and the heartbeat alert drill opened and closed issue #46.
+All four need the founder's keys, accounts or wallet. Each has a written procedure. Done on 2026-10-09: the web and both sponsor Workers run the merged release (testnet `213a2832`, then `32067caf` after the rehearsal's last deploy; mainnet `baaeaae0`; all tagged `215cfb2`), a refusal-only run against the new mainnet Worker spent nothing, the heartbeat alert drill opened and closed issue #46, and the retirement switch was rehearsed on the deployed testnet Worker from 08:57 to 09:03 UTC: six phases, 22 logged steps, all PASS, every deposit that landed taken back ([ops note section 1.4](SOW2_OPS_NOTE.md)).
 
 | Step | Tool or procedure |
 |---|---|
@@ -111,7 +113,6 @@ All five need the founder's keys, accounts or wallet. Each has a written procedu
 | Metric 2: one private mainnet link from getlumenia.com/send (no name typed), previews screenshotted in WhatsApp and Telegram, claimed in a browser with no Lumenia account | [readiness report D2.5](SOW2_READINESS_REPORT.md) |
 | Metric 1: one mainnet link from the store extension, claimed in a second clean browser, recorded in one take | [readiness report D1](SOW2_READINESS_REPORT.md) |
 | The KMS cutover, testnet then mainnet | [`ops/kms/cloudshell-setup.sh`](../ops/kms/cloudshell-setup.sh) in AWS CloudShell, then [`ops/kms/cutover.sh`](../ops/kms/cutover.sh) |
-| The retirement switch rehearsed on the deployed testnet Worker | [`ops/rehearsal/run-testnet-rehearsal.sh`](../ops/rehearsal/run-testnet-rehearsal.sh) |
 
 The opening itself waits for one thing only, as the Customer Development Plan's section 7.4 says:
 a written legal opinion. The request for it is drafted and goes to a law firm this month. Until it

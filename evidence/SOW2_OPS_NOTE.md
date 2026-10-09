@@ -3,8 +3,10 @@
 Status: **2026-10-09. Code done and tested, and deployed on both Workers on 2026-10-08 (the mainnet
 one with `PILOT_MODE=1` kept); the watchdog heartbeat is live (section 3).** The release merged on
 2026-10-09 is deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`, so each Worker names its sponsor account as the cutover script
-needs, and the heartbeat alert drill ran (section 3). Still to run, the owner's: the rehearsal on the
-deployed testnet Worker (section 1.3, one script) and the KMS cutover (section 2.2, two scripts).
+needs, and the heartbeat alert drill ran (section 3). The retirement switch was rehearsed on the
+deployed testnet Worker on 2026-10-09, 08:57 to 09:03 UTC: six phases, 22 logged steps, every one
+PASS (section 1.4); its last deploy left that Worker on version `32067caf`, the same release in its
+normal configuration. Still to run, the owner's: the KMS cutover (section 2.2, two scripts).
 Every step that touches a deployed Worker, AWS or the chain is marked "owner"
 below with the exact command, and each log has a row per step; rows still marked _pending_ are
 filled in when the owner runs them. Nothing here contains a secret: secrets are named, never shown,
@@ -103,8 +105,9 @@ below is what the owner confirms on the day it arrives, before step 1.
   2026-10-09: 133 XLM spendable, about 88 new accounts).
 - [ ] A named support owner: who answers users after the flip, through which channel, and how fast
   (Customer Development Plan section 7.5).
-- [ ] The mainnet signer runs on KMS (section 2), and the rehearsal on the deployed testnet Worker has
-  passed (section 1.4).
+- [ ] The mainnet signer runs on KMS (section 2).
+- [x] The rehearsal on the deployed testnet Worker has passed (section 1.4: 2026-10-09, every step
+  PASS).
 - [ ] Extension 0.1.3 or later is live on both stores, and the self-hosted Firefox file is replaced or
   no longer offered: the published 0.1.2 reads the open answer as approved and has no backup rule
   for real money.
@@ -148,7 +151,7 @@ always ends with a plain `npx wrangler deploy`, so the testnet Worker is left in
 configuration even when a probe fails. Each deploy ships the code of the checkout it runs from, so
 run from the merged tree it also puts the release merged on 2026-10-09 on the testnet Worker. Its log
 lands in `apps/sponsor/adversarial-out/rehearsal-deployed-<date>/rehearsal-log.md` (gitignored); its
-rows go into section 1.4. The timing advice below applies to it unchanged. The table is what it runs,
+rows go into section 1.4, where its run of 2026-10-09 is. The timing advice below applies to it unchanged. The table is what it runs,
 for a run by hand.
 
 Owner steps, testnet only (each `wrangler deploy` replaces the vars of the deploy before it, so the
@@ -227,10 +230,61 @@ current tool's reclaim phase took all three back at 14:52 UTC: [`4169a9b2...4a5b
 [`3d2faa06...78e40`](https://stellar.expert/explorer/testnet/tx/3d2faa06b2de6be9fe208cd8e0cfe901fe25978a5de0ad5dc43485e131c78e40), [`f7242505...99f7d`](https://stellar.expert/explorer/testnet/tx/f7242505bf16b2439a13cb66fec87b8dd396e7e0223dd327a603ecd663d99f7d).
 No rehearsal deposit is left in the testnet escrow.
 
-**On the deployed testnet Worker (owner, section 1.3):** _pending: not run yet (checked 2026-10-09,
-00:20 UTC)_. Run `bash ops/rehearsal/run-testnet-rehearsal.sh` and paste its `rehearsal-log.md` here
-with its timestamps. Until this row is filled, the switch
-has been dry-run on a local Worker against the live testnet ledger, not rehearsed on a deployed one.
+**On the deployed testnet Worker, 2026-10-09 08:57-09:03 UTC** (https://lumenia-sponsor.avakit.workers.dev,
+`bash ops/rehearsal/run-testnet-rehearsal.sh` from the merged tree, section 1.3): six phases, 22
+logged steps, every one PASS, 0 failing. Each switch was a deploy of the testnet Worker, all tagged
+`215cfb2`: `--var PILOT_MODE:1` as version `a89eeb4f` (gated, approved), a plain deploy with the
+allowlist off as `b15ad95d` (open), `--var SPONSOR_HALT:1` as `66cfba07` (halted), and the plain deploy that resumed it
+as `32067caf` (resumed, reclaim), the Worker's version at the end of the run, in its normal
+configuration (`pilotMode: false`, no halt). Between the gated and the approved phases the owner
+approved W1 with `pilot approve` in the testnet namespace. The two tables are the run's log as the
+script wrote it (public parts only), with each deposit's transactions linked; the two route lists
+that the log cuts at 160 characters are given whole, from the run's own JSON log.
+
+| Time (UTC) | Phase | Step | Expected | Got | Result |
+|---|---|---|---|---|---|
+| 2026-10-09T08:57:00.406Z | gated | /health shows the switch ON | pilotMode: true | pilotMode: true | PASS |
+| 2026-10-09T08:57:22.715Z | gated | two throwaway wallets onboarded and given test USDC (onboarding is never gated) | both funded | W1 true, W2 true | PASS |
+| 2026-10-09T08:57:23.161Z | gated | /pilot-status for the never-approved wallet W2 | pilot:true, approved:false | {"pilot":true,"state":"none","approved":false,"used":0,"limit":5} | PASS |
+| 2026-10-09T08:57:24.771Z | gated | a real 0.05 USDC deposit from W2 | 403, not on the allowlist | 403 {"error":"this wallet is not on the pilot allowlist yet"} (link GCXCVVK7L25I6ZJZGLUBOYAZXA3WRYQZSAQ4MMFGUYDIU4OWOWQHI2S7) | PASS |
+| 2026-10-09T08:57:25.590Z | gated | a real 0.05 USDC deposit from W1 before its approval | 403, not on the allowlist | 403 {"error":"this wallet is not on the pilot allowlist yet"} (link GBP2IXE2MK7SIBXPC24HXLCNAL3LQY6DAEAPWPUF4NFTCJRMYYNIQFXV) | PASS |
+| 2026-10-09T08:59:11.246Z | approved | /health still shows the switch ON | pilotMode: true | pilotMode: true | PASS |
+| 2026-10-09T08:59:11.671Z | approved | /pilot-status for W1 after `pilot approve` | pilot:true, approved:true | {"pilot":true,"state":"approved","approved":true,"used":0,"limit":5} | PASS |
+| 2026-10-09T08:59:18.538Z | approved | a real 0.05 USDC deposit from the approved W1 | 200 (or 202) with a hash | 200 {"hash":"dd7071f8d28d7f83884fe15094dacd9d1c280c9da6a25903fefdd41377c54dda","confirmed":true} (link GAAYVBNM2CTHWQ3ZQI5Z2Z43LLXQDGXJ7MQH5HPNQKCSBFF5PX3MN3UP) | PASS |
+| 2026-10-09T08:59:19.872Z | approved | the same from the never-approved W2 | still 403 | 403 {"error":"this wallet is not on the pilot allowlist yet"} (link GBQEH5W3SFJW7RJ2VIVXQOYXBHWPDMSV527W4EILQEN2BCMDK6FFZJAC) | PASS |
+| 2026-10-09T08:59:58.356Z | open | /health shows the switch OFF | pilotMode: false | pilotMode: false | PASS |
+| 2026-10-09T08:59:58.463Z | open | /pilot-status for the never-approved W2 | pilot:false, approved:true, state:open | {"pilot":false,"approved":true,"state":"open"} | PASS |
+| 2026-10-09T09:00:02.895Z | open | a real 0.05 USDC deposit from W1 | 200 (or 202) | 200 {"hash":"83ed3f254a12fde7874bbadd86ee8b8203dfd2efd5235c8b902842bc5f509da3","confirmed":true} (link GCDKI3HXGUW5MGILCE77AVUKL7NFZ5PUQNKZQYPIIRY25NI276THAELK) | PASS |
+| 2026-10-09T09:00:08.771Z | open | a real 0.05 USDC deposit from W2, never approved | 200 (or 202): the allowlist is gone | 200 {"hash":"da75c997d100f932af3a9645768c5dd7c5d7a70065b4363d57614f6cdd59cdc6","confirmed":true} (link GCQYNZVFN6RHESEYRZMWVPKNUK34YQDJDM3SXWVLZNUG6CK7JA4JRZUP) | PASS |
+| 2026-10-09T09:00:09.854Z | open | a 0.005 USDC deposit from W2 (under MIN_DROP_USDC) | 400, the caps still refuse it | 400 {"error":"canary cap: amount 0.005 USDC is below the minimum of 0.01 USDC"} (link GBLCTSZLSDDAMD5E4NKFX4QGABLO6EOO3UZ5IWYMKSJWA6BJQT66D7HM) | PASS |
+| 2026-10-09T09:00:53.869Z | halted | /health shows the halt | halt.halted: true, source env | {"halted":true,"source":"env","reason":"SPONSOR_HALT=1 in the Worker environment"} | PASS |
+| 2026-10-09T09:00:53.870Z | halted | the 11 value routes and the 2 grant routes, with SPONSOR_HALT=1 | all 503 with the halt's answer | 13/13 answered the halt (/create-account:503 /feebump:503 /send-link:503 /payout:503 /sweep:503 /v2-claim:503 /v2-deposit:503 /v2-reclaim:503 /faucet:503 /demo-link:503 /cctp-relay:503 /pilot-approve:503 /pilot-reject:503) | PASS |
+| 2026-10-09T09:00:53.870Z | halted | a read route during the halt | /pilot-status 200 | 200 {"pilot":false,"approved":true,"state":"open"} | PASS |
+| 2026-10-09T09:01:21.194Z | resumed | /health shows no halt | halt.halted: false | {"halted":false,"source":null,"reason":null} | PASS |
+| 2026-10-09T09:01:21.196Z | resumed | the same 13 routes after SPONSOR_HALT is removed | none answers the halt | 0/13 answered the halt (/create-account:404 /feebump:404 /send-link:404 /payout:404 /sweep:404 /v2-claim:404 /v2-deposit:404 /v2-reclaim:404 /faucet:404 /demo-link:404 /cctp-relay:404 /pilot-approve:503 /pilot-reject:503) | PASS |
+| 2026-10-09T09:02:57.491Z | reclaim | take back the approved deposit from W1 (link GAAYVBNM2CTHWQ3ZQI5Z2Z43LLXQDGXJ7MQH5HPNQKCSBFF5PX3MN3UP) | 200 (or 202) with a hash | 200 {"hash":"61330ee638d395585b3f0dc0b27573ccb5a48f3e941a757a26fd7ab4794905c0","confirmed":true} | PASS |
+| 2026-10-09T09:03:04.459Z | reclaim | take back the open deposit from W1 (link GCDKI3HXGUW5MGILCE77AVUKL7NFZ5PUQNKZQYPIIRY25NI276THAELK) | 200 (or 202) with a hash | 200 {"hash":"5170c748abb17c1274cf7092fac9c78ed1f13de00d3c074ddef12ca3aead8fd6","confirmed":true} | PASS |
+| 2026-10-09T09:03:07.908Z | reclaim | take back the open deposit from W2 (link GCQYNZVFN6RHESEYRZMWVPKNUK34YQDJDM3SXWVLZNUG6CK7JA4JRZUP) | 200 (or 202) with a hash | 200 {"hash":"05633cf0eef6f53f7e2e189bbbfba40843e56760219cd21b9c2a17312adebdde","confirmed":true} | PASS |
+
+In the resumed row the two grant routes still answer 503: the testnet Worker does not offer
+approve-by-link, so they answer "not set up" whether it is halted or not, which the probe does not
+count as the halt's answer. The other eleven answer 404 to the probe's GET, as they do whenever the
+Worker is not halted.
+
+Every deposit the rehearsal posted:
+
+| Phase | Wallet | Link (public) | Amount (stroops) | Expiry (UTC) | Outcome | Deposit tx | Taken back |
+|---|---|---|---|---|---|---|---|
+| gated | W2 | GCXCVVK7L25I6ZJZGLUBOYAZXA3WRYQZSAQ4MMFGUYDIU4OWOWQHI2S7 | 500000 | 2026-10-09T08:59:23.000Z | refused |  | nothing to take back |
+| gated | W1 | GBP2IXE2MK7SIBXPC24HXLCNAL3LQY6DAEAPWPUF4NFTCJRMYYNIQFXV | 500000 | 2026-10-09T08:59:24.000Z | refused |  | nothing to take back |
+| approved | W1 | GAAYVBNM2CTHWQ3ZQI5Z2Z43LLXQDGXJ7MQH5HPNQKCSBFF5PX3MN3UP | 500000 | 2026-10-09T09:01:12.000Z | landed | [`dd7071f8...54dda`](https://stellar.expert/explorer/testnet/tx/dd7071f8d28d7f83884fe15094dacd9d1c280c9da6a25903fefdd41377c54dda) | taken back: [`61330ee6...905c0`](https://stellar.expert/explorer/testnet/tx/61330ee638d395585b3f0dc0b27573ccb5a48f3e941a757a26fd7ab4794905c0) |
+| approved | W2 | GBQEH5W3SFJW7RJ2VIVXQOYXBHWPDMSV527W4EILQEN2BCMDK6FFZJAC | 500000 | 2026-10-09T09:01:18.000Z | refused |  | nothing to take back |
+| open | W1 | GCDKI3HXGUW5MGILCE77AVUKL7NFZ5PUQNKZQYPIIRY25NI276THAELK | 500000 | 2026-10-09T09:01:59.000Z | landed | [`83ed3f25...09da3`](https://stellar.expert/explorer/testnet/tx/83ed3f254a12fde7874bbadd86ee8b8203dfd2efd5235c8b902842bc5f509da3) | taken back: [`5170c748...d8fd6`](https://stellar.expert/explorer/testnet/tx/5170c748abb17c1274cf7092fac9c78ed1f13de00d3c074ddef12ca3aead8fd6) |
+| open | W2 | GCQYNZVFN6RHESEYRZMWVPKNUK34YQDJDM3SXWVLZNUG6CK7JA4JRZUP | 500000 | 2026-10-09T09:02:03.000Z | landed | [`da75c997...9cdc6`](https://stellar.expert/explorer/testnet/tx/da75c997d100f932af3a9645768c5dd7c5d7a70065b4363d57614f6cdd59cdc6) | taken back: [`05633cf0...ebdde`](https://stellar.expert/explorer/testnet/tx/05633cf0eef6f53f7e2e189bbbfba40843e56760219cd21b9c2a17312adebdde) |
+| open | W2 | GBLCTSZLSDDAMD5E4NKFX4QGABLO6EOO3UZ5IWYMKSJWA6BJQT66D7HM | 50000 | 2026-10-09T09:02:08.000Z | refused |  | nothing to take back |
+
+The three deposits that landed were all taken back after their two-minute expiry, so this run left
+nothing in the testnet escrow either.
 
 ---
 
@@ -364,8 +418,8 @@ synthetic failure line, so the job fails and the issue path runs once on purpose
 labelled `watchdog-heartbeat` whose title says TEST (or comments on the open one). The next green run,
 scheduled or by hand without the box, closes it. A schedule never sets it. The labels the alerting
 workflows use (`watchdog-heartbeat`, `live-claim`, `contract-security`) were created in the repository
-on 2026-10-09. The drill is the owner's, once the merged workflow is pushed (the input exists only in
-the workflow on the default branch).
+on 2026-10-09. The input exists only in the workflow on the default branch; the drill ran there on
+2026-10-09, opened issue #46 and saw the next run close it (the log below).
 
 What GitHub itself says about scheduled workflows, and what it means here: they run only on the
 default branch, the shortest interval is 5 minutes, runs can be delayed or dropped under load, and in a
@@ -414,8 +468,8 @@ The KMS cutover's own `SetOptions` is a sponsor-sourced `set_options`, so it tri
 design (section 2.2, step 5). That is the live proof of the auto-halt; the cutover log records it.
 The auto-halt has not fired on a deployed Worker yet: the testnet cutover will be its first live
 firing. From the release merged on 2026-10-09 the run writes the halt the moment a tripwire is
-raised, before its remaining reads (`test:watchdog-offline` 201); it takes effect with each Worker's
-next deploy.
+raised, before its remaining reads (`test:watchdog-offline` 201); both Workers run it since their
+deploys of 2026-10-09.
 
 To resume after confirming the finding was expected: read the store's address and token first with
 `read -rs KV_REST_API_URL && export KV_REST_API_URL` and `read -rs KV_REST_API_TOKEN && export
@@ -440,5 +494,7 @@ the first halt's; the watchdog's `lastRun` must be later than the second SetOpti
 Known limit, stated plainly: the store read behind the halt fails OPEN. If the store cannot be read,
 the sponsor runs as if not halted, so that a counter-store outage never strands recipients. The stop
 that needs no store is `npx wrangler deploy --var SPONSOR_HALT:1` (or the same var set in
-`wrangler.toml`). The local dry run exercised it as a Worker restart with `SPONSOR_HALT=1` (section
-1.4); its deploy form has not been run on a deployed Worker yet (section 1.3, steps 7 to 9).
+`wrangler.toml`). The local dry run exercised it as a Worker restart with `SPONSOR_HALT=1`, and the
+rehearsal of 2026-10-09 ran its deploy form on the deployed testnet Worker (section 1.3, steps 7 to
+9; version `66cfba07`): `/health` showed the halt with source `env`, 13 of 13 value and grant routes
+answered it, a read route still answered 200, and a plain deploy resumed the Worker (section 1.4).

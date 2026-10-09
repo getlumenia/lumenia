@@ -12,17 +12,10 @@ owner's, every item of it:**
 - **the KMS cutover on both Workers** (D3.6, ops note section 2.2: `ops/kms/cloudshell-setup.sh` in
   AWS CloudShell, then `ops/kms/cutover.sh` on each network). Until the mainnet Worker signs with
   KMS, metric 3 is not met.
-- **the rehearsal of the retirement switch on the deployed testnet Worker** (D3.4, ops note section
-  1.3: `ops/rehearsal/run-testnet-rehearsal.sh`). Until it has run, this report calls the switch
-  dry-run on a local Worker, not rehearsed.
-- **the deploys of the release merged on 2026-10-09**: both Workers (the log redaction, the
-  subrequest budget, `/health` version, the earlier halt, the approval mail and the named sponsor
-  account, D3.9), and the web, which goes live when the owner commits and pushes the merged tree.
-- **extension 0.1.3 in both stores** (D1, Published builds): built on 2026-10-09; the Chrome Web
-  Store upload and the AMO submission (`web-ext sign --channel=listed`) are the owner's, as is the
-  privacy-policy field of the AMO listing (D1.4). Each store reviews the package before it goes live.
-- **the heartbeat alert drill** (D3.5, ops note section 3): one manual run of the workflow with
-  `test_alert`, once the merged workflow is pushed.
+- **extension 0.1.3 in both stores** (D1, Published builds): built on 2026-10-09 and submitted to
+  addons.mozilla.org the same day (listed, in review); the Chrome Web Store upload is the owner's, as
+  is the privacy-policy field of the AMO listing (D1.4). Each store reviews the package before it
+  goes live.
 - **the Workers plan check** (D3.8): which Cloudflare plan the two Workers run on is not recorded.
 - **the firm for the written legal opinion** (D3.8 a): choosing the firm the request goes to.
 
@@ -30,12 +23,15 @@ Everything else is done: D1's published builds, checklist, tests, testnet proof,
 its practice-money demo video; D2's code, live since 2026-10-07, its tests and the testnet commitment
 spike with the Groth16 measurement; D3's hardening, green in CI and deployed on both Workers on
 2026-10-08, with the live adversarial runs, the first watchdog stamps and the heartbeat's first runs.
-The whole offline gate is green on the merged tree of 2026-10-09 (D3.2).
+On 2026-10-09 the release merged that day went live on the web and on both Workers (D3.9), the
+heartbeat's alert drill opened and closed an issue (D3.5), and the retirement switch was rehearsed
+on the deployed testnet Worker (D3.4). The whole offline gate is green on the merged tree of
+2026-10-09 (D3.2).
 
 Everything below can be checked in public. File and line references are pinned to a commit, because
 later commits move lines: D1.1 cites the published extension's source at `062725f`, and D3 cites
-`24d0f4e` (and `d78f4de` in its "before" column). The release merged on 2026-10-09 is not pushed
-yet, so it is cited by file and function name rather than by commit. Each transaction hash opens on stellar.expert and
+`24d0f4e` (and `d78f4de` in its "before" column). The release merged on 2026-10-09 is cited by
+file and function name rather than by commit; it was pushed on 2026-10-09 (`00aa0a5`). Each transaction hash opens on stellar.expert and
 each CI run on GitHub Actions. Two limits: the raw outputs of the adversarial runs stay out of the
 repository (they sit next to the throwaway keys the runs made), so D3.3 transcribes them with each
 answer cut short; and on mainnet a refusal's text is replaced by "request failed" and a reference
@@ -49,8 +45,8 @@ that only the Worker's own log resolves.
 sender's own account and shows whether it was claimed. It reuses the website's sender code
 (`apps/web/lib`); the recipient side does not change. Published as version 0.1.2 on the Chrome Web
 Store and on addons.mozilla.org, both built from commit `062725f`. The next build, 0.1.3, was built
-on 2026-10-09 from the merged working tree (the owner commits it); its submission to both stores is
-the owner's.
+on 2026-10-09 from the merged tree (commit `00aa0a5`) and submitted to addons.mozilla.org the same
+day (in review); its Chrome Web Store upload is the owner's.
 
 ### Published builds
 
@@ -215,13 +211,14 @@ and a fresh browser profile restoring the account to the same address (balance 0
 - **The AMO listing does not link the privacy policy yet** (AMO's public API answered
   `has_privacy_policy: false` on 2026-10-09); the Chrome Web Store listing links
   getlumenia.com/privacy. Linking https://getlumenia.com/privacy#extension from the AMO listing's
-  privacy-policy field is the owner's step, with the 0.1.3 submission.
+  privacy-policy field is the owner's step, still open after the 0.1.3 submission of 2026-10-09.
 - **Brave** installs the extension from the Chrome Web Store with its standard notice that Brave does
   not review extensions; that notice is Brave's for every extension outside its own vetted list.
 - **The published 0.1.2 makes links in the pre-D2 shape** (amount and name in the query), and it has
   neither of the two rules added after it (see D1.1). The 0.1.3 build of 2026-10-09 has the private
-  shape and both rules; they reach users once the owner has submitted it and each store has reviewed
-  it (see the D2 section and D3.8).
+  shape and both rules; they reach users once each store has reviewed it (submitted to
+  addons.mozilla.org on 2026-10-09; the Chrome Web Store upload is the owner's; see the D2 section
+  and D3.8).
 - **No real-money send from the extension yet, so no recording of one.** Metric 1 (D1.5) needs a
   mainnet link made from the published extension and claimed; that send and its recording are the
   owner's, from an approved pilot wallet.
@@ -290,7 +287,7 @@ and the nightly run against production on 2026-10-08
 "Private link preview (D2 leak audit, live half)". The release merged on 2026-10-09 adds four web
 changes to D2 (no sender name unless one is typed, the rich card only for a live drop or pool, v1
 practice beacons to the testnet Worker, /privacy brought up to date) and the sponsor's log redaction
-(leak audit rows 2, 5, 6, 10 and 11); live since 2026-10-09: the web with the deploy of `00aa0a5`, and both Workers the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`.
+(leak audit rows 2, 5, 6, 10 and 11); live since 2026-10-09: the web with the deploy of `00aa0a5`, and both Workers: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`.
 Still the owner's: the mainnet run (D2.5).
 
 ### D2.1 What a link carries now
@@ -312,7 +309,8 @@ even then the card's amount is read from the ledger. Links made before D2 keep c
 
 ### D2.2 Tests
 
-Counts as run on 2026-10-09 on the merged tree (run locally; CI runs them on the next push); the
+Counts as run on 2026-10-09 on the merged tree (run locally, and in CI on its push: run 37904651201
+on `00aa0a5`, green); the
 figure at `24d0f4e` is given where it differs, and where D3 added cases, the D2 figure too.
 
 | Suite | What it holds | Count |
@@ -331,8 +329,9 @@ figure at `24d0f4e` is given where it differs, and where D3 added cases, the D2 
 | `apps/web/e2e/private-variants.spec.ts` (on demand) | a password-locked link and a group link made on /send and /group, opened on a fresh device, read from the ledger, claimed | passed 2026-10-06, same setup |
 
 The CI suites above ran green on `1bc2049`
-([run 37664877374](https://github.com/getlumenia/lumenia/actions/runs/37664877374), 2026-10-07) and on
-`24d0f4e` ([run 37821341438](https://github.com/getlumenia/lumenia/actions/runs/37821341438), 2026-10-08).
+([run 37664877374](https://github.com/getlumenia/lumenia/actions/runs/37664877374), 2026-10-07), on
+`24d0f4e` ([run 37821341438](https://github.com/getlumenia/lumenia/actions/runs/37821341438), 2026-10-08)
+and on `00aa0a5` ([run 37904651201](https://github.com/getlumenia/lumenia/actions/runs/37904651201), 2026-10-09).
 
 ### D2.3 The leak audit and the privacy page
 
@@ -389,7 +388,8 @@ chosen (the defaults). Until every row is filled, metric 2 is not met.
 - The mainnet run above is not done yet; until it is, metric 2 is not met.
 - The extension's published packages (Chrome Web Store 0.1.2 and AMO 0.1.2, both built from
   `062725f`, and the self-hosted 0.1.1) were built before D2 and make links in the old shape until
-  0.1.3 replaces them: built on 2026-10-09, its submission to both stores is the owner's.
+  0.1.3 replaces them: built on 2026-10-09 and submitted to addons.mozilla.org that day (in review);
+  its Chrome Web Store upload is the owner's.
 - Previews were checked with the chat apps' user agents, not inside every chat app; the cards on a
   real phone are the owner's screenshots.
 - A v1 practice link's key (from /try or /event) is also the key of the account it opens. Until
@@ -408,16 +408,18 @@ Status: **code done, tested and deployed, 2026-10-08.** Every item below is held
 suite that runs in CI under the step "Hardening suite (D3 a-k)" (green, D3.2). Both Workers run this
 code since 2026-10-08 (the mainnet one with `PILOT_MODE=1` kept), and the live adversarial runs,
 the watchdog stamps and the heartbeat workflow's first runs are below. The release merged on
-2026-10-09 is deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2` (D3.9). Still pending, the owner's steps: the KMS cutover
-(without it, metric 3 is not met) and the rehearsal on the deployed testnet Worker;
-[`SOW2_OPS_NOTE.md`](SOW2_OPS_NOTE.md) holds their exact commands, the scripts that run them, and the
+2026-10-09 is deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2` (D3.9). The same day the heartbeat's alert path was drilled (D3.5)
+and the retirement switch was rehearsed on the deployed testnet Worker, whose last deploy left it on
+version `32067caf`, the same release in its normal configuration (D3.4). Still pending, the owner's
+step: the KMS cutover (without it, metric 3 is not met);
+[`SOW2_OPS_NOTE.md`](SOW2_OPS_NOTE.md) holds the exact commands, the scripts that run them, and the
 logs.
 
 What D3 does not do: open mainnet. The mainnet Worker keeps `PILOT_MODE=1` (hand-approved wallets
 only; $5 a link and up to $25 a day from one sender, $50 a day across the whole pilot; fail-closed)
 until the written legal opinion the Customer Development Plan names (section 7.4). D3 makes that
-opening a configuration change, so far dry-run on a local Worker against the live testnet ledger;
-its rehearsal on the deployed testnet Worker is still to run (D3.4). The opening also ends the
+opening a configuration change, dry-run on a local Worker against the live testnet ledger on
+2026-10-08 and rehearsed on the deployed testnet Worker on 2026-10-09 (D3.4). The opening also ends the
 hand-approval, which is the only stand-in for KYC and AML today; D3.8 lists that and the other
 limits that remain after D3.
 
@@ -437,7 +439,7 @@ in this section holds at `24d0f4e` as well.
 | f. Watchdog heartbeat and automatic halt on its own tripwires | no record of the watchdog having run; nothing halted on its own; the halt key and the alert cooldown keys were shared by both Workers' store, so a testnet halt or alert reached mainnet | every run ends by writing `watchdog:<net>:lastrun`; `/health` reports it with the alerting state, the halt state, the signer and the day's counters; a GitHub workflow is scheduled every 30 minutes to read both `/health` pages (GitHub has started this repository's schedules hours late; the first scheduled run is [37850573340](https://github.com/getlumenia/lumenia/actions/runs/37850573340), D3.5) and opens one issue when a stamp is older than 45 minutes; the sponsor halts itself through `sponsor:halt:<net>` on exactly two findings ("Sponsor SOURCED a forbidden operation", "Escrow WASM CHANGED"), never on the float, capacity, state expiry, a governance event or a failed check; the halt key and the cooldowns are per network; the store read still fails open (section D3.8). A second stamp, `watchdog:<net>:lastfull`, is written only when every check completed, and the workflow also fails when it is older than 3 hours, when a stamp is from the future, when `/health` is not JSON, and when the mainnet Worker reports alerting not configured (a revoked key or an unverified sender still reads as configured). Only the Worker's scheduled run may halt or write (`runWatchdog` is read-only without both flags, so a local smoke test cannot halt a Worker); a halt cleared without removing its cause comes back on the next run and is emailed at once; a wasm mismatch halts only when a second read 2 seconds later repeats it; on a cold start (no scan cursor: a first run, or a cursor the store lost) a forbidden operation older than 24 hours pages without halting, while a scan that walks forward from its cursor halts on one of any age; the operation scan reads up to 10 pages a run and pages when it is behind; its cursor moves only once the halt has landed; a scan cursor or wasm pin the store cannot read (an error, not an absent key) skips that check with a page instead of restarting the scan from scratch, which would jump over everything since the cursor and write the jump down; the alert cooldown is stamped only after the mail was accepted; the halt read the routes share is one store read per isolate and network while it is in flight, a verdict written meanwhile outranks its answer, and a read that does not answer in 2 seconds fails open | `apps/sponsor/src/lib/watchdog.ts:1208`, `apps/sponsor/src/lib/watchdog.ts:135`, `apps/sponsor/src/lib/watchdog.ts:1130`, `apps/sponsor/src/lib/kill-switch.ts:69`, `apps/sponsor/src/lib/kill-switch.ts:116`, `apps/sponsor/src/lib/kill-switch.ts:58`, `apps/sponsor/src/lib/watchdog.ts:231`, `apps/sponsor/src/lib/watchdog.ts:936`, `apps/sponsor/src/worker.ts:341`, `apps/sponsor/src/worker.ts:1090`, `apps/sponsor/src/lib/watchdog.ts:202`, `.github/workflows/watchdog-heartbeat.yml` | `test:watchdog-offline` (193 checks at `24d0f4e`, 201 on the merged tree, which also writes the halt the moment a tripwire is raised (D3.9); every tripwire with `fetch` stubbed, and the Worker's own scheduled run with account != signer) |
 | g. Unconfirmed submissions on every value route | `/v2-claim`, `/v2-reclaim` and `/cctp-relay` threw on NOT_FOUND; the Worker answered 400, which mainnet redacts to "request failed", so the claim screen offered a retry that minted another sponsored account for a claim that then landed | the three answer 202 `{hash, confirmed:false}` like `/v2-deposit`; TRY_AGAIN_LATER answers 503 "the network is busy; try again shortly" with the budget given back; DUPLICATE counts as on the network. A send call that throws without a definitive refusal is an unconfirmed submit too, on all four Soroban relays, and `/cctp-relay` has one 202 body for a submitted mint. The web settles a claim's 202 from the claim transaction itself (SUCCESS is claimed; FAILED, or NOT_FOUND past its 60-second time bound plus a margin, is not landed and may be retried) and the payout's balance, never from the escrow's `claimed` flag, which a take-back sets too; a 202 from a Horizon route (`/feebump`, `/send-link`, `/sweep`, `/demo-link`) is one typed unconfirmed error everywhere (a direct payment re-checks the ledger and offers no second payment; a sweep keeps its key until Horizon shows the merge); the take-back, CCTP and agent tools and the extension no longer call an unconfirmed outcome done; the busy answer, the fee budget's refusal and the operator halt are three different sentences on the claim screens and in the extension | `apps/sponsor/src/worker.ts:518`, `apps/sponsor/src/worker.ts:498`, `apps/sponsor/src/worker.ts:1067`, `apps/sponsor/src/lib/soroban-relay.ts:132`, `apps/sponsor/src/lib/soroban-relay.ts:223`, `apps/web/lib/lumendrop.ts:749`, `apps/web/lib/claim-error.ts:162`, `apps/web/lib/unconfirmed.ts:49`, `apps/web/lib/horizon.ts:359`, `apps/web/lib/sweep.ts:113` | `test:soroban-relay` [8], [10], [11]; `test:cctp` [submit]; `test:claimerr`; `test:group` [7], [8]; `test:horizon`; `test:cctp-web`; `test:agentmcp`; extension `test:links`, `test:send` |
 | h. The production signer leaves the environment variable (KMS) | the code used the signer's own address as the sponsor account at 22 call sites in 9 files, so moving the key into KMS would have made the Worker act as a new, unfunded account | `SPONSOR_ACCOUNT_ID` names the existing account and every operation source, fee-bump source and sponsored reserve reads it; the signer only signs; `/health` reports `signer.kind` (`env` or `kms`) and the account; the KMS key is added to the existing account as a weight-1 signer with one SetOptions (tools `kms-check` and `add-signer`); runbook rewritten. KMS mode refuses to start without `SPONSOR_ACCOUNT_ID`; `/health` names where the account came from (`accountSource`); the signing key's own address is refused as a recipient, sender, throwaway, home or operation source, because the KMS signature is also that address's master signature; each KMS call has one retry and a 5-second deadline, and AWS error bodies stay in the log; `add-signer` writes an unsigned dry run with the signers before the change and submits exactly that transaction; the watchdog runs with no KMS call | `apps/sponsor/src/lib/config.ts:155`, `apps/sponsor/src/lib/config.ts:192`, `apps/sponsor/src/lib/service.ts:47`, `apps/sponsor/src/lib/kms-signer.ts:216`, `apps/sponsor/src/lib/service.ts:63`, `apps/sponsor/src/lib/anti-drain.ts:69`, `apps/sponsor/src/cli/add-signer.ts`, `apps/sponsor/src/cli/kms-check.ts`, `ops/RUNBOOK_SPONSOR_KEY.md` section 2 | `test:kms` [6] to [12] ([8] runs every value handler and `/health` with the account and the signer two addresses, and five reverts to the signer's address each fail it; [9] KMS mode without `SPONSOR_ACCOUNT_ID`; [10] the KMS transport; [11], [12] `add-signer` end to end); `test:cctp` [submit] (the CCTP relay with the account and the signer two addresses); `test:caps` [17]; `test:antidrain` SIG-1 to SIG-9 |
-| i. The waitlist retirement behind one switch | unsetting `PILOT_MODE` made the sponsor answer `{pilot:false, approved:false}`, which the web read as "not approved" (`wallet.tsx:194`), so the flip would have locked every user out of real money | `PILOT_MODE` unset: `/pilot-status` answers `{pilot:false, approved:true, state:"open"}`, the allowlist is a no-op, and the web opens real money to every wallet that is locked and backed up (others are sent to do that first, and the wallet refuses to sign a money movement for them on real money); a device with no account learns it from `/pilot-status` asked without a key, answered before the rate limiter; set: the sponsor behaves as before (the web adds two checks of its own on real money: the lock-and-backup card on /home, and no money movement before `/pilot-status` has answered once). Everyone sees the real-money warning once per device, on the first switch or on arriving on real money; on arrival, "Not now" returns to practice money only when the account may switch back, so a recipient the pilot has not approved is never stranded. Every cap survives the flip (only `pilot.ts` and `worker.ts` read the variable) | `apps/sponsor/src/worker.ts:630`, `apps/web/lib/pilot-access.ts:73`, `apps/web/lib/pilot-access.ts:118`, `apps/web/lib/pilot-access.ts:150`, `apps/web/lib/pilot-access.ts:185`, `apps/web/lib/wallet.tsx:354`, `apps/sponsor/wrangler.toml:193` | `test:pilot` [12], [13]; `test:pilotaccess` (the rules as pure functions; their use in `wallet.tsx` is not under test); extension `test:router` [f], `test:send`; the local dry run (D3.4; the rehearsal on the deployed Worker is still to run) |
+| i. The waitlist retirement behind one switch | unsetting `PILOT_MODE` made the sponsor answer `{pilot:false, approved:false}`, which the web read as "not approved" (`wallet.tsx:194`), so the flip would have locked every user out of real money | `PILOT_MODE` unset: `/pilot-status` answers `{pilot:false, approved:true, state:"open"}`, the allowlist is a no-op, and the web opens real money to every wallet that is locked and backed up (others are sent to do that first, and the wallet refuses to sign a money movement for them on real money); a device with no account learns it from `/pilot-status` asked without a key, answered before the rate limiter; set: the sponsor behaves as before (the web adds two checks of its own on real money: the lock-and-backup card on /home, and no money movement before `/pilot-status` has answered once). Everyone sees the real-money warning once per device, on the first switch or on arriving on real money; on arrival, "Not now" returns to practice money only when the account may switch back, so a recipient the pilot has not approved is never stranded. Every cap survives the flip (only `pilot.ts` and `worker.ts` read the variable) | `apps/sponsor/src/worker.ts:630`, `apps/web/lib/pilot-access.ts:73`, `apps/web/lib/pilot-access.ts:118`, `apps/web/lib/pilot-access.ts:150`, `apps/web/lib/pilot-access.ts:185`, `apps/web/lib/wallet.tsx:354`, `apps/sponsor/wrangler.toml:193` | `test:pilot` [12], [13]; `test:pilotaccess` (the rules as pure functions; their use in `wallet.tsx` is not under test); extension `test:router` [f], `test:send`; the local dry run and the rehearsal on the deployed testnet Worker of 2026-10-09 (D3.4) |
 | j. A scripted adversarial run | none | `apps/sponsor/src/adversarial-run.ts`: inflated fees, budget exhaustion, junk claims and transactions, rate limits, the halt switch; full mode (testnet, or a local Worker with a stand-in store) and refusal-only mode (the live mainnet Worker: nothing funded, nothing that can land submitted, no counter seeded, full mode refused) | `apps/sponsor/src/adversarial-run.ts`, `apps/sponsor/src/cli/fake-kv.ts` | the runs in D3.3; `test:antidrain`; `fake-kv --selftest` |
 | k. A per-sender day cap | the $50 day was global: one wallet could spend all of it | `MAX_DAY_USDC_PER_SENDER` (mainnet 25), reserved and released together with the day counter on `/send-link` and `/v2-deposit` | `apps/sponsor/src/lib/caps.ts:310`, `apps/sponsor/src/lib/caps.ts:170`, `apps/sponsor/src/lib/soroban-relay.ts:672`, `apps/sponsor/wrangler.toml:155` | `test:caps` [13] |
 
@@ -481,8 +483,8 @@ stand-in store's self-test 35; web 19 / 945 (recovery 18, claimpw 13, receive 14
 agentmcp 30, linkprivacy 74, claimmeta 65, claimledger 17, claimhome 22, pilotaccess 83); extension 9 /
 2,173; in all 40 suites / 4,388 assertions; `cargo test` 29 for the escrow and 22 for the spike
 contract; three typechecks clean; web lint 0 at `--max-warnings 0`; the web production build, the
-extension build and `web-ext lint` (0 errors) all pass. That tree is not pushed yet, so no CI run
-covers it.
+extension build and `web-ext lint` (0 errors) all pass. That tree was pushed on 2026-10-09, and CI
+run [37904651201](https://github.com/getlumenia/lumenia/actions/runs/37904651201) is green on `00aa0a5`.
 CI runs: [37813352621](https://github.com/getlumenia/lumenia/actions/runs/37813352621), green on commit `227db3f` (2026-10-08), the step "Hardening suite (D3 a-k)" included, and [37821341438](https://github.com/getlumenia/lumenia/actions/runs/37821341438), green on `24d0f4e` (2026-10-08) with the same steps.
 
 Browser runs with the D3 web code (a local production build, 2026-10-08): the live claim
@@ -744,7 +746,7 @@ windows that did not move. Its rows repeat Run 3's and are not transcribed here.
 reference and nothing charged against the fee budget (`fees.spentXlm` 0 before and after); the sponsor held
 239.6774337 XLM and 0 USDC before and after. Report `apps/sponsor/adversarial-out/adversarial-mainnet-refusal-only-2026-10-09T08-53-06-497Z.md`.
 
-### D3.4 The retirement switch: dry runs done, the deployed rehearsal still to run
+### D3.4 The retirement switch: dry runs, then the rehearsal on the deployed testnet Worker
 
 The rehearsal turns the allowlist on, refuses a wallet that was never approved, approves one wallet,
 turns the allowlist off, proves both wallets send and the caps still refuse, halts and resumes by
@@ -755,13 +757,28 @@ three were taken back after their two-minute expiry, and the three deposits the 
 left in the testnet escrow were taken back as well; the log, with the hashes, is in the ops note
 section 1.4.
 
-The run on the deployed testnet Worker is the owner's (ops note section 1.3) and had not run when
-this was written (2026-10-09, 00:20 UTC). Until it has, this report says the switch was dry-run on a
-local Worker against the live testnet ledger, not rehearsed. It needs a connection whose testnet
-onboarding share is unused that day; the ops note says when to run it.
+The rehearsal on the deployed testnet Worker (https://lumenia-sponsor.avakit.workers.dev) ran on
+2026-10-09 from 08:57 to 09:03 UTC with `ops/rehearsal/run-testnet-rehearsal.sh` (ops note section
+1.3): six phases, 22 logged steps, every one PASS, 0 failing. Each phase ran on a deploy of the
+testnet Worker, all tagged `215cfb2`: `PILOT_MODE=1` as version `a89eeb4f`, the allowlist off as
+`b15ad95d`, `SPONSOR_HALT=1` as `66cfba07`, and resumed as `32067caf`, the Worker's version at the
+end, in its normal configuration (`pilotMode: false`, no halt). Between the gated and the approved
+phases the owner approved W1 with `pilot approve` in the testnet namespace. The full log, step by
+step, is in the ops note section 1.4; the transactions are on testnet.
 
-Either way the rehearsal covers the server half of the switch only. The web and the extension ask
-only the mainnet sponsor for `/pilot-status` (`apps/web/lib/wallet.tsx:253` and
+| Phase | What the deployed Worker answered | Transactions |
+|---|---|---|
+| gated (`PILOT_MODE=1`) | `/health` `pilotMode: true`; two throwaway wallets onboarded and funded (onboarding is never gated); a 0.05 USDC deposit from each refused, 403 "this wallet is not on the pilot allowlist yet" | none landed |
+| approved (W1 approved) | `/pilot-status` read W1 as approved; W1's deposit landed; W2's still refused, 403 | W1: [`dd7071f8...54dda`](https://stellar.expert/explorer/testnet/tx/dd7071f8d28d7f83884fe15094dacd9d1c280c9da6a25903fefdd41377c54dda) |
+| open (`PILOT_MODE` unset) | `/health` `pilotMode: false`; `/pilot-status` for the never-approved W2 `{"pilot":false,"approved":true,"state":"open"}`; deposits from W1 and from W2 landed; a 0.005 USDC deposit under the minimum refused, 400, by the caps | W1: [`83ed3f25...09da3`](https://stellar.expert/explorer/testnet/tx/83ed3f254a12fde7874bbadd86ee8b8203dfd2efd5235c8b902842bc5f509da3); W2, never approved: [`da75c997...9cdc6`](https://stellar.expert/explorer/testnet/tx/da75c997d100f932af3a9645768c5dd7c5d7a70065b4363d57614f6cdd59cdc6) |
+| halted (`SPONSOR_HALT=1`) | `/health` `halted: true` with source `env`; 13 of 13 value and grant routes answered 503 with the halt's answer; a read route (`/pilot-status`) answered 200 | none |
+| resumed | `/health` no halt; 0 of 13 routes answered the halt | none |
+| reclaim | the three landed deposits taken back after their two-minute expiry | [`61330ee6...905c0`](https://stellar.expert/explorer/testnet/tx/61330ee638d395585b3f0dc0b27573ccb5a48f3e941a757a26fd7ab4794905c0), [`5170c748...d8fd6`](https://stellar.expert/explorer/testnet/tx/5170c748abb17c1274cf7092fac9c78ed1f13de00d3c074ddef12ca3aead8fd6), [`05633cf0...ebdde`](https://stellar.expert/explorer/testnet/tx/05633cf0eef6f53f7e2e189bbbfba40843e56760219cd21b9c2a17312adebdde) |
+
+No deposit of this run is left in the testnet escrow.
+
+The dry run and the deployed rehearsal both cover the server half of the switch only. The web and
+the extension ask only the mainnet sponsor for `/pilot-status` (`apps/web/lib/wallet.tsx:253` and
 `apps/extension/src/background/pilot.ts:39` at `24d0f4e`), so flipping the testnet Worker never
 reaches their code. Their half is held by `test:pilotaccess` (the rules as pure functions) and the
 extension's `test:router` and `test:send`, and has not been driven in a browser against an open
@@ -842,12 +859,13 @@ started by hand at 18:01 UTC right after both deploys, was green
 `watchdog-heartbeat` issue was opened. Its first 12 scheduled slots (17:07 to 22:37 UTC) produced one
 scheduled run, [run 37850573340](https://github.com/getlumenia/lumenia/actions/runs/37850573340),
 created at 21:59:43 UTC and green; read at 00:18 UTC on 2026-10-09, it was still the only one in 15
-slots. Its alert path (opening or updating an issue) has not run yet: every run so far was green.
+slots. Every run until then was green, so its alert path (opening or updating an issue) had not run.
 The release merged on 2026-10-09 gives the workflow a manual drill: run by hand with the input
 `test_alert`, it adds one synthetic failure line, so the issue path runs once and opens an issue whose
 title says TEST; the next green run closes it. The labels it and the other alerting workflows use
 (`watchdog-heartbeat`, `live-claim`, `contract-security`) were created in the repository on
-2026-10-09. The drill is the owner's, once the merged workflow is pushed.
+2026-10-09. The drill ran on 2026-10-09: run 37905050169 opened issue #46 and run 37905107528 closed
+it at 08:28:08 UTC (the top of this section).
 
 ### D3.6 The KMS trace
 
@@ -910,8 +928,8 @@ means 28 a day.
 (section 7.4), which SOW 2 keeps as the one item between Lumenia and open mainnet. Nothing opens
 before it. Part of what that opinion answers is whether an open, free, capped pilot needs KYC and AML
 controls (the first limit in c); if it says yes, the opening waits for that work as well. D3's own
-remaining steps (the KMS cutover and the deployed rehearsal, in this report's status line) are part
-of being ready, not gates after it. The day the opinion arrives, the flip follows the checklist in
+remaining step (the KMS cutover, in this report's status line) is part of being ready, not a gate
+after it; the deployed rehearsal it also named ran on 2026-10-09 (D3.4). The day the opinion arrives, the flip follows the checklist in
 the ops note, section 1.2.
 
 **b. What raising the caps materially, and renouncing the escrow's upgrade key, wait on.** SOW 2 makes
@@ -1028,8 +1046,9 @@ the professional review the gate for these two steps, not for the opening:
   strand recipients over something that is not a theft.
 - **The kill switch fails open on a store error.** If the store cannot be read, the sponsor runs as
   if not halted, so that a store outage never strands recipients. The stop that needs no store is
-  `SPONSOR_HALT=1`; the dry run exercised it as a local Worker restart (D3.4), and its deploy form
-  (`npx wrangler deploy --var SPONSOR_HALT:1`) has not been run on a deployed Worker yet.
+  `SPONSOR_HALT=1`; the dry run exercised it as a local Worker restart, and the rehearsal of
+  2026-10-09 ran its deploy form (`npx wrangler deploy --var SPONSOR_HALT:1`) on the deployed testnet
+  Worker: 13 of 13 value and grant routes answered the halt, and a plain deploy resumed it (D3.4).
 - **The other store-dependent bounds, and which way each fails.** The rate limiter falls back to
   per-isolate memory; the onboarding and fee budgets degrade to per-isolate counters (a soft bound
   across isolates) rather than refuse; the escrow day cap fails CLOSED on mainnet
@@ -1040,13 +1059,13 @@ the professional review the gate for these two steps, not for the opening:
   every exit callable either way.
 - **The heartbeat workflow depends on GitHub's scheduler**, which can delay or drop runs (one
   scheduled run in its first 12 slots, D3.5) and disables a public repository's scheduled workflows
-  after 60 days without activity. Its alert path (opening an issue) has not run yet; the `test_alert`
-  drill (D3.5) is how it will run once on purpose.
+  after 60 days without activity. Its alert path (opening an issue) ran once on purpose on
+  2026-10-09: the `test_alert` drill opened issue #46 and the next run closed it (D3.5).
 - **The published extension packages** (Chrome Web Store 0.1.2, AMO 0.1.2, the self-hosted 0.1.1) read
   a 202 answer to a take-back from the D3 sponsor as landed, and have no backup rule for real money
-  (D1.1). The source keeps a 202 open and has the rule, and so does the 0.1.3 build of 2026-10-09;
-  its submission to both stores is the owner's, and the flip waits until it is live in both (ops note
-  section 1.2).
+  (D1.1). The source keeps a 202 open and has the rule, and so does the 0.1.3 build of 2026-10-09,
+  submitted to addons.mozilla.org that day (in review); its Chrome Web Store upload is the owner's,
+  and the flip waits until it is live in both (ops note section 1.2).
 - **A direct payment's "do not pay again" lives in the page.** After a 202 on a payment to a known
   address the page says not to pay again and offers no button, and re-checks the ledger; a reload,
   or reopening the request link, loses that state and offers Pay again.
@@ -1084,9 +1103,8 @@ the professional review the gate for these two steps, not for the opening:
 - Whether the two Workers share one store cannot be read from the repository (the store's address is
   a secret); the halt and cooldown keys were made per network on the assumption that they do.
 - Which Cloudflare plan the Workers run on (the Free plan's bounds in D3.8): not recorded; the check
-  is the owner's. The heartbeat workflow's alert path: no run has opened or updated an issue yet
-  (every run so far was green; the scheduled run at 21:59 UTC ran its close job, with nothing to
-  close); the `test_alert` drill (D3.5) is the owner's.
+  is the owner's. (The heartbeat workflow's alert path, listed here until then, was verified on
+  2026-10-09: the `test_alert` drill opened issue #46 and the next run closed it, D3.5.)
 - **Merged and deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`**: the mainnet log redaction (leak audit
   row 11), held by `test:soroban-relay` 163 and `test:antidrain` 82; the subrequest budget of 45
   (D3.8); `/health` gaining `version {id, tag, timestamp}` from the `CF_VERSION_METADATA` binding;

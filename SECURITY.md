@@ -14,7 +14,7 @@ finding.
 |---|---|---|
 | **Testnet**: `lumenia-sponsor.avakit.workers.dev` + the escrow at `CAMCI5VP...3HP3` (repointed to Circle testnet USDC on 2026-09-06; `CDVZN53V...ST6S` is exit-only) | Free-minted test USDC, no value | Anyone. This is where you should reproduce things. |
 | **Mainnet pilot**: `lumenia-sponsor-mainnet.avakit.workers.dev` + the escrow at `CAC5JYQ2...WGR4` | **Real Circle USDC** | An **owner-approved allowlist only**. Every wallet is admitted by hand; $5 per transfer, up to $25 a day from one sender and $50 a day across the whole pilot, a per-wallet budget of 5 value operations, escrow caps that fail **closed**. As of 2026-08-28: 74 approved wallets, 69 accounts opened, 53 of them funded, 109 real-money transfers. Re-counted from Horizon on 2026-09-06: 76 accounts opened by the sponsor (72 still open, 51 holding real USDC today), 92 USDC-moving operations attributable to the sponsor between 2026-08-24 and 2026-08-30, about **$4.4 moved in total**, of which $2.76 was 69 person-to-person payments with a **median of $0.002** and a maximum of $1.00; 65 of those 69 landed on 2026-08-24 in a scripted coverage run. The counts are real and small: this is a mechanism proven with real money, not volume. |
-| **Open public mainnet** | - | **Not open.** Dropping the allowlist waits only for a written legal opinion; since 2026-10-08 it is one rehearsed configuration change (`PILOT_MODE`). Raising the caps materially, and renouncing the escrow's upgrade key, wait for a professional security review and a timelock (see *Current security posture*). |
+| **Open public mainnet** | - | **Not open.** Dropping the allowlist waits only for a written legal opinion; since 2026-10-08 it is one configuration change (`PILOT_MODE`), rehearsed on the deployed testnet Worker on 2026-10-09. Raising the caps materially, and renouncing the escrow's upgrade key, wait for a professional security review and a timelock (see *Current security posture*). |
 
 ## Reporting a vulnerability
 
@@ -161,15 +161,17 @@ to both Workers that day; each one, with the test that holds it, is in
   minutes from outside Cloudflare and opens one issue when a stamp is older than 45 minutes, the
   full-run stamp is older than 3 hours, or the mainnet Worker cannot send alerts. GitHub has started
   this repository's schedules hours late (the first scheduled run is 37850573340), so detection can
-  take hours, not 45 minutes. Its alert path has not run yet; a manual drill (`test_alert`, merged on
-  2026-10-09) opens a TEST issue on purpose, and running it is the owner's.
+  take hours, not 45 minutes. A manual drill (`test_alert`, merged on 2026-10-09) opens a TEST issue
+  on purpose; it ran on 2026-10-09, opened issue #46, and the next healthy run closed it, so the alert
+  path (an issue opened, then closed) is proven.
 - **Migration safety net.** A drop can only be released by the contract holding it, so the
   sponsor and the web app read and exit superseded escrow contracts while new escrow only ever
   enters the current one. A contract repoint therefore cannot strand a link that was already sent.
 
-Merged on 2026-10-09 and **not live yet** (each Worker changes with its next deploy, which is the
-owner's): a redacted mainnet error log (one line, every full address cut to four characters, a
-refused simulation kept to its first line, payout and sweep refusals without amounts, Horizon
-refusals without the transaction envelope), a budget of 45 subrequests per request under the Workers
-Free plan's 50, `/health` naming the deployed version, and the watchdog writing its halt the moment a
-tripwire is raised. Until those deploys, the running Workers are the 2026-10-08 code.
+Merged on 2026-10-09 and **live on both Workers since 2026-10-09** (the release tagged `215cfb2`:
+the mainnet Worker as version `baaeaae0`; the testnet Worker deployed as `213a2832` and, after the
+retirement-switch rehearsal's last deploy, `32067caf`): a redacted mainnet error log (one line, every
+full address cut to four characters, a refused simulation kept to its first line, payout and sweep
+refusals without amounts, Horizon refusals without the transaction envelope), a budget of 45
+subrequests per request under the Workers Free plan's 50, `/health` naming the deployed version, and
+the watchdog writing its halt the moment a tripwire is raised.
