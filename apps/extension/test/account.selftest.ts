@@ -40,7 +40,7 @@ run("ACCOUNT", "an account made here: create, back up, practice dollars, forget"
   const core = await import("../src/core");
   const { ExtError } = await import("../src/lib/errors");
   const codeOf = (r: { value: unknown } | { error: unknown }): string => ("error" in r ? (r.error instanceof ExtError ? r.error.code : `other: ${String(r.error)}`) : "returned");
-  const consent = () => fake.local.set({ [K.settings]: { net: "testnet", autolockMin: 15, from: "", mainnetAck: false, consentAt: 1 } });
+  const consent = () => fake.local.set({ [K.settings]: { net: "testnet", autolockMin: 15, mainnetAck: false, consentAt: 1 } });
   const wipe = async () => {
     idb.dbs.clear();
     await fake.local.clear();

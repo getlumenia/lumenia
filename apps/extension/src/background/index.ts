@@ -7,10 +7,10 @@
  * On every start the worker (1) keeps storage.session away from content scripts, (2) locks a session
  * whose deadline passed while it slept, (3) forgets a `sending` flag left by a worker that died
  * mid-send (the record that send kept is then finished by the settle loop, by reading the escrow),
- * and (4) runs one settle pass.
+ * (4) removes the default "from" name an older version kept, and (5) runs one settle pass.
  */
 import { ext } from "../lib/browser";
-import { K, session } from "../lib/storage";
+import { K, dropLegacyDefaultName, session } from "../lib/storage";
 import { AUTOLOCK_ALARM, isUnlockedNow, lock } from "./account";
 import { createMenus, onMenuClicked } from "./insert";
 import { ensureSettleAlarm, route, runSettle } from "./router";
@@ -55,6 +55,7 @@ async function boot(): Promise<void> {
   }
   await isUnlockedNow(); // locks an expired session
   await session().remove(K.sending);
+  await dropLegacyDefaultName().catch(() => false);
   await ensureSettleAlarm();
   await runSettle().catch(() => undefined);
 }

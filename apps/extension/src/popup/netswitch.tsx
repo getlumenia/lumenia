@@ -6,13 +6,13 @@
  * consequences: an account that lives only in this browser is sent to back it up first (the pilot's
  * approval no longer stands between such an account and real money once the pilot is retired), the
  * pilot is asked first (forced, so the answer is fresh), an account that is not on
- * the list hears "invite-only", the early-preview note is shown once and waits for "I understand",
+ * the list hears "invite-only", the real-money note is shown once and waits for "I understand",
  * and only then does the worker change the money. The worker checks all of it again (router.ts,
  * network.set), so a popup that skipped a step still could not switch.
  */
 import { useState } from "preact/hooks";
-import { DAY_CAP_USD, TX_CAP_USD, URLS } from "../config";
-import { formatUsd } from "../core";
+import { URLS } from "../config";
+import { CAPS_SENTENCE, REAL_MONEY_WARNING } from "../lib/copy";
 import type { NetId, PilotInfo } from "../lib/types";
 import { ask } from "./api";
 import { useApp } from "./context";
@@ -30,9 +30,6 @@ export type NetUi =
   | { kind: "warning" }
   | { kind: "switching"; to: NetId }
   | { kind: "error"; text: string; web?: boolean };
-
-const WARNING =
-  "Real money is an early preview. It hasn't been reviewed by an outside security firm yet, so keep amounts tiny.";
 
 export interface NetSwitchState {
   net: NetId;
@@ -191,10 +188,11 @@ export function NetPanel({ sw }: { sw: NetSwitchState }) {
       return (
         <div class="warning" role="group" aria-label="Before you use real money">
           <h3 class="warning__title">Before you use real money</h3>
-          <p>{WARNING}</p>
+          {/* The warning is one sentence everywhere it is shown (lib/copy.ts); the caps follow it on their own. */}
+          <p>{REAL_MONEY_WARNING}</p>
           <p>
-            Links are capped at {formatUsd(TX_CAP_USD)} each and {formatUsd(DAY_CAP_USD)} a day
-            {checked && checked.pilot && checked.limit > 0 ? `, and this account has ${Math.max(0, checked.limit - checked.used)} of ${checked.limit} sends left` : ""}.
+            {CAPS_SENTENCE}
+            {checked && checked.pilot && checked.limit > 0 ? ` This account has ${Math.max(0, checked.limit - checked.used)} of ${checked.limit} sends left.` : ""}
           </p>
           <div class="row">
             <Button small onClick={sw.understand}>

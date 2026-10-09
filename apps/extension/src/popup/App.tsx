@@ -18,7 +18,7 @@ import type { LinkRecord, SendOutcome, WorkerState } from "../lib/types";
 import { ask, onStale } from "./api";
 import { AppCtx, type AppApi, type View } from "./context";
 import { runEscape } from "./escape";
-import { EMPTY_DRAFT, type Draft, type Flow, type FormError, recentReady } from "./flow";
+import { EMPTY_DRAFT, draftAfterLink, type Draft, type Flow, type FormError, recentReady } from "./flow";
 import { plainSentence } from "./format";
 import { sleep } from "./hooks";
 import { describeProblem, type Problem } from "./problems";
@@ -216,7 +216,7 @@ export function App() {
         return;
       }
       if (mine.phase === "confirmed") {
-        setDraft((d) => ({ ...d, amount: "", password: "" }));
+        setDraft(draftAfterLink);
         setFlow({ kind: "ready", record: mine, link: null, inserted: Boolean(mine.insertedAt) });
       } else if (mine.phase === "failed") {
         setFlow({
@@ -240,7 +240,7 @@ export function App() {
   const sent = useCallback(
     (o: SendOutcome) => {
       if (o.record.phase === "confirmed") {
-        setDraft((d) => ({ ...d, amount: "", password: "" }));
+        setDraft(draftAfterLink);
         setFlow({ kind: "ready", record: o.record, link: o.link ?? null, inserted: Boolean(o.inserted) });
       } else {
         setFlow({ kind: "problem", problem: describeProblem("uncertain", "", o.record.net) });
@@ -257,9 +257,6 @@ export function App() {
       const net = live.current.ws?.settings.net ?? "testnet";
       setFormError(null);
       setFlow({ kind: "sending", amount: input.amount, startedAt });
-      if (input.from !== (live.current.ws?.settings.from ?? "")) {
-        await ask("settings.set", { patch: { from: input.from } });
-      }
       const r = await ask("send", {
         amount: input.amount,
         from: input.from,

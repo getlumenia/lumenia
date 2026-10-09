@@ -6,8 +6,7 @@
  * reach a money screen. The title and the action are always ours. `uncertain` is never reworded:
  * it is the one message that must stop a second send.
  */
-import { DAY_CAP_USD, TX_CAP_USD } from "../config";
-import { formatUsd } from "../core";
+import { CAPS_SENTENCE } from "../lib/copy";
 import type { ErrorCode, NetId } from "../lib/types";
 import { plainSentence } from "./format";
 
@@ -91,7 +90,7 @@ export function describeProblem(code: ErrorCode, message: string, net: NetId): P
     case "over-cap":
       return make(
         "That's over the limit",
-        `During the pilot, real money is capped at ${formatUsd(TX_CAP_USD)} a link and ${formatUsd(DAY_CAP_USD)} a day. Try a smaller amount.`,
+        `${CAPS_SENTENCE} Try a smaller amount.`,
         "back",
         "Change the amount",
       );

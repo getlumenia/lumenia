@@ -5,15 +5,20 @@
  * pilot standing is the worker's cached answer (refreshed at most once a minute, and only on real
  * money). The caps are named here so they are read BEFORE the person signs; the sponsor, and the
  * worker in front of it, are what actually enforce them.
+ *
+ * The name is the sender's to add, never ours: the From field starts empty for every new link (it is
+ * not filled from an earlier send or a saved default), so a link carries no name unless one is typed,
+ * and the claim screen then says "Someone". A typed name gets a note saying where it goes.
  */
 import { useEffect, useRef, useState } from "preact/hooks";
-import { DAY_CAP_USD, MIN_USD, TX_CAP_USD, URLS } from "../../config";
+import { MIN_USD, URLS } from "../../config";
 import { claimPasswordProblem, formatUsd, sanitizeAmountInput } from "../../core";
+import { CAPS_SHORT, NAME_NOTE } from "../../lib/copy";
 import type { NetId } from "../../lib/types";
 import { ask } from "../api";
 import { useApp } from "../context";
 import { type BalanceView, useBalance, usePilot } from "../data";
-import { openRecord, type Draft, type FormError } from "../flow";
+import { draftName, openRecord, type Draft, type FormError } from "../flow";
 import { centsOf, plainSentence } from "../format";
 import { useAlive } from "../hooks";
 import { Bubble, Button, ExtLink, Mascot, Switch, TextField } from "../ui";
@@ -43,7 +48,8 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
   const balance = useBalance(net);
 
   const lock = draft.lock ?? real;
-  const from = draft.from ?? ws.settings.from;
+  const from = draftName(draft);
+  const named = from.trim() !== "";
   const amountRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -228,8 +234,14 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
           autoComplete="off"
           maxLength={40}
           value={from}
+          describedBy={named ? "from-note" : undefined}
           onValue={(v) => patch({ from: v })}
         />
+        {named ? (
+          <p class="fine" id="from-note">
+            {NAME_NOTE}
+          </p>
+        ) : null}
 
         <div class="lockbox">
           <Switch id="lock" checked={lock} onChange={(v) => patch({ lock: v })}>
@@ -271,7 +283,7 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
         </>
         ) : (
           <button type="button" class="more" aria-expanded={false} onClick={() => setMore(true)}>
-            {from.trim() ? `From ${from.trim()}. ` : ""}Add your name or a password
+            {named ? `From ${from.trim()}. ` : ""}Add your name or a password
           </button>
         )}
 
@@ -339,7 +351,7 @@ function BalanceLine({
   );
 }
 
-/** "Real money: up to $5.00 a link, $50.00 a day. 3 of 5 sends left." */
+/** "Real money: $5 a link, $25 a day. 3 of 5 sends left." */
 function CapsLine({ pilotInfo }: { pilotInfo: ReturnType<typeof usePilot> }) {
   if (pilotInfo && pilotInfo.pilot && !pilotInfo.approved) {
     return (
@@ -352,7 +364,7 @@ function CapsLine({ pilotInfo }: { pilotInfo: ReturnType<typeof usePilot> }) {
     pilotInfo && pilotInfo.pilot && pilotInfo.limit > 0 ? ` ${Math.max(0, pilotInfo.limit - pilotInfo.used)} of ${pilotInfo.limit} sends left.` : "";
   return (
     <p class="caps">
-      Real money: up to {formatUsd(TX_CAP_USD)} a link, {formatUsd(DAY_CAP_USD)} a day.{left}
+      Real money: {CAPS_SHORT}.{left}
     </p>
   );
 }

@@ -3,13 +3,13 @@
  *
  * The money here is the same switch as the one in the header (netswitch.tsx): practice money is one
  * tap, real money asks the pilot first, says "invite-only" if the account is not on the list, shows
- * the one-time early-preview note and waits for "I understand". Every refusal from the worker is
+ * the one-time real-money note and waits for "I understand". Every refusal from the worker is
  * shown right there, in its own words when it has a plain one.
  */
 import { useState } from "preact/hooks";
-import { AUTOLOCK_CHOICES, DAY_CAP_USD, TX_CAP_USD, URLS, VERSION } from "../../config";
-import { formatUsd } from "../../core";
+import { AUTOLOCK_CHOICES, URLS, VERSION } from "../../config";
 import type { AutolockMin } from "../../config";
+import { CAPS_SENTENCE } from "../../lib/copy";
 import { MESSAGES, openLinksMessage } from "../../lib/errors";
 import { openLinks } from "../../lib/links";
 import { ask } from "../api";
@@ -170,7 +170,7 @@ export function Settings({ locked = false }: { locked?: boolean }) {
           {net === "public" ? (
             <p class="fine">
               {left !== null && pilot ? `${left} of ${pilot.limit} real-money sends left. ` : ""}
-              Up to {formatUsd(TX_CAP_USD)} a link and {formatUsd(DAY_CAP_USD)} a day.
+              {CAPS_SENTENCE}
             </p>
           ) : approved ? (
             <p class="fine">You're approved for real money.</p>

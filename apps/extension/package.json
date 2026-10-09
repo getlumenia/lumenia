@@ -1,6 +1,6 @@
 {
   "name": "@lumenia/extension",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Lumenia browser extension: send a walletless dollar link from any page and see whether it was claimed",
   "type": "module",

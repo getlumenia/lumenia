@@ -42,7 +42,6 @@ export const RequestSchema = z.discriminatedUnion("type", [
       patch: z
         .object({
           autolockMin: z.union([z.literal(5), z.literal(15), z.literal(60)]).optional(),
-          from: z.string().max(40).optional(),
           mainnetAck: z.literal(true).optional(),
         })
         .strict(),

@@ -3,11 +3,18 @@
  * link-window helpers. The refusal copy is checked mechanically against the product's word law, so a
  * later edit that slips "gasless" or a ledger term into a money screen fails here, not in review.
  *
+ * Also the sentences the extension shares word for word with the other surfaces (lib/copy.ts: the
+ * real-money note, the pilot's caps, the note under a typed name), the empty From field of every new
+ * link, and the store listing text (store/description.txt, store/amo-listed.json) and this package's
+ * README, which have to say the same.
+ *
  *   pnpm --filter @lumenia/extension exec tsx src/popup/popup.selftest.ts
  */
+import { readFileSync } from "node:fs";
+import { CAPS, CAPS_SENTENCE, CAPS_SHORT, NAME_NOTE, REAL_MONEY_WARNING } from "../lib/copy";
 import { MESSAGES } from "../lib/errors";
 import type { ErrorCode, LinkRecord, PilotInfo } from "../lib/types";
-import { openRecord, recentReady } from "./flow";
+import { EMPTY_DRAFT, draftAfterLink, draftName, openRecord, recentReady } from "./flow";
 import { centsOf, dayWords, plainSentence, realMoneyTitle, shortAddress } from "./format";
 import { describeProblem } from "./problems";
 
@@ -160,6 +167,77 @@ check("  ...but not before a send on the other network", openRecord([rec({ phase
 check("a link still being made warns too", openRecord([rec({ phase: "submitted", status: undefined })], NOW, "testnet") !== null);
 check("a settled link does not warn", openRecord([rec({})], NOW, "testnet") === null);
 check("a six-hour-old uncertain link stops warning", openRecord([rec({ phase: "uncertain", status: undefined, createdAt: NOW - 7 * 3_600_000 })], NOW, "testnet") === null);
+
+/* ------------------------- the sentences shared with the other surfaces ------------------------- */
+
+// Written out by hand: the web's dialog and /pilot page, the pilot's mail and both store listings
+// carry the same words, so a change here has to be a deliberate change everywhere.
+const D1 = "Real money on Lumenia is an early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so keep amounts small.";
+const D2 = "$5 a link and up to $25 a day from you ($50 a day across the whole pilot)";
+const D2_SHORT = "$5 a link, $25 a day";
+const D3 = "Your name travels inside the link, after the #. Anyone who can read the chat can read it.";
+check("the real-money note is the shared sentence, word for word", REAL_MONEY_WARNING === D1, REAL_MONEY_WARNING);
+check("  ...and it says you can lose money", /You can lose money/.test(REAL_MONEY_WARNING));
+check("the caps are the pilot's: $5 a link, $25 a day from one sender, $50 a day across the pilot", CAPS === D2 && CAPS_SHORT === D2_SHORT, `${CAPS} | ${CAPS_SHORT}`);
+check("  ...and their sentence stands on its own, apart from the note", CAPS_SENTENCE === `Real money is capped at ${D2}.` && !CAPS_SENTENCE.includes(D1));
+check("the note under a typed name is the shared sentence", NAME_NOTE === D3, NAME_NOTE);
+const LISTING_WORDS = /\b(gasless|yield|savings|interest|bank|deposit|trustless)\b/i;
+for (const [what, text] of [["note", REAL_MONEY_WARNING], ["caps", CAPS_SENTENCE], ["short caps", CAPS_SHORT], ["name note", NAME_NOTE]] as const) {
+  check(`the ${what} is plain ASCII with no off-limits word`, ASCII.test(text) && !BANNED.test(text), text.match(BANNED)?.[0]);
+}
+/* "$50 a day" said alone is the old promise: one sender is capped at $25 a day, and $50 is the whole
+   pilot's day. It may appear only as the pilot-wide figure. */
+const STALE_DAY = /\$50(?:\.00)? (?:a|per) day(?! across the whole pilot)/;
+check("the over-cap refusal names the pilot's caps in the shared sentence", MESSAGES["over-cap"] === CAPS_SENTENCE);
+check("  ...and its panel adds what to do", describeProblem("over-cap", "", "public").body === `${CAPS_SENTENCE} Try a smaller amount.`);
+for (const net of ["testnet", "public"] as const) {
+  for (const code of codes) {
+    const p = describeProblem(code, MESSAGES[code], net);
+    check(`${code}/${net}: no "$50 a day" said as one sender's limit`, !STALE_DAY.test(`${p.title} ${p.body} ${MESSAGES[code]}`));
+  }
+}
+
+/* ------------------------------ the From field of a new link ------------------------------ */
+
+check("a new form's From field is empty (nothing fills it in)", EMPTY_DRAFT.from === null && draftName(EMPTY_DRAFT) === "");
+const sentOne = draftAfterLink({ amount: "5", from: "Ayse", lock: true, password: "a long link password" });
+check("once a link is made, the next one starts with an empty From, no amount and no password", draftName(sentOne) === "" && sentOne.from === null && sentOne.amount === "" && sentOne.password === "");
+check("  ...and the link-password switch stays as the person left it", sentOne.lock === true && draftAfterLink({ ...EMPTY_DRAFT, lock: false }).lock === false);
+check("a name the sender typed is the From field's text, as typed", draftName({ ...EMPTY_DRAFT, from: "  Ayse " }) === "  Ayse ");
+
+/* --------------------------------- the store listing and the README --------------------------------- */
+
+const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), "utf8");
+const pkg = JSON.parse(read("../../package.json")) as { version: string };
+const description = read("../../store/description.txt").replace(/\n$/, "");
+const listed = JSON.parse(read("../../store/amo-listed.json")) as {
+  summary: Record<string, string>;
+  description: Record<string, string>;
+  homepage: Record<string, string>;
+  version: { license: string; approval_notes: string };
+};
+const unlisted = JSON.parse(read("../../store/amo-metadata.json")) as { version: { approval_notes: string } };
+// The README wraps its lines; a sentence is checked with every run of whitespace read as one space.
+const readmeRaw = read("../../README.md");
+const readme = readmeRaw.replace(/\s+/g, " ");
+const listing = listed.description["en-US"] ?? "";
+check("the AMO description is store/description.txt byte for byte (the Chrome listing is pasted from that file)", listing === description, `${listing.length} vs ${description.length} characters`);
+check("the listing carries the real-money note word for word", description.includes(D1));
+check("  ...and the caps, in a sentence of their own after it", description.includes(CAPS_SENTENCE) && description.indexOf(CAPS_SENTENCE) > description.indexOf(D1));
+check("  ...and the note's old wording is gone (early preview, keep amounts tiny)", !/early preview|amounts tiny/i.test(description));
+check("  ...and nowhere says $50 a day as one sender's limit", !STALE_DAY.test(description), description.match(STALE_DAY)?.[0]);
+check("  ...and it says a link carries a name only when one is typed, and no amount", /no name unless you type one/i.test(description) && /carries no amount/i.test(description));
+check("  ...plain ASCII, no off-limits word, and the privacy page linked", /^[\x20-\x7e\n]*$/.test(description) && !LISTING_WORDS.test(description) && description.includes("https://getlumenia.com/privacy"), description.match(LISTING_WORDS)?.[0]);
+check("  ...names no site the paste was never tried on", !/WhatsApp|Telegram|Gmail/.test(description));
+const notes = listed.version.approval_notes;
+check("the reviewer note is the same in both AMO files, and within AMO's 3000 characters", notes === unlisted.version.approval_notes && notes.length <= 3000, `${notes.length} characters`);
+check("  ...it states the caps as the sponsor enforces them (5 a link, 25 a day per sender, 50 a day in all)", /5 dollars a link/.test(notes) && /25 a day per sender/.test(notes) && /50 a day across the whole pilot/.test(notes));
+check("  ...plain ASCII", /^[\x20-\x7e\n]*$/.test(notes));
+check("the README names this version in its published-builds table", new RegExp(`^\\|\\s*${pkg.version.replace(/\./g, "\\.")}\\s*\\|`, "m").test(readmeRaw), pkg.version);
+check("  ...and says this folder is that version", readme.includes(`This folder is version **${pkg.version}**`));
+check("  ...links both store pages", readme.includes("https://chromewebstore.google.com/detail/lumenia-send-dollars-by-l/ccdnjnckaldkmjnlpgpmdmnbajmakhmn") && readme.includes("https://addons.mozilla.org/en-US/firefox/addon/lumenia/"));
+check("  ...says the caps the way the screens do, and the note word for word", readme.includes(CAPS) && readme.includes(D1) && !STALE_DAY.test(readme), readme.match(STALE_DAY)?.[0]);
+check("  ...names no site as a tested paste target", !/\(WhatsApp Web, Telegram Web, Gmail, any ordinary field\)/.test(readme));
 
 console.log(fail === 0 ? `\nPASS POPUP ${pass}/${pass}` : `\nFAIL POPUP ${pass}/${pass + fail}`);
 process.exit(fail === 0 ? 0 : 1);

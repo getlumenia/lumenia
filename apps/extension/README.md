@@ -8,6 +8,41 @@ This is the sender's surface only. It is a small Chrome MV3 / Firefox MV3 extens
 the website's own sender code (`apps/web/lib`) instead of re-implementing anything that moves
 money.
 
+This folder is version **0.1.3**. Both stores still serve 0.1.2 until 0.1.3 has been submitted and
+has passed their review; "Published builds" below says what each published version does
+differently from this source.
+
+## Install
+
+- Chrome Web Store: https://chromewebstore.google.com/detail/lumenia-send-dollars-by-l/ccdnjnckaldkmjnlpgpmdmnbajmakhmn
+- Firefox (140 or newer), addons.mozilla.org: https://addons.mozilla.org/en-US/firefox/addon/lumenia/
+- From this source: see "Build, test, run" below (Load unpacked / Load Temporary Add-on).
+
+## Published builds
+
+| Version | Where | Public since | Built from | Package sha256 | The links it makes |
+|---|---|---|---|---|---|
+| 0.1.3 | Chrome Web Store and addons.mozilla.org (listed) | pending: not submitted yet | this source | recorded when it is submitted | Private: `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<name>][&p=1]`. No amount anywhere in the link, and a name only when the sender types one, after the `#` |
+| 0.1.2 | Chrome Web Store | 2026-10-06 | commit `062725f` | CRX as served on 2026-10-09: `0a62ccc9736aa6b2c40b0f2895ee099c184f9f61855b364f26f099bad43e85a7` | Pre-D2: `/v2/c/<id>?a=<amount>&s=<name>[&p=1][&n=public]&src=ext#<key>`, the amount and the name in the query (the name is "Someone" when none was typed) |
+| 0.1.2 | addons.mozilla.org (listed) | 2026-10-07 | commit `062725f` | signed file AMO serves: `988e3c69014d041b79288b06af5c56e24ede379a221a68d6753d7a12b15103a0` | Pre-D2, as above |
+| 0.1.1 | Firefox, unlisted (signed by Mozilla), self-hosted at getlumenia.com/extension/lumenia-firefox.xpi | 2026-10-04 | commit `3d80c78`, the same code as 0.1.2 apart from its version string | `792667fbce088a10fe5e71287f27fc305dac49684486a53eda1e081764e2039e` | Pre-D2, as above |
+
+What the published 0.1.2 (and 0.1.1) does differently from this source, besides the link shape:
+
+- The From field is filled with the name typed for the previous link, so a link carries a name
+  unless the sender clears it. Here it starts empty for every link.
+- A take-back the sponsor accepted but the ledger had not shown yet (a 202 answer) is listed as
+  Reclaimed. Here it stays open until the ledger shows it.
+- An account made in the extension and never backed up is not stopped from switching to real money
+  by the extension itself (the pilot's approval is what stands in the way). Here it is.
+- A busy network reads as "Sending is paused right now", the same words as the operator's pause.
+  Here the pause, a busy network and a spent daily fee budget are three different messages.
+- The real-money note leaves out "you can lose money", and the caps line gives the whole pilot's
+  $50 day as if it were one sender's limit (one sender's is $25).
+
+To rebuild a published version, check out the commit in the table and follow "Build, test, run";
+the build reads the version from `package.json`, so the zips come out under that version's number.
+
 ## What it does
 
 - **Starts with one question.** The first screen is the landing page's opening ("Hey, I've got a
@@ -24,20 +59,29 @@ money.
   getlumenia.com only; add a password there first.
 - **Makes a payment link**: the amount goes into the Lumenia escrow (a Stellar smart contract)
   behind a fresh link key whose secret lives only in the link's `#fragment`. Optionally the
-  recipient must also know a password you tell them some other way.
-- **Pastes the link where you are**: right-click a text box (WhatsApp Web, Telegram Web, Gmail,
-  any ordinary field) and choose "Paste a Lumenia link here"; once the link exists it is inserted
-  into that box. It only inserts text: it never presses Send, never reads the clipboard, and sends
-  nothing from the page (the one thing it looks at is the box it typed into, to tell you whether the
-  link landed).
+  recipient must also know a password you tell them some other way. The link carries no amount (the
+  claim page reads it from the escrow) and no name unless you type one in From, which starts empty
+  for every link; then the extension says where it goes: "Your name travels inside the link, after
+  the #. Anyone who can read the chat can read it."
+- **Pastes the link where you are**, from any text box on any page, in a few taps: right-click the
+  box and choose "Paste a Lumenia link here" (the popup opens; where a browser does not open it from
+  the menu, a badge on the toolbar button asks for a click), unlock it if it has locked itself,
+  enter the amount (and on real money the link's password, which is on by default there), then Make
+  the link; once the link exists it is inserted into that box. It only inserts text: it never
+  presses Send, never reads the clipboard, and sends nothing from the page (the one thing it looks
+  at is the box it typed into, to tell you whether the link landed). Where it was tried, and where
+  not: see "Known limits".
 - **Shows each link's status**: Waiting, Claimed, Reclaimable (unclaimed after 7 days: you can
   take it back), Reclaimed, Closed (claimed or taken back, when we cannot tell which), Uncertain
   (sent but not confirmed yet) or Didn't go through.
-- **Practice money by default** (Stellar testnet), switched in one tap with the Practice | Real
-  switch that is always at the top of the popup. **Real money** (mainnet) only for accounts the
-  invite-only pilot approved, capped at $5 per link and $50 per day, only with a password-locked
-  account, after a one-time note that this is an early preview not yet reviewed by an outside
-  security firm. The worker checks all of that again before it changes the money.
+- **Practice money by default** (Stellar testnet), changed with the Practice | Real switch that is
+  always at the top of the popup. **Real money** (mainnet) only for accounts the invite-only pilot
+  approved, only with a password-locked account that is backed up (one made here needs its backup
+  first), and only after this one-time note: "Real money on Lumenia is an early pilot. It has not
+  been reviewed by an outside security firm yet. You can lose money, so keep amounts small." It is
+  capped at $5 a link and up to $25 a day from you ($50 a day across the whole pilot). The worker
+  checks all of that again before it changes the money, and the sponsor enforces the pilot and the
+  caps.
 - **Works with the website**: an account backed up here opens on getlumenia.com ("Yes, bring it
   here"), and one made on the website opens here the same way; getlumenia.com/extension is where
   the website points people to install it.
@@ -65,8 +109,8 @@ money.
 | A new account's backup, until you back it up | `storage.local` | The password copy of the key (Argon2id + AES-GCM, the website's own backup format), ciphertext only; removed once it is stored on Lumenia's server |
 | The unlocked key, while unlocked | `storage.session` (memory only) | Removed on Lock, after 5/15/60 minutes without use (default 15), and when the browser closes |
 | Each full link (with its secret) | IndexedDB `lumenia-ext-links` | AES-256-GCM under a key derived from your account key (HKDF-SHA-256) and bound to the link's id. That key is never stored: the links can be read back only while the extension is unlocked (`src/lib/sealed.ts`) |
-| The list of links you made | `storage.local` | Amount, link id, network, status, transaction hashes. Never the link's secret |
-| Settings | `storage.local` | Network, auto-lock, default "from" name, consent time |
+| The list of links you made | `storage.local` | Amount, link id, network, status, transaction hashes, and the name you typed for that link, if any. Never the link's secret |
+| Settings | `storage.local` | Network, auto-lock, whether the real-money note was accepted, consent time. No default "from" name: 0.1.2 and earlier kept the last one, and this version removes it when it starts |
 
 "Forget this account" in Settings removes all of it. If the account was made here and never backed
 up, it first says that forgetting it deletes the account and any money in it for good, and offers
@@ -99,7 +143,18 @@ extension can be told apart; it identifies nobody.
 | `alarms` | The auto-lock, and re-checking open links once a minute |
 | `contextMenus` | "Paste a Lumenia link here" on editable fields |
 | `activeTab` + `scripting` | Inserting the link into the field you picked, only after you clicked the menu item or the toolbar button |
-| Host permissions (exactly the six hosts above) | Lumenia's two sponsor servers and Stellar's public Horizon and RPC endpoints; nothing else, no `<all_urls>` |
+| Host permissions (exactly the six hosts below) | Lumenia's two sponsor servers and Stellar's public Horizon and RPC endpoints; nothing else, no `<all_urls>` |
+
+`host_permissions`, the same in both manifests (`build.mjs` fails the build on any other list):
+
+```text
+https://lumenia-sponsor.avakit.workers.dev/*
+https://lumenia-sponsor-mainnet.avakit.workers.dev/*
+https://horizon-testnet.stellar.org/*
+https://horizon.stellar.org/*
+https://soroban-testnet.stellar.org/*
+https://mainnet.sorobanrpc.com/*
+```
 
 The content security policy of every extension page is `script-src 'self' 'wasm-unsafe-eval';
 object-src 'self'; connect-src 'self'` plus exactly the six hosts above, then `img-src 'self';
@@ -152,6 +207,12 @@ extension, the list showing Claimed, and a second link taken back after its expi
 `node build.mjs --e2e-ttl=180` first; that build expires links after 180 seconds and is never
 packaged.
 
+`e2e/ui.e2e.mjs` drives the same flow through the popup's own screens and takes the store
+screenshots on the way. All three check that a link they made has no amount and no name in its
+query (no `a`, no `s`); create and ui also check that a link made without typing a name carries
+none at all, and testnet and ui that a typed name rides after the `#`. Their last recorded runs
+(2026-10-03) predate the private link shape; those checks were added for 0.1.3.
+
 ## Known limits, stated plainly
 
 - An account made in the extension exists only in this browser until it is backed up. If the
@@ -165,21 +226,27 @@ packaged.
 - Take an unclaimed link back within three weeks of its expiry. After that the ledger archives the
   untouched entry (about 30 days after sending on practice money, longer on real money), and this
   version cannot restore it to take the money back.
-- The amount is not in the link at all: the claim page reads it from the escrow. The optional
-  "from" name rides in the `#fragment` next to the secret, which a browser never sends to the claim
-  page's server, so the name stays out of its logs and out of a chat app's link preview. Anyone who
-  sees the whole link (the chat service it travels through, and the page you paste it into) can
-  still read it, just as they can read the secret.
+- From 0.1.3, the amount is not in the link at all: the claim page reads it from the escrow. A link
+  carries a name only when you type one in From, which starts empty for every link; the claim page
+  then says "Someone". A typed name rides in the `#fragment` next to the secret, which a browser
+  never sends to the claim page's server, so the name stays out of its logs and out of a chat app's
+  link preview. Anyone who sees the whole link (the chat service it travels through, and the page
+  you paste it into) can still read it, just as they can read the secret. Links made by 0.1.2 and
+  earlier, the versions in the stores until 0.1.3 is live there (see "Published builds"), carry the
+  amount and the name in the query instead; getlumenia.com/privacy says the same.
 - The link is pasted into whichever box has focus, on the page and in the frame you picked, at the
-  moment the link is ready; if that page has since moved to another site, nothing is pasted.
-  Pasting was tested on a plain text box, a text area, a one-line field and the Lexical editor
-  (the one WhatsApp Web is built on), not on WhatsApp Web, Telegram Web or Gmail themselves.
+  moment the link is ready; if that page has since moved to another site, nothing is pasted. An
+  automated browser cannot make a real right-click, so the tests call the menu item's handler
+  directly. That way the paste was tested on a local test page (a plain text box, a text area, a
+  one-line field) and on the Lexical playground (the editor WhatsApp Web is built on), not on
+  WhatsApp Web, Telegram Web or Gmail themselves.
 - The escrow contract can be upgraded by its owner (on real money, a 2-of-3 multisig whose three
   keys one person holds today) and has not been reviewed by an outside security firm. Its current
   code gives the owner no way to move escrowed money; an upgrade would replace that code.
-- The real-money rule that the account must be password-locked is checked here, exactly as the
-  website checks it; the sponsor does not check it. The pilot allowlist and the caps are enforced
-  by the sponsor.
+- The real-money rules that the account must be password-locked and, when it was made here, backed
+  up are checked here, exactly as the website checks them; the sponsor checks neither. The pilot
+  allowlist and the caps ($5 a link and up to $25 a day from you, $50 a day across the whole pilot)
+  are enforced by the sponsor.
 - On Firefox, host permissions can be withheld by the user; the extension asks for exactly the six
   hosts before it can do anything.
 - Firefox in permanent private browsing mode ("Never remember history") refuses IndexedDB to

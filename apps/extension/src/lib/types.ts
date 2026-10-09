@@ -78,8 +78,8 @@ export type Pill = "waiting" | "reclaimable" | "claimed" | "reclaimed" | "closed
 export interface Settings {
   net: NetId;
   autolockMin: AutolockMin;
-  /** the default "from" name; "" means "Someone" on the claim screen */
-  from: string;
+  /* No default "from" name: a link carries a name only when the sender types one for it (0.1.2 and
+     earlier kept the last one here; storage.ts dropLegacyDefaultName removes it). */
   /** the one-time real-money warning was read and acknowledged */
   mainnetAck: boolean;
   /** the first-run data disclosure was agreed to (nothing leaves the device before it) */

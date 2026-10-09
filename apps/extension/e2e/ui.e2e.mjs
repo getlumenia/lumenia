@@ -133,6 +133,15 @@ async function main() {
   await shot("ready-pasted");
   await chatPage.locator("#chat").screenshot({ path: path.join(RAW, "raw-chatbox.png") });
   evidence.paste = { boxHoldsALink: /^https:\/\/getlumenia\.com\/v2\/c\/[0-9a-f]{64}\?/.test(linkA), msFromClickToReady: pastedAfterMs };
+  // The private shape (0.1.3): no amount and no name in the query; the name typed for A rides after the '#'.
+  const urlA = new URL(linkA);
+  evidence.linkA = {
+    noAmountOrNameInQuery: !urlA.searchParams.has("a") && !urlA.searchParams.has("s"),
+    typedNameAfterHash: urlA.hash.split("&").slice(1).includes("s=Alex"),
+  };
+  if (!evidence.linkA.noAmountOrNameInQuery || !evidence.linkA.typedNameAfterHash) {
+    throw new Error(`link A is not the private shape: ${JSON.stringify(evidence.linkA)}`);
+  }
 
   if (process.argv.includes("--paste-shots")) {
     // Screenshot pass on the seven-day build: one more link for shot 2, then spend both links shown.
@@ -170,6 +179,15 @@ async function main() {
   const made = (await ext.ask({ type: "links.list" })).slice(0, 3); // newest first: C, B, A
   evidence.links = made.map((r) => ({ linkHex: r.linkHex, depositHash: r.hash, depositUrl: expert(r.hash), expiry: r.expiry }));
   log(`popup: three links made: ${made.map((r) => r.hash.slice(0, 10)).join(", ")}`);
+  // B and C were made after "Make another link" with nothing typed in From: the field started empty,
+  // so neither link carries a name, before or after the '#'.
+  for (const r of made.slice(0, 2)) {
+    const { link } = await ext.ask({ type: "links.reveal", linkHex: r.linkHex });
+    const u = new URL(link);
+    const noName = !u.searchParams.has("s") && !u.hash.split("&").slice(1).some((p) => p.startsWith("s=")) && r.from === "";
+    if (!noName) throw new Error(`a link made with an empty From carries a name: ${r.linkHex}`);
+  }
+  evidence.untypedLinksCarryNoName = true;
 
   await p.getByRole("button", { name: "Links" }).click();
   await p.locator("li.row-card--waiting").first().waitFor({ timeout: 30_000 });

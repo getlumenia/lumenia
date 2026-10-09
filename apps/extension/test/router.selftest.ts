@@ -10,7 +10,9 @@
  *       so the sponsor never relays the same take-back twice, and "Forget" waits for it too;
  *   [e] one send at a time: a second send while the first is in flight is refused as busy;
  *   [f] an account made here and never backed up cannot switch to real money (needs-backup), with
- *       nothing asked of the sponsor; practice money is never blocked.
+ *       nothing asked of the sponsor; practice money is never blocked;
+ *   [g] the worker keeps no default "from" name: settings refuse one, the state carries none, and the
+ *       name an older version kept on disk is removed (a link carries a name only when it is typed).
  *
  * Offline: the RPC node and fetch are replaced with promises the test holds, IndexedDB is in memory.
  * RUN: pnpm --filter @lumenia/extension test:router
@@ -58,7 +60,7 @@ run("ROUTER", "the worker's front door (who may ask, what, and the guards on for
     await fake.local.clear();
     await fake.session.clear();
     await fake.local.set({
-      [K.settings]: { net: "testnet", autolockMin: 15, from: "", mainnetAck: false, consentAt: 1 },
+      [K.settings]: { net: "testnet", autolockMin: 15, mainnetAck: false, consentAt: 1 },
       [K.account]: { pubkey: PUB, restoredAt: 1 },
     });
     await fake.session.set({ [K.seed]: Buffer.from(kp.rawSecretKey()).toString("base64"), [K.unlockedPubkey]: PUB, [K.lockAt]: Date.now() + 15 * 60_000 });
@@ -233,4 +235,24 @@ run("ROUTER", "the worker's front door (who may ask, what, and the guards on for
   } finally {
     globalThis.fetch = realFetchF;
   }
+
+  /* ---------------------------------------- [g] ---------------------------------------- */
+  section("g", "no default sender name: a link carries a name only when one is typed for it");
+  await setUp();
+  const smuggled = await ask({ type: "settings.set", patch: { from: "Ayse" } });
+  ok("a default name sent to settings: refused before anything acts on it", !smuggled.ok && /not a request this extension knows/.test(smuggled.message));
+  const state = await ask({ type: "state" });
+  ok("  ...and the state the popup reads carries no name to fill the From field with", state.ok && !("from" in ((state.data as { settings: object }).settings)));
+  // What 0.1.2 left on disk after a send from "Ayse".
+  await fake.local.set({ [K.settings]: { net: "public", autolockMin: 60, from: "Ayse", mainnetAck: true, consentAt: 7 } });
+  ok("an older version's kept name: removed from disk", (await storage.dropLegacyDefaultName()) === true);
+  const kept = (await fake.local.get(K.settings)) as Record<string, unknown>;
+  ok(
+    "  ...and every other setting is kept as it was",
+    !("from" in kept) && kept.net === "public" && kept.autolockMin === 60 && kept.mainnetAck === true && kept.consentAt === 7,
+    JSON.stringify(kept),
+  );
+  ok("  ...once: with nothing to remove, nothing is written", (await storage.dropLegacyDefaultName()) === false);
+  await fake.local.remove(K.settings);
+  ok("  ...and a browser with no settings yet is left alone", (await storage.dropLegacyDefaultName()) === false && (await fake.local.get(K.settings)) === undefined);
 });

@@ -84,7 +84,6 @@ export const K = {
 export const DEFAULT_SETTINGS: Settings = {
   net: "testnet",
   autolockMin: DEFAULT_AUTOLOCK_MIN,
-  from: "",
   mainnetAck: false,
   consentAt: null,
 };
@@ -97,14 +96,26 @@ export async function readSettings(): Promise<Settings> {
     autolockMin: (AUTOLOCK_CHOICES as readonly number[]).includes(raw.autolockMin as number)
       ? (raw.autolockMin as Settings["autolockMin"])
       : DEFAULT_AUTOLOCK_MIN,
-    from: typeof raw.from === "string" ? raw.from.slice(0, 40) : "",
     mainnetAck: raw.mainnetAck === true,
     consentAt: typeof raw.consentAt === "number" ? raw.consentAt : null,
   };
 }
 
+/** Writes the known fields only, so a field an older version kept is dropped on the next write. */
 export async function writeSettings(patch: Partial<Settings>): Promise<Settings> {
   const next = { ...(await readSettings()), ...patch };
   await local().set({ [K.settings]: next });
   return next;
+}
+
+/**
+ * Version 0.1.2 and earlier kept the last "from" name as the next link's default. A link now carries
+ * a name only when the sender types one for it, so that name is never read; this removes it from
+ * disk once (the worker runs it on every start, and it writes only when the old field is there).
+ */
+export async function dropLegacyDefaultName(): Promise<boolean> {
+  const raw = await local().get<Record<string, unknown>>(K.settings);
+  if (!raw || typeof raw !== "object" || !("from" in raw)) return false;
+  await writeSettings({});
+  return true;
 }

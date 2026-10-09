@@ -4,20 +4,24 @@
  * the Soroban RPC and the sponsor's POST faked. For practice money and for real money:
  *
  *   - the link is the private one (D2, apps/web/lib/lumendrop.ts v2LinkUrl):
- *       https://getlumenia.com/v2/c/<linkHex>?[n=public&]src=ext#<key>&s=<name>[&p=1]
+ *       https://getlumenia.com/v2/c/<linkHex>?[n=public&]src=ext#<key>[&s=<name>][&p=1]
  *     with no amount anywhere in it, and the sender's name and the lock marker only after the '#'
+ *   - by default (the From field left empty, as it starts for every link) the link carries no name at
+ *     all: no s= before or after the '#', and the claim reader finds none, so the screen says "Someone"
  *   - `src=ext` is the last query parameter and appears once, whatever the sender's name contains
  *   - `n=public` is in the query if and only if the link is real money
  *   - the key (the S... secret, or the p1. seed of a password-locked link) is only ever after the '#',
  *     first there, never in the path or the query, and the password is nowhere at all
- *   - the name rides after the key exactly as typed, and cannot add a parameter however it is spelled
+ *   - a name the sender typed rides after the key exactly as typed, and cannot add a parameter
+ *     however it is spelled
  *   - the POST goes to that network's sponsor at /v2-deposit, every RPC call goes to that network's RPC
  *     node, and the deposit invokes that network's escrow, signed for that network's passphrase
  *   - the website's own claim reader resolves the link to the same escrow the deposit went to
  *
  *   [a] preconditions: the fakes reach the code under test, the build environment is the shipped one,
  *       and every host the configs use is a host the manifests grant
- *   [b] one run per (network x plain / password-locked / hostile sender name)
+ *   [b] one run per (network x no name / no name, password-locked / a typed name / a typed name,
+ *       password-locked / a hostile typed name)
  *   [c] the same pipeline when the sponsor's answer is not a plain 200 (202, a dropped connection, the
  *       403 / 429 / 503 / 400 refusals), on both networks: the real error text must still be read
  *       correctly, and every escrow question must go to the network that was named
@@ -213,19 +217,24 @@ async function main() {
   interface RunCfg {
     label: string;
     net: NetId;
+    /** what the From field held: "" is the default, a name only when the sender typed one */
     from: string;
-    /** the name the claim screen prints for it: the website's sanitiser cuts it at 24 characters */
-    shown: string;
+    /** the name the claim screen prints for it (the website's sanitiser cuts it at 24 characters), or null for none */
+    shown: string | null;
     password?: string;
   }
   const HOSTILE_SHOWN = "Ay\u015fe&n=public&src=web&p=";
   const runs: RunCfg[] = [
-    { label: "practice money", net: "testnet", from: "Ayse", shown: "Ayse" },
-    { label: "practice money, password-locked", net: "testnet", from: "Ayse", shown: "Ayse", password: PASSWORD },
-    { label: "practice money, hostile sender name", net: "testnet", from: HOSTILE, shown: HOSTILE_SHOWN },
-    { label: "real money", net: "public", from: "Ayse", shown: "Ayse" },
-    { label: "real money, password-locked", net: "public", from: "Ayse", shown: "Ayse", password: PASSWORD },
-    { label: "real money, hostile sender name", net: "public", from: HOSTILE, shown: HOSTILE_SHOWN },
+    { label: "practice money, no name (the default)", net: "testnet", from: "", shown: null },
+    { label: "practice money, no name, password-locked", net: "testnet", from: "", shown: null, password: PASSWORD },
+    { label: "practice money, a typed name", net: "testnet", from: "Ayse", shown: "Ayse" },
+    { label: "practice money, a typed name, password-locked", net: "testnet", from: "Ayse", shown: "Ayse", password: PASSWORD },
+    { label: "practice money, a hostile typed name", net: "testnet", from: HOSTILE, shown: HOSTILE_SHOWN },
+    { label: "real money, no name (the default)", net: "public", from: "", shown: null },
+    { label: "real money, no name, password-locked", net: "public", from: "", shown: null, password: PASSWORD },
+    { label: "real money, a typed name", net: "public", from: "Ayse", shown: "Ayse" },
+    { label: "real money, a typed name, password-locked", net: "public", from: "Ayse", shown: "Ayse", password: PASSWORD },
+    { label: "real money, a hostile typed name", net: "public", from: HOSTILE, shown: HOSTILE_SHOWN },
   ];
 
   for (const cfg of runs) {
@@ -237,7 +246,7 @@ async function main() {
     const puts: LinkRecord[] = [];
     const deps: SendDeps = {
       now: () => Date.now(),
-      settings: async () => ({ net: cfg.net, autolockMin: 15, from: "", mainnetAck: true, consentAt: 1 }),
+      settings: async () => ({ net: cfg.net, autolockMin: 15, mainnetAck: true, consentAt: 1 }),
       account: async () => ({ pubkey: PUB, phase: 2 }),
       backupNeeded: async () => false,
       signer: async () => signer,
@@ -281,13 +290,21 @@ async function main() {
     ok("the query is n (if real money), then src: in that order and nothing else", same([...sp.keys()], [...(e.mainnet ? ["n"] : []), "src"]), [...sp.keys()].join(","));
     ok(
       "no amount anywhere in the link (no a=, no 2.50), and the sender's name nowhere before the '#'",
-      !link.includes("a=") && !link.includes("2.50") && !beforeHash.includes("s=") && !beforeHash.includes(encodeURIComponent(cfg.from)),
+      !link.includes("a=") && !link.includes("2.50") && !beforeHash.includes("s=") && (cfg.from === "" || !beforeHash.includes(encodeURIComponent(cfg.from))),
     );
-    ok(
-      "after the key, s= carries the sender's name exactly as typed, and the claim reader prints it as the screen will",
-      sentName !== undefined && decodeURIComponent(sentName) === cfg.from && carried.from === cfg.shown,
-      JSON.stringify(carried.from),
-    );
+    if (cfg.from === "") {
+      ok(
+        "no name was typed: no s= anywhere in the link (not even a placeholder), and the claim reader finds no name, so the screen says Someone",
+        sentName === undefined && !link.includes("s=") && !link.includes("Someone") && carried.from === null,
+        fragment.replace(key, "<key>"),
+      );
+    } else {
+      ok(
+        "a typed name: after the key, s= carries it exactly as typed, and the claim reader prints it as the screen will",
+        sentName !== undefined && decodeURIComponent(sentName) === cfg.from && carried.from === cfg.shown,
+        JSON.stringify(carried.from),
+      );
+    }
     ok(`n=public is ${e.mainnet ? "present, once" : "absent"} (real money only)`, same(sp.getAll("n"), e.mainnet ? ["public"] : []));
     ok(
       `p=1 is ${lock ? "after the '#', once" : "absent"} (only a password-locked link), and never in the query`,
@@ -295,13 +312,20 @@ async function main() {
     );
     ok("no seeded marker and no group marker (an extension link is a plain one-to-one link)", !sp.has("seeded") && !sp.has("g") && !fragment.includes("&g=") && carried.slots === null);
 
-    // The key.
+    // The key, then the typed name when there is one, then the lock marker when there is one.
+    const behindKey = `${cfg.from === "" ? "" : `&s=${encodeURIComponent(cfg.from)}`}${lock ? "&p=1" : ""}`;
+    const parts = ["the key", ...(cfg.from === "" ? [] : ["the name"]), ...(lock ? ["the lock marker"] : [])];
+    ok(
+      `the fragment is exactly ${parts.length === 1 ? "the key" : `${parts.join(", ")}, in that order,`} and nothing else`,
+      fragment === `${key}${behindKey}`,
+      fragment.replace(key, "<key>"),
+    );
     if (!lock) {
-      ok("the fragment starts with an S... secret, and the name rides behind it", /^S[A-Z2-7]{55}$/.test(key) && fragment.startsWith(`${key}&s=`));
+      ok(`the fragment starts with an S... secret${cfg.from === "" ? "" : ", and the name rides behind it"}`, /^S[A-Z2-7]{55}$/.test(key) && (cfg.from === "" ? fragment === key : fragment.startsWith(`${key}&s=`)));
       ok("  ...and it is the secret of the key that was escrowed (its public half is the link id)", S.Keypair.fromSecret(key).rawPublicKey().toString("hex") === linkHex);
       ok("  ...and no S... string appears in the path or the query", !/S[A-Z2-7]{55}/.test(beforeHash) && !(url.pathname + url.search).includes(key));
     } else {
-      ok("the fragment starts with the p1. seed, not a key", key.startsWith("p1.") && fragment.startsWith(`${key}&s=`) && !/S[A-Z2-7]{55}/.test(link));
+      ok("the fragment starts with the p1. seed, not a key", key.startsWith("p1.") && fragment.startsWith(`${key}&`) && !/S[A-Z2-7]{55}/.test(link));
       const parsed = claimPw.parseLinkFragment(key);
       ok("  ...the right password opens exactly the escrowed link id", parsed?.kind === "password" && (await claimPw.unlockLink(parsed.seed, PASSWORD, linkHex)).ok === true);
       ok("  ...a wrong password does not", parsed?.kind === "password" && (await claimPw.unlockLink(parsed.seed, "not the password", linkHex)).ok === false);
@@ -371,7 +395,7 @@ async function main() {
     setup(world);
     const deps: SendDeps = {
       now: () => Date.now(),
-      settings: async () => ({ net: netId, autolockMin: 15, from: "", mainnetAck: true, consentAt: 1 }),
+      settings: async () => ({ net: netId, autolockMin: 15, mainnetAck: true, consentAt: 1 }),
       account: async () => ({ pubkey: PUB, phase: 2 }),
       backupNeeded: async () => false,
       signer: async () => signer,

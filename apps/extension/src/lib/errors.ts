@@ -13,8 +13,9 @@
  * stated refusal behind "request failed", so a 400 in other words is a refusal. An uncertain link
  * is settled by reading the escrow, never by sending again.
  */
-import { DAY_CAP_USD, TX_CAP_USD } from "../config";
+import { SENDER_DAY_CAP_USD } from "../config";
 import { DepositUncertainError, formatUsd } from "../core";
+import { CAPS_SENTENCE } from "./copy";
 import type { ErrorCode } from "./types";
 
 export class ExtError extends Error {
@@ -38,7 +39,7 @@ export const MESSAGES: Record<ErrorCode, string> = {
   "not-approved": "Real money is invite-only for now, and this account is not approved yet.",
   "pilot-unknown": "We couldn't check whether real money is open for this account. Try again in a minute.",
   "slots-used": "You've used all your real-money sends in the pilot.",
-  "over-cap": `During the pilot you can send up to ${formatUsd(TX_CAP_USD)} at a time and ${formatUsd(DAY_CAP_USD)} a day.`,
+  "over-cap": CAPS_SENTENCE,
   "rate-limited": "Too many tries in a minute. Wait a moment, then try again.",
   halted: "Sending is paused right now. Your money hasn't moved. Try again later.",
   "network-busy": "The network is busy right now. Your money hasn't moved. Try again in a moment.",
@@ -150,6 +151,17 @@ function isStatedRefusal(reason: string, mainnet: boolean): boolean {
   return mainnet || /^(canary cap:|a group link|each share is below|today's sponsor fee budget is spent)/i.test(reason);
 }
 
+/**
+ * The sponsor's per-sender refusal ("your sends today add up to the per-sender limit of 25.0000000
+ * USDC; try again tomorrow") in plain words. The figure is the sponsor's own when it names one, since
+ * the sponsor is what enforces it; this build's figure only when it does not.
+ */
+function senderDayRefusal(why: string): string {
+  const named = /per-sender limit of (\d{1,9}(?:\.\d+)?)/i.exec(why)?.[1];
+  const usd = named ? formatUsd(named).replace(/\.00$/, "") : `$${SENDER_DAY_CAP_USD}`;
+  return `That goes over your limit of ${usd} a day. Nothing moved. Try a smaller amount, or try again tomorrow.`;
+}
+
 /** A stated refusal, in the words the popup shows. */
 function statedRefusal(reason: string): { code: ErrorCode; message: string } {
   const why = reason.replace(/^canary cap:\s*/i, "");
@@ -157,6 +169,8 @@ function statedRefusal(reason: string): { code: ErrorCode; message: string } {
   if (wait) return wait;
   if (/fail-closed/i.test(why)) return { code: "halted", message: MESSAGES.halted };
   if (/per-drop cap/i.test(why)) return { code: "over-cap", message: MESSAGES["over-cap"] };
+  // One sender's share of the day (MAX_DAY_USDC_PER_SENDER): a smaller amount may still fit today.
+  if (/per-sender limit/i.test(why)) return { code: "over-cap", message: senderDayRefusal(why) };
   if (/daily escrow cap/i.test(why)) {
     return { code: "sponsor-refused", message: "The pilot's limit for today is reached. Nothing moved. Try again tomorrow." };
   }

@@ -60,14 +60,22 @@ async function main() {
   const [rec] = await ext.ask({ type: "links.list" });
   const { link } = await ext.ask({ type: "links.reveal", linkHex: rec.linkHex });
   const [base, fragment = ""] = link.split("#");
+  const query = new URL(base).searchParams;
   evidence.link = {
     linkHex: rec.linkHex,
     depositHash: rec.hash,
     depositUrl: expert(rec.hash),
-    srcExt: new URL(base).searchParams.get("src") === "ext",
+    srcExt: query.get("src") === "ext",
     secretOnlyInFragment: fragment.length > 0 && !base.includes(fragment),
+    // The private shape (0.1.3): no amount and no name in the query.
+    noAmountOrNameInQuery: !query.has("a") && !query.has("s"),
+    // No name was typed, so the link carries none, after the '#' either (no placeholder).
+    noNameAnywhere: !fragment.split("&").slice(1).some((p) => p.startsWith("s=")) && !link.includes("Someone"),
   };
   log(`popup: first link made, ${rec.hash}`);
+  if (!evidence.link.noAmountOrNameInQuery || !evidence.link.noNameAnywhere) {
+    throw new Error(`the link is not the private shape: ${JSON.stringify(evidence.link)}`);
+  }
   const claimHash = await claimOnWeb(browser, link);
   evidence.link.claimHash = claimHash;
   evidence.link.claimUrl = expert(claimHash);

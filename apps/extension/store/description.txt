@@ -1,0 +1,21 @@
+Send dollars to anyone with a link. Make it here, drop it into a chat or an email, and whoever opens it collects the money in their browser. The recipient needs no app, no wallet and no extension, and pays no gas: Lumenia's sponsor service covers the network fee.
+
+Start in seconds: make a new account right in the extension with one password, and practice dollars are added for you. Or bring the Lumenia account you already have, with your email, a one-time code and your backup password. Back a new account up with your email whenever you like; until then it lives only in this browser, and the extension says so. For your key it stores only an encrypted record (Argon2id and AES-GCM), and each link you make is kept encrypted with a key derived from your account key.
+
+WHAT IT DOES
+- Make a payment. Enter an amount and, if you like, a claim password the recipient must also know. The amount goes into an escrow on the Stellar ledger, behind a fresh key made for that one payment. The secret that opens it lives only after the "#" in the URL, a part browsers do not send to servers. The link carries no amount (the claim page reads it from the ledger) and no name unless you type one in From. A name you type travels inside the link, after the "#", so anyone who can read the chat can read it.
+- Follow each payment. Statuses: Waiting, Claimed, Reclaimable (unclaimed after 7 days, so you can take it back), Reclaimed, Closed (claimed or taken back, when we cannot tell which), Uncertain (sent but not confirmed yet; never sent again automatically) and Didn't go through (nothing moved).
+- Copy the URL, open the transaction on stellar.expert, or take back an unclaimed payment once it is reclaimable.
+- Right-click in a text box and choose "Paste a Lumenia link here". When the payment is ready, the finished link is inserted into that box, such as a chat box, an email draft or any ordinary text field. It only inserts text. It never sends a message and collects nothing from the page.
+- Auto-lock. The unlocked key stays in memory and locks after 15 minutes of inactivity (you can choose 5, 15 or 60) and whenever the browser restarts.
+
+PRACTICE MONEY FIRST
+By default the extension uses practice money on the Stellar test network; the switch at the top changes it. Real money is only for wallets approved into the invite-only pilot, and it needs a password-locked account that is backed up. Before the first switch to real money the extension shows a one-time note: "Real money on Lumenia is an early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so keep amounts small." Real money is capped at $5 a link and up to $25 a day from you ($50 a day across the whole pilot).
+
+NOT HELD BY US
+Non-custodial: the money sits in the escrow on the ledger, never with us. Our servers only relay transactions and pay fees.
+
+WHAT LEAVES YOUR DEVICE
+To restore or back up an account: your email address and the one-time code, to Lumenia's server; a backup is your key locked with your password, which we cannot open. To add practice dollars: your public key. To pay or take back: the transaction you signed. On real money only: your public key, to check whether the pilot approved it. For balances and status: reads from public Stellar servers. Also a few usage counts, such as "link created", with no URL, secret or page content. Servers see your IP address for rate limiting. No ads, no third-party analytics kit, nothing is sold. Details: https://getlumenia.com/privacy
+
+"Forget this account" erases everything the extension holds on your device. If the account was never backed up, or a link you made is still open, it tells you first, because this browser holds the only copy and the only way to take it back.

@@ -275,7 +275,8 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
           ),
         );
         await touch();
-        if (req.from.trim() !== (await readSettings()).from) await writeSettings({ from: req.from.trim().slice(0, 40) });
+        // The name typed for this link is not kept as a default for the next one: a link carries a
+        // name only when the sender types it for that link.
         // The person right-clicked a text field and asked for the link there: put it there now.
         if (outcome.link && (await readPendingInsert())) {
           try {

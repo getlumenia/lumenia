@@ -201,7 +201,7 @@ async function main() {
   ok("sessionView reads the stored pair, or LOCKED", same(await account.sessionView(), LOCKED) && (await put(), (await account.sessionView()).pubkey === PUB));
 
   // touch()
-  await fake.local.set({ [K.settings]: { net: "testnet", autolockMin: 5, from: "", mainnetAck: false, consentAt: N } });
+  await fake.local.set({ [K.settings]: { net: "testnet", autolockMin: 5, mainnetAck: false, consentAt: N } });
   await fake.session.set({ [K.lockAt]: Date.now() + MIN });
   fake.alarms.length = 0;
   const before = Date.now();

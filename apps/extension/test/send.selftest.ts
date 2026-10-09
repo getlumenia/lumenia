@@ -125,7 +125,7 @@ async function main() {
       signerCalls: [],
       clock,
     };
-    const settings: Settings = { net: "testnet", autolockMin: 15, from: "", mainnetAck: false, consentAt: 1, ...cfg.settings };
+    const settings: Settings = { net: "testnet", autolockMin: 15, mainnetAck: false, consentAt: 1, ...cfg.settings };
     const account = cfg.account === undefined ? { pubkey: PUB, phase: 2 as const } : cfg.account;
     let putN = 0;
 
@@ -304,6 +304,10 @@ async function main() {
     { name: "400 on testnet, the shared daily cap (a stated refusal, before the submit)", err: relay(400, '{"error":"canary cap: daily escrow cap of 50 USDC reached; try again tomorrow"}'), code: "sponsor-refused", phase: "failed", text: /limit for today is reached\. Nothing moved/ },
     { name: "400 on real money, the shared daily cap", cfg: MAIN, err: relay(400, '{"error":"canary cap: daily escrow cap of 50 USDC reached; try again tomorrow"}'), code: "sponsor-refused", phase: "failed", text: /limit for today is reached\. Nothing moved/ },
     { name: "400 on real money, the per-link cap", cfg: MAIN, err: relay(400, '{"error":"canary cap: amount 5.5 USDC exceeds the per-drop cap of 5 USDC"}'), code: "over-cap", phase: "failed" },
+    // One sender's share of the day (MAX_DAY_USDC_PER_SENDER, 25 on mainnet): said in the figure the
+    // screens name, and a smaller amount may still fit, so it is over-cap ("Change the amount").
+    { name: "400 on real money, this sender's share of the day (the per-sender limit)", cfg: MAIN, err: relay(400, '{"error":"canary cap: your sends today add up to the per-sender limit of 25.0000000 USDC; try again tomorrow"}'), code: "over-cap", phase: "failed", text: /^That goes over your limit of \$25 a day\. Nothing moved\. Try a smaller amount, or try again tomorrow\.$/ },
+    { name: "400 on testnet, the per-sender limit in the sponsor's own figure", err: relay(400, '{"error":"canary cap: your sends today add up to the per-sender limit of 250.5000000 USDC; try again tomorrow"}'), code: "over-cap", phase: "failed", text: /^That goes over your limit of \$250\.50 a day\. Nothing moved\./ },
     { name: "400 on real money, the caps cannot be read (fail-closed)", cfg: MAIN, err: relay(400, '{"error":"canary cap: daily cap counter unavailable (fail-closed): kv down"}'), code: "halted", phase: "failed" },
     { name: "400 on real money, any other stated sentence (only stated refusals survive the redaction)", cfg: MAIN, err: relay(400, '{"error":"xdr and senderPublicKey are required"}'), code: "sponsor-refused", phase: "failed", text: /Nothing moved/ },
     { name: "400 on real money, the redaction", cfg: MAIN, err: relay(400, '{"error":"request failed","ref":"1a2b3c4d"}'), code: "uncertain", phase: "uncertain" },
@@ -578,16 +582,28 @@ async function main() {
   const emptyPw = makeRig();
   await send(emptyPw, { ...OK_REQ, password: "" });
   ok("an empty password string means no password", emptyPw.creates[0]!.password === undefined && emptyPw.puts[0]!.locked === false);
+  // No name is the default: the link then carries none (no "Someone" either), and the claim screen
+  // prints "Someone" for a link with no name.
   const fromRows: [string, string, string, string][] = [
-    ["left empty", "", "Someone", ""],
-    ["only spaces", "   ", "Someone", ""],
+    ["left empty", "", "", ""],
+    ["only spaces", "   ", "", ""],
     ["with spaces around it", "  Ayse  ", "Ayse", "Ayse"],
     ["sixty characters long", "x".repeat(60), "x".repeat(40), "x".repeat(40)],
   ];
   for (const [what, typed, linkName, recordName] of fromRows) {
     const rig = makeRig();
     await send(rig, { amount: "1", from: typed });
-    ok(`a sender name ${what}: createLink gets ${linkName.length > 10 ? "the first forty characters" : JSON.stringify(linkName)}, the record keeps ${recordName ? "the trimmed name" : "nothing"}`, rig.creates[0]!.from === linkName && rig.puts[0]!.from === recordName);
+    const sealedLink = [...rig.sealed.values()][0] ?? "";
+    const fragment = sealedLink.split("#")[1] ?? "";
+    ok(
+      `a sender name ${what}: createLink gets ${linkName.length > 10 ? "the first forty characters" : JSON.stringify(linkName)}, the record keeps ${recordName ? "the trimmed name" : "nothing"}`,
+      rig.creates[0]!.from === linkName && rig.puts[0]!.from === recordName,
+    );
+    ok(
+      `  ...and the link ${linkName ? "carries that name after the '#' as s=" : "carries no s= at all, before or after the '#'"}`,
+      linkName ? fragment.includes(`&s=${encodeURIComponent(linkName)}`) && !sealedLink.split("#")[0]!.includes("s=") : sealedLink.length > 0 && !sealedLink.includes("s=") && !sealedLink.includes("Someone"),
+      sealedLink.replace(/#S[A-Z2-7]{55}/, "#<key>"),
+    );
   }
   const mainPw = makeRig(MAIN);
   await send(mainPw, pw(PASSWORD));
@@ -741,12 +757,16 @@ async function main() {
   const sweep = everyPut.join("\n");
   ok(`${everyPut.length} stored records, across every scenario above, hold no '#', no URL, no /v2/c/ path and no S... key`, everyPut.length > 50 && !sweep.includes("#") && !sweep.includes("https://") && !sweep.includes("/v2/c/") && !/S[A-Z2-7]{55}/.test(sweep), `${everyPut.length} records`);
   ok("  ...and not the link password", !sweep.includes(PASSWORD));
-  // The private fragment is the key, then the sender's name, then the lock marker when there is one
-  // (apps/web/lib/lumendrop.ts v2LinkUrl), and nothing else.
+  // The private fragment is the key, then the sender's name when one was typed, then the lock marker
+  // when there is one (apps/web/lib/lumendrop.ts v2LinkUrl), and nothing else.
   ok(
     "  ...while every sealed link does carry its fragment (the link is kept where it can be read back)",
-    everySealedLinks.length > 50 && everySealedLinks.every((l) => /#S[A-Z2-7]{55}&s=[A-Za-z0-9%._~!*'()-]+(&p=1)?$/.test(l)),
+    everySealedLinks.length > 50 && everySealedLinks.every((l) => /#S[A-Z2-7]{55}(&s=[A-Za-z0-9%._~!*'()-]+)?(&p=1)?$/.test(l)),
     `${everySealedLinks.length} sealed`,
+  );
+  ok(
+    "  ...and the links made with no name typed carry no s= at all",
+    everySealedLinks.some((l) => /#S[A-Z2-7]{55}(&p=1)?$/.test(l)) && everySealedLinks.every((l) => !l.includes("Someone")),
   );
   ok("the whole suite made no network request outside its own fake", strayFetches === 0, `${strayFetches} stray fetches`);
 

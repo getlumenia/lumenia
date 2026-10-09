@@ -106,8 +106,13 @@ async function main() {
     noMainnetMarker: !u.searchParams.has("n"),
     secretOnlyInFragment: u.hash.length > 1 && !u.pathname.includes(u.hash.slice(1)) && !u.search.includes(u.hash.slice(1)),
     path: u.pathname === `/v2/c/${sent.linkHex}`,
+    // The private shape (0.1.3): no amount and no name in the query; the name typed for this link
+    // ("Extension test") rides after the '#'.
+    noAmountOrNameInQuery: !u.searchParams.has("a") && !u.searchParams.has("s"),
+    typedNameAfterHash: u.hash.split("&").slice(1).includes(`s=${encodeURIComponent("Extension test")}`),
   };
   log("link contract:", JSON.stringify(contract));
+  if (Object.values(contract).some((v) => v !== true)) throw new Error(`the link breaks its contract: ${JSON.stringify(contract)}`);
   evidence.link1 = { linkHex: sent.linkHex, depositHash: sent.record.hash, depositUrl: expert(sent.record.hash), query: u.search, contract };
 
   const claimHash = await claimOnWeb(browser, link);

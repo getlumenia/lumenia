@@ -20,9 +20,16 @@ export const WEB_ORIGIN = "https://getlumenia.com";
  */
 export const SRC = "ext" as const;
 
-/** Real money is a capped pilot: the mainnet sponsor's MAX_DROP_USDC and MAX_DAY_USDC (wrangler.toml). */
+/**
+ * Real money is a capped pilot. The mainnet sponsor enforces all three (apps/sponsor/wrangler.toml,
+ * [env.mainnet.vars]); they are repeated here only so the screens can name them before anyone signs.
+ */
+/** MAX_DROP_USDC: one link. */
 export const TX_CAP_USD = "5";
-export const DAY_CAP_USD = "50";
+/** MAX_DAY_USDC_PER_SENDER: what one sender may send in a day. */
+export const SENDER_DAY_CAP_USD = "25";
+/** MAX_DAY_USDC: the whole pilot's day, across every sender. */
+export const PILOT_DAY_CAP_USD = "50";
 /** The testnet sponsor's own per-link ceiling (MAX_DROP_USDC = 100). Practice money, but still a rule. */
 export const TESTNET_MAX_USD = "100";
 /** The escrow's floor (MIN_DROP_USDC on both Workers). */

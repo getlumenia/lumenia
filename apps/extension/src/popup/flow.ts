@@ -16,6 +16,22 @@ export interface Draft {
 
 export const EMPTY_DRAFT: Draft = { amount: "", from: null, lock: null, password: "" };
 
+/**
+ * The From field's text. Untouched, it is empty: a link carries a name only when the sender types
+ * one for it, so nothing (an earlier send, a saved default, the account's name) fills it in.
+ */
+export function draftName(d: Draft): string {
+  return d.from ?? "";
+}
+
+/**
+ * The form once a link is made: the amount, the password and the name go, so the next link starts
+ * with an empty From. Whether the link password is switched on stays as the person left it.
+ */
+export function draftAfterLink(d: Draft): Draft {
+  return { ...d, amount: "", password: "", from: null };
+}
+
 /** A refusal that belongs under one field, not in a panel. */
 export interface FormError {
   field: "amount" | "password";

@@ -100,7 +100,9 @@ export async function runSend(deps: SendDeps, req: SendRequest): Promise<SendOut
     made = await deps.createLink({
       signer,
       amount,
-      from: from || "Someone",
+      // Empty unless the sender typed a name for this link: the link then carries no name at all (no
+      // `&s=` after the '#', lib/link-fragment.ts claimFragment) and the claim screen says "Someone".
+      from,
       webOrigin: WEB_ORIGIN,
       sponsorUrl: net.sponsorUrl,
       net,
