@@ -54,8 +54,8 @@ Chrome Web Store and on addons.mozilla.org, both built from commit `062725f`. Th
 was built on 2026-10-09 from the merged tree (commit `00aa0a5`), and both stores serve it now:
 addons.mozilla.org since 2026-10-09, 08:36 UTC, and the Chrome Web Store since 2026-10-10, 10:32 UTC
 (13:32 Istanbul, the time of the store's "published" mail to the owner). Version 0.1.4, built on
-2026-10-10 from `c961c69` with the account management described below, was submitted to
-addons.mozilla.org the same day and is in its review; its Chrome Web Store upload is the owner's
+2026-10-10 from `c961c69` with the account management described below, is public on
+addons.mozilla.org since 2026-10-10 (13:26 UTC); its Chrome Web Store upload is the owner's
 step and has not been made yet.
 
 ### Published builds
