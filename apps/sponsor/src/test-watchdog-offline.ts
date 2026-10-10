@@ -33,6 +33,7 @@ import { Address, Keypair, nativeToScVal, xdr } from "@stellar/stellar-sdk";
 import { makeConfig, USDC_ISSUERS } from "./lib/config.js";
 import {
   AUTO_HALT_FAILED_TITLE,
+  BLIND_GRACE_MS,
   AUTO_HALT_SKIPPED_TITLE,
   AUTO_HALT_TITLE,
   EVENTS_PAGE_SIZE,
@@ -133,8 +134,15 @@ interface World {
   latest: number;
   instanceUntil: number;
   codeUntil: number;
-  /** Fail these upstreams with a 500 text body. */
-  down: Set<"horizon" | "rpc" | "kv">;
+  /**
+   * Fail these upstreams: "horizon" a 502, "rpc" Cloudflare's throttle (429, "error code: 1015"), "kv" a
+   * 500 for every store request. Answers about the request, never busy: "horizon-404" (no such account),
+   * "rpc-answer" (a JSON-RPC error object), "rpc-refused" (a 403 firewall block). "kv-set": the store
+   * reads, and refuses every plain /set/.
+   */
+  down: Set<"horizon" | "horizon-404" | "rpc" | "rpc-answer" | "rpc-refused" | "kv" | "kv-set">;
+  /** The Retry-After header the RPC throttle sends, or null for none. */
+  retryAfter: string | null;
   /** The fee counter the caps module keeps, in stroops. */
   feeSpent: bigint | null;
   /** Every SET inside a store pipeline fails (a store refusing the halt write); plain /set/ still works. */
@@ -162,6 +170,7 @@ const world: World = {
   instanceUntil: 1_000_000 + 1_000_000,
   codeUntil: 1_000_000 + 1_000_000,
   down: new Set(),
+  retryAfter: null,
   feeSpent: 0n,
   pipelineSetFails: false,
   getFails: null,
@@ -185,6 +194,8 @@ const trace: string[] = [];
 const haltReasons: string[] = [];
 /** Whether the halt key was already set when the run's first Soroban RPC request left. */
 let haltedAtFirstRpc: boolean | null = null;
+/** Every Soroban RPC request, answered or not. */
+let rpcRequests = 0;
 
 function instanceEntryXdr(hashHex: string): string {
   return xdr.LedgerEntryData.contractData(
@@ -219,8 +230,14 @@ function op(type: string, source: string, token: number, ageMs = 60_000): Op {
 function json(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) } as unknown as Response;
 }
-function text(body: string, status = 500): Response {
-  return { ok: status < 400, status, json: async () => JSON.parse(body), text: async () => body } as unknown as Response;
+function text(body: string, status = 500, headers: Record<string, string> = {}): Response {
+  return {
+    ok: status < 400,
+    status,
+    headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+    json: async () => JSON.parse(body),
+    text: async () => body,
+  } as unknown as Response;
 }
 
 /** Routes every fetch the watchdog, the caps reader and the kill switch make. */
@@ -231,6 +248,7 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
     horizonRequests.push(u);
     trace.push(/\/operations\?/.test(u) ? "horizon:ops" : "horizon:account");
     if (world.down.has("horizon")) return text("error code: 502", 502);
+    if (world.down.has("horizon-404")) return json({ title: "Resource Missing", status: 404 }, 404);
     if (/\/operations\?/.test(u)) {
       opsRequests.push(u);
       // Horizon's paging: asc returns the records AFTER the cursor, desc the records BEFORE it
@@ -253,8 +271,13 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
   }
 
   if (u.startsWith("https://rpc.fake")) {
+    rpcRequests++;
     if (haltedAtFirstRpc === null) haltedAtFirstRpc = kv.get(haltKey("testnet")) === "1";
-    if (world.down.has("rpc")) return text("error code: 1015");
+    // How the public RPC's Cloudflare front answered on 2026-10-10.
+    if (world.down.has("rpc")) return text("error code: 1015", 429, world.retryAfter === null ? {} : { "retry-after": world.retryAfter });
+    if (world.down.has("rpc-refused")) return text("error code: 1020", 403);
+    // A considered JSON-RPC answer (not a busy source): the RPC refused the request itself.
+    if (world.down.has("rpc-answer")) return json({ jsonrpc: "2.0", id: 1, error: { message: "startLedger must be within the ledger range" } });
     const req = JSON.parse(String(init?.body ?? "{}")) as {
       method: string;
       params?: { keys?: string[]; startLedger?: number; pagination?: { limit?: number } };
@@ -335,6 +358,7 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
     const set = path.match(/^\/set\/([^/]+)\/(.*)$/);
     if (set) {
       trace.push(`kv:set ${decodeURIComponent(set[1]!)}`);
+      if (world.down.has("kv-set")) return json({ error: "OOM command not allowed when used memory > 'maxmemory'." }, 400);
       kv.set(decodeURIComponent(set[1]!), decodeURIComponent(set[2]!));
       return json({ result: "OK" });
     }
@@ -366,6 +390,7 @@ function quiet(): void {
   world.instanceUntil = world.latest + 1_000_000;
   world.codeUntil = world.latest + 1_000_000;
   world.down.clear();
+  world.retryAfter = null;
   world.feeSpent = 0n;
   world.pipelineSetFails = false;
   world.getFails = null;
@@ -380,6 +405,7 @@ function quiet(): void {
   trace.length = 0;
   haltReasons.length = 0;
   haltedAtFirstRpc = null;
+  rpcRequests = 0;
   resetHaltCache();
   delete process.env.SPONSOR_HALT;
   delete process.env.RESEND_API_KEY;
@@ -391,6 +417,7 @@ function quiet(): void {
   delete process.env.UPSTASH_REDIS_REST_URL;
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
   process.env.STELLAR_NETWORK = "testnet";
+  process.env.WATCHDOG_RETRY_BASE_MS = "1"; // the 1 s and 3 s pauses between retries, shrunk for the suite
   process.env.KV_REST_API_URL = "https://fake-kv.test";
   process.env.KV_REST_API_TOKEN = "t";
   process.env.SPONSOR_MIN_XLM = "50";
@@ -558,13 +585,14 @@ async function main() {
     check("far from expiry the check reports an info line", has(r.alerts, "Escrow contract state expiry") && !has(r.alerts, "Escrow contract state expiry approaching"));
   }
 
-  console.log("[10] a check that cannot run pages its own failure, never halts, never stops the others");
+  console.log("[10] a check that cannot run reports its own failure, never halts, never stops the others");
   quiet();
   process.env.LUMENDROP_WASM_HASH = WASM;
   world.down.add("horizon");
   {
     const r = await runWatchdog(config, SPONSOR, WORKER);
-    check("pages 'Watchdog check failed: sponsor account'", has(r.alerts, "Watchdog check failed: sponsor account"));
+    check("reports 'Watchdog check failed: sponsor account'", has(r.alerts, "Watchdog check failed: sponsor account"));
+    check("a busy source on its first run is an info line, not a page", !titles(r.alerts, "page").includes("Watchdog check failed: sponsor account") && titles(r.alerts, "info").includes("Watchdog check failed: sponsor account"));
     check("the failure names the host and the status, not a parser error", /horizon\.fake answered 502/.test(r.alerts.find((a) => a.title.endsWith("sponsor account"))?.detail ?? ""));
     check("the other checks still ran", r.checked.includes("escrow-governance") && r.checked.includes("escrow-wasm") && r.checked.includes("fee-budget"));
     check("no halt", !r.autoHalted && !halted());
@@ -651,11 +679,211 @@ async function main() {
   world.down.add("horizon");
   world.down.add("rpc");
   {
-    const r = await runWatchdog(config, SPONSOR, WORKER);
-    check("every check reported its own failure", titles(r.alerts, "page").filter((t) => t.startsWith("Watchdog check failed")).length >= 4, titles(r.alerts, "page").join(" | "));
+    const t0 = Date.now();
+    await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 }); // the outage begins
+    kv.delete(lastRunKey("testnet"));
+    const r = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + BLIND_GRACE_MS + 60_000 });
+    check("once the outage has lasted the grace, every check pages its own failure", titles(r.alerts, "page").filter((t) => t.startsWith("Watchdog check failed")).length >= 4, titles(r.alerts, "page").join(" | "));
     check("no halt from failures", !r.autoHalted && !halted());
     check("the heartbeat stamp is there", !!kv.get(lastRunKey("testnet")));
     check("and the full-run stamp is not", !kv.has(lastFullRunKey("testnet")));
+  }
+
+  console.log("[13b] a busy source pages only once it has lasted the grace; an answer, an operator's run or an unreadable store page at once");
+  quiet();
+  mailOn();
+  process.env.LUMENDROP_WASM_HASH = WASM;
+  world.down.add("rpc");
+  {
+    const BLIND = "watchdog:testnet:blind";
+    const RPC_CHECKS = ["Watchdog check failed: escrow governance", "Watchdog check failed: escrow wasm hash", "Watchdog check failed: escrow state expiry"];
+    const t0 = Date.now();
+    const first = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 });
+    check("first throttled run: the three RPC checks are info lines", RPC_CHECKS.every((t) => titles(first.alerts, "info").includes(t)), titles(first.alerts).join(" | "));
+    check("first throttled run: none of them pages", RPC_CHECKS.every((t) => !titles(first.alerts, "page").includes(t)));
+    check("first throttled run: no mail about them", !resend.some((m) => /Watchdog check failed/.test(`${m.subject}\n${m.text}`)));
+    check("the info line says when it will page", /pages if this lasts 45 minutes/.test(detail(first.alerts, RPC_CHECKS[0]!)), detail(first.alerts, RPC_CHECKS[0]!).slice(-160));
+    const ledger = JSON.parse(kv.get(BLIND) ?? "{}") as Record<string, number>;
+    check("the blind ledger records when each RPC check began failing", Object.keys(ledger).length === 3 && Object.values(ledger).every((v) => v === t0), kv.get(BLIND));
+    check("the full-run stamp stays stale while blind", first.lastFullRun === null);
+
+    const mid = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + 30 * 60_000 });
+    check("30 minutes in: still info lines, still no page", RPC_CHECKS.every((t) => titles(mid.alerts, "info").includes(t) && !titles(mid.alerts, "page").includes(t)));
+    check("30 minutes in: the line counts the minutes", /for 30 minutes so far/.test(detail(mid.alerts, RPC_CHECKS[1]!)), detail(mid.alerts, RPC_CHECKS[1]!).slice(-160));
+    check("30 minutes in: the start time is kept, not reset", (JSON.parse(kv.get(BLIND) ?? "{}") as Record<string, number>)[Object.keys(ledger)[0]!] === t0);
+
+    const late = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + 46 * 60_000 });
+    check("46 minutes in: all three page", RPC_CHECKS.every((t) => titles(late.alerts, "page").includes(t)), titles(late.alerts, "page").join(" | "));
+    check("46 minutes in: the page says how long and since when", /Every run for 46 minutes \(since \d{4}-/.test(detail(late.alerts, RPC_CHECKS[2]!)), detail(late.alerts, RPC_CHECKS[2]!).slice(-120));
+    check("46 minutes in: the page was mailed", resend.some((m) => /Watchdog check failed: escrow governance/.test(`${m.subject}\n${m.text}`)));
+
+    world.down.delete("rpc");
+    const back = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + 60 * 60_000 });
+    check("the source answers again: no check-failed line at all", !titles(back.alerts).some((t) => t.startsWith("Watchdog check failed")));
+    check("and the blind ledger is emptied", kv.get(BLIND) === "{}", kv.get(BLIND));
+    check("and the run is a full run again", back.lastFullRun !== null);
+  }
+  quiet();
+  process.env.LUMENDROP_WASM_HASH = WASM;
+  world.down.add("rpc");
+  {
+    const r = await runWatchdog(config, SPONSOR, { autoHalt: false, heartbeat: false, confirmDelayMs: 5 });
+    check("an operator's run (no heartbeat) pages a busy source at once", titles(r.alerts, "page").includes("Watchdog check failed: escrow governance"));
+    check("and writes no blind ledger", !kv.has("watchdog:testnet:blind"));
+  }
+  quiet();
+  process.env.LUMENDROP_WASM_HASH = WASM;
+  world.down.add("rpc-answer");
+  {
+    const r = await runWatchdog(config, SPONSOR, WORKER);
+    check("a considered RPC answer (an error object) pages at once, no grace", titles(r.alerts, "page").includes("Watchdog check failed: escrow governance"), titles(r.alerts).join(" | "));
+    check("and it is not recorded as blind", !(kv.get("watchdog:testnet:blind") ?? "{}").includes("governance"));
+  }
+  quiet();
+  process.env.LUMENDROP_WASM_HASH = WASM;
+  world.down.add("rpc");
+  world.down.add("kv");
+  {
+    const r = await runWatchdog(config, SPONSOR, WORKER);
+    check("with the store unreadable there is no memory, so a busy source pages at once", titles(r.alerts, "page").includes("Watchdog check failed: escrow governance"), titles(r.alerts).join(" | "));
+  }
+
+  console.log("[13c] the grace rests on a record the store keeps, a refusal is no busy source, a late cron start costs no run, and a tripwire missed while blind still halts");
+  {
+    const GOV = "Watchdog check failed: escrow governance";
+    const WASM_CHECK = "Watchdog check failed: escrow wasm hash";
+    const ACCOUNT = "Watchdog check failed: sponsor account";
+    const BLIND = "watchdog:testnet:blind";
+    const mailed = (title: string) => resend.some((m) => `${m.subject}\n${m.text}`.includes(title));
+
+    quiet();
+    mailOn();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    delete process.env.KV_REST_API_URL;
+    world.down.add("rpc");
+    {
+      const t0 = Date.now();
+      const first = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 });
+      const later = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + 3 * HOUR });
+      check(
+        "with no store at all nothing carries a start time between runs, so a busy source pages at once, on every run",
+        [first, later].every((r) => titles(r.alerts, "page").includes(GOV)),
+        titles(first.alerts).join(" | "),
+      );
+    }
+    process.env.KV_REST_API_URL = "https://fake-kv.test";
+
+    quiet();
+    mailOn();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.down.add("rpc");
+    world.down.add("kv-set");
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check(
+        "a store that reads but refuses the write: no later run could count the grace, so the busy checks page now",
+        titles(r.alerts, "page").includes(GOV) && titles(r.alerts, "page").includes(WASM_CHECK) && !titles(r.alerts, "info").includes(GOV),
+        titles(r.alerts).join(" | "),
+      );
+      check("the page says why it did not wait", /could not save when this began/.test(detail(r.alerts, GOV)), detail(r.alerts, GOV).slice(-110));
+      check("and it was mailed", mailed(GOV));
+    }
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.down.add("rpc");
+    world.down.add("kv-set");
+    {
+      // An outage already 15 minutes old, kept by an earlier run; this run's write (the sponsor
+      // account check cleared) is refused, but the RPC checks' start is in the store already.
+      const t0 = Date.now();
+      kv.set(BLIND, JSON.stringify({ "watchdog-check-failed-escrow-governance": t0 - 15 * 60_000, "watchdog-check-failed-sponsor-account": t0 - 15 * 60_000 }));
+      const r = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 });
+      check("a refused write does not page a failure whose start an earlier run already kept", titles(r.alerts, "info").includes(GOV), titles(r.alerts).join(" | "));
+      check("while one whose start rested on this write does", titles(r.alerts, "page").includes(WASM_CHECK), titles(r.alerts).join(" | "));
+    }
+
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.down.add("rpc-refused");
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check(
+        "the RPC refusing the request (403, a firewall block) is an answer, not a busy source: it pages at once",
+        titles(r.alerts, "page").includes(GOV) && titles(r.alerts, "page").includes(WASM_CHECK),
+        titles(r.alerts).join(" | "),
+      );
+      check("unretried: one request each for getLatestLedger and the instance read", rpcRequests === 2, `${rpcRequests} requests`);
+      check("and nothing is recorded as blind", !kv.has(BLIND), kv.get(BLIND));
+      check("the page names the status and the body", /HTTP 403, and the body was not JSON: error code: 1020/.test(detail(r.alerts, GOV)), detail(r.alerts, GOV));
+    }
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.down.add("horizon-404");
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check(
+        "Horizon answering 404 for the sponsor account (merged, or a wrong id) pages at once, unretried",
+        titles(r.alerts, "page").includes(ACCOUNT) && /horizon\.fake answered 404/.test(detail(r.alerts, ACCOUNT)) && horizonRequests.length === 1,
+        `${horizonRequests.length} requests: ${detail(r.alerts, ACCOUNT)}`,
+      );
+    }
+
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.down.add("rpc");
+    {
+      // Cron runs start some seconds after their minute, by a different amount each time.
+      const t0 = Date.now();
+      const at = (minutes: number, lateSeconds: number) => runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + minutes * 60_000 + lateSeconds * 1000 });
+      await at(0, 20);
+      await at(15, 5);
+      const thirty = await at(30, 9);
+      check("the run 30 minutes on still waits", titles(thirty.alerts, "info").includes(GOV) && !titles(thirty.alerts, "page").includes(GOV));
+      const fortyFive = await at(45, 1);
+      check(
+        "the run 45 minutes on pages although it started less late than the first did (44 min 41 s apart)",
+        titles(fortyFive.alerts, "page").includes(GOV),
+        titles(fortyFive.alerts).join(" | "),
+      );
+    }
+
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    process.env.WATCHDOG_RETRY_BASE_MS = "50"; // pauses of 50 and 150 ms, at most 200 ms each
+    world.down.add("rpc");
+    world.retryAfter = "3600";
+    {
+      const t = Date.now();
+      await runWatchdog(config, SPONSOR, { autoHalt: false, heartbeat: false, confirmDelayMs: 5 });
+      const took = Date.now() - t;
+      // getLatestLedger and the instance read, three attempts each: four pauses, 400 ms without the header.
+      check("the throttle's Retry-After is honoured up to the cap (four pauses of 200 ms)", took >= 700, `${took} ms`);
+      check("and never past it: an hour asked is not an hour waited", took < 5_000, `${took} ms`);
+    }
+
+    quiet();
+    mailOn();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    kv.set(OPS_CURSOR, "100");
+    world.down.add("horizon");
+    {
+      const t0 = Date.now();
+      const blind1 = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 });
+      world.ops = [op("create_account", SPONSOR, 101), op("payment", SPONSOR, 102)]; // the theft, while the scan cannot see
+      const blind2 = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + 15 * 60_000 });
+      check(
+        "while Horizon is busy the scan waits as an info line and its cursor stays put",
+        [blind1, blind2].every((r) => titles(r.alerts, "info").includes(ACCOUNT) && !r.autoHalted) && kv.get(OPS_CURSOR) === "100",
+      );
+      world.down.delete("horizon");
+      const back = await runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + 30 * 60_000 });
+      check(
+        "the first run Horizon answers walks on from the old cursor, finds the operation and halts, grace or not",
+        has(back.alerts, TRIPWIRE_FORBIDDEN_OP) && back.autoHalted && halted() && kv.get(OPS_CURSOR) === "102",
+        kv.get(OPS_CURSOR),
+      );
+      check("and that halt is mailed", resend.some((m) => /AUTO-HALTED/.test(m.text)));
+    }
   }
 
   console.log("[14] the kill switch: env flag, namespaced key, legacy key, clear, explicit network, and fail-open on a store error");
@@ -949,8 +1177,9 @@ async function main() {
   {
     const r = await runWatchdog(config, SPONSOR, WORKER);
     check(
-      "an unreadable ops cursor pages 'Watchdog check failed: sponsor account', naming the cursor",
-      /cursor could not be read/.test(detail(r.alerts, "Watchdog check failed: sponsor account")),
+      "an unreadable ops cursor pages 'Watchdog check failed: sponsor account' at once (a store error is no busy source), naming the cursor",
+      titles(r.alerts, "page").includes("Watchdog check failed: sponsor account") &&
+        /cursor could not be read/.test(detail(r.alerts, "Watchdog check failed: sponsor account")),
       detail(r.alerts, "Watchdog check failed: sponsor account"),
     );
     check("no operations page was read (not restarted from the newest page)", opsRequests.length === 0, opsRequests.join(" | "));
@@ -969,7 +1198,7 @@ async function main() {
     const r = await runWatchdog(config, SPONSOR, WORKER);
     check(
       "an unreadable ledger cursor pages 'Watchdog check failed: escrow governance', and the cursor stays",
-      has(r.alerts, "Watchdog check failed: escrow governance") && kv.get(`watchdog:ledger:${CONTRACT}`) === String(world.latest - 5000) && r.lastFullRun === null,
+      titles(r.alerts, "page").includes("Watchdog check failed: escrow governance") && kv.get(`watchdog:ledger:${CONTRACT}`) === String(world.latest - 5000) && r.lastFullRun === null,
       kv.get(`watchdog:ledger:${CONTRACT}`),
     );
     world.getFails = null;
@@ -983,7 +1212,7 @@ async function main() {
     const r = await runWatchdog(config, SPONSOR, WORKER);
     check(
       "an unreadable store pin is not 'no pin yet': no re-pin to the running wasm, a check-failed page instead",
-      kv.get(`watchdog:wasm:${CONTRACT}`) === WASM && has(r.alerts, "Watchdog check failed: escrow wasm hash"),
+      kv.get(`watchdog:wasm:${CONTRACT}`) === WASM && titles(r.alerts, "page").includes("Watchdog check failed: escrow wasm hash"),
       kv.get(`watchdog:wasm:${CONTRACT}`),
     );
     world.getFails = null;

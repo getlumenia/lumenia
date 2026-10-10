@@ -351,22 +351,56 @@ const SECONDS_PER_LEDGER = 5;
  * fifteen minutes; and on a real failure an error naming the host and the status, so the email is
  * "Horizon answered 502" rather than a parser complaint.
  */
+/**
+ * A source that was busy or out of reach (a throttle, a 5xx, a gateway page, no connection), as
+ * opposed to an answer. A check that fails this way leaves its subject unobserved for one run, and
+ * on the Worker's scheduled run it pages only once that has lasted BLIND_GRACE_MS: the public RPC
+ * and Horizon both sit behind Cloudflare, Workers share their outgoing addresses, and a 15-minute
+ * cron that pages on every throttled run teaches its reader to ignore pages. A considered answer (a
+ * JSON-RPC error object, a 404 for the sponsor account) is not this, and still pages at once.
+ */
+export class SourceBusyError extends Error {}
+
+/** How long a check may stay blind on busy sources before it pages: three missed scheduled runs. */
+export const BLIND_GRACE_MS = 45 * 60_000;
+
+/**
+ * Slack on BLIND_GRACE_MS for when a cron run starts. Each run starts some seconds after its minute,
+ * by a different amount every time, so without it the run 45 minutes on missed the bound whenever it
+ * started less late than the first blind run had, and the page waited one more run (60 minutes). Well
+ * under the 15-minute interval, so the run 30 minutes on still waits.
+ */
+const BLIND_START_SLACK_MS = 5 * 60_000;
+
+/** The pause before retry `attempt` (2 or 3): 1 s then 3 s, longer when the source asks, never over 4 s. */
+function retryPauseMs(attempt: number, retryAfter: string | null): number {
+  const base = Number(process.env.WATCHDOG_RETRY_BASE_MS ?? "1000");
+  const step = attempt <= 2 ? base : base * 3;
+  const asked = retryAfter === null ? Number.NaN : Number(retryAfter) * 1000;
+  return Number.isFinite(asked) && asked > step ? Math.min(asked, base * 4) : step;
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   let lastError = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 1_500));
+  let retryAfter: string | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1) await new Promise((r) => setTimeout(r, retryPauseMs(attempt, retryAfter)));
     try {
       const res = await fetch(url);
       if (!res.ok) {
         lastError = `${new URL(url).host} answered ${res.status}`;
+        // A 4xx other than a throttle is an answer about what was asked (a missing account), not a busy source.
+        if (res.status !== 429 && res.status < 500) throw new Error(lastError);
+        retryAfter = res.headers?.get?.("retry-after") ?? null;
         continue;
       }
       return (await res.json()) as T;
     } catch (e) {
+      if (e instanceof Error && e.message === lastError) throw e;
       lastError = `${new URL(url).host}: ${(e as Error).message}`;
     }
   }
-  throw new Error(lastError);
+  throw new SourceBusyError(lastError);
 }
 
 type OpsPage = { _embedded?: { records?: Array<Record<string, unknown>> } };
@@ -651,14 +685,25 @@ function bodyExcerpt(body: string): string {
 }
 
 /**
+ * A 4xx other than a throttle is the source answering about the request (a key it refuses, a wrong
+ * URL, a firewall block such as Cloudflare's 403 "error code: 1020"), not a busy source: it pages at
+ * once, as it does from Horizon (fetchJson), and is not retried.
+ */
+function refusedNotBusy(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429;
+}
+
+/**
  * One JSON-RPC call. Retries a body that is not JSON, an unreachable host and an answer with
  * neither result nor error; a JSON-RPC `error` object is a considered answer (a bad key, a
- * startLedger outside the retained window) so it throws on the spot, unretried.
+ * startLedger outside the retained window) so it throws on the spot, unretried, and so does a 4xx
+ * other than 429 (refusedNotBusy).
  */
 async function rpcCall<T>(url: string, method: string, params?: unknown): Promise<T> {
   let last = `${method}: the RPC was never reached`;
+  let retryAfter: string | null = null;
   for (let attempt = 1; attempt <= RPC_ATTEMPTS; attempt += 1) {
-    if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt - 1)));
+    if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, retryPauseMs(attempt, retryAfter)));
     let status = 0;
     let body: string;
     try {
@@ -668,6 +713,7 @@ async function rpcCall<T>(url: string, method: string, params?: unknown): Promis
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params === undefined ? {} : { params }) }),
       });
       status = res.status;
+      retryAfter = res.headers?.get?.("retry-after") ?? null;
       body = await res.text();
     } catch (e) {
       last = `${method}: the RPC could not be reached (${(e as Error).message})`;
@@ -679,6 +725,7 @@ async function rpcCall<T>(url: string, method: string, params?: unknown): Promis
     } catch {
       // Cloudflare's throttle and every gateway error page answer in text or HTML, not JSON.
       last = `${method}: HTTP ${status}, and the body was not JSON: ${bodyExcerpt(body)}`;
+      if (refusedNotBusy(status)) throw new Error(last);
       continue;
     }
     if (parsed.error) {
@@ -686,11 +733,12 @@ async function rpcCall<T>(url: string, method: string, params?: unknown): Promis
     }
     if (parsed.result === undefined) {
       last = `${method}: HTTP ${status}, with neither a result nor an error`;
+      if (refusedNotBusy(status)) throw new Error(last);
       continue;
     }
     return parsed.result;
   }
-  throw new Error(`${last} [${RPC_ATTEMPTS} attempts]`);
+  throw new SourceBusyError(`${last} [${RPC_ATTEMPTS} attempts]`);
 }
 
 /** `getLedgerEntries`, with the RPC's own latest ledger and each entry's expiry kept. */
@@ -1105,56 +1153,93 @@ export async function runWatchdog(
   };
   run.haltNow = haltNow;
 
+  /* BLIND CHECKS (see SourceBusyError). When each check began failing on busy sources, in ONE store
+   * key, so a run costs one read and, only when something changed, one write. A store that cannot be
+   * read, or no store at all, leaves no memory of earlier runs, and then a failed check pages at once,
+   * as before: the grace never outlives the record it depends on (and a store that refuses the write
+   * pages the failures that waited on it, below). Only the Worker's scheduled run (persist) uses it;
+   * an operator's run reports every failure as a page. */
+  const blindKey = `watchdog:${network}:blind`;
+  let blindKnown = false;
+  let blindBefore: Record<string, number> = {};
+  if (run.persist && kvConfigFromEnv()) {
+    const read = await kvRead(blindKey);
+    if (read.ok) {
+      blindKnown = true;
+      try {
+        const parsed = JSON.parse(read.value ?? "{}") as unknown;
+        if (parsed && typeof parsed === "object") blindBefore = parsed as Record<string, number>;
+      } catch {
+        blindBefore = {};
+      }
+    }
+  }
+  const blindNow: Record<string, number> = {};
+  /** The failures this run let wait as info lines, each resting on its start time in the ledger. */
+  const waiting: Array<{ alert: Alert; slug: string; since: number; lead: string; why: string }> = [];
+  const checkFailed = (title: string, lead: string, e: unknown): void => {
+    const why = (e as Error).message;
+    if (!(e instanceof SourceBusyError) || !run.persist || !blindKnown) {
+      alerts.push({ severity: "page", title, detail: `${lead}: ${why}` });
+      return;
+    }
+    const slug = alertSlug(title);
+    const seen = Number(blindBefore[slug]);
+    const since = Number.isFinite(seen) && seen > 0 && seen <= now ? seen : now;
+    blindNow[slug] = since;
+    const minutes = Math.round((now - since) / 60_000);
+    if (now - since >= BLIND_GRACE_MS - BLIND_START_SLACK_MS) {
+      alerts.push({
+        severity: "page",
+        title,
+        detail:
+          `${lead}: ${why}. Every run for ${minutes} minutes (since ${new Date(since).toISOString()}) found the ` +
+          `source busy or out of reach.`,
+      });
+      return;
+    }
+    const alert: Alert = {
+      severity: "info",
+      title,
+      detail:
+        `${lead}: ${why}. A busy or unreachable source ${minutes > 0 ? `for ${minutes} minutes so far` : "on this run"}; ` +
+        `it pages if this lasts ${BLIND_GRACE_MS / 60_000} minutes, and the heartbeat opens an issue after 3 hours ` +
+        `without a full run.`,
+    };
+    waiting.push({ alert, slug, since, lead, why });
+    alerts.push(alert);
+  };
+
   try {
     if (await checkSponsorAccount(config, sponsorPublicKey, alerts, run)) checked.push("sponsor-account");
   } catch (e) {
-    alerts.push({
-      severity: "page",
-      title: "Watchdog check failed: sponsor account",
-      detail: `The sponsor float check or forbidden-op scan did not complete: ${(e as Error).message}`,
-    });
+    checkFailed("Watchdog check failed: sponsor account", "The sponsor float check or forbidden-op scan did not complete", e);
   }
   await haltNow(); // a forbidden operation halts before the next check reads anything
 
   try {
     if (await checkGovernance(config, alerts, run)) checked.push("escrow-governance");
   } catch (e) {
-    alerts.push({
-      severity: "page",
-      title: "Watchdog check failed: escrow governance",
-      detail: `Governance events are unobserved until this clears: ${(e as Error).message}`,
-    });
+    checkFailed("Watchdog check failed: escrow governance", "Governance events are unobserved until this clears", e);
   }
 
   try {
     if (await checkWasmHash(config, alerts, readInstance, run)) checked.push("escrow-wasm");
   } catch (e) {
-    alerts.push({
-      severity: "page",
-      title: "Watchdog check failed: escrow wasm hash",
-      detail: `An upgrade would go unnoticed until this clears: ${(e as Error).message}`,
-    });
+    checkFailed("Watchdog check failed: escrow wasm hash", "An upgrade would go unnoticed until this clears", e);
   }
   await haltNow(); // a confirmed wasm change halts before the expiry and fee reads
 
   try {
     if (await checkStateExpiry(config, alerts, readInstance)) checked.push("escrow-ttl");
   } catch (e) {
-    alerts.push({
-      severity: "page",
-      title: "Watchdog check failed: escrow state expiry",
-      detail: `Archival would arrive unannounced until this clears: ${(e as Error).message}`,
-    });
+    checkFailed("Watchdog check failed: escrow state expiry", "Archival would arrive unannounced until this clears", e);
   }
 
   try {
     if (await checkFeeBudget(alerts, run)) checked.push("fee-budget");
   } catch (e) {
-    alerts.push({
-      severity: "page",
-      title: "Watchdog check failed: fee budget",
-      detail: `The day's fee spend is unobserved until this clears: ${(e as Error).message}`,
-    });
+    checkFailed("Watchdog check failed: fee budget", "The day's fee spend is unobserved until this clears", e);
   }
 
   /* The halt step's REPORT. Every write already happened as its tripwire was raised (`haltNow`);
@@ -1205,6 +1290,21 @@ export async function runWatchdog(
   }
 
   await moveOpsCursor(); // no-op when the halt branch above already moved it
+
+  /* The blind ledger, written BEFORE anything is logged or mailed: a failure this run let wait rests
+   * on the start time this write keeps. When the store refuses it, the next run would find no start
+   * and wait again, and again on every run after that, so each failure whose start was not already
+   * in the store pages now instead. */
+  if (run.persist && blindKnown) {
+    const norm = (m: Record<string, number>) => JSON.stringify(Object.keys(m).sort().map((k) => [k, Number(m[k])]));
+    if (norm(blindNow) !== norm(blindBefore) && !(await kvSet(blindKey, JSON.stringify(blindNow)))) {
+      for (const w of waiting) {
+        if (Number(blindBefore[w.slug]) === w.since) continue; // its start is already kept from an earlier run
+        w.alert.severity = "page";
+        w.alert.detail = `${w.lead}: ${w.why}. The store could not save when this began, so the grace cannot be counted and it pages now.`;
+      }
+    }
+  }
 
   const alerting = alertingStatus();
   if (!alerting.configured) {
