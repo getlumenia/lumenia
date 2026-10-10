@@ -130,8 +130,8 @@ export default function Privacy() {
           </p>
           <p>
             <strong>Older links carry more.</strong> Links made on our website before 7 October 2026, and
-            links made by our browser extension up to version 0.1.2 (what the stores serve until version
-            0.1.3 passes their review), also carry the amount and the sender&apos;s name after the ?, where our website&apos;s
+            links made by our browser extension up to version 0.1.2 (an install that has not updated yet
+            may still make them), also carry the amount and the sender&apos;s name after the ?, where our website&apos;s
             host and a chat app that builds a preview can read them. The claim page still ignores that
             amount and reads the real one from the ledger, and keeps the chat preview plain.
           </p>
@@ -384,7 +384,7 @@ export default function Privacy() {
           </p>
           <p>
             Version 0.1.2 and earlier put the amount and your sender name in the link&apos;s address,
-            after the ?. Version 0.1.3, which reaches each store after that store&apos;s review, makes the
+            after the ?. Version 0.1.3 and later, which both stores serve since 10 October 2026, make the
             same links as the website: no amount anywhere in the link, and a name only if you type one,
             after the #.
           </p>
