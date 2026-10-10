@@ -20,6 +20,8 @@
  *   POST /recovery-otp    → email a single-use code proving control of the box's email
  *   POST /recovery        → store a ciphertext-only recovery box (OTP-gated; isolated; signs nothing)
  *   POST /recovery-fetch  → fetch a ciphertext-only recovery box (OTP-gated)
+ *   POST /recovery-check  → does this email back up the account that signs? (no code; the account's proof)
+ *   POST /recovery-release → the account lets go of its backup email (the account's proof)
  *   POST /recovery-alias-fetch → fetch a box by its PRF-derived id (find-my-account; no OTP, separate namespace)
  *
  * The request handlers live in lib/* and are platform-agnostic, so the same core
@@ -38,13 +40,28 @@ import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
 import { relayClaimHandler, relayDepositHandler, relayReclaimHandler, isRelayBusy } from "./lib/soroban-relay.js";
 import { isSubmitUnconfirmed } from "./lib/stellar.js";
+import { isPublicRefusal } from "./lib/caps.js";
 import { faucetHandler } from "./lib/faucet.js";
 import { demoLinkHandler } from "./lib/demo-link.js";
 import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent } from "./lib/events.js";
-import { putBox, getBox, putAliasBox, getAliasBox } from "./lib/recovery-store.js";
-import { requestOtp, verifyOtp } from "./lib/recovery-otp.js";
+import {
+  putBox,
+  getBoxState,
+  putAliasBox,
+  getAliasBox,
+  assertAliasWritable,
+  BackupConflict,
+  mintRecoveryTicket,
+  consumeRecoveryTicket,
+  checkMine,
+  releaseBox,
+  ACCOUNT_NOT_CONFIRMED_ERROR,
+  NOT_YOURS_ERROR,
+  type OwnerProof,
+} from "./lib/recovery-store.js";
+import { requestOtp, verifyOtpDetailed, isOtpBudgetExceeded, OTP_BUDGET_BODY } from "./lib/recovery-otp.js";
 
 const { config, signer, faucet, server, channels } = getService();
 const allowedOrigin = process.env.ALLOWED_ORIGIN ?? "*";
@@ -270,7 +287,7 @@ const httpServer = createServer(async (req, res) => {
       // plausible cause IS the shared per-IP window — the problem-report channel must
       // not be closed by the very throttling being reported. Spam here also cannot
       // consume the money-path window.
-      const rl = await enforceRateLimit(`fb:${clientIp(req)}`);
+      const rl = await enforceRateLimit(clientIp(req), undefined, { ipPrefix: "fb:" });
       if (rl.limited) return send(res, 429, { error: rl.reason });
       const body = (await readJson(req)) as { category?: string; message?: string; contact?: string };
       await saveFeedback(body);
@@ -290,38 +307,66 @@ const httpServer = createServer(async (req, res) => {
 
     if (method === "POST" && url === "/recovery-otp") {
       // Email a single-use code (proves control of the email that keys the box).
-      const rl = await enforceRateLimit(`rec:${clientIp(req)}`);
+      const rl = await enforceRateLimit(clientIp(req), undefined, { ipPrefix: "rec:" });
       if (rl.limited) return send(res, 429, { error: rl.reason });
-      const body = (await readJson(req)) as { email?: unknown };
-      await requestOtp(body.email);
+      const body = (await readJson(req)) as { email?: unknown; purpose?: unknown };
+      try {
+        await requestOtp(body.email, body.purpose === "pilot" ? "pilot" : "recovery");
+      } catch (e) {
+        if (isOtpBudgetExceeded(e)) return send(res, 429, OTP_BUDGET_BODY);
+        throw e;
+      }
       return send(res, 200, { ok: true });
     }
 
     if (method === "POST" && url === "/recovery") {
-      // Store a ciphertext-only box AFTER verifying the emailed code. Its OWN limiter
-      // bucket ("rec:"); signs nothing and touches no anti-drain policy.
-      const rl = await enforceRateLimit(`rec:${clientIp(req)}`);
+      // Store a ciphertext-only box AFTER verifying the emailed code (or a ticket a 409 handed out),
+      // exactly as the Worker does (worker.ts /recovery). Its OWN limiter bucket ("rec:"); signs
+      // nothing and touches no anti-drain policy.
+      const rl = await enforceRateLimit(clientIp(req), undefined, { ipPrefix: "rec:" });
       if (rl.limited) return send(res, 429, { error: rl.reason });
       const body = (await readJson(req)) as {
-        id?: unknown; box?: unknown; code?: unknown; aliasId?: unknown; aliasProof?: unknown;
+        id?: unknown; box?: unknown; code?: unknown; ticket?: unknown; owner?: unknown; replace?: unknown;
+        aliasId?: unknown; aliasProof?: unknown;
       };
-      if (!(await verifyOtp(body.id, body.code))) return send(res, 401, { error: "invalid or expired code" });
-      await putBox(body.id, body.box);
-      // Optional PRF alias behind the SAME verified code. aliasId === id is refused: it would drop
-      // an email-derived (low-entropy) id into the namespace whose fetch has no OTP. The code
-      // proves control of `id` alone, so the alias write carries its own ownership proof.
+      const present = (v: unknown) => v !== undefined && v !== null && v !== "";
+      if (present(body.code) === present(body.ticket)) return send(res, 401, { error: "invalid or expired code" });
+      if (present(body.ticket)) {
+        if (!(await consumeRecoveryTicket(body.ticket, body.id))) return send(res, 401, { error: "invalid or expired code" });
+      } else {
+        const verdict = await verifyOtpDetailed(body.id, body.code);
+        if (verdict === "budget") return send(res, 429, OTP_BUDGET_BODY);
+        if (verdict !== "ok") return send(res, 401, { error: "invalid or expired code" });
+      }
+      // Optional PRF alias behind the SAME verified code, checked before the email row is touched.
+      // aliasId === id is refused: it would drop an email-derived (low-entropy) id into the
+      // namespace whose fetch has no OTP. The code proves control of `id` alone, so the alias write
+      // carries its own ownership proof.
       if (body.aliasId !== undefined) {
         if (body.aliasId === body.id) return send(res, 400, { error: "aliasId must differ from id" });
-        await putAliasBox(body.aliasId, body.box, body.aliasProof);
+        await assertAliasWritable(body.aliasId, body.aliasProof);
       }
-      return send(res, 200, { ok: true });
+      let bound: boolean;
+      try {
+        const owner = body.owner && typeof body.owner === "object" ? (body.owner as OwnerProof) : undefined;
+        ({ bound } = await putBox(body.id, body.box, owner, { replace: body.replace === true }));
+      } catch (e) {
+        if (e instanceof BackupConflict) {
+          // A fresh ticket only for a write a CODE let in, as on the Worker: a ticket never renews itself.
+          const ticket = e.unbound && !present(body.ticket) ? await mintRecoveryTicket(body.id) : undefined;
+          return send(res, 409, { error: e.message, code: "email-taken", unbound: e.unbound, box: e.box, ...(ticket ? { ticket } : {}) });
+        }
+        throw e;
+      }
+      if (body.aliasId !== undefined) await putAliasBox(body.aliasId, body.box, body.aliasProof);
+      return send(res, 200, { ok: true, bound });
     }
 
     // Find-my-account: fetch by PRF-derived alias id. Never OTP-gated; reads ONLY the alias
     // namespace. See lib/recovery-store.ts for why the separation IS the security control.
     if (method === "POST" && url === "/recovery-alias-fetch") {
       const body = (await readJson(req)) as { id?: unknown };
-      const rl = await enforceRateLimit(`recpk:${clientIp(req)}`, typeof body.id === "string" ? body.id : undefined);
+      const rl = await enforceRateLimit(clientIp(req), typeof body.id === "string" ? body.id : undefined, { ipPrefix: "recpk:" });
       if (rl.limited) return send(res, 429, { error: rl.reason });
       const box = await getAliasBox(body.id);
       if (!box) return send(res, 404, { error: "not found" });
@@ -329,13 +374,38 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (method === "POST" && url === "/recovery-fetch") {
-      const rl = await enforceRateLimit(`rec:${clientIp(req)}`);
+      const rl = await enforceRateLimit(clientIp(req), undefined, { ipPrefix: "rec:" });
       if (rl.limited) return send(res, 429, { error: rl.reason });
       const body = (await readJson(req)) as { id?: unknown; code?: unknown };
-      if (!(await verifyOtp(body.id, body.code))) return send(res, 401, { error: "invalid or expired code" });
-      const box = await getBox(body.id);
-      if (!box) return send(res, 404, { error: "not found" });
-      return send(res, 200, { box });
+      const verdict = await verifyOtpDetailed(body.id, body.code);
+      if (verdict === "budget") return send(res, 429, OTP_BUDGET_BODY);
+      if (verdict !== "ok") return send(res, 401, { error: "invalid or expired code" });
+      const found = await getBoxState(body.id);
+      if (!found) return send(res, 404, { error: "not found" });
+      const ticket = found.bound ? undefined : await mintRecoveryTicket(body.id);
+      return send(res, 200, { box: found.box, bound: found.bound, ...(ticket ? { ticket } : {}) });
+    }
+
+    // The account's own questions about its backup email, exactly as the Worker answers them
+    // (worker.ts /recovery-check and /recovery-release): no code, a `links` proof instead.
+    if (method === "POST" && (url === "/recovery-check" || url === "/recovery-release")) {
+      const body = (await readJson(req)) as { id?: unknown; owner?: unknown };
+      const owner = body.owner && typeof body.owner === "object" ? (body.owner as OwnerProof) : undefined;
+      const signer = typeof owner?.pubkey === "string" ? owner.pubkey : undefined;
+      const rl = await enforceRateLimit(clientIp(req), signer, { ipPrefix: "rc:", accountPrefix: "rc:" });
+      if (rl.limited) return send(res, 429, { error: rl.reason });
+      if (typeof body.id !== "string" || !/^[0-9a-f]{64}$/.test(body.id) || !owner) {
+        return send(res, 400, { error: "id and owner are required" });
+      }
+      if (url === "/recovery-check") {
+        const checked = await checkMine(body.id, owner);
+        if (!checked.ok) return send(res, 401, { error: ACCOUNT_NOT_CONFIRMED_ERROR });
+        return send(res, 200, { mine: checked.mine });
+      }
+      const released = await releaseBox(body.id, owner);
+      if (!released.ok) return send(res, 401, { error: ACCOUNT_NOT_CONFIRMED_ERROR });
+      if (!released.released) return send(res, 409, { error: NOT_YOURS_ERROR, code: "not-yours" });
+      return send(res, 200, { ok: true });
     }
 
     return send(res, 404, { error: "not found" });
@@ -347,7 +417,9 @@ const httpServer = createServer(async (req, res) => {
       return send(res, 202, { error: "submit unconfirmed", hash: (e as { hash?: string }).hash });
     }
     if (isRelayBusy(e)) return send(res, 503, { error: (e as Error).message });
-    return send(res, 400, { error: (e as Error).message });
+    // A refusal that names a reason a client branches on (owner-required) keeps it, as on the Worker.
+    const code = isPublicRefusal(e) ? (e as { code?: unknown }).code : undefined;
+    return send(res, 400, { error: (e as Error).message, ...(typeof code === "string" ? { code } : {}) });
   }
 });
 

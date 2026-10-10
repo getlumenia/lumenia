@@ -210,8 +210,12 @@ export function __resetHandleStore(): void {
  * What an account signature authorizes. `links` is not a handle operation at all — it reuses this
  * same proof so that "which ways back in does this account have?" can only be asked by the account
  * itself, rather than by anyone who knows an address.
+ *
+ * `pilot` is the account asking to join real money (worker.ts /pilot-request), signed over the hash
+ * of the email it asks with. Its own action, so a proof made for a backup write can never be
+ * replayed as an application, nor the other way round.
  */
-export type ProofAction = "claim" | "release" | "links";
+export type ProofAction = "claim" | "release" | "links" | "pilot";
 
 /**
  * The exact bytes the account key signs. Built identically on the client

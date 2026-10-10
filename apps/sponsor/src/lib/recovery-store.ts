@@ -133,24 +133,43 @@ function networkFromEnv(): "testnet" | "mainnet" {
   return process.env.STELLAR_NETWORK === "mainnet" ? "mainnet" : "testnet";
 }
 
+/** What a row records of the account that may replace it: SHA-256 of its G... address. */
+export async function ownerHashOf(pubkey: string): Promise<string> {
+  return sha256Hex(pubkey);
+}
+
 /**
- * Check an owner proof and return what a row records of it, or null when none was offered.
- * A proof that is present but does not verify throws: a bad signature is not "no signature".
+ * Verify a `links` proof by `owner` over `name` on this deployment's network: the box id for a
+ * write, `check:<id>` for /recovery-check, `release:<id>` for /recovery-release. The three names
+ * differ so a signature made for one of them can never be replayed as another.
  */
-async function ownerHashFrom(id: string, owner: OwnerProof | undefined): Promise<string | null> {
-  if (!owner) return null;
+async function verifyOwner(
+  name: string,
+  owner: OwnerProof,
+): Promise<{ ok: true; ownerHash: string } | { ok: false; reason: string }> {
   const pubkey = String(owner.pubkey ?? "");
   const signed = await verifyHandleProof({
     action: "links",
-    name: id,
+    name,
     pubkey,
     ts: Number(owner.ts),
     nonce: String(owner.nonce ?? ""),
     network: networkFromEnv(),
     proof: String(owner.proof ?? ""),
   });
-  if (signed.ok !== true) throw new Error(signed.reason);
-  return sha256Hex(pubkey);
+  if (signed.ok !== true) return { ok: false, reason: signed.reason };
+  return { ok: true, ownerHash: await sha256Hex(pubkey) };
+}
+
+/**
+ * Check an owner proof and return what a row records of it, or null when none was offered.
+ * A proof that is present but does not verify throws: a bad signature is not "no signature".
+ */
+async function ownerHashFrom(id: string, owner: OwnerProof | undefined): Promise<string | null> {
+  if (!owner) return null;
+  const verified = await verifyOwner(id, owner);
+  if (!verified.ok) throw new Error(verified.reason);
+  return verified.ownerHash;
 }
 
 function parseRow(raw: string): StoredRow {
@@ -190,55 +209,236 @@ async function writeRow(prefix: string, id: string, row: StoredRow): Promise<voi
   if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
 }
 
+async function deleteRow(prefix: string, id: string): Promise<void> {
+  const kv = kvConfigFromEnv();
+  if (!kv) {
+    mem.delete(prefix + id);
+    return;
+  }
+  const res = await fetch(`${kv.url}/del/${prefix}${id}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${kv.token}` },
+  });
+  if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
+}
+
 async function getBoxAt(prefix: string, rawId: unknown): Promise<RecoveryBox | null> {
   const row = await readRow(prefix, validateId(rawId));
   return row?.box ?? null;
 }
 
 /**
- * Store the EMAIL-keyed box. Always OTP-gated at the route.
- *
- * OWNERSHIP. The code proves control of an INBOX, and the id is SHA-256 of the address it was
- * mailed to, so on its own an emailed code is the whole distance between somebody else's mailbox
- * and the only copy of their key. Creating a FIRST box asks no more than that code — a new user has
- * no account to prove yet, and a backup that is hard to make is a backup nobody has. Once a row
- * carries an owner, replacing it takes a signature from that account, so a stolen inbox cannot
- * paint over a working backup with ciphertext the owner's password cannot open.
- *
- * WHO REACHES THIS ARGUMENT. The live Worker (worker.ts /recovery) forwards `owner`, and
- * apps/web/lib/recovery-api.ts::storeRecoveryBox signs it whenever the backup flow hands it a
- * signer. Two callers still pass nothing: index.ts (the local dev server) and the web's own
- * RecoveryFlow, which does not yet forward a signer into the store step — so rows written by that
- * path remain ownerless, and a mailed code alone still replaces those.
- *
- * An ownerless row stays replaceable and adopts the first proof it is given — the same line the
- * alias rows below take, for the same reason. A row can therefore only be bound by a caller that
- * CAN sign, which is what keeps the refusals below from stranding anybody: whoever bound a row can
- * always re-prove it.
- *
- * Both refusals are PublicRefusal so their text survives on a mainnet-configured host. Neither says
- * anything the caller does not already know — it just passed the OTP for this id.
+ * The sentence every "this email is taken" answer carries. Word for word what the extension 0.1.2
+ * and 0.1.3 already match (apps/extension/src/lib/backup.ts, REFUSED), so an older client that does
+ * not know the 409 still shows a refusal instead of a network error.
  */
-export async function putBox(rawId: unknown, rawBox: unknown, owner?: OwnerProof): Promise<{ ok: true }> {
+export const EMAIL_TAKEN_ERROR =
+  "That email already holds a backup for a different account. Use another email address for this one.";
+/** Under RECOVERY_REQUIRE_OWNER=1, an unsigned first write. */
+export const OWNER_REQUIRED_ERROR =
+  "Back up again from the latest version of Lumenia: this backup has to be signed by your account.";
+const NEEDS_SIGNATURE_ERROR = "Replacing this backup needs a signature from the account it belongs to.";
+const DIFFERENT_PASSKEY_ERROR = "This Face ID backup belongs to a different passkey.";
+/** /recovery-check, /recovery-release (and /pilot-request) when the account's signature does not verify. */
+export const ACCOUNT_NOT_CONFIRMED_ERROR =
+  "We couldn't confirm this account signed the request. Check your device clock and try again.";
+/** /recovery-release for anything but a row bound to the signer. */
+export const NOT_YOURS_ERROR = "That email doesn't back up this account.";
+
+/**
+ * The email already backs up something this write may not replace: a row bound to another account
+ * (`unbound` false), or an unbound row the write did not explicitly agree to replace (`unbound`
+ * true). Carries the stored box, which the route hands back with its 409: the caller has just
+ * proved the inbox, so it is exactly what /recovery-fetch would give them for the same code.
+ * A PublicRefusal, so a route that does not catch it still shows the sentence on mainnet.
+ */
+export class BackupConflict extends PublicRefusal {
+  readonly unbound: boolean;
+  readonly box: RecoveryBox;
+  constructor(unbound: boolean, box: RecoveryBox) {
+    super(EMAIL_TAKEN_ERROR, "email-taken");
+    this.name = "BackupConflict";
+    this.unbound = unbound;
+    this.box = box;
+  }
+}
+
+/**
+ * Store the EMAIL-keyed box. Always gated at the route by an emailed code, or by the single-use
+ * ticket a 409 or a fetch handed to whoever just passed one.
+ *
+ * ONE EMAIL, ONE ACCOUNT. The code proves control of an INBOX, and the id is SHA-256 of the address
+ * it was mailed to, so on its own an emailed code is the whole distance between somebody else's
+ * mailbox and the only copy of their key. A row is therefore BOUND to the account whose signature
+ * wrote it (`ownerHash`), and what a later write may do follows from that:
+ *
+ *   - no row: stored, and bound when the write is signed. With RECOVERY_REQUIRE_OWNER=1 an unsigned
+ *     first write is refused (code owner-required): the switch for once every live client signs.
+ *   - a row bound to the signer: replaced. That is a re-backup.
+ *   - a row bound, and no signature: refused. A stolen inbox is not the account.
+ *   - a row bound to another key: BackupConflict (unbound false). Nothing is written.
+ *   - an UNBOUND row: replaced and bound only by a signed write that says `replace: true`, which a
+ *     client sends after the person has seen what the row holds. Anything else is BackupConflict
+ *     (unbound true) and nothing is written. Such a row used to adopt the first proof it was given,
+ *     so a second account backed up under the same email silently painted over the first account's
+ *     only copy, and its owner later restored a key that was not theirs.
+ *
+ * `replace` never overrides a bound row.
+ *
+ * WHO SIGNS. The Worker (worker.ts /recovery) forwards `owner`, and so does index.ts. The clients
+ * sign with the account being backed up (apps/web/lib/recovery-api.ts::storeRecoveryBox when it is
+ * handed a signer, the extension's backup step). The unbound rows are the ones written before the
+ * binding existed (30 August 2026), and since then by a client that did not sign: the website's own
+ * backup flow handed the store step no signer until the account contract (v1) made every backup
+ * signed.
+ *
+ * The refusals are PublicRefusal so their text survives on a mainnet-configured host. None of them
+ * says anything the caller does not already know: it has just passed the code for this id.
+ */
+export async function putBox(
+  rawId: unknown,
+  rawBox: unknown,
+  owner?: OwnerProof,
+  opts: { replace?: boolean } = {},
+): Promise<{ ok: true; bound: boolean }> {
   const id = validateId(rawId);
   const box = validateBox(rawBox);
   const ownerHash = await ownerHashFrom(id, owner);
   const existing = await readRow(KEY_EMAIL, id);
-  if (existing?.ownerHash) {
-    if (!ownerHash) {
-      throw new PublicRefusal("Replacing this backup needs a signature from the account it belongs to.");
+  if (!existing) {
+    if (!ownerHash && process.env.RECOVERY_REQUIRE_OWNER === "1") {
+      throw new PublicRefusal(OWNER_REQUIRED_ERROR, "owner-required");
     }
-    if (ownerHash !== existing.ownerHash) {
-      throw new PublicRefusal("That email already holds a backup for a different account. Use another email address for this one.");
-    }
+    await writeRow(KEY_EMAIL, id, { box, ...(ownerHash ? { ownerHash } : {}) });
+    return { ok: true, bound: ownerHash !== null };
   }
-  await writeRow(KEY_EMAIL, id, { box, ...(ownerHash ? { ownerHash } : {}) });
-  return { ok: true };
+  if (existing.ownerHash) {
+    if (!ownerHash) throw new PublicRefusal(NEEDS_SIGNATURE_ERROR);
+    if (ownerHash !== existing.ownerHash) throw new BackupConflict(false, existing.box);
+    await writeRow(KEY_EMAIL, id, { box, ownerHash });
+    return { ok: true, bound: true };
+  }
+  if (ownerHash && opts.replace === true) {
+    await writeRow(KEY_EMAIL, id, { box, ownerHash });
+    return { ok: true, bound: true };
+  }
+  throw new BackupConflict(true, existing.box);
+}
+
+/**
+ * Whether the email row exists and, when bound, the hash of the account it is bound to. For the
+ * other registries that must agree with this one (the pilot request, the identity links). Never
+ * for an answer to a caller that has not proved the inbox or signed as that account.
+ */
+export async function rowState(rawId: unknown): Promise<{ exists: boolean; ownerHash?: string }> {
+  const row = await readRow(KEY_EMAIL, validateId(rawId));
+  if (!row) return { exists: false };
+  return row.ownerHash ? { exists: true, ownerHash: row.ownerHash } : { exists: true };
+}
+
+/** True only when the email row exists and is bound to `pubkey`. Throws on a store error. */
+export async function isBoundTo(rawId: unknown, pubkey: string): Promise<boolean> {
+  const state = await rowState(rawId);
+  return state.ownerHash !== undefined && state.ownerHash === (await sha256Hex(pubkey));
+}
+
+/**
+ * /recovery-check: does this email back up the account that signed? A `links` proof over
+ * `check:<id>`, so no code is needed and nothing is said about anybody else: no row, an unbound row
+ * and another account's row all answer `mine: false`.
+ */
+export async function checkMine(
+  rawId: unknown,
+  owner: OwnerProof,
+): Promise<{ ok: true; mine: boolean } | { ok: false; reason: string }> {
+  const id = validateId(rawId);
+  const verified = await verifyOwner(`check:${id}`, owner);
+  if (!verified.ok) return verified;
+  const row = await readRow(KEY_EMAIL, id);
+  return { ok: true, mine: row?.ownerHash !== undefined && row.ownerHash === verified.ownerHash };
+}
+
+/**
+ * /recovery-release: the account lets go of its backup email, so that email can back up another
+ * account. A `links` proof over `release:<id>`. Deletes only a row bound to the signer; any other
+ * state answers `released: false` and changes nothing.
+ */
+export async function releaseBox(
+  rawId: unknown,
+  owner: OwnerProof,
+): Promise<{ ok: true; released: boolean } | { ok: false; reason: string }> {
+  const id = validateId(rawId);
+  const verified = await verifyOwner(`release:${id}`, owner);
+  if (!verified.ok) return verified;
+  const row = await readRow(KEY_EMAIL, id);
+  if (row?.ownerHash === undefined || row.ownerHash !== verified.ownerHash) return { ok: true, released: false };
+  await deleteRow(KEY_EMAIL, id);
+  return { ok: true, released: true };
+}
+
+/* ---------------------------------------------------------------------------
+ * RECOVERY TICKETS. A 409 over an unbound row, and a fetch of one, hand the caller a ticket: 64 hex,
+ * single use, ten minutes, valid for the one id it was minted for. It stands in for an emailed code
+ * exactly once, so the person who just proved the inbox can bind or replace that row (a signed write
+ * with `replace: true`) without waiting for a second code. Read and deleted in one GETDEL, so two
+ * requests racing with the same ticket cannot both spend it; presenting it for another id spends it
+ * too.
+ * --------------------------------------------------------------------------- */
+const KEY_TICKET = "lumenia:recovery-ticket:";
+export const RECOVERY_TICKET_TTL_SEC = 600;
+const ticketMem = new Map<string, { id: string; exp: number }>(); // local/test fallback (no KV)
+
+function randomHex(bytes: number): string {
+  return [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function mintRecoveryTicket(rawId: unknown): Promise<string> {
+  const id = validateId(rawId);
+  const ticket = randomHex(32);
+  const kv = kvConfigFromEnv();
+  if (!kv) {
+    ticketMem.set(ticket, { id, exp: Date.now() + RECOVERY_TICKET_TTL_SEC * 1000 });
+    return ticket;
+  }
+  const res = await fetch(`${kv.url}/set/${KEY_TICKET}${ticket}?EX=${RECOVERY_TICKET_TTL_SEC}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${kv.token}` },
+    body: id, // Upstash SET: the raw request body is the value
+  });
+  if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
+  return ticket;
+}
+
+/** Spend `ticket`: true only when it exists, has not expired, and was minted for `rawId`. */
+export async function consumeRecoveryTicket(rawTicket: unknown, rawId: unknown): Promise<boolean> {
+  if (typeof rawTicket !== "string" || !ID_RE.test(rawTicket)) return false;
+  if (typeof rawId !== "string" || !ID_RE.test(rawId)) return false;
+  const kv = kvConfigFromEnv();
+  if (!kv) {
+    const hit = ticketMem.get(rawTicket);
+    ticketMem.delete(rawTicket);
+    return hit !== undefined && hit.exp > Date.now() && hit.id === rawId;
+  }
+  const res = await fetch(`${kv.url}/pipeline`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
+    body: JSON.stringify([["GETDEL", KEY_TICKET + rawTicket]]),
+  });
+  if (!res.ok) throw new Error(`recovery store returned ${res.status}`);
+  const [first] = (await res.json()) as Array<{ result?: unknown; error?: string }>;
+  if (first?.error) throw new Error(`recovery store error: ${first.error}`);
+  return first?.result === rawId;
 }
 
 /** Fetch the EMAIL-keyed box, or null. Always OTP-gated at the route. */
 export async function getBox(rawId: unknown): Promise<RecoveryBox | null> {
   return getBoxAt(KEY_EMAIL, rawId);
+}
+
+/** The EMAIL-keyed box and whether it is bound to an account, or null. Always OTP-gated at the route. */
+export async function getBoxState(rawId: unknown): Promise<{ box: RecoveryBox; bound: boolean } | null> {
+  const row = await readRow(KEY_EMAIL, validateId(rawId));
+  return row ? { box: row.box, bound: row.ownerHash !== undefined } : null;
 }
 
 /**
@@ -267,20 +467,33 @@ export async function putAliasBox(
   rawBox: unknown,
   rawProof: unknown,
 ): Promise<{ ok: true }> {
-  const id = validateId(rawId);
   const box = validateBox(rawBox);
+  const { id, proofHash } = await aliasWriteCheck(rawId, rawProof);
+  await writeRow(KEY_ALIAS, id, { box, proofHash });
+  return { ok: true };
+}
+
+/**
+ * Would `putAliasBox(rawId, ..., rawProof)` be refused? Throws the same refusal it would, writes
+ * nothing. /recovery asks BEFORE it touches the email row, so a mismatched passkey can no longer
+ * leave a new email row behind next to an alias write that was then refused.
+ */
+export async function assertAliasWritable(rawId: unknown, rawProof: unknown): Promise<void> {
+  await aliasWriteCheck(rawId, rawProof);
+}
+
+async function aliasWriteCheck(rawId: unknown, rawProof: unknown): Promise<{ id: string; proofHash: string }> {
+  const id = validateId(rawId);
   const proof = typeof rawProof === "string" && ID_RE.test(rawProof) ? rawProof : null;
   if (!proof) throw new Error("aliasProof must be a 64-char hex string");
-
   const proofHash = await sha256Hex(proof);
   const existing = await readRow(KEY_ALIAS, id);
   if (existing?.proofHash && existing.proofHash !== proofHash) {
     // Public for the same reason the email refusals above are: a caller that cannot read this is
     // told only "request failed", and there is no action behind that.
-    throw new PublicRefusal("This Face ID backup belongs to a different passkey.");
+    throw new PublicRefusal(DIFFERENT_PASSKEY_ERROR);
   }
-  await writeRow(KEY_ALIAS, id, { box, proofHash });
-  return { ok: true };
+  return { id, proofHash };
 }
 
 async function sha256Hex(s: string): Promise<string> {

@@ -14,6 +14,7 @@
  * RESEND_API_KEY is set, for local/dev).
  */
 import { kvConfigFromEnv } from "./rate-limit.js";
+import { PublicRefusal } from "./caps.js";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const ID_RE = /^[0-9a-f]{64}$/;
@@ -37,6 +38,45 @@ interface OtpRecord {
 }
 const mem = new Map<string, OtpRecord>(); // local/test fallback (no KV)
 const tryMem = new Map<string, { n: number; exp: number }>(); // ditto, for the verify budget
+
+/**
+ * What a person is told when either per-email budget is spent: the request cap below, or the verify
+ * budget. Both used to look like something else (a request that "worked" and mailed nothing, a right
+ * code answered as a wrong one), so a person locked out for the hour kept asking for codes that could
+ * not help. The answer says nothing about any account: the counters are per email whether or not a
+ * backup exists, and whoever spent them already knows they did.
+ */
+export const OTP_BUDGET_ERROR = "Too many tries for this email in the last hour. Wait, then ask for a new code.";
+export const OTP_BUDGET_BODY = { error: OTP_BUDGET_ERROR, code: "otp-budget" } as const;
+
+/** Thrown by `requestOtp` over the per-email request cap. The routes answer it with 429 OTP_BUDGET_BODY. */
+export class OtpBudgetExceeded extends Error {
+  readonly isOtpBudgetExceeded = true;
+  constructor() {
+    super(OTP_BUDGET_ERROR);
+    this.name = "OtpBudgetExceeded";
+  }
+}
+
+export function isOtpBudgetExceeded(e: unknown): boolean {
+  return e instanceof OtpBudgetExceeded || (e as { isOtpBudgetExceeded?: boolean })?.isOtpBudgetExceeded === true;
+}
+
+/**
+ * The verify budget could not be read, so the code was not compared (the budget fails CLOSED). Not
+ * a spent budget and not a wrong code: telling the person to wait an hour, or that their right code
+ * is wrong, would both be untrue. A PublicRefusal, so its sentence reaches the screen on any host.
+ */
+export const OTP_UNAVAILABLE_ERROR = "We couldn't check the code just now. Try again in a minute.";
+export class OtpCheckUnavailable extends PublicRefusal {
+  constructor() {
+    super(OTP_UNAVAILABLE_ERROR, "otp-unavailable");
+    this.name = "OtpCheckUnavailable";
+  }
+}
+
+/** Why a code was mailed. Only the wording of the mail changes; the code itself is the same kind. */
+export type OtpPurpose = "recovery" | "pilot";
 
 async function sha256Hex(s: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -83,7 +123,26 @@ async function kvDel(kv: { url: string; token: string }, key: string): Promise<v
   await fetch(`${kv.url}/del/${key}`, { method: "POST", headers: { authorization: `Bearer ${kv.token}` } }).catch(() => {});
 }
 
-async function sendCodeEmail(email: string, code: string): Promise<void> {
+/**
+ * The lines of the code mail. A backup code ends with what a stranger's request means for this
+ * person, because a code nobody asked for is the one sign they get that somebody is trying their
+ * email on our restore page; a real-money code does not open anything and keeps the plain line.
+ */
+export function codeEmailLines(purpose: OtpPurpose): { first: string; expiry: string } {
+  if (purpose === "pilot") {
+    return {
+      first: "Your code to ask for real money:",
+      expiry: "It expires in 10 minutes. If you didn't ask for this, ignore this email.",
+    };
+  }
+  return {
+    first: "Your code to secure or restore your money:",
+    expiry:
+      "It expires in 10 minutes. If you didn't ask for this, someone may be trying to open your Lumenia backup. It stays locked by your password.",
+  };
+}
+
+async function sendCodeEmail(email: string, code: string, purpose: OtpPurpose): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
     // "Never in prod" was a comment, not a control: a Worker deployed or rotated without the
@@ -96,14 +155,17 @@ async function sendCodeEmail(email: string, code: string): Promise<void> {
     console.log(`[recovery:otp] (local, no RESEND_API_KEY) code for ${email.slice(0, 3)}…: ${code}`);
     return;
   }
+  const lines = codeEmailLines(purpose);
+  // A real-money code can come from the mainnet Worker, where "a test network" would be untrue.
+  const footer = purpose === "pilot" ? "Real money on Lumenia is an early pilot." : "Lumenia is in pilot on a test network.";
   const html = `<!doctype html><html><body style="margin:0;background:#F5F3EF;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F3EF;padding:32px 16px;"><tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;width:100%;background:#FBFAF8;border:1px solid #E5DFE8;border-radius:16px;overflow:hidden;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
 <tr><td style="background:#6E5FCE;padding:18px 28px;"><span style="font-size:18px;font-weight:700;color:#F6F4FD;">Lumenia</span></td></tr>
-<tr><td style="padding:26px 28px 6px;font-size:15px;color:#1E1B22;">Your code to secure or restore your money:</td></tr>
+<tr><td style="padding:26px 28px 6px;font-size:15px;color:#1E1B22;">${lines.first}</td></tr>
 <tr><td style="padding:8px 28px 6px;"><div style="font-size:34px;font-weight:700;letter-spacing:8px;color:#4E40A8;font-family:ui-monospace,Menlo,Consolas,monospace;">${code}</div></td></tr>
-<tr><td style="padding:6px 28px 24px;font-size:13px;color:#67626E;">It expires in 10 minutes. If you didn't ask for this, ignore this email.</td></tr>
-<tr><td style="border-top:1px solid #E5DFE8;padding:14px 28px;font-size:11.5px;color:#67626E;">Lumenia is in pilot on a test network.</td></tr>
+<tr><td style="padding:6px 28px 24px;font-size:13px;color:#67626E;">${lines.expiry}</td></tr>
+<tr><td style="border-top:1px solid #E5DFE8;padding:14px 28px;font-size:11.5px;color:#67626E;">${footer}</td></tr>
 </table></td></tr></table></body></html>`;
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -114,7 +176,7 @@ async function sendCodeEmail(email: string, code: string): Promise<void> {
         to: [email],
         subject: `Your Lumenia code: ${code}`,
         html,
-        text: `Your Lumenia code is ${code}. It expires in 10 minutes.`,
+        text: `${lines.first} ${code}\n\n${lines.expiry}\n`,
       }),
     });
     if (!res.ok) console.log(`[recovery:otp] resend returned ${res.status}`);
@@ -127,8 +189,12 @@ async function sendCodeEmail(email: string, code: string): Promise<void> {
  * matters: one attacker spread across addresses can hammer a SINGLE victim's email, both as an
  * inbox flood and as a way to keep invalidating the code the victim is trying to use. Counted per
  * box id over a rolling window, so a normal user (a couple of tries, maybe a resend) never notices
- * and a flood stops at the eleventh. Deliberately NOT an error that reveals anything: the caller
- * gets the same shape as a bad email, and no email is sent. */
+ * and a flood stops at the eleventh.
+ *
+ * Over the cap the caller is TOLD (429, OTP_BUDGET_BODY) and no email is sent. It used to answer
+ * the ordinary 200 so as not to "confirm the address exists", but the counter is per email whether
+ * or not any backup exists, so a 429 confirms nothing beyond the requests the caller made itself,
+ * while the silent 200 left the real owner waiting for a code that was never coming. */
 const MAX_OTP_PER_WINDOW = 10;
 const OTP_WINDOW_SEC = 3600;
 const reqMem = new Map<string, { n: number; exp: number }>();
@@ -163,23 +229,25 @@ async function overRequestCap(id: string): Promise<boolean> {
   }
 }
 
-/** Email a fresh single-use code for `email` and store it hashed under its box id. */
-export async function requestOtp(rawEmail: unknown): Promise<{ ok: true }> {
+/**
+ * Email a fresh single-use code for `email` and store it hashed under its box id. `purpose` changes
+ * the wording of the mail only ("pilot": the code that confirms an email when asking to join real
+ * money, worker.ts /pilot-request). Throws OtpBudgetExceeded over the per-email request cap.
+ */
+export async function requestOtp(rawEmail: unknown, purpose: OtpPurpose = "recovery"): Promise<{ ok: true }> {
   const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : "";
   if (email.length > 200 || !EMAIL_RE.test(email)) throw new Error("invalid email");
   const id = await idForEmail(email);
-  // Over the per-id cap: return the same 200 the happy path returns and send nothing. Saying
-  // "too many" here would confirm the address exists and hand the attacker a signal.
   if (await overRequestCap(id)) {
-    console.log(`[recovery:otp] per-id cap hit for ${id.slice(0, 8)}… — no email sent`);
-    return { ok: true };
+    console.log(`[recovery:otp] per-id cap hit for ${id.slice(0, 8)}...: no email sent`);
+    throw new OtpBudgetExceeded();
   }
   const code = sixDigit();
   const rec: OtpRecord = { codeHash: await sha256Hex(`${id}:${code}`), exp: Date.now() + TTL_SEC * 1000, tries: 0 };
   const kv = kvConfigFromEnv();
   if (!kv) mem.set(id, rec);
   else await kvSetJson(kv, otpKey(id), rec, TTL_SEC);
-  await sendCodeEmail(email, code);
+  await sendCodeEmail(email, code, purpose === "pilot" ? "pilot" : "recovery");
   return { ok: true };
 }
 
@@ -213,40 +281,59 @@ async function overVerifyBudget(id: string): Promise<boolean> {
     });
     // A store outage must not open the door: this counter IS the brute-force defence, so it fails
     // CLOSED. The cost is that an outage pauses recovery; the alternative is unlimited guessing.
-    if (!res.ok) return true;
+    if (!res.ok) throw new OtpCheckUnavailable();
     const [first] = (await res.json()) as Array<{ result?: unknown }>;
     return Number(first?.result ?? 0) > MAX_VERIFY_PER_WINDOW;
   } catch {
-    return true;
+    throw new OtpCheckUnavailable();
   }
 }
 
-/** Verify AND consume the code for `id`. Returns true only on a correct, unexpired, unused code. */
-export async function verifyOtp(rawId: unknown, rawCode: unknown): Promise<boolean> {
+/**
+ * Verify AND consume the code for `id`: "ok" only for a correct, unexpired, unused code; "budget"
+ * when this email's verify budget for the hour is spent (the code was not even compared); "wrong"
+ * for everything else, a malformed id or code included. The routes answer "budget" with 429
+ * OTP_BUDGET_BODY, so a person locked out for the hour is told so instead of "wrong code". Throws
+ * OtpCheckUnavailable when the budget cannot be read (nothing is compared, nothing is consumed).
+ */
+export async function verifyOtpDetailed(rawId: unknown, rawCode: unknown): Promise<"ok" | "wrong" | "budget"> {
   const id = typeof rawId === "string" && ID_RE.test(rawId) ? rawId : "";
   const code = typeof rawCode === "string" ? rawCode.trim() : "";
-  if (!id || !/^\d{6}$/.test(code)) return false;
+  if (!id || !/^\d{6}$/.test(code)) return "wrong";
   // The hard cap comes first — before any store read, so a flood costs the attacker a budget unit
   // whatever else happens.
-  if (await overVerifyBudget(id)) return false;
+  if (await overVerifyBudget(id)) return "budget";
   const kv = kvConfigFromEnv();
   const key = otpKey(id);
   const rec = kv ? await kvGetJson(kv, key) : (mem.get(id) ?? null);
-  if (!rec) return false;
+  if (!rec) return "wrong";
   if (Date.now() > rec.exp || rec.tries >= MAX_TRIES) {
     if (kv) await kvDel(kv, key);
     else mem.delete(id);
-    return false;
+    return "wrong";
   }
   if (!timingSafeEqualHex(await sha256Hex(`${id}:${code}`), rec.codeHash)) {
     rec.tries += 1;
     const remainSec = Math.max(1, Math.ceil((rec.exp - Date.now()) / 1000));
     if (kv) await kvSetJson(kv, key, rec, remainSec);
     else mem.set(id, rec);
-    return false;
+    return "wrong";
   }
   // correct → single-use: consume it
   if (kv) await kvDel(kv, key);
   else mem.delete(id);
-  return true;
+  return "ok";
+}
+
+/**
+ * Verify AND consume the code for `id`. True only on a correct, unexpired, unused code. The boolean
+ * API the identity routes use: an unreadable budget is false here, as it always was.
+ */
+export async function verifyOtp(rawId: unknown, rawCode: unknown): Promise<boolean> {
+  try {
+    return (await verifyOtpDetailed(rawId, rawCode)) === "ok";
+  } catch (e) {
+    if (e instanceof OtpCheckUnavailable) return false;
+    throw e;
+  }
 }

@@ -166,6 +166,15 @@ function runOne(cmd: string[]): Reply {
   switch (op) {
     case "GET":
       return { result: getString(key) };
+    case "GETDEL": {
+      // Read and delete in one step: how a recovery ticket is spent (lib/recovery-store.ts).
+      const value = getString(key);
+      if (live(key) !== undefined) {
+        store.delete(key);
+        expiry.delete(key);
+      }
+      return { result: value };
+    }
     case "SET": {
       // SET key value [NX | XX] [GET] [EX s | PX ms | KEEPTTL], as Redis reads it. XX writes only
       // over a key that exists (a fenced update of a slot this caller still holds); KEEPTTL keeps
@@ -361,9 +370,11 @@ const server = createServer(async (req, res) => {
     // A decimal string, like the counters Upstash returns for GET.
     reply = { result: (gross.get(segs[1]!) ?? 0n).toString() };
   } else if (segs.length >= 2) {
-    // Single-command paths: /<cmd>/<key>[/<arg>...]. The flags Upstash accepts as a query string
-    // (`?EX=60`) are folded in the same way.
+    // Single-command paths: /<cmd>/<key>[/<arg>...]. A POST body is the command's last argument, as
+    // Upstash takes it ("the raw request body is the value": the recovery rows, the codes, the
+    // tickets), and the flags Upstash accepts as a query string (`?EX=60`) are folded in after it.
     const [cmd, ...rest] = segs;
+    if (req.method === "POST" && body !== "") rest.push(body);
     const extra: string[] = [];
     for (const [k, v] of url.searchParams) extra.push(k, v);
     const r = run([cmd!, ...rest, ...extra]);
@@ -485,6 +496,12 @@ async function selftest(): Promise<number> {
   }
   check("found the service's scripts (at least the channel pool's release)", found >= 1, `${found} found`);
 
+  console.log("GETDEL: a recovery ticket is spent once");
+  fresh();
+  r(["SET", "ticket", "id-a", "EX", 600]);
+  check("GETDEL answers the value and deletes the key", res(r(["GETDEL", "ticket"])) === "id-a" && getString("ticket") === null);
+  check("a second GETDEL answers nil", res(r(["GETDEL", "ticket"])) === null);
+
   console.log("the HTTP pipeline shape");
   fresh();
   await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", () => resolveListen()));
@@ -505,6 +522,9 @@ async function selftest(): Promise<number> {
     check("a pipeline answers one {result} per command, in order", JSON.stringify(rows) === JSON.stringify([{ result: "OK" }, { result: 2 }, { result: 2 }, { result: 1 }, { result: [null, "1", "1"] }]), JSON.stringify(rows));
     const grossReply = (await (await fetch(`http://127.0.0.1:${port}/__gross/d`)).json()) as { result?: unknown };
     check("GET /__gross/<key> answers the gross as a decimal string (2 in, 1 given back: 2)", grossReply.result === "2", JSON.stringify(grossReply));
+    // Upstash SET with the value as the POST body and the expiry as a query string (lib/recovery-*.ts).
+    await fetch(`http://127.0.0.1:${port}/set/body-key?EX=600`, { method: "POST", body: '{"box":1}' });
+    check("POST /set/<key>?EX=600 stores the body as the value, with the expiry", getString("body-key") === '{"box":1}' && Number(res(r(["TTL", "body-key"]))) > 0, String(getString("body-key")));
   } finally {
     server.close();
   }

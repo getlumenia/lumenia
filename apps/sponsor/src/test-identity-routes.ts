@@ -19,6 +19,13 @@
 import { Keypair } from "@stellar/stellar-sdk";
 import worker from "./worker.js";
 import { handleProofMessage, proofNonce } from "./lib/handles.js";
+import { idForEmail } from "./lib/recovery-otp.js";
+import { identityId } from "./lib/identity-links.js";
+
+// Never a real store or a real mailer, whatever the shell exports (see the note above).
+for (const k of ["KV_REST_API_URL", "KV_REST_API_TOKEN", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "RESEND_API_KEY"]) {
+  delete process.env[k];
+}
 
 let passed = 0;
 let failed = 0;
@@ -34,6 +41,11 @@ const ENV = {
   USDC_ISSUER: Keypair.random().publicKey(),
   ALLOWED_ORIGIN: "https://getlumenia.com",
   FEDERATION_DOMAIN: "getlumenia.com",
+  // The email codes of section [6] are read from the local log line, as a developer reads them.
+  RECOVERY_ALLOW_MEMORY_STORE: "1",
+  // This suite asks more often than a person would; the limits are not what it tests.
+  RATE_CAP: "1000",
+  ACCOUNT_RATE_CAP: "1000",
 };
 
 const BASE = "https://sponsor.test";
@@ -68,6 +80,43 @@ function accountProof(kp: Keypair) {
   const nonce = proofNonce();
   const message = handleProofMessage("links", "attach", kp.publicKey(), ts, nonce, "testnet");
   return { ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
+}
+
+/** The account's own authorization to cut a link off it: the `links` proof, over `detach:<id>`. */
+function detachProof(kp: Keypair, id: string) {
+  const ts = Math.floor(Date.now() / 1000);
+  const nonce = proofNonce();
+  const message = handleProofMessage("links", `detach:${id}`, kp.publicKey(), ts, nonce, "testnet");
+  return { ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
+}
+
+/** A backup write's owner proof: the `links` proof over the box id. */
+function writeProof(kp: Keypair, id: string) {
+  const ts = Math.floor(Date.now() / 1000);
+  const nonce = proofNonce();
+  const message = handleProofMessage("links", id, kp.publicKey(), ts, nonce, "testnet");
+  return { pubkey: kp.publicKey(), ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
+}
+
+const BOX = {
+  formatVersion: 1,
+  copies: [{ kind: "password", iv: "AAAA", ct: "BBBB", salt: "CCCC", argon: { memMiB: 48, time: 2, parallelism: 1 } }],
+};
+
+/** Ask /recovery-otp for a code and read it off the local log line (no mailer in this suite). */
+async function codeFor(email: string): Promise<string> {
+  const lines: string[] = [];
+  const real = console.log;
+  console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+  let res: { status: number; json: Record<string, unknown> };
+  try {
+    res = await call("POST", "/recovery-otp", { email });
+  } finally {
+    console.log = real;
+  }
+  const code = lines.map((l) => /\[recovery:otp\] \(local, no RESEND_API_KEY\) code for .*: (\d{6})$/.exec(l)?.[1]).find(Boolean);
+  if (res.status !== 200 || !code) throw new Error(`no code for ${email}: ${res.status} ${JSON.stringify(res.json)}`);
+  return code;
 }
 
 function signed(kp: Keypair, action: "claim" | "release" | "links", name: string) {
@@ -230,6 +279,59 @@ async function main(): Promise<void> {
   ok("and is NOT offered as available during the cooldown", cooldown.json.available !== true, String(cooldown.json.error));
   const lookalikeFree = await call("GET", "/handle?name=mer1c");
   ok("a lookalike is not offered as available either", lookalikeFree.json.available !== true, String(lookalikeFree.json.error));
+
+  /* One email, one account, in BOTH registries. An email that backs up one account must not become
+     a way back in to another, or "find my account" and "restore my backup" open two different keys
+     for the same address. And holding an inbox for one code is not standing to cut a way back in
+     off the account it leads to: that account signs, as it does to attach one. */
+  console.log("\n[6] one email, one account: the ways back in agree with the backups");
+  const carol = Keypair.random();
+  const BACKED = "backed-up@example.test";
+  const backedId = await idForEmail(BACKED);
+  const stored = await call("POST", "/recovery", { id: backedId, box: BOX, code: await codeFor(BACKED), owner: writeProof(carol, backedId) });
+  ok("carol's backup of an email is bound to her account", stored.status === 200 && stored.json.bound === true, JSON.stringify(stored.json));
+  const emailProof = async (email: string) => ({ kind: "email", email, code: await codeFor(email) });
+  const refusedAttach = await call("POST", "/identity-attach", {
+    proof: await emailProof(BACKED),
+    address: alice.publicKey(),
+    accountProof: accountProof(alice),
+  });
+  ok(
+    "alice cannot make that email a way back in to HER account (409)",
+    refusedAttach.status === 409 && refusedAttach.json.error === "That email already backs up another account.",
+    `${refusedAttach.status} ${String(refusedAttach.json.error)}`,
+  );
+  const notAttached = await call("POST", "/identity-check", { proof: await emailProof(BACKED) });
+  ok("and nothing was attached", notAttached.status === 200 && notAttached.json.taken === false);
+  const ownAttach = await call("POST", "/identity-attach", {
+    proof: await emailProof(BACKED),
+    address: carol.publicKey(),
+    accountProof: accountProof(carol),
+  });
+  ok("carol can attach it: the backup is her own account's", ownAttach.status === 200 && ownAttach.json.ok === true, JSON.stringify(ownAttach.json).slice(0, 80));
+  const FRESH = "no-backup@example.test";
+  const freshAttach = await call("POST", "/identity-attach", {
+    proof: await emailProof(FRESH),
+    address: alice.publicKey(),
+    accountProof: accountProof(alice),
+  });
+  ok("an email with no backup row can be attached", freshAttach.status === 200 && freshAttach.json.ok === true, JSON.stringify(freshAttach.json).slice(0, 80));
+
+  const codeOnly = await call("POST", "/identity-detach", { proof: await emailProof(FRESH) });
+  ok(
+    "detaching with the inbox code alone is refused (401)",
+    codeOnly.status === 401 && codeOnly.json.error === "That account has to authorize this.",
+    `${codeOnly.status} ${String(codeOnly.json.error)}`,
+  );
+  const stillLinked = await call("POST", "/identity-check", { proof: await emailProof(FRESH) });
+  ok("and the email still leads to alice", stillLinked.json.taken === true && stillLinked.json.address === alice.publicKey());
+  const freshId = await identityId("email", FRESH);
+  const bobSigns = await call("POST", "/identity-detach", { proof: await emailProof(FRESH), accountProof: detachProof(bob, freshId) });
+  ok("another account's signature does not authorize it either (401)", bobSigns.status === 401);
+  const detached = await call("POST", "/identity-detach", { proof: await emailProof(FRESH), accountProof: detachProof(alice, freshId) });
+  ok("the account's own signature over detach:<id> disconnects it", detached.status === 200 && detached.json.ok === true, JSON.stringify(detached.json));
+  const unlinked = await call("POST", "/identity-check", { proof: await emailProof(FRESH) });
+  ok("and the email leads nowhere now", unlinked.status === 200 && unlinked.json.taken === false);
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} IDENTITY ROUTE TESTS ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

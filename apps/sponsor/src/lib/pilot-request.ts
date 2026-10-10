@@ -2,23 +2,53 @@
  * Pilot join request — emails the OWNER that a wallet wants into the mainnet pilot,
  * plus the two applicant-facing outcome mails (approved / not-yet).
  *
- * This DOES persist, and the docstring used to claim otherwise. `startPilotRequest` records the
- * application state, a pubkey↔email mapping (so the outcome mail has somewhere to go), and a
- * marker that this address has applied — the last one keyed by HASH, never by the address itself.
+ * This DOES persist, and the docstring used to claim otherwise. Both request paths record the
+ * application state, a pubkey-to-email mapping (so the outcome mail has somewhere to go), and the
+ * latest wallet that asked with this address, the last one keyed by HASH, never by the address.
+ *
+ * TWO PATHS (worker.ts /pilot-request):
+ *  - SIGNED (`answerSignedPilotRequest`): the account signed the ask and the asker proved the email
+ *    (a code mailed to it, or a backup row it protects). Filed per the account's state, and the
+ *    owner mail says where it came from, how the email was proven, and which other wallet asked with
+ *    the same email.
+ *  - LEGACY (`notifyPilotRequest`): a page that does not sign. Answers exactly as before, so older
+ *    pages keep working until PILOT_REQUIRE_PROOF=1 closes it. A collision is still not recorded,
+ *    but it is logged and mailed to the owner instead of vanishing.
+ *
  * The owner can still approve from the terminal with `pnpm --filter @lumenia/sponsor pilot approve
  * <pubkey>`, and the email carries that command ready to paste. Reuses the Resend owner-gate
  * (recovery-otp.ts): the shared onboarding sender only delivers to the Resend account owner —
- * exactly who should see these. If Resend isn't configured it logs (visible in `wrangler
- * tail`), so a request is never silently lost.
+ * exactly who should see these. A mail that cannot be sent (no mailer, a refusal, a throw) is one
+ * log line with the wallet and the contact (visible in `wrangler tail`), never a failed request, so
+ * a request is never silently lost.
  *
- * All three mails share one branded, table-based HTML skeleton (`renderEmail`) so they render
+ * All the mails share one branded, table-based HTML skeleton (`renderEmail`) so they render
  * consistently and Outlook-safely; every send carries BOTH a plain-text and an HTML body.
  */
 import { StrKey } from "@stellar/stellar-sdk";
 import { capsFromEnv, stroopsToUsdc } from "./caps.js";
-import { mintApprovalToken, startPilotRequest } from "./pilot.js";
+import {
+  mintApprovalToken,
+  startPilotRequest,
+  filePilotRequest,
+  markOwnerMailed,
+  ownerMailedRecently,
+  getPilotState,
+  getPilotSrc,
+  pilotLimit,
+  shortAddress,
+  type InboxProof,
+  type PilotSource,
+  type PilotState,
+} from "./pilot.js";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** The address as every pilot path stores and compares it, or null when it is not one. */
+export function normalizePilotEmail(email: string): string | null {
+  const clean = email.trim().toLowerCase();
+  return clean.length <= 200 && EMAIL_RE.test(clean) ? clean : null;
+}
 
 // ── Brand tokens (app / "Periwinkle" palette — verified) ───────────────────────────────
 const PAPER = "#F5F3EF"; // background / paper
@@ -105,27 +135,80 @@ function renderEmail(opts: {
 </html>`;
 }
 
-export async function notifyPilotRequest(
-  pubkey: string,
-  email: string,
-  origin?: string,
-): Promise<{ ok: true; already?: boolean }> {
-  if (!StrKey.isValidEd25519PublicKey(pubkey)) throw new Error("invalid pubkey");
-  const clean = email.trim().toLowerCase();
-  if (clean.length > 200 || !EMAIL_RE.test(clean)) throw new Error("invalid email");
+/** What one owner mail is about. */
+interface OwnerMail {
+  kind: "request" | "more-sends" | "collision";
+  pubkey: string;
+  /** The contact, normalized. */
+  email: string;
+  /** Where the ask came from; undefined for an older page that sends no source. */
+  src?: PilotSource;
+  /** How the email was proven; null when it was not (an older page asks for no code). */
+  inbox: InboxProof | null;
+  /** Another wallet that asked with this email, and where it stands. */
+  other?: { pubkey: string; state: PilotState };
+  used?: number;
+  limit?: number;
+}
 
-  // TASK 1 — idempotent: records a pending application; if this wallet OR email already applied,
-  // send NO duplicate owner-mail and tell the caller so it can show "you've already applied".
-  const { created, collision } = await startPilotRequest(pubkey, clean);
-  // `already` is an honest answer about THIS wallet's own application. A collision — some other
-  // wallet already applied with this address — gets the ordinary success shape instead, so the
-  // response cannot be used to test whether a given address is in the pilot.
-  if (!created) return collision ? { ok: true } : { ok: true, already: true };
+function askedFromLine(src: PilotSource | undefined): string {
+  if (src === "ext") return "Asked from: the extension";
+  if (src === "web") return "Asked from: the website";
+  return "Asked from: an older page";
+}
 
+function inboxLine(inbox: InboxProof | null): string {
+  if (inbox === "code") return "Email confirmed by a code";
+  if (inbox === "backup") return "Email confirmed by the backup it protects";
+  return "Email not confirmed: an older page does not ask for a code";
+}
+
+function alsoLine(other: OwnerMail["other"]): string | null {
+  return other ? `This email also asked for ${shortAddress(other.pubkey)} (${other.state}).` : null;
+}
+
+/**
+ * Mail the owner about one ask. Resolves true only when Resend ACCEPTED it; every other outcome (no
+ * mailer configured, a refusal, a throw) is exactly one log line naming the wallet and the contact,
+ * and false. Never throws: a mail must not fail the ask it reports.
+ */
+async function mailOwner(m: OwnerMail, origin?: string): Promise<boolean> {
   const to = process.env.OWNER_EMAIL;
   const key = process.env.RESEND_API_KEY;
   const network = process.env.STELLAR_NETWORK ?? "testnet";
+  if (!to || !key) {
+    console.log(`[pilot:request] ${network} wallet ${m.pubkey} ${m.email} (no mailer)`);
+    return false;
+  }
+  try {
+    const mail = await composeOwnerMail(m, network, origin);
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
+        to: [to],
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      }),
+    });
+    if (res.ok) return true;
+  } catch {
+    /* reported by the one line below */
+  }
+  console.log(`[pilot:request] ${network} wallet ${m.pubkey} ${m.email} (mail failed)`);
+  return false;
+}
+
+async function composeOwnerMail(
+  m: OwnerMail,
+  network: string,
+  origin?: string,
+): Promise<{ subject: string; text: string; html: string }> {
+  const { pubkey, email } = m;
   const approveCmd = `STELLAR_NETWORK=${network} pnpm --filter @lumenia/sponsor pilot approve ${pubkey}`;
+  const resetCmd = `STELLAR_NETWORK=${network} pnpm --filter @lumenia/sponsor pilot reset ${pubkey}`;
   /**
    * One-tap approve/decline links. Two things are deliberate here:
    *
@@ -136,7 +219,8 @@ export async function notifyPilotRequest(
    *
    * The TOKEN is a per-wallet, per-action, expiring signature (lib/pilot.ts), not the shared
    * secret. Without a configured origin we simply omit the buttons and fall back to the CLI
-   * command rather than mint a link pointing somewhere we cannot vouch for.
+   * command rather than mint a link pointing somewhere we cannot vouch for. Each link opens a
+   * confirmation page; nothing is decided until the owner presses its button (worker.ts).
    */
   const base = (process.env.SPONSOR_ORIGIN ?? (network === "mainnet" ? "" : (origin ?? ""))).replace(/\/$/, "");
   const mint = async (action: "approve" | "reject") => {
@@ -144,15 +228,72 @@ export async function notifyPilotRequest(
     const t = await mintApprovalToken(action, pubkey, Date.now());
     return t ? `${base}/pilot-${action}?pubkey=${pubkey}&exp=${t.exp}&token=${t.token}` : null;
   };
-  const approveUrl = await mint("approve");
-  const rejectUrl = await mint("reject");
 
-  if (!to || !key) {
-    // No mailer configured — log it so the owner can still see the request and approve by hand.
-    console.log(`[pilot:request] ${network} — wallet ${pubkey} — ${clean}`);
-    return { ok: true };
+  // The facts every owner mail carries, in this order, in both bodies.
+  const facts: string[] = [askedFromLine(m.src), inboxLine(m.inbox)];
+  if (m.kind === "more-sends") facts.push(`Used: ${m.used ?? 0} of ${m.limit ?? pilotLimit()} sends`);
+  const also = alsoLine(m.other);
+  if (also) facts.push(also);
+
+  const factsHtml = facts.map((f) => `${esc(f)}<br>`).join("");
+  const walletBox = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAPER};border:1px solid ${CHIP};border-radius:12px;">
+  <tr><td style="padding:14px 16px;font-family:${FONT};font-size:14px;line-height:1.6;color:${INK};">
+    <span style="color:${INK_SOFT};">Wallet</span><br>
+    <code style="font-family:${MONO};font-size:13px;word-break:break-all;color:${ACCENT_PRESSED};">${esc(pubkey)}</code><br><br>
+    <span style="color:${INK_SOFT};">Contact</span><br>
+    <a href="mailto:${esc(email)}" style="color:${ACCENT_PRESSED};text-decoration:none;">${esc(email)}</a><br><br>
+    ${factsHtml}
+  </td></tr>
+</table>`;
+  const code = (cmd: string) =>
+    `<code style="font-family:${MONO};font-size:12px;word-break:break-all;color:${ACCENT_PRESSED};">${esc(cmd)}</code>`;
+  const footer =
+    "You're getting this because you own the Lumenia Resend account. Only your own emailed links can approve or decline a pilot request.";
+
+  if (m.kind === "more-sends") {
+    const lead = `An approved wallet on the ${network} pilot has used all ${m.limit ?? pilotLimit()} of its real-money sends and asks for more.`;
+    const html = renderEmail({
+      preheader: `Wallet ${shortAddress(pubkey)} asks for more sends.`,
+      mascotFile: "mark-link.webp",
+      mascotAlt: "Lumenia",
+      h1: "More sends asked",
+      bodyHtml: `<p style="margin:0 0 16px;">${esc(lead)}</p>
+${walletBox}
+<p style="margin:22px 0 4px;font-size:15px;color:${INK};">Give it its sends again from the terminal:</p>
+<p style="margin:0;">${code(resetCmd)}</p>`,
+      footer,
+    });
+    return {
+      subject: `Pilot: more sends asked - ${email} (${network})`,
+      text: `${lead}\n\nWallet:  ${pubkey}\nContact: ${email}\n${facts.join("\n")}\n\nGive it its sends again:\n  ${resetCmd}\n`,
+      html,
+    };
   }
 
+  if (m.kind === "collision") {
+    const lead =
+      `A wallet asked to join the ${network} pilot from an older page, with an email that another wallet asked with first. ` +
+      "It was not recorded: an older page does not confirm the email, so this could be somebody else using that address.";
+    const next = "If it is the same person, ask them to ask again from the latest page, which confirms the email with a code.";
+    const html = renderEmail({
+      preheader: `Wallet ${shortAddress(pubkey)} was not recorded.`,
+      mascotFile: "mark-link.webp",
+      mascotAlt: "Lumenia",
+      h1: "Pilot request not recorded",
+      bodyHtml: `<p style="margin:0 0 16px;">${esc(lead)}</p>
+${walletBox}
+<p style="margin:16px 0 0;">${esc(next)}</p>`,
+      footer,
+    });
+    return {
+      subject: `Pilot request not recorded - ${email} (${network})`,
+      text: `${lead}\n\nWallet:  ${pubkey}\nContact: ${email}\n${facts.join("\n")}\n\n${next}\n`,
+      html,
+    };
+  }
+
+  const approveUrl = await mint("approve");
+  const rejectUrl = await mint("reject");
   // Buttons only when the one-tap links exist (else fall back to the CLI command).
   const actionHtml =
     approveUrl && rejectUrl
@@ -162,56 +303,106 @@ export async function notifyPilotRequest(
           ACCENT,
           "#FFFFFF",
         )}<td style="width:12px;">&nbsp;</td>${buttonCell(rejectUrl, "Decline", CHIP, INK)}</tr></table>
-<p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:${INK_SOFT};">Prefer the terminal? <code style="font-family:${MONO};font-size:12px;word-break:break-all;color:${ACCENT_PRESSED};">${esc(
-          approveCmd,
-        )}</code></p>`
+<p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:${INK_SOFT};">Prefer the terminal? ${code(approveCmd)}</p>`
       : `<p style="margin:22px 0 4px;font-size:15px;color:${INK};">Approve from the terminal:</p>
-<p style="margin:0;"><code style="font-family:${MONO};font-size:12px;word-break:break-all;color:${ACCENT_PRESSED};">${esc(
-          approveCmd,
-        )}</code></p>`;
-
-  const bodyHtml = `<p style="margin:0 0 16px;">A wallet asked to join the <strong>${esc(
-    network,
-  )}</strong> pilot. Approve to let them switch to real money, or decline to keep them in practice mode.</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAPER};border:1px solid ${CHIP};border-radius:12px;">
-  <tr><td style="padding:14px 16px;font-family:${FONT};font-size:14px;line-height:1.6;color:${INK};">
-    <span style="color:${INK_SOFT};">Wallet</span><br>
-    <code style="font-family:${MONO};font-size:13px;word-break:break-all;color:${ACCENT_PRESSED};">${esc(
-      pubkey,
-    )}</code><br><br>
-    <span style="color:${INK_SOFT};">Contact</span><br>
-    <a href="mailto:${esc(clean)}" style="color:${ACCENT_PRESSED};text-decoration:none;">${esc(clean)}</a>
-  </td></tr>
-</table>
-${actionHtml}`;
-
+<p style="margin:0;">${code(approveCmd)}</p>`;
+  const lead = `A wallet asked to join the ${network} pilot. Approve to let them switch to real money, or decline to keep them in practice mode.`;
   const html = renderEmail({
-    preheader: `Wallet ${pubkey.slice(0, 8)}… · tap to approve or decline`,
+    preheader: `Wallet ${shortAddress(pubkey)}: tap to approve or decline.`,
     mascotFile: "mark-link.webp",
     mascotAlt: "Lumenia",
     h1: "New pilot request",
-    bodyHtml,
-    footer:
-      "You're getting this because you own the Lumenia Resend account — only your own emailed links can approve or decline a pilot request.",
+    bodyHtml: `<p style="margin:0 0 16px;">${esc(lead)}</p>
+${walletBox}
+${actionHtml}`,
+    footer,
   });
+  return {
+    subject: `Pilot request - ${email} (${network})`,
+    text: `${lead}\n\nWallet:  ${pubkey}\nContact: ${email}\n${facts.join("\n")}\n\n${
+      approveUrl ? `Approve: ${approveUrl}\nDecline: ${rejectUrl}\n\nor via CLI:\n  ${approveCmd}\n` : `Approve with:\n  ${approveCmd}\n`
+    }`,
+    html,
+  };
+}
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
-      to: [to],
-      subject: `Pilot request — ${clean} (${network})`,
-      text: `A wallet asked to join the ${network} pilot.\n\nWallet:  ${pubkey}\nContact: ${clean}\n\n${
-        approveUrl
-          ? `Approve: ${approveUrl}\nDecline: ${rejectUrl}\n\nor via CLI:\n  ${approveCmd}\n`
-          : `Approve with:\n  ${approveCmd}\n`
-      }`,
-      html,
-    }),
-  });
-  if (!res.ok) console.log(`[pilot:request] resend ${res.status} — wallet ${pubkey} — ${clean}`);
+/**
+ * The LEGACY ask: no signature, no proven email (pages from before the signed ask). Answers exactly
+ * as it always has: {ok:true} for a filed or swallowed ask, {ok:true, already:true} when this
+ * wallet already has a state. A collision (another wallet asked with this address first) is still
+ * not recorded, for the reason in lib/pilot.ts `startPilotRequest`; it is now one
+ * `[pilot:collision]` log line per ask and one owner mail per wallet a week, so the owner can act by
+ * hand. Throws on a store problem (the route answers 503).
+ */
+export async function notifyPilotRequest(
+  pubkey: string,
+  email: string,
+  origin?: string,
+): Promise<{ ok: true; already?: boolean }> {
+  if (!StrKey.isValidEd25519PublicKey(pubkey)) throw new Error("invalid pubkey");
+  const clean = normalizePilotEmail(email);
+  if (!clean) throw new Error("invalid email");
+  const network = process.env.STELLAR_NETWORK ?? "testnet";
+
+  const { created, collision, other } = await startPilotRequest(pubkey, clean);
+  if (!created) {
+    if (!collision) return { ok: true, already: true };
+    console.log(`[pilot:collision] ${network} wallet ${pubkey} asked with an email already used by ${other ?? "another wallet"}; not recorded`);
+    if (!(await ownerMailedRecently(pubkey))) {
+      const otherInfo = other ? { pubkey: other, state: await getPilotState(other) } : undefined;
+      if (await mailOwner({ kind: "collision", pubkey, email: clean, inbox: null, other: otherInfo }, origin)) {
+        await markOwnerMailed(pubkey).catch(() => {});
+      }
+    }
+    // The ordinary success shape: the answer must not tell this wallet whether the address applied.
+    return { ok: true };
+  }
+  if (await mailOwner({ kind: "request", pubkey, email: clean, inbox: null }, origin)) {
+    await markOwnerMailed(pubkey).catch(() => {});
+  }
   return { ok: true };
+}
+
+/** The answer to a signed ask (contract 3.2). */
+export interface SignedPilotAnswer {
+  ok: true;
+  state: "pending" | "approved" | "rejected";
+  /** For the first ask, always true; for a re-ask, whether an owner mail went out now. */
+  filed: boolean;
+  already?: true;
+  /** short(G) of another wallet that asked with this email in the last 90 days. */
+  emailAlsoFor?: string;
+}
+
+/**
+ * The SIGNED ask, after worker.ts has verified the account's signature and the email (a code, or a
+ * backup row bound to this account). Files it (lib/pilot.ts `filePilotRequest`), sends the owner
+ * the mail the filing calls for, and records the mail only when Resend accepted it, so a failed mail
+ * is retried by the next ask instead of being counted. Throws on a store problem (503).
+ */
+export async function answerSignedPilotRequest(
+  pubkey: string,
+  email: string,
+  src: PilotSource | undefined,
+  inboxProof: InboxProof,
+  origin?: string,
+): Promise<SignedPilotAnswer> {
+  const filing = await filePilotRequest(pubkey, email, src, { inboxProof });
+  let mailed = false;
+  if (filing.mail) {
+    mailed = await mailOwner(
+      { kind: filing.mail, pubkey, email, src, inbox: inboxProof, other: filing.other, used: filing.used, limit: filing.limit },
+      origin,
+    );
+    if (mailed) await markOwnerMailed(pubkey).catch(() => {});
+  }
+  return {
+    ok: true,
+    state: filing.state,
+    filed: filing.already ? mailed : true,
+    ...(filing.already ? { already: true as const } : {}),
+    ...(filing.other ? { emailAlsoFor: shortAddress(filing.other.pubkey) } : {}),
+  };
 }
 
 /**
@@ -307,21 +498,32 @@ export async function notifyPilotApproved(pubkey: string, email: string): Promis
     return false;
   }
 
-  const switchUrl = `${process.env.WEB_ORIGIN ?? "https://getlumenia.com"}/account?switch=mainnet`;
+  /* The mail names the ACCOUNT it approves. One person can hold a website account and an extension
+     account (two keys), and a mail that said only "you're approved" sent them to whichever account
+     their browser happened to hold. `#for=` lets /account check it is the right one; the fragment
+     never reaches a server log. Where the ask came from and the send limit are read here, best
+     effort, so the Worker's link and the owner CLI send the same mail. */
+  const switchUrl = `${process.env.WEB_ORIGIN ?? "https://getlumenia.com"}/account?switch=mainnet#for=${pubkey}`;
+  const src = await getPilotSrc(pubkey);
+  const limit = pilotLimit();
   /* The caps this mail quotes are read from the SAME env the enforcement reads (lib/caps.ts). They
      used to be a hardcoded "$1", an aspirational number the mainnet Worker never enforced (it has run
      $5 since day one), so the welcome mail promised a protection the user did not have. The warning
      comes first, word for word as everywhere else, and the caps in a sentence of their own. */
   const caps = pilotCaps();
   const ready = "Your account is ready to use Lumenia with real money. When you're set, turn it on in one tap.";
+  const forAccount = `This approval is for account ${shortAddress(pubkey)}.`;
+  const sends = `You can make ${limit} real-money links from this account.`;
+  const extension = src === "ext" ? "Open the Lumenia extension and choose Real money." : null;
   const limits = `Pilot limits: ${caps.full}.`;
+  const paragraphs = [ready, forAccount, sends, ...(extension ? [extension] : []), REAL_MONEY_WARNING, limits];
 
   const html = renderEmail({
     preheader: `Turn on real money in one tap. Pilot limits: ${caps.short}.`,
     mascotFile: "mascot-celebrate-cut.webp",
     mascotAlt: "Confetti celebration",
     h1: "You're approved for real money",
-    bodyHtml: [ready, REAL_MONEY_WARNING, limits]
+    bodyHtml: paragraphs
       .map((p, i, all) => `<p style="margin:0${i < all.length - 1 ? " 0 14px" : ""};">${esc(p)}</p>`)
       .join("\n"),
     buttonUrl: switchUrl,
@@ -337,19 +539,21 @@ export async function notifyPilotApproved(pubkey: string, email: string): Promis
       from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
       to: [clean],
       subject: "You're in: Lumenia is ready for real money",
-      text: `You're approved for real money.\n\n${ready}\n\n${REAL_MONEY_WARNING}\n\n${limits}\n\nSwitch to real money: ${switchUrl}\n\nLumenia\n`,
+      text: `You're approved for real money.\n\n${paragraphs.join("\n\n")}\n\nSwitch to real money: ${switchUrl}\n\nLumenia\n`,
       html,
     }),
   });
-  if (!res.ok) console.log(`[pilot:approved] resend ${res.status} — ${pubkey}`);
+  if (!res.ok) console.log(`[pilot:approved] resend ${res.status}: ${pubkey}`);
   return res.ok;
 }
 
 /**
- * Tell a not-yet applicant, gently (TASK 2). Not a cold "no" — a "not yet, we're working on it"
- * that keeps goodwill, points them at practice mode, and never uses a hard rejection word. Sent
- * on the shared branded skeleton. Best-effort; logs when Resend isn't configured. Resolves true
- * only when Resend accepted the mail (same contract as notifyPilotApproved).
+ * Tell a not-yet applicant, gently (TASK 2). Not a cold "no", and no longer a promise either: it
+ * used to say "you're still on the list, and we'll email you the moment your spot is ready", and
+ * nothing in the pilot ever sends that email. It names the account the answer is for, points at
+ * practice mode, and says how to ask again (reply). Sent on the shared branded skeleton.
+ * Best-effort; logs when Resend isn't configured. Resolves true only when Resend accepted the mail
+ * (same contract as notifyPilotApproved).
  */
 export async function notifyPilotRejected(pubkey: string, email: string): Promise<boolean> {
   const clean = email.trim().toLowerCase();
@@ -363,23 +567,25 @@ export async function notifyPilotRejected(pubkey: string, email: string): Promis
   }
 
   const homeUrl = `${process.env.WEB_ORIGIN ?? "https://getlumenia.com"}/home`;
+  const forAccount = `This answer is for account ${shortAddress(pubkey)}.`;
   const p1 =
     "We're not able to open a real-money spot for you just yet. This isn't a no, it's a " +
     "not-yet. We're letting people in slowly on purpose, so we can support everyone properly " +
     "while it's early.";
   const p2 =
-    "You're still on the list, and we'll email you the moment your spot is ready. In the " +
+    "This isn't a no forever. If you'd like us to look again, reply to this email. In the " +
     "meantime, practice mode is open: it's the exact same Lumenia with no real money and no wait.";
   const p3 = "If something's holding you up, just reply to this email. A real person reads it.";
 
   const html = renderEmail({
-    preheader: "Not yet, but you're still on the list, and practice mode is open now.",
+    preheader: "Not approved for now. Practice mode is open.",
     mascotFile: "avatar-heart-cut.webp",
     mascotAlt: "A warm heart",
-    h1: "Not yet, but you're still on the list",
-    bodyHtml: `<p style="margin:0 0 14px;">${p1}</p>
-<p style="margin:0 0 14px;">${p2}</p>
-<p style="margin:0 0 20px;">${p3}</p>
+    h1: "Not approved for now",
+    bodyHtml: `<p style="margin:0 0 14px;">${esc(forAccount)}</p>
+<p style="margin:0 0 14px;">${esc(p1)}</p>
+<p style="margin:0 0 14px;">${esc(p2)}</p>
+<p style="margin:0 0 20px;">${esc(p3)}</p>
 <p style="margin:0;"><a href="${esc(homeUrl)}" style="color:${ACCENT_PRESSED};text-decoration:underline;font-weight:600;">Open practice mode &rarr;</a></p>`,
     footer: "You're getting this because you asked to join the Lumenia mainnet pilot.",
   });
@@ -391,10 +597,10 @@ export async function notifyPilotRejected(pubkey: string, email: string): Promis
       from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
       to: [clean],
       subject: "An update on your Lumenia pilot request",
-      text: `Not yet, but you're still on the list.\n\n${p1}\n\n${p2}\n\n${p3}\n\nOpen practice mode: ${homeUrl}\n\nLumenia\n`,
+      text: `Not approved for now.\n\n${forAccount}\n\n${p1}\n\n${p2}\n\n${p3}\n\nOpen practice mode: ${homeUrl}\n\nLumenia\n`,
       html,
     }),
   });
-  if (!res.ok) console.log(`[pilot:rejected] resend ${res.status} — ${pubkey}`);
+  if (!res.ok) console.log(`[pilot:rejected] resend ${res.status}: ${pubkey}`);
   return res.ok;
 }

@@ -88,6 +88,14 @@ function accountProof(kp: Keypair, ts = Math.floor(Date.now() / 1000)) {
   return { ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
 }
 
+/** The account's authorization to cut a link off it: the `links` proof, over `detach:<id>`. */
+function detachProof(kp: Keypair, id: string) {
+  const ts = Math.floor(Date.now() / 1000);
+  const nonce = proofNonce();
+  const message = handleProofMessage("links", `detach:${id}`, kp.publicKey(), ts, nonce, NET);
+  return { ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
+}
+
 const BOX = {
   formatVersion: 1,
   copies: [{ kind: "password", iv: "AAAA", ct: "BBBB", salt: "CCCC", argon: { memMiB: 48, time: 2, parallelism: 1 } }],
@@ -249,13 +257,43 @@ async function main(): Promise<void> {
   const links = await listLinks(alice.publicKey(), NET);
   ok("the account lists both connections", links.length === 2, links.map((l) => l.provider).join("+"));
   ok("a listing never leaks the ids", !JSON.stringify(links).includes(hex("c")));
-  ok("disconnecting works", (await detachIdentity(emailIdentity)).ok === true);
+  // Holding the identity (one inbox code) is not standing to cut it off the account it opens.
+  const unsignedDetach = await detachIdentity(emailIdentity, NET);
+  ok("disconnecting with the identity alone is refused", unsignedDetach.ok === false && unsignedDetach.unauthorized === true);
+  ok(
+    "and so is another account's signature",
+    (await detachIdentity(emailIdentity, NET, detachProof(bob, emailIdentity.id))).ok === false,
+  );
+  ok("the account's own signature disconnects it", (await detachIdentity(emailIdentity, NET, detachProof(alice, emailIdentity.id))).ok === true);
   ok("and it stops resolving", (await fetchByIdentity(emailIdentity)) === null);
   ok("the other connection survives", (await listLinks(alice.publicKey(), NET)).length === 1);
-  ok("disconnecting twice is an honest refusal", (await detachIdentity(emailIdentity)).ok === false);
+  const twice = await detachIdentity(emailIdentity, NET, detachProof(alice, emailIdentity.id));
+  ok("disconnecting twice is an honest refusal", twice.ok === false && twice.unauthorized !== true);
 
   console.log("\n[12] unregistered providers are not offered");
   ok("no OAuth app configured → nothing offered", availableOAuthProviders().length === 0);
+
+  /* The account asking to join real money signs `pilot` over the hash of its email (worker.ts
+     /pilot-request). Pinned to the shared contract's golden vector, which the web and the extension
+     pin too: a drift here refuses every ask without failing loudly. */
+  console.log("\n[13] a pilot proof is its own action");
+  const seedOnes = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1));
+  const EMAIL_ID = "fb72704240c3527ba45904a8705865922f70a9c4f3c11bfa93c839f939945884";
+  const GOLDEN_PILOT =
+    "lumenia-handle-pilot:v1:fb72704240c3527ba45904a8705865922f70a9c4f3c11bfa93c839f939945884:GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR:1760000000:0123456789abcdef:mainnet";
+  const GOLDEN_PILOT_SIG = "kZuq86B7rr9BIoSE0Mb2wqfQ2dgxLoRRVLRbT5JHnAvZuizmWtof0me3rY80wPHUfwA0XYWChj4FA8vtTEGnDg==";
+  ok("the test seed is the contract's account", seedOnes.publicKey() === "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR");
+  const pilotMessage = handleProofMessage("pilot", EMAIL_ID, seedOnes.publicKey(), 1760000000, "0123456789abcdef", "mainnet");
+  ok("the pilot message matches the golden string", pilotMessage === GOLDEN_PILOT, pilotMessage);
+  ok(
+    "and the golden signature verifies over it",
+    seedOnes.verify(Buffer.from(GOLDEN_PILOT, "utf8"), Buffer.from(GOLDEN_PILOT_SIG, "base64")) &&
+      seedOnes.sign(Buffer.from(GOLDEN_PILOT, "utf8")).toString("base64") === GOLDEN_PILOT_SIG,
+  );
+  const pilotProof = proofFor(alice, "pilot", EMAIL_ID);
+  ok("a fresh pilot proof verifies", (await verifyHandleProof(pilotProof)).ok === true);
+  const linksAsPilot = { ...proofFor(alice, "links", EMAIL_ID), action: "pilot" as const };
+  ok("a links proof over the same name is not a pilot proof", (await verifyHandleProof(linksAsPilot)).ok !== true);
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} IDENTITY TESTS ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

@@ -12,7 +12,9 @@
  *         (the token is read hidden, never typed on a command line; unset KV_REST_API_TOKEN afterwards)
  *         ...pilot approve G... G... G...        several at once
  *         ...pilot approve --file wallets.txt    one G... per line, # comments allowed
- *         ...pilot list [pending|approved|rejected|none|all]   (default: pending)
+ *         ...pilot list [pending|approved|rejected|revoked|none|all]   (default: pending)
+ *                                                counts per state first, then the wallets, with src
+ *         ...pilot waitlist                      the people who asked with no account yet (emails)
  *         ...pilot notify G...                   re-send the "you're in" mail (needs RESEND_API_KEY,
  *                                                RESEND_FROM and MAX_DROP_USDC = the Worker's cap)
  *         ...pilot reject G...    |    ...pilot revoke G...    |    ...pilot status G...
@@ -31,21 +33,24 @@ import {
   resetPilotBudget,
   pilotStatus,
   getPilotEmail,
+  getPilotSrc,
   listPilot,
-  type PilotState,
 } from "../lib/pilot.js";
 import { notifyPilotApproved, notifyPilotRejected, pilotCaps } from "../lib/pilot-request.js";
+import { listContacts } from "../lib/waitlist.js";
+import { pilotListLines, pilotStatusLines, waitlistLines, type PilotListFilter } from "../lib/pilot-report.js";
 
-const COMMANDS = ["approve", "reject", "revoke", "status", "list", "notify", "reset"] as const;
+const COMMANDS = ["approve", "reject", "revoke", "status", "list", "waitlist", "notify", "reset"] as const;
 type Command = (typeof COMMANDS)[number];
-const STATES = ["pending", "approved", "rejected", "none", "all"] as const;
+const STATES = ["pending", "approved", "rejected", "revoked", "none", "all"] as const;
 
 function usage(): never {
   console.error(
     [
       "usage: pilot approve <G...> [<G...> ...] | approve --file <path>",
       "       pilot reject|revoke|status|notify|reset <G...>",
-      "       pilot list [pending|approved|rejected|none|all]",
+      "       pilot list [pending|approved|rejected|revoked|none|all]",
+      "       pilot waitlist",
     ].join("\n"),
   );
   process.exit(1);
@@ -96,7 +101,7 @@ async function approveOne(pubkey: string, net: string): Promise<void> {
   console.log(`  budget: ${s.limit} transactions, ${s.used} already used`);
   const email = await getPilotEmail(pubkey);
   if (!email) {
-    console.log(`  (no stored email — approved silently; they'll see it on /account)`);
+    console.log("  No email on file, so nobody was told. Tell them yourself.");
     return;
   }
   if (!process.env.RESEND_API_KEY) {
@@ -124,11 +129,11 @@ async function main(): Promise<void> {
     case "list": {
       const want = (rest[0] ?? "pending") as (typeof STATES)[number];
       if (!(STATES as readonly string[]).includes(want)) usage();
-      const rows = await listPilot(want as PilotState | "all");
-      console.log(`${net} pilot — ${rows.length} wallet(s) with state "${want}"`);
-      for (const r of rows) {
-        console.log(`  ${r.pubkey}  ${r.state.padEnd(8)}  email:${r.hasEmail ? "yes" : "no "}`);
-      }
+      for (const line of pilotListLines(await listPilot("all"), want as PilotListFilter, net)) console.log(line);
+      break;
+    }
+    case "waitlist": {
+      for (const line of waitlistLines(await listContacts("pilot"))) console.log(line);
       break;
     }
     case "approve": {
@@ -182,6 +187,11 @@ async function main(): Promise<void> {
     }
     case "reject": {
       const [pubkey] = walletsFrom(rest.slice(0, 1));
+      // The same line the emailed Decline link takes: a second decline changes nothing and mails nobody.
+      if ((await pilotStatus(pubkey!)).state === "rejected") {
+        console.log(`already declined on the ${net} pilot: ${pubkey}. No second email sent.`);
+        break;
+      }
       await rejectPilot(pubkey!);
       console.log(`declined from the ${net} pilot: ${pubkey}`);
       const email = await getPilotEmail(pubkey!);
@@ -189,7 +199,7 @@ async function main(): Promise<void> {
         if (await notifyPilotRejected(pubkey!, email)) console.log(`  emailed:  ${email}`);
         else console.log(`  (mail NOT sent: see the [pilot:rejected] line above)`);
       } else {
-        console.log(`  (no stored email — declined silently)`);
+        console.log("  No email on file, so nobody was told. Tell them yourself.");
       }
       break;
     }
@@ -208,10 +218,7 @@ async function main(): Promise<void> {
     case "status": {
       const [pubkey] = walletsFrom(rest.slice(0, 1));
       const s = await pilotStatus(pubkey!);
-      console.log(`${net} pilot — ${pubkey}`);
-      console.log(`  state:    ${s.state}`);
-      console.log(`  approved: ${s.approved}`);
-      console.log(`  used:     ${s.used} / ${s.limit}`);
+      for (const line of pilotStatusLines(net, pubkey!, s, await getPilotSrc(pubkey!))) console.log(line);
       break;
     }
   }

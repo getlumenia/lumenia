@@ -63,9 +63,12 @@ export const USDC_STROOPS = 10_000_000n;
  */
 export class PublicRefusal extends Error {
   readonly isPublicRefusal = true;
-  constructor(message: string) {
+  /** A stable reason a client may branch on (for example "owner-required"), when there is one. */
+  readonly code?: string;
+  constructor(message: string, code?: string) {
     super(message);
     this.name = "PublicRefusal";
+    if (code) this.code = code;
   }
 }
 

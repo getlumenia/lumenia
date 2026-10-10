@@ -66,17 +66,46 @@ export interface RateLimitVerdict {
   reason?: string;
 }
 
+/**
+ * Which buckets a request is counted in. A route that must never spend (or be spent by) the
+ * value routes' windows names its own prefixes: `/pilot-status` is `ps:`, `/pilot-request` is `pr:`,
+ * the signed recovery reads are `rc:`, and the older routes keep theirs (`rec:`, `recpk:`, `handle:`,
+ * `idlink:`, `pilot:`, `fb:`, `ev:`) on the IP side only.
+ *
+ * The prefix goes AFTER `ipBucket`, never into the address it is given. Prepended to the address,
+ * `rec:2a02:db8:1234:5678::1` parsed as nine groups with `rec` as the first, so the "/64" it kept
+ * was really a /48 and a whole provider block shared one bucket.
+ */
+export interface RateLimitKeyOptions {
+  ipPrefix?: string;
+  accountPrefix?: string;
+}
+
+/** The two bucket names for a request: `ip:<ipPrefix><ipBucket(ip)>` and `acct:<accountPrefix><account>`. */
+export function rateLimitKeys(
+  ip: string,
+  account: string | undefined,
+  opts: RateLimitKeyOptions = {},
+): { ip: string; account?: string } {
+  return {
+    ip: `ip:${opts.ipPrefix ?? ""}${ipBucket(ip)}`,
+    ...(account ? { account: `acct:${opts.accountPrefix ?? ""}${account}` } : {}),
+  };
+}
+
 /** Enforce per-IP then per-account limits. `account` is the recipient pubkey (if known). */
 export function checkRateLimit(
   ip: string,
   account: string | undefined,
   cfg: RateLimitConfig,
   now: number,
+  opts: RateLimitKeyOptions = {},
 ): RateLimitVerdict {
-  if (ipStore(`ip:${ipBucket(ip)}`, cfg.ipCap, cfg.ipWindowMs, now)) {
+  const keys = rateLimitKeys(ip, account, opts);
+  if (ipStore(keys.ip, cfg.ipCap, cfg.ipWindowMs, now)) {
     return { limited: true, reason: "per-IP rate limit exceeded" };
   }
-  if (account && accountStore(`acct:${account}`, cfg.accountCap, cfg.accountWindowMs, now)) {
+  if (keys.account && accountStore(keys.account, cfg.accountCap, cfg.accountWindowMs, now)) {
     return { limited: true, reason: "per-account rate limit exceeded" };
   }
   return { limited: false };
@@ -142,19 +171,21 @@ export async function checkRateLimitDurable(
   account: string | undefined,
   cfg: RateLimitConfig,
   now: number,
+  opts: RateLimitKeyOptions = {},
 ): Promise<RateLimitVerdict> {
   const kv = kvConfigFromEnv();
-  if (!kv) return checkRateLimit(ip, account, cfg, now);
+  if (!kv) return checkRateLimit(ip, account, cfg, now, opts);
+  const keys = rateLimitKeys(ip, account, opts);
   try {
-    if (await kvLimited(kv, `ip:${ipBucket(ip)}`, cfg.ipCap, cfg.ipWindowMs, now)) {
+    if (await kvLimited(kv, keys.ip, cfg.ipCap, cfg.ipWindowMs, now)) {
       return { limited: true, reason: "per-IP rate limit exceeded" };
     }
-    if (account && (await kvLimited(kv, `acct:${account}`, cfg.accountCap, cfg.accountWindowMs, now))) {
+    if (keys.account && (await kvLimited(kv, keys.account, cfg.accountCap, cfg.accountWindowMs, now))) {
       return { limited: true, reason: "per-account rate limit exceeded" };
     }
     return { limited: false };
   } catch (e) {
     console.warn(`rate-limit store unavailable, falling back to in-memory: ${(e as Error).message}`);
-    return checkRateLimit(ip, account, cfg, now);
+    return checkRateLimit(ip, account, cfg, now, opts);
   }
 }

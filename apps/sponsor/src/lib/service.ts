@@ -9,7 +9,12 @@ import { signerFromSecret, type SponsorSigner } from "./signer.js";
 import { kmsSignerFromEnv } from "./kms-signer.js";
 import { horizon } from "./stellar.js";
 import { ChannelManager } from "./channels.js";
-import { checkRateLimitDurable, rateLimitConfigFromEnv, type RateLimitVerdict } from "./rate-limit.js";
+import {
+  checkRateLimitDurable,
+  rateLimitConfigFromEnv,
+  type RateLimitKeyOptions,
+  type RateLimitVerdict,
+} from "./rate-limit.js";
 
 /** Which signer the service was built with: the env hot key, or the AWS KMS raw-Ed25519 signer. */
 export type SignerKind = "env" | "kms";
@@ -198,8 +203,9 @@ export function clientIpFrom(headers: Record<string, string | string[] | undefin
 
 /**
  * Enforce per-IP + per-account rate limits (env-configured) for this request.
- * Durable (KV/Upstash) when the store env is set; in-memory otherwise.
+ * Durable (KV/Upstash) when the store env is set; in-memory otherwise. `opts` names a route's own
+ * buckets (lib/rate-limit.ts, `rateLimitKeys`); without it the request shares the default windows.
  */
-export function enforceRateLimit(ip: string, account?: string): Promise<RateLimitVerdict> {
-  return checkRateLimitDurable(ip, account, rateLimitConfigFromEnv(), Date.now());
+export function enforceRateLimit(ip: string, account?: string, opts?: RateLimitKeyOptions): Promise<RateLimitVerdict> {
+  return checkRateLimitDurable(ip, account, rateLimitConfigFromEnv(), Date.now(), opts);
 }

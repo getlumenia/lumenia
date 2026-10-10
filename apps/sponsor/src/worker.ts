@@ -31,10 +31,52 @@ import { takeDemoLink, refillDemoPool } from "./lib/demo-pool.js";
 import { saveContact } from "./lib/waitlist.js";
 import { saveFeedback } from "./lib/feedback.js";
 import { handleEvent, recordEvent, eventsSummary } from "./lib/events.js";
-import { putBox, getBox, putAliasBox, getAliasBox, type OwnerProof } from "./lib/recovery-store.js";
-import { requestOtp, verifyOtp, idForEmail } from "./lib/recovery-otp.js";
-import { pilotEnabled, enforcePilot, pilotStatus, approvePilot, rejectPilot, getPilotEmail, isPilotApproved, verifyApprovalToken } from "./lib/pilot.js";
-import { notifyPilotRequest, notifyPilotApproved, notifyPilotRejected, notifyPilotInterest } from "./lib/pilot-request.js";
+import {
+  putBox,
+  getBoxState,
+  putAliasBox,
+  getAliasBox,
+  assertAliasWritable,
+  BackupConflict,
+  mintRecoveryTicket,
+  consumeRecoveryTicket,
+  checkMine,
+  releaseBox,
+  rowState,
+  isBoundTo,
+  ownerHashOf,
+  ACCOUNT_NOT_CONFIRMED_ERROR,
+  NOT_YOURS_ERROR,
+  type OwnerProof,
+} from "./lib/recovery-store.js";
+import {
+  requestOtp,
+  verifyOtp,
+  verifyOtpDetailed,
+  idForEmail,
+  isOtpBudgetExceeded,
+  OTP_BUDGET_BODY,
+} from "./lib/recovery-otp.js";
+import {
+  pilotEnabled,
+  enforcePilot,
+  pilotStatus,
+  approvePilot,
+  rejectPilot,
+  getPilotEmail,
+  isPilotApproved,
+  verifyApprovalToken,
+  shortAddress,
+  type PilotSource,
+} from "./lib/pilot.js";
+import {
+  notifyPilotRequest,
+  answerSignedPilotRequest,
+  normalizePilotEmail,
+  notifyPilotApproved,
+  notifyPilotRejected,
+  notifyPilotInterest,
+} from "./lib/pilot-request.js";
 import {
   isPublicRefusal,
   PublicRefusal,
@@ -101,6 +143,33 @@ function html(status: number, inner: string): Response {
     { status, headers: { "content-type": "text/html; charset=utf-8", ...corsHeaders() } },
   );
 }
+
+/** Escape text for the owner pages: an applicant's email is user input, and they run on this origin. */
+function escHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * The fields of a signed approve/decline link: from the query string on GET (the link the owner
+ * tapped), from the form body on POST (the confirmation page's button).
+ */
+async function ownerLinkFields(request: Request, method: string): Promise<{ pubkey: string; token: string; exp: string }> {
+  const params = method === "POST" ? new URLSearchParams(await readCapped(request)) : new URL(request.url).searchParams;
+  return { pubkey: params.get("pubkey") ?? "", token: params.get("token") ?? "", exp: params.get("exp") ?? "" };
+}
+
+/** The confirmation page's button: the link's own three fields, posted back to the same path. */
+function ownerConfirmForm(path: string, f: { pubkey: string; token: string; exp: string }, label: string): string {
+  const hidden = (name: string, value: string) => `<input type="hidden" name="${name}" value="${escHtml(value)}">`;
+  return `<form method="post" action="${path}">${hidden("pubkey", f.pubkey)}${hidden("exp", f.exp)}${hidden("token", f.token)}<button type="submit" style="font:inherit;font-weight:600;padding:.7rem 1.4rem;border:0;border-radius:12px;background:#6E5FCE;color:#fff;cursor:pointer">${escHtml(label)}</button></form>`;
+}
+
+const PILOT_STORE_UNAVAILABLE = { error: "We couldn't record that just now. Try again in a minute.", code: "store-unavailable" } as const;
 
 function clientIp(request: Request): string {
   const cf = request.headers.get("cf-connecting-ip");
@@ -633,8 +702,6 @@ const handlers = {
         return json(200, { ok: true });
       }
 
-      // A wallet asking into the mainnet pilot. NOT a value route (moves no money) — it just
-      // emails the owner, who approves with the pilot CLI. Rate-limited by pubkey to stop spam.
       // Client asks "is this account approved for mainnet?" — read-only, moves nothing. When the
       // pilot is off (every testnet deployment) it answers a plain "not a pilot", so the client
       // simply stays on testnet. The real gate is still the allowlist enforced on value routes.
@@ -657,30 +724,37 @@ const handlers = {
         if (!pubkey || !StrKey.isValidEd25519PublicKey(pubkey)) {
           return json(400, { error: "a valid pubkey is required" });
         }
-        const rl = await enforceRateLimit(clientIp(request), pubkey);
+        /* Its own buckets (`ps:`): a status check must never spend the per-IP or per-account windows
+         * the value routes count, or a client polling for its approval 429s its own next send. */
+        const rl = await enforceRateLimit(clientIp(request), pubkey, { ipPrefix: "ps:", accountPrefix: "ps:" });
         if (rl.limited) return json(429, { error: rl.reason });
         try {
           return json(200, { pilot: true, ...(await pilotStatus(pubkey)) });
         } catch {
-          return json(200, { pilot: true, approved: false });
+          /* A store that did not answer is not a "no". This used to be 200 {pilot:true, approved:false},
+           * which every client read as "not approved" and some showed as "ask to join" to a wallet
+           * that was approved all along. 503 is what it is: we could not check. */
+          return json(503, { error: "pilot store unavailable" });
         }
       }
 
-      // One-tap approve from the owner's email. The link carries a per-wallet, expiring signature
-      // (lib/pilot.ts) rather than the shared secret, so a leaked link approves one wallet for one
-      // week instead of everything forever. Rate-limited because this is the route that grants the
-      // right to move real money, and an unmetered guessing loop against it is the worst hole in
-      // the service.
-      if (method === "GET" && url === "/pilot-approve") {
-        const u = new URL(request.url);
-        const pubkey = u.searchParams.get("pubkey") ?? "";
-        const token = u.searchParams.get("token") ?? "";
-        const exp = u.searchParams.get("exp") ?? "";
-        const rl = await enforceRateLimit(`pilot:${clientIp(request)}`);
+      /* One-tap approve from the owner's email. The link carries a per-wallet, expiring signature
+       * (lib/pilot.ts) rather than the shared secret, so a leaked link approves one wallet for one
+       * week instead of everything forever. Rate-limited because this is the route that grants the
+       * right to move real money, and an unmetered guessing loop against it is the worst hole in
+       * the service.
+       *
+       * Opening the link (GET) only shows what it would do; the page's button (POST, the same three
+       * fields) does it. Mail scanners and link previews open links on their own, and a GET that
+       * granted real money let one of them approve a wallet nobody had looked at. */
+      if ((method === "GET" || method === "POST") && url === "/pilot-approve") {
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "pilot:" });
         if (rl.limited) return html(429, "<h2>Too many attempts</h2><p>Wait a minute and try again.</p>");
-        if (!process.env.PILOT_APPROVE_TOKEN) return html(503, "<h2>Approve-by-link isn’t set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
+        const link = await ownerLinkFields(request, method);
+        const { pubkey } = link;
+        if (!process.env.PILOT_APPROVE_TOKEN) return html(503, "<h2>Approve-by-link isn't set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
         if (!StrKey.isValidEd25519PublicKey(pubkey)) return html(400, "<h2>Invalid wallet address</h2>");
-        if (!(await verifyApprovalToken("approve", pubkey, token, exp, Date.now()))) {
+        if (!(await verifyApprovalToken("approve", pubkey, link.token, link.exp, Date.now()))) {
           return html(403, "<h2>Not authorized</h2><p>This approval link is invalid or has expired.</p>");
         }
         /* Idempotent: tapping the emailed Approve link twice must not re-send "you're in". Decided
@@ -694,58 +768,157 @@ const handlers = {
         } catch {
           return html(503, "<h2>Could not check</h2><p>The pilot store did not answer, so nothing was changed. Try the link again in a minute.</p>");
         }
+        const who = `<code>${escHtml(shortAddress(pubkey))}</code>`;
         if (alreadyIn) {
-          return html(200, `<h2>Already approved</h2><p><code>${pubkey.slice(0, 8)}...${pubkey.slice(-6)}</code> is already in the mainnet pilot. No second email sent.</p>`);
+          return html(200, `<h2>Already approved</h2><p>${who} is already in the mainnet pilot. No second email sent.</p>`);
+        }
+        if (method === "GET") {
+          return html(200, `<h2>Approve this wallet?</h2><p>${who} asked to join the mainnet pilot. Approving lets it move real money.</p>${ownerConfirmForm("/pilot-approve", link, "Approve")}`);
         }
         try {
           await approvePilot(pubkey);
           const email = await getPilotEmail(pubkey);
-          if (email) await notifyPilotApproved(pubkey, email).catch(() => {});
-          return html(200, `<h2>✓ Approved</h2><p><code>${pubkey.slice(0, 8)}…${pubkey.slice(-6)}</code> is now in the mainnet pilot.</p><p>${email ? `We emailed <b>${email}</b>.` : "No stored email — they’ll see it on their account."}</p>`);
+          const mailed = email ? await notifyPilotApproved(pubkey, email).catch(() => false) : false;
+          const told = !email
+            ? "No email on file, so nobody was told. Tell them yourself."
+            : mailed
+              ? `We emailed <b>${escHtml(email)}</b>.`
+              : `The email to <b>${escHtml(email)}</b> did not go out (see the [pilot:approved] log line). Send it again with <code>pilot notify</code>.`;
+          return html(200, `<h2>Approved</h2><p>${who} is now in the mainnet pilot.</p><p>${told}</p>`);
         } catch (e) {
-          return html(500, `<h2>Couldn’t approve</h2><p>${(e as Error).message}</p>`);
+          return html(500, `<h2>Couldn't approve</h2><p>${escHtml((e as Error).message)}</p>`);
         }
       }
 
-      // One-tap DECLINE from the owner's email — same token guard as approve. Marks the wallet
-      // rejected and sends the gentle "not yet" mail (TASK 2).
-      if (method === "GET" && url === "/pilot-reject") {
-        const u = new URL(request.url);
-        const pubkey = u.searchParams.get("pubkey") ?? "";
-        const token = u.searchParams.get("token") ?? "";
-        const exp = u.searchParams.get("exp") ?? "";
-        const rl = await enforceRateLimit(`pilot:${clientIp(request)}`);
+      /* One-tap DECLINE from the owner's email: the same token guard and the same confirm-then-act
+       * shape as approve. Marks the wallet rejected and sends the gentle "not approved for now" mail
+       * (TASK 2). Declining an approved wallet asks first, with what it has used; declining a wallet
+       * that is already declined changes nothing and mails nobody a second time. */
+      if ((method === "GET" || method === "POST") && url === "/pilot-reject") {
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "pilot:" });
         if (rl.limited) return html(429, "<h2>Too many attempts</h2><p>Wait a minute and try again.</p>");
-        if (!process.env.PILOT_APPROVE_TOKEN) return html(503, "<h2>Decline-by-link isn’t set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
+        const link = await ownerLinkFields(request, method);
+        const { pubkey } = link;
+        if (!process.env.PILOT_APPROVE_TOKEN) return html(503, "<h2>Decline-by-link isn't set up</h2><p>Set <code>PILOT_APPROVE_TOKEN</code> on the worker.</p>");
         if (!StrKey.isValidEd25519PublicKey(pubkey)) return html(400, "<h2>Invalid wallet address</h2>");
-        if (!(await verifyApprovalToken("reject", pubkey, token, exp, Date.now()))) {
+        if (!(await verifyApprovalToken("reject", pubkey, link.token, link.exp, Date.now()))) {
           return html(403, "<h2>Not authorized</h2><p>This link is invalid or has expired.</p>");
+        }
+        let status: Awaited<ReturnType<typeof pilotStatus>>;
+        try {
+          status = await pilotStatus(pubkey);
+        } catch {
+          return html(503, "<h2>Could not check</h2><p>The pilot store did not answer, so nothing was changed. Try the link again in a minute.</p>");
+        }
+        const who = `<code>${escHtml(shortAddress(pubkey))}</code>`;
+        if (status.state === "rejected") {
+          return html(200, `<h2>Already declined</h2><p>${who}: Already declined. No second email sent.</p>`);
+        }
+        if (method === "GET") {
+          return status.approved
+            ? html(200, `<h2>Decline an approved wallet?</h2><p>${who}: This wallet is approved for real money and has used ${status.used} of ${status.limit} sends. Decline it anyway?</p>${ownerConfirmForm("/pilot-reject", link, "Decline anyway")}`)
+            : html(200, `<h2>Decline this wallet?</h2><p>${who} asked to join the mainnet pilot. Declining keeps it in practice mode.</p>${ownerConfirmForm("/pilot-reject", link, "Decline")}`);
         }
         try {
           await rejectPilot(pubkey);
           const email = await getPilotEmail(pubkey);
-          if (email) await notifyPilotRejected(pubkey, email).catch(() => {});
-          return html(200, `<h2>Declined</h2><p><code>${pubkey.slice(0, 8)}…${pubkey.slice(-6)}</code> was declined${email ? `, and we emailed <b>${email}</b> gently` : ""}.</p>`);
+          const mailed = email ? await notifyPilotRejected(pubkey, email).catch(() => false) : false;
+          const told = !email
+            ? "No email on file, so nobody was told. Tell them yourself."
+            : mailed
+              ? `We emailed <b>${escHtml(email)}</b>.`
+              : `The email to <b>${escHtml(email)}</b> did not go out (see the [pilot:rejected] log line).`;
+          return html(200, `<h2>Declined</h2><p>${who} was declined.</p><p>${told}</p>`);
         } catch (e) {
-          return html(500, `<h2>Couldn’t decline</h2><p>${(e as Error).message}</p>`);
+          return html(500, `<h2>Couldn't decline</h2><p>${escHtml((e as Error).message)}</p>`);
         }
       }
 
+      /* A wallet asking into the mainnet pilot (contract 3.2). It moves no money; it files the ask
+       * and mails the owner, who approves from the mail or the pilot CLI.
+       *
+       * SIGNED (an `owner` proof): the account signs `pilot` over the hash of the email, so nobody
+       * can file for a key they do not hold, and the email is proven by a code from /recovery-otp
+       * (purpose "pilot", on this same host) or, with no code, by this email's backup row being bound
+       * to this key. "No row", "an unbound row" and "another key's row" all answer code-required, so
+       * an ask without a code says nothing about whose email it is. Only a caller that proved the
+       * inbox hears that the email backs up another account.
+       *
+       * LEGACY (no `owner`): the old unsigned ask, answered as before, until PILOT_REQUIRE_PROOF=1.
+       * Its own rate-limit buckets (`pr:`), like /pilot-status. */
       if (method === "POST" && url === "/pilot-request") {
-        const body = (await readJson(request)) as { pubkey?: string; email?: string };
-        if (!body.pubkey || !body.email) return json(400, { error: "pubkey and email are required" });
-        const rl = await enforceRateLimit(clientIp(request), body.pubkey);
+        const body = (await readJson(request)) as { pubkey?: unknown; email?: unknown; owner?: unknown; code?: unknown; src?: unknown };
+        const pubkey = typeof body.pubkey === "string" ? body.pubkey : "";
+        const rawEmail = typeof body.email === "string" ? body.email : "";
+        if (!pubkey || !rawEmail) return json(400, { error: "pubkey and email are required" });
+        if (!StrKey.isValidEd25519PublicKey(pubkey)) return json(400, { error: "invalid pubkey" });
+        const email = normalizePilotEmail(rawEmail);
+        if (!email) return json(400, { error: "invalid email" });
+        const rl = await enforceRateLimit(clientIp(request), pubkey, { ipPrefix: "pr:", accountPrefix: "pr:" });
         if (rl.limited) return json(429, { error: rl.reason });
+        const origin = new URL(request.url).origin;
+
+        if (body.owner === undefined || body.owner === null) {
+          if (process.env.PILOT_REQUIRE_PROOF === "1") {
+            return json(400, { error: "Reload the page and ask again.", code: "proof-required" });
+          }
+          try {
+            return json(200, await notifyPilotRequest(pubkey, email, origin));
+          } catch (e) {
+            console.error(`[pilot:request] ${config.network} store error: ${oneLogLine((e as Error).message, LOG_REASON_MAX)}`);
+            return json(503, PILOT_STORE_UNAVAILABLE);
+          }
+        }
+
+        const owner = typeof body.owner === "object" ? (body.owner as Partial<OwnerProof>) : {};
+        const badProof = { error: ACCOUNT_NOT_CONFIRMED_ERROR, code: "bad-proof" };
+        if (String(owner.pubkey ?? "") !== pubkey) return json(401, badProof);
         try {
-          return json(200, await notifyPilotRequest(body.pubkey, body.email, new URL(request.url).origin));
+          const id = await idForEmail(email);
+          const signed = await verifyHandleProof({
+            action: "pilot",
+            name: id,
+            pubkey,
+            ts: Number(owner.ts),
+            nonce: String(owner.nonce ?? ""),
+            network: config.network,
+            proof: String(owner.proof ?? ""),
+          });
+          if (signed.ok !== true) return json(401, badProof);
+
+          let inboxProof: "code" | "backup";
+          const hasCode = body.code !== undefined && body.code !== null && body.code !== "";
+          if (hasCode) {
+            const verdict = await verifyOtpDetailed(id, body.code);
+            if (verdict === "budget") return json(429, OTP_BUDGET_BODY);
+            if (verdict !== "ok") return json(401, { error: "That code is wrong or has expired.", code: "bad-code" });
+            inboxProof = "code";
+            // The inbox is proven, so the caller may hear whose email it is. Only when this host can
+            // read the row: a read that fails here is the store's problem, and the filing reports it.
+            const row = await rowState(id).catch(() => null);
+            if (row?.ownerHash !== undefined && row.ownerHash !== (await ownerHashOf(pubkey))) {
+              return json(409, {
+                error: "That email backs up another Lumenia account. Ask with the email that backs up this one.",
+                code: "email-taken",
+              });
+            }
+          } else {
+            if (!(await isBoundTo(id, pubkey))) {
+              return json(401, { error: "Confirm your email with a code first.", code: "code-required" });
+            }
+            inboxProof = "backup";
+          }
+          const src: PilotSource | undefined = body.src === "web" || body.src === "ext" ? body.src : undefined;
+          return json(200, await answerSignedPilotRequest(pubkey, email, src, inboxProof, origin));
         } catch (e) {
-          return json(400, { error: (e as Error).message });
+          console.error(`[pilot:request] ${config.network} store error: ${oneLogLine((e as Error).message, LOG_REASON_MAX)}`);
+          return json(503, PILOT_STORE_UNAVAILABLE);
         }
       }
 
       if (method === "POST" && url === "/feedback") {
         // Its OWN limiter bucket ("fb:") — see index.ts.
-        const rl = await enforceRateLimit(`fb:${clientIp(request)}`);
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "fb:" });
         if (rl.limited) return json(429, { error: rl.reason });
         await saveFeedback((await readJson(request)) as { category?: string; message?: string; contact?: string });
         return json(200, { ok: true });
@@ -754,7 +927,7 @@ const handlers = {
       if (method === "POST" && url === "/events") {
         // Its OWN limiter bucket ("ev:"), like /feedback. Beacons used to share the per-IP bucket
         // with claims, so on one venue Wi-Fi the room's analytics could 429 the room's claims.
-        const rl = await enforceRateLimit(`ev:${clientIp(request)}`);
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "ev:" });
         if (rl.limited) return json(429, { error: rl.reason });
         try {
           const input = (await readJson(request)) as { event?: string; cid?: string; aid?: string };
@@ -785,37 +958,73 @@ const handlers = {
       }
 
       if (method === "POST" && url === "/recovery-otp") {
-        const rl = await enforceRateLimit(`rec:${clientIp(request)}`);
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "rec:" });
         if (rl.limited) return json(429, { error: rl.reason });
-        await requestOtp(((await readJson(request)) as { email?: unknown }).email);
+        const body = (await readJson(request)) as { email?: unknown; purpose?: unknown };
+        try {
+          // "pilot" changes the words of the mail only: the code that confirms an email for /pilot-request.
+          await requestOtp(body.email, body.purpose === "pilot" ? "pilot" : "recovery");
+        } catch (e) {
+          if (isOtpBudgetExceeded(e)) return json(429, OTP_BUDGET_BODY);
+          throw e;
+        }
         return json(200, { ok: true });
       }
 
+      /* Store the email-keyed box (contract 2.2). The gate is an emailed code, or the single-use
+       * ticket a 409 or a fetch handed to whoever just passed one; never both, never neither. Who may
+       * replace what is lib/recovery-store.ts `putBox`: one email backs up one account, and a write
+       * that would take over a row it may not is a 409 carrying what the row holds. */
       if (method === "POST" && url === "/recovery") {
-        const rl = await enforceRateLimit(`rec:${clientIp(request)}`);
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "rec:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const body = (await readJson(request)) as {
-          id?: unknown; box?: unknown; code?: unknown; owner?: unknown; aliasId?: unknown; aliasProof?: unknown;
+          id?: unknown; box?: unknown; code?: unknown; ticket?: unknown; owner?: unknown; replace?: unknown;
+          aliasId?: unknown; aliasProof?: unknown;
         };
-        if (!(await verifyOtp(body.id, body.code))) return json(401, { error: "invalid or expired code" });
-        // The code proves control of an INBOX. `owner` is the account's own signature over this
-        // box's id, and it is what binds the row so a later write from a stolen inbox is refused
-        // (see putBox) — a row only ever carries one if the write that made it carried one.
-        await putBox(
-          body.id,
-          body.box,
-          body.owner && typeof body.owner === "object" ? (body.owner as OwnerProof) : undefined,
-        );
-        // Optional PRF alias, written behind the SAME verified code. Refusing aliasId === id is not
-        // defensive noise: it would drop an email-derived (low-entropy) id into the namespace whose
-        // fetch route has no OTP, which is exactly the bypass the two namespaces exist to prevent.
-        // The code proves control of `id` only, so the alias write carries its own passkey-derived
-        // proof of ownership (see putAliasBox).
+        const present = (v: unknown) => v !== undefined && v !== null && v !== "";
+        if (present(body.code) === present(body.ticket)) return json(401, { error: "invalid or expired code" });
+        if (present(body.ticket)) {
+          if (!(await consumeRecoveryTicket(body.ticket, body.id))) return json(401, { error: "invalid or expired code" });
+        } else {
+          const verdict = await verifyOtpDetailed(body.id, body.code);
+          if (verdict === "budget") return json(429, OTP_BUDGET_BODY);
+          if (verdict !== "ok") return json(401, { error: "invalid or expired code" });
+        }
+        /* Optional PRF alias, written behind the SAME verified code, and checked BEFORE the email row
+         * is touched, so a refused alias cannot leave a new email row behind it. Refusing aliasId ===
+         * id is not defensive noise: it would drop an email-derived (low-entropy) id into the
+         * namespace whose fetch route has no OTP, which is exactly the bypass the two namespaces
+         * exist to prevent. The code proves control of `id` only, so the alias write carries its own
+         * passkey-derived proof of ownership (see putAliasBox). */
         if (body.aliasId !== undefined) {
           if (body.aliasId === body.id) return json(400, { error: "aliasId must differ from id" });
-          await putAliasBox(body.aliasId, body.box, body.aliasProof);
+          await assertAliasWritable(body.aliasId, body.aliasProof);
         }
-        return json(200, { ok: true });
+        // The code proves control of an INBOX. `owner` is the account's own signature over this
+        // box's id, and it is what binds the row (see putBox).
+        let stored: { ok: true; bound: boolean };
+        try {
+          stored = await putBox(
+            body.id,
+            body.box,
+            body.owner && typeof body.owner === "object" ? (body.owner as OwnerProof) : undefined,
+            { replace: body.replace === true },
+          );
+        } catch (e) {
+          if (e instanceof BackupConflict) {
+            /* A fresh ticket only for a write an emailed CODE let in. A ticket stands in for a code
+             * exactly once: a write it let in that is refused again (no `replace`, no signature) gets
+             * no new one, or a single code would buy an endless chain of tickets, each re-reading the
+             * box and keeping the row open to a takeover without the inbox ever being asked again.
+             * Every client sends a ticket with `replace` and a signature, which an unbound row takes. */
+            const ticket = e.unbound && !present(body.ticket) ? await mintRecoveryTicket(body.id) : undefined;
+            return json(409, { error: e.message, code: "email-taken", unbound: e.unbound, box: e.box, ...(ticket ? { ticket } : {}) });
+          }
+          throw e;
+        }
+        if (body.aliasId !== undefined) await putAliasBox(body.aliasId, body.box, body.aliasProof);
+        return json(200, { ok: true, bound: stored.bound });
       }
 
       /**
@@ -827,21 +1036,52 @@ const handlers = {
        */
       if (method === "POST" && url === "/recovery-alias-fetch") {
         const body = (await readJson(request)) as { id?: unknown };
-        const rl = await enforceRateLimit(`recpk:${clientIp(request)}`, typeof body.id === "string" ? body.id : undefined);
+        const rl = await enforceRateLimit(clientIp(request), typeof body.id === "string" ? body.id : undefined, { ipPrefix: "recpk:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const box = await getAliasBox(body.id);
         if (!box) return json(404, { error: "not found" });
         return json(200, { box });
       }
 
+      /* `bound` says whether the row is tied to an account yet; an unbound one comes with a ticket,
+       * so the person who just restored it can bind it to the key it opens without a second code. */
       if (method === "POST" && url === "/recovery-fetch") {
-        const rl = await enforceRateLimit(`rec:${clientIp(request)}`);
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "rec:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const body = (await readJson(request)) as { id?: unknown; code?: unknown };
-        if (!(await verifyOtp(body.id, body.code))) return json(401, { error: "invalid or expired code" });
-        const box = await getBox(body.id);
-        if (!box) return json(404, { error: "not found" });
-        return json(200, { box });
+        const verdict = await verifyOtpDetailed(body.id, body.code);
+        if (verdict === "budget") return json(429, OTP_BUDGET_BODY);
+        if (verdict !== "ok") return json(401, { error: "invalid or expired code" });
+        const found = await getBoxState(body.id);
+        if (!found) return json(404, { error: "not found" });
+        const ticket = found.bound ? undefined : await mintRecoveryTicket(body.id);
+        return json(200, { box: found.box, bound: found.bound, ...(ticket ? { ticket } : {}) });
+      }
+
+      /* Does this email back up the account that signs? (contract 2.4) No code: the account's own
+       * `links` proof over "check:" + id. `mine` is true only for a row bound to the signer; no row,
+       * an unbound row and another account's row all answer false, so it says nothing about anyone
+       * else. Its own buckets (`rc:`). */
+      if (method === "POST" && (url === "/recovery-check" || url === "/recovery-release")) {
+        const body = (await readJson(request)) as { id?: unknown; owner?: unknown };
+        const owner = body.owner && typeof body.owner === "object" ? (body.owner as OwnerProof) : undefined;
+        const signer = owner && typeof owner.pubkey === "string" && StrKey.isValidEd25519PublicKey(owner.pubkey) ? owner.pubkey : undefined;
+        const rl = await enforceRateLimit(clientIp(request), signer, { ipPrefix: "rc:", accountPrefix: "rc:" });
+        if (rl.limited) return json(429, { error: rl.reason });
+        if (typeof body.id !== "string" || !/^[0-9a-f]{64}$/.test(body.id) || !owner) {
+          return json(400, { error: "id and owner are required" });
+        }
+        if (url === "/recovery-check") {
+          const checked = await checkMine(body.id, owner);
+          if (!checked.ok) return json(401, { error: ACCOUNT_NOT_CONFIRMED_ERROR });
+          return json(200, { mine: checked.mine });
+        }
+        /* Let go of a backup email (contract 2.5), so it can back up another account: a `links` proof
+         * over "release:" + id. Deletes only a row bound to the signer. */
+        const released = await releaseBox(body.id, owner);
+        if (!released.ok) return json(401, { error: ACCOUNT_NOT_CONFIRMED_ERROR });
+        if (!released.released) return json(409, { error: NOT_YOURS_ERROR, code: "not-yours" });
+        return json(200, { ok: true });
       }
 
       /* ------------------------------------------------------------------------------
@@ -876,7 +1116,7 @@ const handlers = {
 
       if (method === "POST" && url === "/handle-claim") {
         const b = (await readJson(request)) as { name?: unknown; pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
-        const rl = await enforceRateLimit(`handle:${clientIp(request)}`, typeof b.pubkey === "string" ? b.pubkey : undefined);
+        const rl = await enforceRateLimit(clientIp(request), typeof b.pubkey === "string" ? b.pubkey : undefined, { ipPrefix: "handle:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const result = await claimHandle({
           action: "claim",
@@ -892,7 +1132,7 @@ const handlers = {
 
       if (method === "POST" && url === "/handle-release") {
         const b = (await readJson(request)) as { name?: unknown; pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
-        const rl = await enforceRateLimit(`handle:${clientIp(request)}`, typeof b.pubkey === "string" ? b.pubkey : undefined);
+        const rl = await enforceRateLimit(clientIp(request), typeof b.pubkey === "string" ? b.pubkey : undefined, { ipPrefix: "handle:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const result = await releaseHandle({
           action: "release",
@@ -938,7 +1178,7 @@ const handlers = {
         if (!OAUTH_PROVIDERS.includes(provider as OAuthProvider)) {
           return json(400, { error: "unknown provider" });
         }
-        const rl = await enforceRateLimit(`idlink:${clientIp(request)}`);
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "idlink:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const started = await startOAuth(
           provider as OAuthProvider,
@@ -972,7 +1212,7 @@ const handlers = {
         method === "POST" &&
         (url === "/identity-check" || url === "/identity-attach" || url === "/identity-fetch" || url === "/identity-detach")
       ) {
-        const rl = await enforceRateLimit(`idlink:${clientIp(request)}`);
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "idlink:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const b = (await readJson(request)) as Record<string, unknown>;
         const proof = b.proof as IdentityProof | undefined;
@@ -991,20 +1231,35 @@ const handlers = {
           const found = await fetchByIdentity(resolved);
           return found ? json(200, found) : json(404, { error: "not found" });
         }
+        const accountProof = b.accountProof && typeof b.accountProof === "object" ? (b.accountProof as AccountProof) : undefined;
         if (url === "/identity-detach") {
-          const done = await detachIdentity(resolved);
-          return done.ok ? json(200, done) : json(404, { error: done.reason });
+          // The identity alone (an inbox code, say) is not standing to cut a link off an account:
+          // the account it leads to has to sign too, exactly as it does to attach one.
+          const done = await detachIdentity(resolved, config.network, accountProof);
+          if (done.ok) return json(200, done);
+          return done.unauthorized ? json(401, { error: done.reason }) : json(404, { error: done.reason });
+        }
+        /* One email, one account, in both registries. An email that backs up one account must not
+         * become a way back in to another: "find my account" and "restore my backup" would then
+         * open two different keys for the same address. The inbox code was just verified above, so
+         * saying the email is taken tells the caller nothing they may not know. */
+        const address = String(b.address ?? "");
+        if (resolved.provider === "email" && resolved.label && StrKey.isValidEd25519PublicKey(address)) {
+          const row = await rowState(await idForEmail(resolved.label));
+          if (row.ownerHash !== undefined && row.ownerHash !== (await ownerHashOf(address))) {
+            return json(409, { error: "That email already backs up another account." });
+          }
         }
         // Two different proofs, so two different keys: `proof` above is the identity's, and
         // `accountProof` is the account agreeing to be what that identity opens. attachIdentity
         // refuses without the second, so a route that never forwarded it could never attach.
         const attached = await attachIdentity(
           resolved,
-          String(b.address ?? ""),
+          address,
           config.network,
           b.box,
           typeof b.passkeyProof === "string" ? b.passkeyProof : undefined,
-          b.accountProof && typeof b.accountProof === "object" ? (b.accountProof as AccountProof) : undefined,
+          accountProof,
         );
         return attached.ok ? json(200, attached) : json(409, { error: attached.reason, conflict: attached.conflict });
       }
@@ -1025,7 +1280,7 @@ const handlers = {
         };
         const pubkey = String(b.pubkey ?? "");
         const provider = String(b.provider ?? "");
-        const rl = await enforceRateLimit(`idlink:${clientIp(request)}`, pubkey);
+        const rl = await enforceRateLimit(clientIp(request), pubkey, { ipPrefix: "idlink:" });
         if (rl.limited) return json(429, { error: rl.reason });
         if (!PROVIDERS.includes(provider as Provider)) return json(400, { error: "unknown provider" });
         const okProof = await verifyHandleProof({
@@ -1048,7 +1303,7 @@ const handlers = {
       if (method === "POST" && url === "/identity-links") {
         const b = (await readJson(request)) as { pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
         const pubkey = String(b.pubkey ?? "");
-        const rl = await enforceRateLimit(`idlink:${clientIp(request)}`, pubkey);
+        const rl = await enforceRateLimit(clientIp(request), pubkey, { ipPrefix: "idlink:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const okProof = await verifyHandleProof({
           action: "links",
@@ -1073,7 +1328,10 @@ const handlers = {
       const message = (e as Error).message;
       // A refusal the caller is entitled to understand — a cap or a floor — keeps its text on
       // every network. Only the reasons that would help someone map the validator get hidden.
-      if (isPublicRefusal(e)) return json(400, { error: message });
+      if (isPublicRefusal(e)) {
+        const code = (e as { code?: unknown }).code;
+        return json(400, { error: message, ...(typeof code === "string" ? { code } : {}) });
+      }
       /* A submission Horizon never ruled on is not a failure and must not be reported as one, on
        * any network. The mainnet redaction below used to turn it into a bare "request failed",
        * which the client could only read as "nothing moved" — and on /payout a retry on that

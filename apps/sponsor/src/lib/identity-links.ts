@@ -385,10 +385,38 @@ export async function fetchByIdentity(
   return { address: row.address, handle: handle ?? undefined, box: row.box };
 }
 
-/** Disconnect a proved identity from the account it leads to. Deletes the row and its index entry. */
-export async function detachIdentity(resolved: ResolvedIdentity): Promise<{ ok: true } | { ok: false; reason: string }> {
+/** What the account signs to authorize a detach: the `links` proof, over `detach:` + the identity id. */
+const DETACH_PROOF_PREFIX = "detach:";
+
+/**
+ * Disconnect a proved identity from the account it leads to. Deletes the row and its index entry.
+ *
+ * TWO parties, as for attaching. Proving the identity alone used to be enough, so whoever held an
+ * inbox for a moment (one emailed code) could cut that email off the account it leads back to,
+ * silently, and the account's owner found the way back in gone. Now the account it leads to signs
+ * too: a `links` proof by the row's address over `detach:<id>`, on this deployment's network. Its
+ * absence or a bad one is `unauthorized`; a row that does not exist is answered first, since then
+ * there is no account to ask.
+ */
+export async function detachIdentity(
+  resolved: ResolvedIdentity,
+  network: NetworkId,
+  accountProof?: AccountProof,
+): Promise<{ ok: true } | { ok: false; reason: string; unauthorized?: true }> {
   const row = await readRow(resolved.id);
   if (!row) return { ok: false, reason: "That is not connected." };
+  const unauthorized = { ok: false as const, reason: "That account has to authorize this.", unauthorized: true as const };
+  if (!accountProof) return unauthorized;
+  const signed = await verifyHandleProof({
+    action: "links",
+    name: DETACH_PROOF_PREFIX + resolved.id,
+    pubkey: row.address,
+    ts: Number(accountProof.ts),
+    nonce: String(accountProof.nonce ?? ""),
+    network,
+    proof: String(accountProof.proof ?? ""),
+  });
+  if (signed.ok !== true) return unauthorized;
   await kvDel(KEY_IDENTITY + resolved.id);
   const links = (await readLinks(row.network, row.address)).filter((l) => l.id !== resolved.id);
   await writeLinks(row.network, row.address, links);

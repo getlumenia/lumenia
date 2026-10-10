@@ -96,6 +96,16 @@ function maxTx(): number {
   return Number.isFinite(n) && n > 0 ? n : 5;
 }
 
+/** How many real-money sends an approved wallet gets (`PILOT_MAX_TX`, default 5). */
+export function pilotLimit(): number {
+  return maxTx();
+}
+
+/** short(G): the first 6 characters, "...", the last 6. How every mail and owner page names an account. */
+export function shortAddress(pubkey: string): string {
+  return pubkey.length > 12 ? `${pubkey.slice(0, 6)}...${pubkey.slice(-6)}` : pubkey;
+}
+
 function net(): string {
   return process.env.STELLAR_NETWORK ?? "testnet";
 }
@@ -122,15 +132,27 @@ const emailKey = (pk: string) => `pilot:${net()}:email:${pk}`;
 /** How long a contact address is kept — an owner's decision window, not a permanent record. */
 export const PILOT_EMAIL_RETENTION_SECONDS = 90 * 24 * 60 * 60;
 /**
- * The "this address already applied" marker. Keyed on a HASH of the address rather than the
- * address itself: a Redis key name is not a place to keep someone's email in the clear, and this
- * store is shared with the rate limiter and caps.
+ * The "this address already applied" marker: the LATEST wallet that asked with this email, kept for
+ * the same 90 days as the contact. Keyed on a HASH of the address rather than the address itself: a
+ * Redis key name is not a place to keep someone's email in the clear, and this store is shared with
+ * the rate limiter and caps.
  */
 async function seenEmailKey(email: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(email.trim().toLowerCase()));
   const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
   return `pilot:${net()}:seen:${hex}`;
 }
+/** Where the wallet last asked from ("web" or "ext"), for the approval mail. Same 90 days. */
+const srcKey = (pk: string) => `pilot:${net()}:src:${pk}`;
+/** Set for 7 days when an owner mail about this wallet was ACCEPTED, so a re-ask does not mail again. */
+const mailedKey = (pk: string) => `pilot:${net()}:mailed:${pk}`;
+export const PILOT_MAILED_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * Set by `revokePilot`, deleted by `approvePilot` and `rejectPilot`. A revoked wallet and a declined
+ * one both read state "rejected"; this is what tells the client which sentence is true ("we took
+ * this account off real money" against "not approved for now").
+ */
+const revokedKey = (pk: string) => `pilot:${net()}:revoked:${pk}`;
 
 interface Kv {
   url: string;
@@ -202,17 +224,42 @@ export async function enforcePilot(pubkey: string): Promise<PilotVerdict> {
 
 /** The lifecycle of a pilot application. */
 export type PilotState = "none" | "pending" | "approved" | "rejected";
+const STATES: readonly string[] = ["none", "pending", "approved", "rejected"];
 
 /**
- * Idempotent join request (TASK 1). Records a `pending` application UNLESS this wallet already
- * has a state, OR this email already applied on any wallet — in which case it returns
- * {created:false} so the caller sends NO duplicate owner-mail. Fail-open only when there's no
- * store (so the owner still sees the log and can act by hand).
+ * One reading of a wallet's three keys, the same everywhere (the status route, the request, the
+ * owner list). The status key is a record and the allowlist flag is the gate, so where they
+ * disagree the gate wins: a status of "approved" with no flag behind it is a wallet revoked before
+ * revokePilot also wrote the status (2026-10-08), and it reads as declined-and-revoked, never as
+ * approved.
+ */
+function readState(st: unknown, appr: unknown, revokedFlag: unknown): { state: PilotState; approved: boolean; revoked: boolean } {
+  const approved = appr === "1";
+  const recorded = typeof st === "string" && STATES.includes(st) ? (st as PilotState) : null;
+  if (recorded === "approved" && !approved) return { state: "rejected", approved: false, revoked: true };
+  const state: PilotState = recorded ?? (approved ? "approved" : "none");
+  return { state, approved, revoked: revokedFlag === "1" };
+}
+
+/**
+ * The join request from a page that does not sign it (the web before the signed ask, extension
+ * 0.1.2 and 0.1.3 never call it). Records a `pending` application UNLESS this wallet already has a
+ * state, OR another wallet is the latest to have asked with this email, in which case it returns
+ * {created:false} and the caller sends NO request mail. Fail-open only when there's no store (so the
+ * owner still sees the log and can act by hand).
+ *
+ * The collision is NOT recorded, and that is still a hole the comment here used to deny: anyone can
+ * name a victim's address with a throwaway wallet first, and the victim's own unsigned ask is then
+ * not filed. Nothing on this path proves the address belongs to the asker, so filing the second ask
+ * would let a stranger attach an email to any wallet instead. What changed is that it is no longer
+ * silent: the caller logs it and mails the owner (lib/pilot-request.ts), who can act by hand, and
+ * the signed path (`filePilotRequest`) takes a proven inbox past it. The answer to the asker stays
+ * the ordinary success shape, so nobody can probe whether an address applied.
  */
 export async function startPilotRequest(
   pubkey: string,
   email: string,
-): Promise<{ created: boolean; state: PilotState; collision?: boolean }> {
+): Promise<{ created: boolean; state: PilotState; collision?: boolean; other?: string }> {
   const kv = kvConfigFromEnv();
   if (!kv) return { created: true, state: "pending" };
   const clean = email.trim().toLowerCase();
@@ -223,22 +270,134 @@ export async function startPilotRequest(
   ]);
   const existing = (typeof st === "string" ? st : "none") as PilotState;
   if (existing !== "none") return { created: false, state: existing };
-  // The "seen" marker is scoped to the WALLET that set it. Keyed on the address alone it was a
-  // registration-poisoning primitive: anyone could POST /pilot-request with a throwaway wallet and
-  // a victim's address, and the victim's own later application would then be silently swallowed —
-  // no owner mail, no error, no way for them to tell.
   if (typeof seen === "string" && seen !== pubkey) {
-    // `collision` so the CALLER can stay silent about it. Telling this wallet "that address has
-    // already applied" would answer a question it has no business asking: anyone could probe an
-    // address with a throwaway wallet and learn whether its owner applied to the pilot.
-    return { created: false, state: "pending", collision: true };
+    return { created: false, state: "pending", collision: true, other: seen };
   }
   await pipe(kv, [
     ["SET", statusKey(pubkey), "pending"],
-    ["SET", seenKey, pubkey],
+    ["SET", seenKey, pubkey, "EX", PILOT_EMAIL_RETENTION_SECONDS],
     ["SET", emailKey(pubkey), clean, "EX", PILOT_EMAIL_RETENTION_SECONDS],
   ]);
   return { created: true, state: "pending" };
+}
+
+/** Where a signed ask came from. */
+export type PilotSource = "web" | "ext";
+/** How the asker proved the email is theirs: a code mailed to it, or a backup row it protects. */
+export type InboxProof = "code" | "backup";
+
+export interface PilotFiling {
+  /** The wallet's state after this ask. */
+  state: "pending" | "approved" | "rejected";
+  /** False only for the ask that moved the wallet from none to pending. */
+  already: boolean;
+  /** The owner mail this ask calls for now: a new request, an ask for more sends, or none. */
+  mail: "request" | "more-sends" | null;
+  /** The latest OTHER wallet to ask with this email in the last 90 days, and where it stands. */
+  other?: { pubkey: string; state: PilotState };
+  used: number;
+  limit: number;
+  /** What the filing rests on, for the owner mail. */
+  inboxProof: InboxProof;
+  src?: PilotSource;
+}
+
+/**
+ * The SIGNED join request (worker.ts /pilot-request with an owner proof), after the route has
+ * checked that the account signed it and that the asker controls the email (a code, or a backup row
+ * bound to this account). Both proven, the email is theirs to use, so a second wallet asking with an
+ * address another wallet used is FILED, and the owner mail says so.
+ *
+ * By the wallet's state:
+ *  - none: becomes pending, and the owner is mailed a request.
+ *  - pending: the contact is refreshed; the owner is mailed again only when no owner mail about
+ *    this wallet was accepted in the last 7 days (`mailedKey`).
+ *  - approved with every send used: the owner is mailed that it asks for more, at most once a week.
+ *  - approved with sends left, or rejected: the contact is refreshed and nothing else happens. A
+ *    decline is the owner's to reopen, never the asker's.
+ *
+ * Every signed ask refreshes the contact (90 days), the email's latest-wallet marker (90 days) and,
+ * when given, where it came from. This function decides the mail; the caller sends it and calls
+ * `markOwnerMailed` only when the mailer accepted it. Throws on any store problem.
+ */
+export async function filePilotRequest(
+  pubkey: string,
+  email: string,
+  src: PilotSource | undefined,
+  opts: { inboxProof: InboxProof },
+): Promise<PilotFiling> {
+  const kv = kvConfigFromEnv();
+  if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
+  const clean = email.trim().toLowerCase();
+  const seenKey = await seenEmailKey(clean);
+  const [st, appr, tx, revoked, seen, mailed] = await pipe(kv, [
+    ["GET", statusKey(pubkey)],
+    ["GET", apprKey(pubkey)],
+    ["GET", txKey(pubkey)],
+    ["GET", revokedKey(pubkey)],
+    ["GET", seenKey],
+    ["GET", mailedKey(pubkey)],
+  ]);
+  const now = readState(st, appr, revoked);
+  const used = Number(tx ?? 0);
+  const limit = maxTx();
+
+  let other: PilotFiling["other"];
+  if (typeof seen === "string" && seen !== "" && seen !== pubkey) {
+    const [os, oa, orv] = await pipe(kv, [
+      ["GET", statusKey(seen)],
+      ["GET", apprKey(seen)],
+      ["GET", revokedKey(seen)],
+    ]);
+    other = { pubkey: seen, state: readState(os, oa, orv).state };
+  }
+
+  const refresh: (string | number)[][] = [
+    ["SET", emailKey(pubkey), clean, "EX", PILOT_EMAIL_RETENTION_SECONDS],
+    ["SET", seenKey, pubkey, "EX", PILOT_EMAIL_RETENTION_SECONDS],
+    ...(src ? [["SET", srcKey(pubkey), src, "EX", PILOT_EMAIL_RETENTION_SECONDS]] : []),
+  ];
+  const recentlyMailed = mailed === "1";
+  const base = { other, used, limit, inboxProof: opts.inboxProof, ...(src ? { src } : {}) };
+
+  if (now.state === "none") {
+    // NX: two asks racing from one wallet file it once; the one that loses reads as a re-ask.
+    const [created] = await pipe(kv, [["SET", statusKey(pubkey), "pending", "NX"], ...refresh]);
+    if (created === "OK") return { ...base, state: "pending", already: false, mail: "request" };
+    return { ...base, state: "pending", already: true, mail: recentlyMailed ? null : "request" };
+  }
+  await pipe(kv, refresh);
+  if (now.state === "pending") {
+    return { ...base, state: "pending", already: true, mail: recentlyMailed ? null : "request" };
+  }
+  if (now.state === "approved") {
+    const spent = used >= limit;
+    return { ...base, state: "approved", already: true, mail: spent && !recentlyMailed ? "more-sends" : null };
+  }
+  return { ...base, state: "rejected", already: true, mail: null };
+}
+
+/** The owner mail about this wallet was accepted: no second one for 7 days (`filePilotRequest`). */
+export async function markOwnerMailed(pubkey: string): Promise<void> {
+  const kv = kvConfigFromEnv();
+  if (!kv) return;
+  await pipe(kv, [["SET", mailedKey(pubkey), "1", "EX", PILOT_MAILED_SECONDS]]);
+}
+
+/** Was an owner mail about this wallet accepted in the last 7 days? Throws on a store error. */
+export async function ownerMailedRecently(pubkey: string): Promise<boolean> {
+  const kv = kvConfigFromEnv();
+  if (!kv) return false;
+  const [v] = await pipe(kv, [["GET", mailedKey(pubkey)]]);
+  return v === "1";
+}
+
+/** Where this wallet last asked from, best effort: null when unknown or unreadable. */
+export async function getPilotSrc(pubkey: string): Promise<PilotSource | null> {
+  const kv = kvConfigFromEnv();
+  if (!kv) return null;
+  const [v] = await pipe(kv, [["GET", srcKey(pubkey)]]).catch(() => [null]);
+  return v === "web" || v === "ext" ? v : null;
 }
 
 /**
@@ -255,12 +414,16 @@ export async function isPilotApproved(pubkey: string): Promise<boolean> {
   return appr === "1";
 }
 
-/** A wallet's application state (none/pending/approved/rejected). */
+/** A wallet's application state (none/pending/approved/rejected), read as `pilotStatus` reads it. */
 export async function getPilotState(pubkey: string): Promise<PilotState> {
   const kv = kvConfigFromEnv();
   if (!kv) return "none";
-  const [st] = await pipe(kv, [["GET", statusKey(pubkey)]]).catch(() => [null]);
-  return (typeof st === "string" ? st : "none") as PilotState;
+  const [st, appr, revoked] = await pipe(kv, [
+    ["GET", statusKey(pubkey)],
+    ["GET", apprKey(pubkey)],
+    ["GET", revokedKey(pubkey)],
+  ]).catch(() => [null, null, null]);
+  return readState(st, appr, revoked).state;
 }
 
 /**
@@ -278,6 +441,9 @@ export async function approvePilot(pubkey: string): Promise<void> {
     ["SET", apprKey(pubkey), "1"],
     ["SET", txKey(pubkey), "0", "NX"],
     ["SET", statusKey(pubkey), "approved"],
+    ["DEL", revokedKey(pubkey)],
+    // The approval answers the ask that was mailed, so the next one (more sends) mails at once.
+    ["DEL", mailedKey(pubkey)],
   ]);
 }
 
@@ -290,17 +456,22 @@ export async function resetPilotBudget(pubkey: string): Promise<number> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
   const [old] = await pipe(kv, [["GET", txKey(pubkey)]]);
-  await pipe(kv, [["SET", txKey(pubkey), "0"]]);
+  // A refill answers an ask for more sends, so the next one mails at once.
+  await pipe(kv, [["SET", txKey(pubkey), "0"], ["DEL", mailedKey(pubkey)]]);
   return Number(old ?? 0);
 }
 
-/** Owner-only: decline a wallet (state rejected, allowlist flag removed). They can be re-approved later. */
+/**
+ * Owner-only: decline a wallet (state rejected, allowlist flag removed, not revoked). They can be
+ * re-approved later.
+ */
 export async function rejectPilot(pubkey: string): Promise<void> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
   await pipe(kv, [
     ["SET", statusKey(pubkey), "rejected"],
     ["DEL", apprKey(pubkey)],
+    ["DEL", revokedKey(pubkey)],
   ]);
 }
 
@@ -343,13 +514,26 @@ export async function getPilotEmail(pubkey: string): Promise<string | null> {
 export async function revokePilot(pubkey: string): Promise<void> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
+  // The email's latest-wallet marker goes too when it names this wallet: it is the last place the
+  // address and this wallet are tied together. It is keyed by the email's hash, so read the stored
+  // contact first, before it is erased below.
+  const [email] = await pipe(kv, [["GET", emailKey(pubkey)]]);
+  let seenDel: (string | number)[][] = [];
+  if (typeof email === "string" && email !== "") {
+    const seenKey = await seenEmailKey(email);
+    const [seen] = await pipe(kv, [["GET", seenKey]]);
+    if (seen === pubkey) seenDel = [["DEL", seenKey]];
+  }
   // The status follows the allowlist: a revoked wallet reads as declined, never as "approved"
   // with no allowlist flag behind it (which told the web "you're approved" for a wallet the value
-  // routes refuse). Declined is also a state a fresh request does not reopen by itself.
+  // routes refuse). Declined is also a state a fresh request does not reopen by itself. The revoked
+  // flag is what lets the client say "we took this account off real money" instead of "not approved".
   await pipe(kv, [
     ["DEL", apprKey(pubkey)],
     ["DEL", emailKey(pubkey)],
     ["SET", statusKey(pubkey), "rejected"],
+    ["SET", revokedKey(pubkey), "1"],
+    ...seenDel,
   ]);
 }
 
@@ -364,9 +548,17 @@ export async function revokePilot(pubkey: string): Promise<void> {
  * `hasEmail` says whether an approval mail can still be sent (the contact expires after
  * PILOT_EMAIL_RETENTION_SECONDS), so the owner knows whom to tell by hand.
  */
-export async function listPilot(
-  filter: PilotState | "all" = "all",
-): Promise<Array<{ pubkey: string; state: PilotState; hasEmail: boolean }>> {
+export interface PilotListRow {
+  pubkey: string;
+  state: PilotState;
+  hasEmail: boolean;
+  /** Taken off real money by `revokePilot` (state "rejected"). */
+  revoked: boolean;
+  /** Where it last asked from, when it asked with a signed request. */
+  src: PilotSource | null;
+}
+
+export async function listPilot(filter: PilotState | "all" = "all"): Promise<PilotListRow[]> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
   const prefix = `pilot:${net()}:status:`;
@@ -384,35 +576,49 @@ export async function listPilot(
   } while (cursor !== "0");
   const pubkeys = [...new Set(keys.map((k) => k.slice(prefix.length)))];
   if (pubkeys.length === 0) return [];
+  const per = 5;
   const rows = await pipe(
     kv,
     pubkeys.flatMap((pk) => [
       ["GET", statusKey(pk)],
       ["GET", emailKey(pk)],
+      ["GET", apprKey(pk)],
+      ["GET", revokedKey(pk)],
+      ["GET", srcKey(pk)],
     ]),
   );
-  const all = pubkeys.map((pk, i) => ({
-    pubkey: pk,
-    state: (typeof rows[i * 2] === "string" ? rows[i * 2] : "none") as PilotState,
-    hasEmail: typeof rows[i * 2 + 1] === "string" && rows[i * 2 + 1] !== "",
-  }));
+  const all = pubkeys.map((pk, i): PilotListRow => {
+    const [st, email, appr, revoked, src] = rows.slice(i * per, i * per + per);
+    const view = readState(st, appr, revoked);
+    return {
+      pubkey: pk,
+      state: view.state,
+      hasEmail: typeof email === "string" && email !== "",
+      revoked: view.revoked,
+      src: src === "web" || src === "ext" ? src : null,
+    };
+  });
   return all
     .filter((r) => filter === "all" || r.state === filter)
     .sort((a, b) => a.pubkey.localeCompare(b.pubkey));
 }
 
-/** Read a wallet's pilot status — for the client status endpoint, owner CLI and audits. */
+/**
+ * Read a wallet's pilot status, for the client status endpoint, owner CLI and audits. `revoked`
+ * separates "we took this account off real money" from "not approved for now" (both state
+ * "rejected"). Throws on a store error: the route answers that 503, never "not approved".
+ */
 export async function pilotStatus(
   pubkey: string,
-): Promise<{ state: PilotState; approved: boolean; used: number; limit: number }> {
+): Promise<{ state: PilotState; approved: boolean; used: number; limit: number; revoked: boolean }> {
   const kv = kvConfigFromEnv();
   if (!kv) throw new Error("pilot store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
-  const [appr, tx, st] = await pipe(kv, [
+  const [appr, tx, st, revoked] = await pipe(kv, [
     ["GET", apprKey(pubkey)],
     ["GET", txKey(pubkey)],
     ["GET", statusKey(pubkey)],
+    ["GET", revokedKey(pubkey)],
   ]);
-  const approved = appr === "1";
-  const state = (typeof st === "string" ? st : approved ? "approved" : "none") as PilotState;
-  return { state, approved, used: Number(tx ?? 0), limit: maxTx() };
+  const view = readState(st, appr, revoked);
+  return { state: view.state, approved: view.approved, used: Number(tx ?? 0), limit: maxTx(), revoked: view.revoked };
 }

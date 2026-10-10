@@ -21,11 +21,21 @@ import {
   getPilotEmail,
   PILOT_EMAIL_RETENTION_SECONDS,
   listPilot,
+  rejectPilot,
+  shortAddress,
+  getPilotSrc,
+  PILOT_MAILED_SECONDS,
 } from "./lib/pilot.js";
 import { notifyPilotApproved, notifyPilotRejected } from "./lib/pilot-request.js";
-import { ipBucket } from "./lib/rate-limit.js";
+import { ipBucket, rateLimitKeys, checkRateLimit } from "./lib/rate-limit.js";
 import { SubmitUnconfirmedError } from "./lib/stellar.js";
 import { resetHaltCache } from "./lib/kill-switch.js";
+import { resetServiceCache } from "./lib/service.js";
+import { handleProofMessage, proofNonce } from "./lib/handles.js";
+import { idForEmail } from "./lib/recovery-otp.js";
+import { putBox } from "./lib/recovery-store.js";
+import { saveContact, listContacts } from "./lib/waitlist.js";
+import { pilotListLines, pilotStatusLines, waitlistLines } from "./lib/pilot-report.js";
 import { Keypair } from "@stellar/stellar-sdk";
 import worker, { resetHealthCache, withPilotSlot } from "./worker.js";
 
@@ -37,67 +47,121 @@ const check = (n: string, ok: boolean, d = "") => {
 };
 
 /**
- * In-memory stand-in for the Upstash REST pipeline lib/pilot.ts talks to (GET/SET/DEL/INCR/DECR).
+ * In-memory stand-in for the Upstash REST API the pilot, recovery and limiter modules talk to:
+ * the pipeline (GET/SET/DEL/INCR/DECR/SCAN/EXPIRE/PEXPIRE/SMEMBERS/GETDEL) and the single-command
+ * paths (`/get/<key>`, `/set/<key>?EX=` with the value as the body, `/del/<key>`, `/sadd/<key>/<m>`).
  * `ttls` records the `EX` seconds of a SET so a test can prove a key was written with an expiry —
  * an unbounded write and a bounded one are otherwise indistinguishable from the outside.
+ *
+ * It also stands in for the MAILER: every POST to api.resend.com lands in `mails`, answered with
+ * `mailStatus()` (default 200), or thrown when `mailThrows()` says so.
  */
-function installFakeKv(opts: { failGets?: () => boolean } = {}) {
+interface SentMail {
+  to?: string[];
+  subject?: string;
+  text?: string;
+  html?: string;
+}
+function installFakeKv(
+  opts: { failGets?: () => boolean; mailStatus?: () => number; mailThrows?: () => boolean } = {},
+) {
   const store = new Map<string, string>();
   const ttls = new Map<string, number>();
+  const sets = new Map<string, Set<string>>();
+  const mails: SentMail[] = [];
   process.env.KV_REST_API_URL = "https://fake-kv.test";
   process.env.KV_REST_API_TOKEN = "t";
-  globalThis.fetch = (async (_url: string | URL, init?: { body?: string }) => {
-    // A store that stops answering reads (the approve-link test's outage), on request.
+  const ok = (result: unknown) => ({ ok: true, status: 200, json: async () => result }) as unknown as Response;
+  const setValue = (key: string, value: string, ex?: number) => {
+    store.set(key, value);
+    ttls.delete(key);
+    if (ex !== undefined && Number.isFinite(ex)) ttls.set(key, ex);
+  };
+  globalThis.fetch = (async (_url: string | URL, init?: { body?: string; method?: string }) => {
+    const url = String(_url);
+    if (url.startsWith("https://api.resend.com/")) {
+      if (opts.mailThrows?.()) throw new Error("mailer unreachable");
+      mails.push(JSON.parse(String(init?.body ?? "{}")) as SentMail);
+      const status = opts.mailStatus?.() ?? 200;
+      return { ok: status >= 200 && status < 300, status, json: async () => ({}) } as unknown as Response;
+    }
+    // A store that stops answering (the approve-link test's outage, the 503 checks), on request.
     if (opts.failGets?.()) return { ok: false, status: 500, json: async () => [] } as unknown as Response;
-    // The plain `/get/<key>` read that /health's counters and the watchdog stamp use.
-    const got = String(_url).match(/\/get\/([^?]+)$/);
-    if (got) {
-      const key = decodeURIComponent(got[1]!);
-      return { ok: true, status: 200, json: async () => ({ result: store.has(key) ? store.get(key) : null }) } as unknown as Response;
+    const parsed = new URL(url);
+    const segs = parsed.pathname.split("/").filter(Boolean).map((p) => decodeURIComponent(p));
+    const [cmd, key, member] = segs;
+    // The single-command paths: a read, a write with its value as the body, a delete, a set add.
+    if (cmd === "get" && key) return ok({ result: store.has(key) ? store.get(key) : null });
+    if (cmd === "set" && key) {
+      const ex = parsed.searchParams.get("EX");
+      setValue(key, String(init?.body ?? ""), ex === null ? undefined : Number(ex));
+      return ok({ result: "OK" });
+    }
+    if (cmd === "del" && key) {
+      const had = store.delete(key);
+      ttls.delete(key);
+      return ok({ result: had ? 1 : 0 });
+    }
+    if (cmd === "sadd" && key && member !== undefined) {
+      const set = sets.get(key) ?? new Set<string>();
+      const added = !set.has(member);
+      set.add(member);
+      sets.set(key, set);
+      return ok({ result: added ? 1 : 0 });
     }
     const cmds = JSON.parse(String(init?.body ?? "[]")) as string[][];
-    const results = cmds.map((cmd) => {
-      const [op, key, arg] = cmd;
+    const results = cmds.map((c) => {
+      const [op, k, arg] = c;
       switch (op) {
         case "GET":
-          return { result: store.has(key!) ? store.get(key!) : null };
+          return { result: store.has(k!) ? store.get(k!) : null };
+        case "GETDEL": {
+          const v = store.has(k!) ? store.get(k!) : null;
+          store.delete(k!);
+          ttls.delete(k!);
+          return { result: v };
+        }
         case "SET": {
-          if (cmd.includes("NX") && store.has(key!)) return { result: null };
-          store.set(key!, String(arg));
-          const ex = cmd.indexOf("EX");
-          ttls.delete(key!);
-          if (ex > 0 && cmd[ex + 1] !== undefined) ttls.set(key!, Number(cmd[ex + 1]));
+          if (c.includes("NX") && store.has(k!)) return { result: null };
+          const ex = c.indexOf("EX");
+          setValue(k!, String(arg), ex > 0 && c[ex + 1] !== undefined ? Number(c[ex + 1]) : undefined);
           return { result: "OK" };
         }
         case "DEL": {
-          const had = store.delete(key!);
-          ttls.delete(key!);
+          const had = store.delete(k!);
+          ttls.delete(k!);
           return { result: had ? 1 : 0 };
         }
         case "INCR": {
-          const n = Number(store.get(key!) ?? "0") + 1;
-          store.set(key!, String(n));
+          const n = Number(store.get(k!) ?? "0") + 1;
+          store.set(k!, String(n));
           return { result: n };
         }
         case "DECR": {
-          const n = Number(store.get(key!) ?? "0") - 1;
-          store.set(key!, String(n));
+          const n = Number(store.get(k!) ?? "0") - 1;
+          store.set(k!, String(n));
           return { result: n };
         }
+        case "EXPIRE":
+        case "PEXPIRE":
+          // The windows of the limiter and the code budgets. Time does not pass in this fake.
+          return { result: store.has(k!) ? 1 : 0 };
+        case "SMEMBERS":
+          return { result: [...(sets.get(k!) ?? new Set<string>())] };
         case "SCAN": {
           // SCAN <cursor> MATCH <glob> COUNT <n>: one page holds everything, the cursor comes back "0".
-          const at = cmd.indexOf("MATCH");
-          const glob = at > 0 ? String(cmd[at + 1]) : "*";
+          const at = c.indexOf("MATCH");
+          const glob = at > 0 ? String(c[at + 1]) : "*";
           const re = new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$");
-          return { result: ["0", [...store.keys()].filter((k) => re.test(k))] };
+          return { result: ["0", [...store.keys()].filter((key2) => re.test(key2))] };
         }
         default:
           throw new Error(`unexpected command ${op}`);
       }
     });
-    return { ok: true, status: 200, json: async () => results } as unknown as Response;
+    return ok(results);
   }) as typeof fetch;
-  return { store, ttls };
+  return { store, ttls, sets, mails };
 }
 function clearKv() {
   delete process.env.KV_REST_API_URL;
@@ -106,6 +170,121 @@ function clearKv() {
 
 const W = "GABFQIK63R2NETJM7T673EAMZN4RJLLGP3OFUEJU5SZVTGWUKULZJNL6";
 const W2 = "GBHB3NAY2ADZ3XAGJNO6UN6GWT2D3PC4DXEQ2SVBGPIX6N6RS4PRBUK2";
+
+/* ---- The shared account contract's pilot host (sections 1, 3 and 6), driven through worker.fetch ---- */
+
+const OWNER = "owner@example.test";
+const NINETY_DAYS = 7776000;
+const BOX = {
+  formatVersion: 1,
+  copies: [{ kind: "password", iv: "AAAA", ct: "BBBB", salt: "CCCC", argon: { memMiB: 48, time: 2, parallelism: 1 } }],
+};
+
+/** The mainnet pilot Worker's configuration, with the mailer on (it is the fake in installFakeKv). */
+function mainnetEnv(): void {
+  process.env.STELLAR_NETWORK = "mainnet";
+  process.env.PILOT_MODE = "1";
+  process.env.RESEND_API_KEY = "re_test";
+  process.env.OWNER_EMAIL = OWNER;
+  process.env.PILOT_APPROVE_TOKEN = "an-approve-secret";
+  process.env.SPONSOR_ORIGIN = "https://sponsor-mainnet.test";
+  process.env.WEB_ORIGIN = "https://getlumenia.com";
+  // These sections ask far more often than a person would; the limits are not what they test.
+  process.env.RATE_CAP = "1000";
+  process.env.ACCOUNT_RATE_CAP = "1000";
+  resetServiceCache(); // the service (and its network) is built once per isolate
+  resetHaltCache();
+}
+function clearMainnetEnv(): void {
+  for (const k of ["STELLAR_NETWORK", "PILOT_MODE", "RESEND_API_KEY", "OWNER_EMAIL", "PILOT_APPROVE_TOKEN", "SPONSOR_ORIGIN", "WEB_ORIGIN", "RATE_CAP", "ACCOUNT_RATE_CAP", "PILOT_REQUIRE_PROOF"]) {
+    delete process.env[k];
+  }
+  resetServiceCache();
+  resetHaltCache();
+  clearKv();
+}
+
+type Answer = { status: number; json: Record<string, any> };
+async function asJson(res: Response): Promise<Answer> {
+  const text = await res.text();
+  try {
+    return { status: res.status, json: text ? (JSON.parse(text) as Record<string, any>) : {} };
+  } catch {
+    return { status: res.status, json: { raw: text.slice(0, 120) } };
+  }
+}
+function get(path: string, ip = "198.51.100.20"): Promise<Response> {
+  return worker.fetch(new Request(`https://sponsor.test${path}`, { headers: { "cf-connecting-ip": ip } }), {});
+}
+async function post(path: string, body: unknown, ip = "198.51.100.20"): Promise<Answer> {
+  return asJson(
+    await worker.fetch(
+      new Request(`https://sponsor.test${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "cf-connecting-ip": ip },
+        body: JSON.stringify(body),
+      }),
+      {},
+    ),
+  );
+}
+/** Flat objects with the same keys and values, in any order. */
+function flatEq(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
+
+/** The account's own `pilot` proof over the hash of `email` (contract 1). Overrides make the bad ones. */
+async function pilotProof(
+  kp: Keypair,
+  email: string,
+  over: { pubkey?: string; action?: "pilot" | "links"; network?: "testnet" | "mainnet" } = {},
+) {
+  const ts = Math.floor(Date.now() / 1000);
+  const nonce = proofNonce();
+  const pubkey = over.pubkey ?? kp.publicKey();
+  const message = handleProofMessage(over.action ?? "pilot", await idForEmail(email), pubkey, ts, nonce, over.network ?? "mainnet");
+  return { pubkey, ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
+}
+
+/** A backup write's owner proof (the `links` proof over the box id), on this host's network. */
+function writeProof(kp: Keypair, id: string) {
+  const ts = Math.floor(Date.now() / 1000);
+  const nonce = proofNonce();
+  const message = handleProofMessage("links", id, kp.publicKey(), ts, nonce, "mainnet");
+  return { pubkey: kp.publicKey(), ts, nonce, proof: kp.sign(Buffer.from(message, "utf8")).toString("base64") };
+}
+
+/** Ask this host for a real-money code (purpose "pilot") and read it out of the mail it sent. */
+async function pilotCode(mails: SentMail[], email: string): Promise<string> {
+  const before = mails.length;
+  const res = await post("/recovery-otp", { email, purpose: "pilot" });
+  const mail = mails.slice(before).find((m) => m.to?.[0] === email);
+  const code = /^Your Lumenia code: (\d{6})$/.exec(mail?.subject ?? "")?.[1];
+  if (res.status !== 200 || !code) throw new Error(`no code for ${email}: ${res.status} ${JSON.stringify(res.json)}`);
+  return code;
+}
+
+/** Run `fn` with console.log captured. */
+async function captureLogs<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {
+  const lines: string[] = [];
+  const real = console.log;
+  console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+  try {
+    return { result: await fn(), lines };
+  } finally {
+    console.log = real;
+  }
+}
+
+/** The confirmation page's button: the link's three fields, form-encoded, POSTed to the same path. */
+function ownerPost(path: string, pubkey: string, t: { token: string; exp: number }, ip?: string): Request {
+  return new Request(`https://sponsor.test${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", ...(ip ? { "cf-connecting-ip": ip } : {}) },
+    body: new URLSearchParams({ pubkey, exp: String(t.exp), token: t.token }).toString(),
+  });
+}
 
 async function main() {
   console.log("============================================================");
@@ -153,6 +332,7 @@ async function main() {
   await revokePilot(W2);
   check("a revoked wallet is rejected", !(await enforcePilot(W2)).ok);
   check("and its status follows the allowlist: declined, never 'approved' with no flag behind it", (await pilotStatus(W2)).state === "rejected");
+  check("and it says it was revoked, not declined (revoked:true)", (await pilotStatus(W2)).revoked === true);
 
   console.log("[7] fail-closed: no store, no admission");
   clearKv();
@@ -330,6 +510,25 @@ async function main() {
   check("the elided :: form collapses the same as the expanded one",
     ipBucket("2a02:db8:1234:5678::1") === ipBucket("2a02:db8:1234:5678:0:0:0:2"));
   check("IPv4 is untouched", ipBucket("203.0.113.9") === "203.0.113.9");
+  // A route's own buckets are named AFTER the address is bucketed. Prepended to the address, the
+  // prefix used to parse as the first IPv6 group, so "rec:" kept a /48 instead of a /64.
+  check(
+    "a route prefix goes after ipBucket: ip:<prefix><the /64>",
+    rateLimitKeys("2a02:db8:1234:5678::1", undefined, { ipPrefix: "rec:" }).ip === "ip:rec:2a02:db8:1234:5678::/64",
+    rateLimitKeys("2a02:db8:1234:5678::1", undefined, { ipPrefix: "rec:" }).ip,
+  );
+  check(
+    "and the account side gets its own prefix: acct:<prefix><account>",
+    rateLimitKeys("203.0.113.9", "GABC", { ipPrefix: "ps:", accountPrefix: "ps:" }).account === "acct:ps:GABC",
+  );
+  {
+    const cfg = { ipCap: 2, ipWindowMs: 60_000, accountCap: 5, accountWindowMs: 60_000 };
+    const t = Date.now();
+    const v6 = (ip: string) => checkRateLimit(ip, undefined, cfg, t, { ipPrefix: "v6test:" }).limited;
+    const firstTwo = [v6("2a02:db8:1:2::1"), v6("2a02:db8:1:2:ffff:ffff:ffff:ffff")];
+    check("with a prefix, two addresses in one /64 share one bucket (the third ask is limited)", firstTwo.every((l) => !l) && v6("2a02:db8:1:2:aaaa::7"));
+    check("and the next /64 is a bucket of its own", !v6("2a02:db8:1:3::1"));
+  }
 
   /* ------------------------------------------------------------------------------------------
    * SOW 2, D3 (item c residuals, item i): the slot guard around a value handler, the approve link
@@ -374,8 +573,17 @@ async function main() {
     delete process.env.RESEND_API_KEY;
     const used = () => Number(store.get(`pilot:testnet:tx:${W}`) ?? "0");
     const minted = await mintApprovalToken("approve", W, Date.now());
-    const tap = () =>
+    // Opening the emailed link only shows what it would do; the page's button POSTs the same fields.
+    const openLink = () =>
       worker.fetch(new Request(`https://sponsor.test/pilot-approve?pubkey=${W}&token=${minted!.token}&exp=${minted!.exp}`), {});
+    const tap = () => worker.fetch(ownerPost("/pilot-approve", W, minted!), {});
+    const opened = await openLink();
+    const page = await opened.text();
+    check(
+      "opening the link (GET) approves nothing: it shows a confirmation with a POST button",
+      opened.status === 200 && /method="post"/.test(page) && /Approve this wallet\?/.test(page) && store.get(`pilot:testnet:appr:${W}`) !== "1",
+      page.slice(0, 60),
+    );
     const first = await tap();
     check("the first tap approves (200)", first.status === 200 && store.get(`pilot:testnet:appr:${W}`) === "1", String(first.status));
     for (let i = 0; i < 3; i++) await enforcePilot(W);
@@ -468,10 +676,584 @@ async function main() {
     clearKv();
   }
 
+  await pilotStatusChecks();
+  await signedProofChecks();
+  await signedOutcomeChecks();
+  await legacyPathChecks();
+  await answerMailChecks();
+  await ownerCliChecks();
+
   console.log("\n============================================================");
   console.log(fail === 0 ? ` ✅ PILOT GUARD TESTS PASS (${pass}/${pass})` : ` ❌ ${fail} FAILURES (${pass} passed)`);
   console.log("============================================================");
   if (fail > 0) process.exit(1);
+}
+
+/* ------------------------------------------------------------------------------------------
+ * [15] /pilot-status (contract 3.1): revoked, an honest 503, and buckets of its own.
+ * ------------------------------------------------------------------------------------------ */
+async function pilotStatusChecks(): Promise<void> {
+  console.log("[15] /pilot-status says revoked, answers 503 when it cannot check, and spends only its own buckets");
+  const kvState = { failing: false };
+  const { store } = installFakeKv({ failGets: () => kvState.failing });
+  mainnetEnv();
+  const status = async (pk: string, ip?: string) => asJson(await get(`/pilot-status?pubkey=${pk}`, ip));
+
+  const A = Keypair.random().publicKey();
+  await approvePilot(A);
+  await revokePilot(A);
+  const revoked = await status(A);
+  check(
+    "a revoked wallet reads {state:'rejected', approved:false, revoked:true}",
+    revoked.status === 200 && revoked.json.pilot === true && revoked.json.state === "rejected" && revoked.json.approved === false && revoked.json.revoked === true,
+    JSON.stringify(revoked.json),
+  );
+  const B = Keypair.random().publicKey();
+  await approvePilot(B);
+  await rejectPilot(B);
+  const declined = await status(B);
+  check("a declined wallet reads rejected with revoked:false", declined.json.state === "rejected" && declined.json.revoked === false, JSON.stringify(declined.json));
+  await approvePilot(A);
+  const back = await status(A);
+  check("re-approving a revoked wallet clears revoked", back.json.state === "approved" && back.json.approved === true && back.json.revoked === false, JSON.stringify(back.json));
+  await revokePilot(A);
+  await rejectPilot(A);
+  check("declining a revoked wallet leaves it plainly declined", (await status(A)).json.revoked === false);
+  // A row from before revokePilot also wrote the status: "approved", with no allowlist flag behind it.
+  const C = Keypair.random().publicKey();
+  store.set(`pilot:mainnet:status:${C}`, "approved");
+  const legacy = await status(C);
+  check(
+    "a legacy 'approved' status with no allowlist flag reads rejected and revoked, never approved",
+    legacy.json.state === "rejected" && legacy.json.revoked === true && legacy.json.approved === false,
+    JSON.stringify(legacy.json),
+  );
+  const none = await status(Keypair.random().publicKey());
+  check(
+    "a wallet that never asked reads {state:'none', approved:false, used:0, limit:5, revoked:false}",
+    none.json.state === "none" && none.json.approved === false && none.json.used === 0 && none.json.limit === 5 && none.json.revoked === false,
+    JSON.stringify(none.json),
+  );
+  kvState.failing = true;
+  const down = await status(B);
+  kvState.failing = false;
+  check(
+    "a store that does not answer is 503 'pilot store unavailable', never a 200 'not approved'",
+    down.status === 503 && flatEq(down.json, { error: "pilot store unavailable" }),
+    `${down.status} ${JSON.stringify(down.json)}`,
+  );
+
+  // The value routes' windows are not the status route's. Default limits from here (30 per IP, 5 per account).
+  delete process.env.RATE_CAP;
+  delete process.env.ACCOUNT_RATE_CAP;
+  const IP = "203.0.113.60";
+  const answers: number[] = [];
+  for (let i = 0; i < 40; i++) answers.push((await status(Keypair.random().publicKey(), IP)).status);
+  check(
+    "40 status asks from one address are counted in their own bucket (rl:ip:ps:...)",
+    [...store.keys()].some((k) => k.startsWith(`rl:ip:ps:${IP}:`)),
+    `${answers.filter((s) => s === 429).length} of 40 were 429`,
+  );
+  check("and none of them in the value routes' per-IP bucket", ![...store.keys()].some((k) => k.startsWith(`rl:ip:${IP}:`)));
+  const claim = await post("/v2-claim", { method: "nope", linkHex: "00", payout: Keypair.random().publicKey(), sigHex: "00" }, IP);
+  check("so /v2-claim from that address is not a 429", claim.status !== 429, `${claim.status} ${JSON.stringify(claim.json)}`);
+  const Wx = Keypair.random().publicKey();
+  const IP2 = "203.0.113.61";
+  for (let i = 0; i < 5; i++) await status(Wx, IP2);
+  const counted = [...store.entries()].filter(([k]) => k.startsWith(`rl:acct:ps:${Wx}:`)).reduce((n, [, v]) => n + Number(v), 0);
+  check("5 status asks for one wallet are counted under acct:ps:<wallet>", counted === 5, `counted ${counted}`);
+  const deposit = await post("/v2-deposit", { xdr: "AAAA", senderPublicKey: Wx }, IP2);
+  check("so /v2-deposit naming that wallet does not get the per-account 429", deposit.status !== 429, `${deposit.status} ${JSON.stringify(deposit.json)}`);
+  clearMainnetEnv();
+}
+
+/* ------------------------------------------------------------------------------------------
+ * [16] /pilot-request, SIGNED (contract 1 and 3.2): the proof and the inbox, before anything is written.
+ * ------------------------------------------------------------------------------------------ */
+async function signedProofChecks(): Promise<void> {
+  console.log("[16] /pilot-request, signed: the account signs it, and the inbox is proven, before anything is written");
+  const { store, mails } = installFakeKv();
+  mainnetEnv();
+  const ONES = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1));
+  const GOLDEN =
+    "lumenia-handle-pilot:v1:fb72704240c3527ba45904a8705865922f70a9c4f3c11bfa93c839f939945884:GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR:1760000000:0123456789abcdef:mainnet";
+  const GOLDEN_SIG = "kZuq86B7rr9BIoSE0Mb2wqfQ2dgxLoRRVLRbT5JHnAvZuizmWtof0me3rY80wPHUfwA0XYWChj4FA8vtTEGnDg==";
+  const built = handleProofMessage("pilot", await idForEmail("  Founder@Example.com "), ONES.publicKey(), 1760000000, "0123456789abcdef", "mainnet");
+  check("the pilot message is the contract's golden string", built === GOLDEN, built.slice(0, 50));
+  check(
+    "and the golden signature verifies over it (and is what the test seed signs)",
+    ONES.verify(Buffer.from(GOLDEN, "utf8"), Buffer.from(GOLDEN_SIG, "base64")) && ONES.sign(Buffer.from(GOLDEN, "utf8")).toString("base64") === GOLDEN_SIG,
+  );
+
+  const w1 = Keypair.random();
+  const W1 = w1.publicKey();
+  const w2 = Keypair.random();
+  const stranger = Keypair.random();
+  const E1 = "first@example.test";
+  const BAD_PROOF = { error: "We couldn't confirm this account signed the request. Check your device clock and try again.", code: "bad-proof" };
+  const nothingFor = (pk: string) => ![...store.keys()].some((k) => k.startsWith("pilot:mainnet:") && k.endsWith(pk));
+
+  const flagged = await post("/pilot-request", { pubkey: W1, email: E1, owner: { pubkey: W1 } });
+  check("an owner object with no signature in it is 401 bad-proof", flagged.status === 401 && flatEq(flagged.json, BAD_PROOF), JSON.stringify(flagged.json));
+  const forged = await post("/pilot-request", { pubkey: W1, email: E1, owner: await pilotProof(stranger, E1, { pubkey: W1 }) });
+  check("another key's signature over this wallet's message is 401 bad-proof (forged)", forged.status === 401 && flatEq(forged.json, BAD_PROOF));
+  const otherKey = await post("/pilot-request", { pubkey: W1, email: E1, owner: await pilotProof(w2, E1) });
+  check("a valid proof by ANOTHER account (owner.pubkey is not the asking wallet) is 401 bad-proof", otherKey.status === 401 && flatEq(otherKey.json, BAD_PROOF));
+  const links = await post("/pilot-request", { pubkey: W1, email: E1, owner: await pilotProof(w1, E1, { action: "links" }) });
+  check("a backup-write (`links`) proof is not a pilot proof", links.status === 401 && links.json.code === "bad-proof");
+  const testnet = await post("/pilot-request", { pubkey: W1, email: E1, owner: await pilotProof(w1, E1, { network: "testnet" }) });
+  check("a proof for the other network is refused", testnet.status === 401 && testnet.json.code === "bad-proof");
+  const otherEmail = await post("/pilot-request", { pubkey: W1, email: E1, owner: await pilotProof(w1, "other@example.test") });
+  check("a proof over a different email is refused", otherEmail.status === 401 && otherEmail.json.code === "bad-proof");
+  const valid = await pilotProof(w1, E1);
+  const noCode = await post("/pilot-request", { pubkey: W1, email: E1, owner: valid });
+  check(
+    "a good proof with no code and no backup row is 401 code-required",
+    noCode.status === 401 && flatEq(noCode.json, { error: "Confirm your email with a code first.", code: "code-required" }),
+    JSON.stringify(noCode.json),
+  );
+  const replayed = await post("/pilot-request", { pubkey: W1, email: E1, owner: valid, code: "123456" });
+  check("the same proof a second time is 401 bad-proof (replayed)", replayed.status === 401 && replayed.json.code === "bad-proof");
+  check(
+    "none of that wrote anything for the wallet, or mailed the owner",
+    nothingFor(W1) && !mails.some((m) => m.to?.[0] === OWNER),
+    [...store.keys()].filter((k) => k.startsWith("pilot:")).join(","),
+  );
+
+  // The email is proven by the backup it protects: a row bound to this account, on this host's store.
+  const w3 = Keypair.random();
+  const W3 = w3.publicKey();
+  const E3 = "backup@example.test";
+  const e3Id = await idForEmail(E3);
+  await putBox(e3Id, BOX, writeProof(w3, e3Id));
+  const byBackup = await post("/pilot-request", { pubkey: W3, email: E3, owner: await pilotProof(w3, E3), src: "web" });
+  check(
+    "a backup row bound to this account proves the email: filed with no code",
+    byBackup.status === 200 && flatEq(byBackup.json, { ok: true, state: "pending", filed: true }),
+    JSON.stringify(byBackup.json),
+  );
+  const mail = mails.filter((m) => m.to?.[0] === OWNER).at(-1);
+  check(
+    "and the owner mail says so, and where it came from",
+    !!mail?.text?.includes("Email confirmed by the backup it protects") && !!mail?.text?.includes("Asked from: the website"),
+    mail?.text?.slice(0, 120),
+  );
+
+  const E2 = "second@example.test";
+  const real = await pilotCode(mails, E2);
+  const wrong = real === "000000" ? "111111" : "000000";
+  const badCode = await post("/pilot-request", { pubkey: w2.publicKey(), email: E2, owner: await pilotProof(w2, E2), code: wrong });
+  check(
+    "a wrong code is 401 bad-code",
+    badCode.status === 401 && flatEq(badCode.json, { error: "That code is wrong or has expired.", code: "bad-code" }),
+    JSON.stringify(badCode.json),
+  );
+  check("and nothing was filed", nothingFor(w2.publicKey()));
+
+  // The verify budget is the same per-email budget the backup codes spend: past it, the answer says so.
+  const E4 = "budget@example.test";
+  const w4 = Keypair.random();
+  const realCode = await pilotCode(mails, E4);
+  const miss = realCode === "000000" ? "111111" : "000000";
+  for (let i = 0; i < 12; i++) await post("/pilot-request", { pubkey: w4.publicKey(), email: E4, owner: await pilotProof(w4, E4), code: miss });
+  const spent = await post("/pilot-request", { pubkey: w4.publicKey(), email: E4, owner: await pilotProof(w4, E4), code: realCode });
+  check("past the per-email verify budget even the right code is a 429 otp-budget", spent.status === 429 && spent.json.code === "otp-budget", JSON.stringify(spent.json));
+  clearMainnetEnv();
+}
+
+/* ------------------------------------------------------------------------------------------
+ * [17] /pilot-request, SIGNED: what each state answers, and which owner mails go out (contract 3.2).
+ * ------------------------------------------------------------------------------------------ */
+async function signedOutcomeChecks(): Promise<void> {
+  console.log("[17] /pilot-request, signed: the answer per state, the owner mails, and the 409 and 503");
+  const mailState = { status: 200, throws: false };
+  const kvState = { failing: false };
+  const { store, ttls, mails } = installFakeKv({
+    failGets: () => kvState.failing,
+    mailStatus: () => mailState.status,
+    mailThrows: () => mailState.throws,
+  });
+  mainnetEnv();
+  const ownerMails = () => mails.filter((m) => m.to?.[0] === OWNER);
+  const ask = async (kp: Keypair, email: string, extra: Record<string, unknown> = {}) =>
+    post("/pilot-request", { pubkey: kp.publicKey(), email, owner: await pilotProof(kp, email), ...extra });
+  const askWithCode = async (kp: Keypair, email: string, src?: string) =>
+    ask(kp, email, { code: await pilotCode(mails, email), ...(src ? { src } : {}) });
+
+  const w1 = Keypair.random();
+  const W1 = w1.publicKey();
+  const w2 = Keypair.random();
+  const W2 = w2.publicKey();
+  const SHARED = "shared@example.test";
+  const seenKey = `pilot:mainnet:seen:${await idForEmail(SHARED)}`;
+
+  const first = await askWithCode(w1, SHARED, "ext");
+  check("a first ask with a proven code: 200 {ok, state:'pending', filed:true}", first.status === 200 && flatEq(first.json, { ok: true, state: "pending", filed: true }), JSON.stringify(first.json));
+  check(
+    "the wallet is pending and its contact is kept 90 days",
+    store.get(`pilot:mainnet:status:${W1}`) === "pending" && store.get(`pilot:mainnet:email:${W1}`) === SHARED && ttls.get(`pilot:mainnet:email:${W1}`) === NINETY_DAYS,
+  );
+  check("where it asked from is kept 90 days too", store.get(`pilot:mainnet:src:${W1}`) === "ext" && ttls.get(`pilot:mainnet:src:${W1}`) === NINETY_DAYS);
+  check("the email's latest-wallet marker names it, for 90 days", store.get(seenKey) === W1 && ttls.get(seenKey) === NINETY_DAYS);
+  const m1 = ownerMails().at(-1);
+  check(
+    "one owner mail: asked from the extension, email confirmed by a code",
+    ownerMails().length === 1 && !!m1?.text?.includes("Asked from: the extension") && !!m1?.text?.includes("Email confirmed by a code"),
+    m1?.text?.slice(0, 160),
+  );
+  check(
+    "and the owner-mailed marker is set for 7 days",
+    store.get(`pilot:mainnet:mailed:${W1}`) === "1" && ttls.get(`pilot:mainnet:mailed:${W1}`) === PILOT_MAILED_SECONDS && PILOT_MAILED_SECONDS === 604800,
+  );
+  check("the request mail's subject is plain ASCII", /^Pilot request - shared@example\.test \(mainnet\)$/.test(m1?.subject ?? ""), m1?.subject);
+
+  // A second wallet with the same email, its inbox proven: filed, and nobody is left in the dark.
+  const second = await askWithCode(w2, SHARED, "web");
+  check(
+    "another wallet asking with that email, code proven, is filed too (W2 pending)",
+    second.status === 200 && second.json.state === "pending" && second.json.filed === true && store.get(`pilot:mainnet:status:${W2}`) === "pending",
+    JSON.stringify(second.json),
+  );
+  check(
+    "and hears which wallet asked with it before: emailAlsoFor = short(W1)",
+    second.json.emailAlsoFor === shortAddress(W1) && shortAddress(W1) === `${W1.slice(0, 6)}...${W1.slice(-6)}`,
+    String(second.json.emailAlsoFor),
+  );
+  const m2 = ownerMails().at(-1);
+  check(
+    "exactly one more owner mail, naming the first wallet and where it stands",
+    ownerMails().length === 2 && !!m2?.text?.includes(`This email also asked for ${shortAddress(W1)} (pending).`),
+    m2?.text?.slice(0, 200),
+  );
+  check("the marker now names the latest wallet", store.get(seenKey) === W2);
+
+  // Proving your own inbox is not a way to file for somebody else's key.
+  const victim = Keypair.random();
+  const stranger = Keypair.random();
+  const SE = "stranger@example.test";
+  const forVictim = await post("/pilot-request", { pubkey: victim.publicKey(), email: SE, owner: await pilotProof(stranger, SE), code: await pilotCode(mails, SE) });
+  check("a stranger with a proven inbox still cannot file for a victim's key (401 bad-proof)", forVictim.status === 401 && forVictim.json.code === "bad-proof");
+  check("nothing was filed for the victim", !store.has(`pilot:mainnet:status:${victim.publicKey()}`) && ownerMails().length === 2);
+
+  // A pending re-ask: the contact follows the ask, the owner is not mailed twice in a week.
+  const RENAMED = "renamed@example.test";
+  const reask = await askWithCode(w1, RENAMED);
+  check(
+    "a pending re-ask inside 7 days: {state:'pending', filed:false, already:true}",
+    flatEq(reask.json, { ok: true, state: "pending", filed: false, already: true }),
+    JSON.stringify(reask.json),
+  );
+  check("no new owner mail", ownerMails().length === 2);
+  check("and the contact is now the email it asked with", (await getPilotEmail(W1)) === RENAMED && ttls.get(`pilot:mainnet:email:${W1}`) === NINETY_DAYS);
+  store.delete(`pilot:mainnet:mailed:${W1}`); // seven days on
+  const weekOn = await askWithCode(w1, RENAMED);
+  check("a week on, the re-ask mails the owner again (filed:true, already:true)", weekOn.json.filed === true && weekOn.json.already === true && ownerMails().length === 3, JSON.stringify(weekOn.json));
+
+  // A mail that did not go out is not counted: the next ask mails again at once.
+  const w3 = Keypair.random();
+  const FAILED = "failed-mail@example.test";
+  const failedCode = await pilotCode(mails, FAILED);
+  mailState.status = 500;
+  const failed = await ask(w3, FAILED, { code: failedCode });
+  mailState.status = 200;
+  check("an ask whose owner mail was refused is still filed (200, pending, filed)", failed.status === 200 && failed.json.state === "pending" && failed.json.filed === true);
+  check("and no marker records a mail that did not go out", !store.has(`pilot:mainnet:mailed:${w3.publicKey()}`));
+  const retried = await askWithCode(w3, FAILED);
+  check("so the next ask mails the owner at once (filed:true)", retried.json.filed === true && store.get(`pilot:mainnet:mailed:${w3.publicKey()}`) === "1", JSON.stringify(retried.json));
+
+  // A mailer that throws: still 200, and exactly one log line with the wallet and the contact.
+  const w4 = Keypair.random();
+  const THROWS = "throws@example.test";
+  const throwsCode = await pilotCode(mails, THROWS);
+  mailState.throws = true;
+  const thrown = await captureLogs(() => ask(w4, THROWS, { code: throwsCode }));
+  mailState.throws = false;
+  const requestLines = thrown.lines.filter((l) => l.startsWith("[pilot:request]"));
+  check("a mailer that throws: the ask still answers 200, pending", thrown.result.status === 200 && thrown.result.json.state === "pending", JSON.stringify(thrown.result.json));
+  check(
+    "with exactly one log line naming the wallet and the contact",
+    requestLines.length === 1 && requestLines[0] === `[pilot:request] mainnet wallet ${w4.publicKey()} ${THROWS} (mail failed)`,
+    requestLines.join(" | "),
+  );
+
+  // Approved with every send used: the ask is for more sends, once a week.
+  await approvePilot(W1);
+  store.set(`pilot:mainnet:tx:${W1}`, "5");
+  const before = ownerMails().length;
+  const more = await askWithCode(w1, RENAMED);
+  check("approved, 5 of 5 used: {state:'approved', filed:true, already:true}", flatEq(more.json, { ok: true, state: "approved", filed: true, already: true }), JSON.stringify(more.json));
+  const mm = ownerMails().at(-1);
+  check(
+    "the owner mail asks for more sends, with what was used and the reset command",
+    ownerMails().length === before + 1 && /^Pilot: more sends asked - /.test(mm?.subject ?? "") && !!mm?.text?.includes("Used: 5 of 5 sends") && !!mm?.text?.includes(`pilot reset ${W1}`),
+    mm?.subject,
+  );
+  const moreAgain = await askWithCode(w1, RENAMED);
+  check("a second ask that week mails nobody (filed:false)", moreAgain.json.filed === false && ownerMails().length === before + 1, JSON.stringify(moreAgain.json));
+  await approvePilot(W2);
+  const left = await askWithCode(w2, SHARED);
+  check("approved with sends left: {state:'approved', filed:false, already:true}, no mail", flatEq(left.json, { ok: true, state: "approved", filed: false, already: true }) && ownerMails().length === before + 1, JSON.stringify(left.json));
+
+  // A declined wallet's re-ask reopens nothing.
+  await rejectPilot(w3.publicKey());
+  const declined = await askWithCode(w3, FAILED);
+  check(
+    "a declined wallet's re-ask: {state:'rejected', filed:false, already:true}, no mail, still declined",
+    flatEq(declined.json, { ok: true, state: "rejected", filed: false, already: true }) && ownerMails().length === before + 1 && store.get(`pilot:mainnet:status:${w3.publicKey()}`) === "rejected",
+    JSON.stringify(declined.json),
+  );
+
+  // An email that backs up ANOTHER account: said only to a caller that proved the inbox.
+  const w5 = Keypair.random();
+  const BOUND = "bound-elsewhere@example.test";
+  const boundId = await idForEmail(BOUND);
+  await putBox(boundId, BOX, writeProof(w5, boundId));
+  const taken = await askWithCode(w2, BOUND);
+  check(
+    "a proven code for an email whose backup is bound to another account: 409 email-taken",
+    taken.status === 409 && flatEq(taken.json, { error: "That email backs up another Lumenia account. Ask with the email that backs up this one.", code: "email-taken" }),
+    JSON.stringify(taken.json),
+  );
+  const unproven = await ask(w2, BOUND);
+  check("without a code the same ask hears only code-required (nothing about whose it is)", unproven.status === 401 && unproven.json.code === "code-required");
+
+  // A store that does not answer is not a refusal.
+  const w6 = Keypair.random();
+  const DOWN = "down@example.test";
+  const downCode = await pilotCode(mails, DOWN);
+  const signedProof = await pilotProof(w6, DOWN);
+  kvState.failing = true;
+  const down = await post("/pilot-request", { pubkey: w6.publicKey(), email: DOWN, owner: signedProof, code: downCode });
+  const downLegacy = await post("/pilot-request", { pubkey: w6.publicKey(), email: DOWN });
+  kvState.failing = false;
+  const STORE_DOWN = { error: "We couldn't record that just now. Try again in a minute.", code: "store-unavailable" };
+  check("a store that does not answer: 503 store-unavailable (signed)", down.status === 503 && flatEq(down.json, STORE_DOWN), `${down.status} ${JSON.stringify(down.json)}`);
+  check("and on the legacy path too, instead of the old raw 400", downLegacy.status === 503 && flatEq(downLegacy.json, STORE_DOWN), `${downLegacy.status} ${JSON.stringify(downLegacy.json)}`);
+  clearMainnetEnv();
+}
+
+/* ------------------------------------------------------------------------------------------
+ * [18] /pilot-request, LEGACY (unsigned): the same answers, a collision no longer silent, the switch.
+ * ------------------------------------------------------------------------------------------ */
+async function legacyPathChecks(): Promise<void> {
+  console.log("[18] /pilot-request, legacy: the same answers, a collision logged and mailed, PILOT_REQUIRE_PROOF");
+  const { store, ttls, mails } = installFakeKv();
+  mainnetEnv();
+  const ownerMails = () => mails.filter((m) => m.to?.[0] === OWNER);
+  const L1 = Keypair.random().publicKey();
+  const L2 = Keypair.random().publicKey();
+  const LEGACY = "legacy@example.test";
+  const seenKey = `pilot:mainnet:seen:${await idForEmail(LEGACY)}`;
+
+  const firstAsk = await post("/pilot-request", { pubkey: L1, email: LEGACY });
+  check("a legacy first ask answers exactly {ok:true}", firstAsk.status === 200 && flatEq(firstAsk.json, { ok: true }), JSON.stringify(firstAsk.json));
+  check("it is filed pending, and the marker is written with a 90-day expiry", store.get(`pilot:mainnet:status:${L1}`) === "pending" && store.get(seenKey) === L1 && ttls.get(seenKey) === NINETY_DAYS);
+  const om = ownerMails().at(-1);
+  check(
+    "the owner mail says it came from an older page that confirms no email",
+    !!om?.text?.includes("Asked from: an older page") && !!om?.text?.includes("Email not confirmed"),
+    om?.text?.slice(0, 160),
+  );
+  const again = await post("/pilot-request", { pubkey: L1, email: LEGACY });
+  check("a legacy re-ask answers exactly {ok:true, already:true}", flatEq(again.json, { ok: true, already: true }), JSON.stringify(again.json));
+
+  const mailsBefore = ownerMails().length;
+  const collision = await captureLogs(() => post("/pilot-request", { pubkey: L2, email: LEGACY }));
+  const collisionLines = collision.lines.filter((l) => l.startsWith("[pilot:collision]"));
+  check("a collision answers the ordinary {ok:true}: nothing to probe", flatEq(collision.result.json, { ok: true }), JSON.stringify(collision.result.json));
+  check("it is still not recorded (an unsigned ask proves no inbox)", !store.has(`pilot:mainnet:status:${L2}`) && store.get(seenKey) === L1);
+  check(
+    "but it is exactly one log line naming both wallets",
+    collisionLines.length === 1 && collisionLines[0] === `[pilot:collision] mainnet wallet ${L2} asked with an email already used by ${L1}; not recorded`,
+    collisionLines.join(" | "),
+  );
+  const cm = ownerMails().at(-1);
+  check(
+    "and exactly one owner mail, naming the other wallet",
+    ownerMails().length === mailsBefore + 1 && /^Pilot request not recorded - /.test(cm?.subject ?? "") && !!cm?.text?.includes(`This email also asked for ${shortAddress(L1)} (pending).`),
+    cm?.subject,
+  );
+  const collisionAgain = await captureLogs(() => post("/pilot-request", { pubkey: L2, email: LEGACY }));
+  check(
+    "asking again logs again, but mails the owner no second time that week",
+    collisionAgain.lines.filter((l) => l.startsWith("[pilot:collision]")).length === 1 && ownerMails().length === mailsBefore + 1,
+  );
+
+  check("missing fields: the unchanged 400", flatEq((await post("/pilot-request", { pubkey: L1 })).json, { error: "pubkey and email are required" }));
+  check("a bad pubkey: the unchanged 400", flatEq((await post("/pilot-request", { pubkey: "GNOPE", email: LEGACY })).json, { error: "invalid pubkey" }));
+  check("a bad email: the unchanged 400", flatEq((await post("/pilot-request", { pubkey: L1, email: "not-an-email" })).json, { error: "invalid email" }));
+
+  process.env.PILOT_REQUIRE_PROOF = "1";
+  const closed = await post("/pilot-request", { pubkey: Keypair.random().publicKey(), email: "closed@example.test" });
+  delete process.env.PILOT_REQUIRE_PROOF;
+  check(
+    "with PILOT_REQUIRE_PROOF=1 an unsigned ask is 400 proof-required",
+    closed.status === 400 && flatEq(closed.json, { error: "Reload the page and ask again.", code: "proof-required" }),
+    JSON.stringify(closed.json),
+  );
+
+  // Revoking the wallet a marker names deletes the marker; another wallet's marker stays.
+  const L3 = Keypair.random().publicKey();
+  const KEEP = "keep@example.test";
+  await post("/pilot-request", { pubkey: L3, email: KEEP });
+  const keepKey = `pilot:mainnet:seen:${await idForEmail(KEEP)}`;
+  await approvePilot(L1);
+  await revokePilot(L1);
+  check("revoking a wallet deletes the email marker that names it", !store.has(seenKey));
+  await revokePilot(Keypair.random().publicKey());
+  check("and a revoke of some other wallet leaves another email's marker alone", store.get(keepKey) === L3);
+  clearMainnetEnv();
+}
+
+/* ------------------------------------------------------------------------------------------
+ * [19] The answer mails name the account, and the owner's links confirm before they act (3.3, 3.4).
+ * ------------------------------------------------------------------------------------------ */
+async function answerMailChecks(): Promise<void> {
+  console.log("[19] the approval and decline mails name the account; the owner links confirm before acting");
+  const { store, mails } = installFakeKv();
+  mainnetEnv();
+  const ext = Keypair.random();
+  const EXT = ext.publicKey();
+  const web = Keypair.random();
+  const WEB = web.publicKey();
+  const EXT_MAIL = "ext-user@example.test";
+  const WEB_MAIL = "web-user@example.test";
+  for (const [kp, email, src] of [[ext, EXT_MAIL, "ext"], [web, WEB_MAIL, "web"]] as const) {
+    const filed = await post("/pilot-request", { pubkey: kp.publicKey(), email, owner: await pilotProof(kp, email), code: await pilotCode(mails, email), src });
+    if (filed.status !== 200) throw new Error(`could not file ${src}: ${JSON.stringify(filed.json)}`);
+  }
+  const to = (email: string) => mails.filter((m) => m.to?.[0] === email && !/^Your Lumenia code/.test(m.subject ?? ""));
+
+  const approveExt = (await mintApprovalToken("approve", EXT, Date.now()))!;
+  const opened = await get(`/pilot-approve?pubkey=${EXT}&exp=${approveExt.exp}&token=${approveExt.token}`);
+  const page = await opened.text();
+  check(
+    "GET on the approve link changes nothing: a confirmation page with a POST form",
+    opened.status === 200 && /<form method="post" action="\/pilot-approve">/.test(page) && store.get(`pilot:mainnet:appr:${EXT}`) !== "1" && to(EXT_MAIL).length === 0,
+    page.slice(0, 80),
+  );
+  const approved = await worker.fetch(ownerPost("/pilot-approve", EXT, approveExt), {});
+  check("POST from that page approves", approved.status === 200 && store.get(`pilot:mainnet:appr:${EXT}`) === "1");
+  const am = to(EXT_MAIL).at(-1);
+  const short = shortAddress(EXT);
+  check(
+    "the approval mail names the account, in the text and the HTML",
+    !!am?.text?.includes(`This approval is for account ${short}.`) && !!am?.html?.includes(`This approval is for account ${short}.`),
+    am?.text?.slice(0, 160),
+  );
+  check(
+    "and says how many real-money links it can make",
+    !!am?.text?.includes("You can make 5 real-money links from this account.") && !!am?.html?.includes("You can make 5 real-money links from this account."),
+  );
+  check("an extension ask gets the extension line", !!am?.text?.includes("Open the Lumenia extension and choose Real money."));
+  check(
+    "the button opens /account for THIS account (#for=<G>)",
+    !!am?.text?.includes(`Switch to real money: https://getlumenia.com/account?switch=mainnet#for=${EXT}\n`) &&
+      !!am?.html?.includes(`href="https://getlumenia.com/account?switch=mainnet#for=${EXT}"`),
+  );
+  const approveWeb = (await mintApprovalToken("approve", WEB, Date.now()))!;
+  await worker.fetch(ownerPost("/pilot-approve", WEB, approveWeb), {});
+  const wm = to(WEB_MAIL).at(-1);
+  check(
+    "a website ask's approval mail has no extension line",
+    !!wm?.text?.includes(`This approval is for account ${shortAddress(WEB)}.`) && !wm?.text?.includes("Open the Lumenia extension"),
+  );
+
+  const rejectExt = (await mintApprovalToken("reject", EXT, Date.now()))!;
+  const ask = await get(`/pilot-reject?pubkey=${EXT}&exp=${rejectExt.exp}&token=${rejectExt.token}`);
+  const askPage = await ask.text();
+  check(
+    "GET on the decline link of an APPROVED wallet asks first, with what it has used",
+    ask.status === 200 && askPage.includes("This wallet is approved for real money and has used 0 of 5 sends. Decline it anyway?") && askPage.includes("Decline anyway"),
+    askPage.slice(0, 120),
+  );
+  check("and changes nothing", store.get(`pilot:mainnet:appr:${EXT}`) === "1" && store.get(`pilot:mainnet:status:${EXT}`) === "approved");
+  const declined = await worker.fetch(ownerPost("/pilot-reject", EXT, rejectExt), {});
+  check("POST declines it", declined.status === 200 && store.get(`pilot:mainnet:status:${EXT}`) === "rejected" && store.get(`pilot:mainnet:appr:${EXT}`) !== "1");
+  const dm = to(EXT_MAIL).at(-1);
+  check(
+    "the decline mail's heading is 'Not approved for now' and it names the account",
+    !!dm?.html?.includes(">Not approved for now</td>") && !!dm?.text?.includes(`This answer is for account ${short}.`),
+    dm?.text?.slice(0, 120),
+  );
+  check(
+    "its second paragraph is the contract's, and it never says 'still on the list'",
+    !!dm?.text?.includes(
+      "This isn't a no forever. If you'd like us to look again, reply to this email. In the meantime, practice mode is open: it's the exact same Lumenia with no real money and no wait.",
+    ) && !/still on the list/i.test(`${dm?.text}${dm?.html}`),
+  );
+  const declineMails = to(EXT_MAIL).length;
+  const twice = await worker.fetch(ownerPost("/pilot-reject", EXT, rejectExt), {});
+  const twicePage = await twice.text();
+  check(
+    "declining it again: 'Already declined. No second email sent.', and no second mail",
+    twice.status === 200 && twicePage.includes("Already declined. No second email sent.") && to(EXT_MAIL).length === declineMails,
+  );
+
+  process.env.SPONSOR_HALT = "1";
+  resetHaltCache();
+  const halted = [
+    (await get(`/pilot-approve?pubkey=${WEB}&exp=${approveWeb.exp}&token=${approveWeb.token}`)).status,
+    (await worker.fetch(ownerPost("/pilot-approve", WEB, approveWeb), {})).status,
+    (await get(`/pilot-reject?pubkey=${EXT}&exp=${rejectExt.exp}&token=${rejectExt.token}`)).status,
+    (await worker.fetch(ownerPost("/pilot-reject", EXT, rejectExt), {})).status,
+  ];
+  delete process.env.SPONSOR_HALT;
+  resetHaltCache();
+  check("the halt switch stops both links on both methods (503)", halted.every((s) => s === 503), halted.join(","));
+  clearMainnetEnv();
+}
+
+/* ------------------------------------------------------------------------------------------
+ * [20] The owner CLI's lines (cli/pilot.ts through lib/pilot-report.ts).
+ * ------------------------------------------------------------------------------------------ */
+async function ownerCliChecks(): Promise<void> {
+  console.log("[20] the owner CLI: counts per state, where each asked from, and the no-account waitlist");
+  const { store } = installFakeKv();
+  process.env.STELLAR_NETWORK = "mainnet";
+  const [P, A, D, R] = [0, 1, 2, 3].map(() => Keypair.random().publicKey()) as [string, string, string, string];
+  store.set(`pilot:mainnet:status:${P}`, "pending");
+  store.set(`pilot:mainnet:email:${P}`, "p@example.test");
+  store.set(`pilot:mainnet:src:${P}`, "web");
+  await approvePilot(A);
+  store.set(`pilot:mainnet:src:${A}`, "ext");
+  await approvePilot(D);
+  await rejectPilot(D);
+  await approvePilot(R);
+  await revokePilot(R);
+  const all = await listPilot("all");
+  const lines = pilotListLines(all, "all", "mainnet");
+  check(
+    "the first line counts every state, a revoked wallet apart from a declined one",
+    lines[0] === "mainnet pilot: 4 wallet(s): pending 1, approved 1, rejected 1, revoked 1, none 0",
+    lines[0],
+  );
+  check(
+    "each wallet's line says whether there is a contact and where it asked from",
+    lines.some((l) => l.includes(P) && l.includes("email:yes") && l.includes("src:web")) && lines.some((l) => l.includes(A) && l.includes("src:ext")),
+    lines.slice(2).join(" | "),
+  );
+  const revokedOnly = pilotListLines(all, "revoked", "mainnet");
+  check(
+    "'pilot list revoked' keeps only the revoked wallet",
+    revokedOnly.length === 3 && revokedOnly[1] === '1 wallet(s) with state "revoked"' && !!revokedOnly[2]?.includes(R) && !!revokedOnly[2]?.includes("revoked"),
+    revokedOnly.join(" | "),
+  );
+  await saveContact("pilot", "Zed@Example.test");
+  await saveContact("pilot", "amy@example.test");
+  await saveContact("waitlist", "someone-else@example.test");
+  const wl = waitlistLines(await listContacts("pilot"));
+  check(
+    "'pilot waitlist' lists the no-account askers, sorted, and only them",
+    wl.length === 3 && wl[0]!.startsWith("waitlist: 2 address(es)") && wl[1] === "  amy@example.test" && wl[2] === "  zed@example.test",
+    wl.join(" | "),
+  );
+  const st = pilotStatusLines("mainnet", R, await pilotStatus(R), await getPilotSrc(R));
+  check("'pilot status' prints revoked and src", st.includes("  revoked:  true") && st.includes("  src:      -"), st.join(" | "));
+  const sa = pilotStatusLines("mainnet", A, await pilotStatus(A), await getPilotSrc(A));
+  check("and an approved extension wallet reads revoked false, src ext", sa.includes("  revoked:  false") && sa.includes("  src:      ext"), sa.join(" | "));
+  delete process.env.STELLAR_NETWORK;
+  clearKv();
 }
 
 main().catch((e) => {

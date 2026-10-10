@@ -51,3 +51,24 @@ export async function saveContact(list: string, email: string): Promise<{ ok: tr
   const body = (await res.json().catch(() => ({}))) as { result?: number };
   return { ok: true, added: body.result === 1 };
 }
+
+/**
+ * Owner CLI only (`pilot waitlist`): every address on one list, sorted. The "pilot" list is the
+ * people who asked for real money before they had an account, so there is no wallet to approve and
+ * the owner answers them by hand. Printed to the owner's terminal; no route exposes it. Throws
+ * without a store, and on a store error.
+ */
+export async function listContacts(list: string): Promise<string[]> {
+  if (!LISTS.has(list)) throw new Error("unknown list");
+  const kv = kvConfigFromEnv();
+  if (!kv) throw new Error("contact store not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");
+  const res = await fetch(`${kv.url}/pipeline`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
+    body: JSON.stringify([["SMEMBERS", `lumenia:${list}`]]),
+  });
+  if (!res.ok) throw new Error(`contact store returned ${res.status}`);
+  const [first] = (await res.json()) as Array<{ result?: unknown; error?: string }>;
+  if (first?.error) throw new Error(`contact store error: ${first.error}`);
+  return Array.isArray(first?.result) ? first.result.map(String).sort() : [];
+}

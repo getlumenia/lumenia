@@ -27,7 +27,12 @@ src/spike*.ts             proof spikes (#1/#1b/#1c/#4/#5/#6/#7/#8/#9/#10 + Lumen
 Endpoints (Worker): `/health`, `/create-account`, `/feebump`, `/send-link`, `/sweep`, `/payout`,
 `/faucet`, `/demo-link`, `/waitlist`, `/feedback`, `/events`, plus the v2 Soroban group
 (`/v2-deposit` `/v2-claim` `/v2-reclaim`), the recovery group (`/recovery-otp` `/recovery`
-`/recovery-fetch` `/recovery-alias-fetch`) and the pilot group (`/pilot-*`).
+`/recovery-fetch` `/recovery-check` `/recovery-release` `/recovery-alias-fetch`) and the pilot
+group (`/pilot-*`).
+
+Two switches, unset by default (unset keeps the old behavior): `RECOVERY_REQUIRE_OWNER=1` on the
+testnet Worker refuses an unsigned first backup, and `PILOT_REQUIRE_PROOF=1` on the mainnet Worker
+refuses an unsigned ask to join real money. Set both once the website that signs both is live.
 
 ## Run
 
