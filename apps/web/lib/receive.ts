@@ -13,7 +13,7 @@
  * changes and a rule quietly rots.
  */
 import { StrKey } from "@stellar/stellar-sdk";
-import { USDC_ISSUER } from "./network";
+import { testnetConfig, USDC_ISSUER } from "./network";
 
 export interface ReceiveUriOpts {
   address: string;
@@ -70,12 +70,57 @@ export const NETWORK_LABEL: Record<"real" | "test", string> = {
 };
 
 /** Shared with /send's faucet button so the two call sites cannot drift apart. */
-export async function getTestMoney(sponsorUrl: string, address: string): Promise<void> {
-  const res = await fetch(`${sponsorUrl.replace(/\/$/, "")}/faucet`, {
+/** What getTestMoney may be handed instead of the real network (the self-test's seam). */
+export interface TestMoneyDeps {
+  fetch: (input: string, init?: RequestInit) => Promise<Response>;
+  sleep: (ms: number) => Promise<void>;
+  /** The faucet is testnet-only, so a payment it could not see land is looked up on the testnet ledger. */
+  horizonUrl: string;
+  /** How long to look for that payment before calling it a failure. */
+  waitMs: number;
+}
+
+const LOOK_EVERY_MS = 3_000;
+
+/** True once the testnet ledger shows the payment succeeded; false if it failed or never showed up in time. */
+async function paymentLanded(hash: string, d: TestMoneyDeps): Promise<boolean> {
+  for (let waited = 0; ; waited += LOOK_EVERY_MS) {
+    const r = await d.fetch(`${d.horizonUrl.replace(/\/$/, "")}/transactions/${hash}`).catch(() => null);
+    if (r && r.ok) {
+      const t = (await r.json().catch(() => null)) as { successful?: unknown } | null;
+      if (t?.successful === true) return true;
+      if (t?.successful === false) return false;
+    }
+    if (waited + LOOK_EVERY_MS > d.waitMs) return false;
+    await d.sleep(LOOK_EVERY_MS);
+  }
+}
+
+/**
+ * Practice dollars from the testnet sponsor's faucet. A 202 means the sponsor sent the payment but
+ * did not see it land (a Horizon timeout): that is not done until the ledger says so, so the
+ * payment is looked up by its hash for a short while, and one that never shows up is a failure to
+ * try again, never "added". On 2026-10-10 a 202 read as success showed "You have $0.00".
+ */
+export async function getTestMoney(sponsorUrl: string, address: string, deps: Partial<TestMoneyDeps> = {}): Promise<void> {
+  const d: TestMoneyDeps = {
+    fetch: (input, init) => fetch(input, init),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    horizonUrl: testnetConfig().horizonUrl,
+    waitMs: 30_000,
+    ...deps,
+  };
+  const res = await d.fetch(`${sponsorUrl.replace(/\/$/, "")}/faucet`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ recipientPublicKey: address }),
   });
+  if (res.status === 202) {
+    const j = (await res.json().catch(() => ({}))) as { hash?: unknown };
+    const hash = typeof j.hash === "string" && /^[0-9a-f]{64}$/.test(j.hash) ? j.hash : null;
+    if (hash && (await paymentLanded(hash, d))) return;
+    throw new Error("Practice dollars didn't arrive this time. Try again in a moment.");
+  }
   if (!res.ok) {
     const j = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(j.error ?? "Couldn't get test money right now.");
