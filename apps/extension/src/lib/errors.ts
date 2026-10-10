@@ -36,8 +36,17 @@ export const MESSAGES: Record<ErrorCode, string> = {
   "needs-consent": "Read and agree to what this extension sends before it can do anything.",
   "needs-password": "Real money needs an account locked with a password.",
   "needs-backup": "Real money needs this account backed up first. Until then it lives only in this browser.",
-  "not-approved": "Real money is invite-only for now, and this account is not approved yet.",
-  "pilot-unknown": "We couldn't check whether real money is open for this account. Try again in a minute.",
+  "not-approved": "Real money is invite-only for now. Ask to join with this account.",
+  "pilot-unknown": "We couldn't check real money for this account. Try again in a minute.",
+  // The standings of LUMENIA ACCOUNT CONTRACT v1, 5.1, without the account's short address (the
+  // worker adds it where it knows the account, and the popup shows the full lines).
+  "pilot-pending": "You're on the list. We'll email you when this account is approved.",
+  "pilot-declined": "Not approved for now. This account isn't approved for real money yet. If you think we got it wrong, reply to our email.",
+  "pilot-revoked":
+    "Real money is off for this account. Your money stays yours: you can still receive it, cash it out and take links back.",
+  "pilot-code-required": "Confirm your email with a code first.",
+  "email-taken": "This email already backs up another Lumenia account.",
+  "backup-not-mine": "That email doesn't back up this account.",
   "slots-used": "You've used all your real-money sends in the pilot.",
   "over-cap": CAPS_SENTENCE,
   "rate-limited": "Too many tries in a minute. Wait a moment, then try again.",
@@ -58,7 +67,7 @@ export const MESSAGES: Record<ErrorCode, string> = {
   "not-backed-up":
     "This account exists only in this browser. If you forget it here, it and any money in it are gone for good. Back it up first.",
   "unsupported-backup": "This backup has settings this extension doesn't support, so it wasn't opened.",
-  "account-not-found": "This account isn't on this network yet. Add dollars to it on getlumenia.com first.",
+  "account-not-found": "This account isn't open on this network yet.",
   "not-enough-money": "That's more than you have.",
   busy: "A link is still being made. Wait for it to finish.",
   "open-send":
@@ -73,6 +82,13 @@ export const MESSAGES: Record<ErrorCode, string> = {
   "host-access": "Allow Lumenia to reach its servers first.",
   internal: "Something went wrong. Your money hasn't moved. Try again.",
 };
+
+/**
+ * Said before an account whose backup was never confirmed as its own (an older server never said,
+ * or the server said it is not tied to it) leaves this browser: it may be lost for good.
+ */
+export const UNCONFIRMED_LOSS =
+  "We can't confirm a backup that opens this account. If it has none, it and any money in it are gone for good once it leaves this browser.";
 
 /**
  * "Forget this account" while links are open: what is at stake, in words. The worker refuses with

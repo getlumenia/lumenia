@@ -99,7 +99,7 @@ async function main() {
   const code = await mail.nextCode();
   log("popup: backup code arrived by mail");
   await p.getByLabel("6-digit code").fill(code);
-  await p.getByText("Backed up").waitFor({ timeout: 60_000 });
+  await p.getByRole("heading", { name: "Backed up" }).waitFor({ timeout: 60_000 });
   evidence.backedUp = (await ext.ask({ type: "state" })).backup.needed === false;
   log(`popup: backed up: ${evidence.backedUp}`);
   if (!evidence.backedUp) throw new Error("the account still reads as not backed up");
@@ -120,7 +120,10 @@ async function main() {
   await q.getByLabel("6-digit code").fill(code2);
   await q.getByLabel("Backup password").fill(PASSWORD, { timeout: 60_000 });
   await q.getByRole("button", { name: /^Restore$/ }).click();
-  await q.getByLabel("Amount").waitFor({ timeout: 90_000 });
+  // The restore names the account once ("This is G..., backed up with ..."), then the home screen.
+  await q.getByRole("heading", { name: "Your account is here" }).waitFor({ timeout: 90_000 });
+  await q.getByRole("button", { name: "Done" }).click();
+  await q.getByLabel("Amount").waitFor({ timeout: 30_000 });
   const restored = (await ext2.ask({ type: "state" })).account.pubkey;
   evidence.restoredSameAccount = restored === pubkey;
   evidence.restoredBalance = (await ext2.ask({ type: "balance" })).usd;

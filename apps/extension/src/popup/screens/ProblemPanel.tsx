@@ -28,7 +28,7 @@ export function ProblemPanel({ problem, onAction }: { problem: Problem; onAction
         <Mascot pose={stop ? "phone" : "wave"} size="md" />
         <Heading class="h1--panel">{problem.title}</Heading>
         <p class="panel__body">{problem.body}</p>
-        <Button variant={stop ? "primary" : "secondary"} onClick={act} busy={busy} busyLabel={problem.label}>
+        <Button variant={stop ? "primary" : "secondary"} onClick={act} busy={busy} busyLabel={problem.action === "open-real" ? "Opening" : problem.label}>
           {problem.label}
         </Button>
       </section>

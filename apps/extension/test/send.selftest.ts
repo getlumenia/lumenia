@@ -11,7 +11,8 @@
  *   [f] the key and the balance
  *   [g] what createLink is handed
  *   [h] a worker that dies mid-send, and the settle pass that finishes the job without sending again
- *   [i] pilot.ts: the cached real-money answer, and canSendRealMoney
+ *   [i] pilot.ts: the cached real-money answer, and canSendRealMoney; an answer that does not say
+ *       where the account stands is "unknown", never "not approved" (LUMENIA ACCOUNT CONTRACT v1, 4)
  *   [j] nothing secret ever reached storage
  *
  * The real createV2Link is exercised end to end, offline, in url.selftest.ts.
@@ -182,7 +183,7 @@ async function main() {
       pilot: async () => {
         rig.log.push("pilot");
         if (cfg.pilot instanceof Error) throw cfg.pilot;
-        return { pilot: true, approved: true, state: "approved", used: 0, limit: 5, at: clock.now, ...cfg.pilot };
+        return { pilot: true, approved: true, state: "approved", used: 0, limit: 5, revoked: false, at: clock.now, ...cfg.pilot };
       },
       balance: async (pubkey, net) => {
         rig.log.push("balance");
@@ -442,7 +443,12 @@ async function main() {
     { name: "mainnet, an account made here and never backed up", cfg: { ...MAIN, backupNeeded: true }, code: "needs-backup", pilotAsked: false },
     { name: "mainnet, never backed up, even with the pilot retired and the wallet admitted", cfg: { ...MAIN, backupNeeded: true, pilot: { pilot: false, approved: true, state: "open", limit: 0 } }, code: "needs-backup", pilotAsked: false },
     { name: "mainnet, the real-money note not accepted", cfg: { ...MAIN, settings: { net: "public", mainnetAck: false } }, code: "not-approved", pilotAsked: false },
-    { name: "mainnet, the account is not approved", cfg: { ...MAIN, pilot: { approved: false, state: "none" } }, code: "not-approved", pilotAsked: true },
+    { name: "mainnet, the account is not approved (never asked)", cfg: { ...MAIN, pilot: { approved: false, state: "none" } }, code: "not-approved", pilotAsked: true },
+    // Each standing that does not open real money is its own refusal, never "not on the list".
+    { name: "mainnet, the account asked and waits (pending)", cfg: { ...MAIN, pilot: { approved: false, state: "pending" } }, code: "pilot-pending", pilotAsked: true },
+    { name: "mainnet, the account was declined", cfg: { ...MAIN, pilot: { approved: false, state: "rejected" } }, code: "pilot-declined", pilotAsked: true },
+    { name: "mainnet, the account was taken off real money", cfg: { ...MAIN, pilot: { approved: false, state: "rejected", revoked: true } }, code: "pilot-revoked", pilotAsked: true },
+    { name: "mainnet, approved but no longer on the allowlist", cfg: { ...MAIN, pilot: { approved: false, state: "approved" } }, code: "pilot-revoked", pilotAsked: true },
     { name: "mainnet, all five sends used (used == limit)", cfg: { ...MAIN, pilot: { used: 5, limit: 5 } }, code: "slots-used", pilotAsked: true },
     { name: "mainnet, more than the limit used", cfg: { ...MAIN, pilot: { used: 9, limit: 5 } }, code: "slots-used", pilotAsked: true },
     { name: "mainnet, the pilot answer is unknown (never read as 'not approved')", cfg: { ...MAIN, pilot: new ExtError("pilot-unknown", MESSAGES["pilot-unknown"]) }, code: "pilot-unknown", pilotAsked: true },
@@ -478,6 +484,15 @@ async function main() {
       `${codeOf(res)} log=[${rig.log.join(",")}]`,
     );
   }
+  const shortPub = `${PUB.slice(0, 6)}...${PUB.slice(-6)}`;
+  const waiting = await send(makeRig({ ...MAIN, pilot: { approved: false, state: "pending" } }));
+  ok(
+    "the waiting refusal is the contract's standing, naming this account by its short address",
+    "error" in waiting && (waiting.error as Error).message === `You're on the list. We'll email you when this account (${shortPub}) is approved.`,
+    "error" in waiting ? (waiting.error as Error).message : "returned",
+  );
+  const spent = await send(makeRig({ ...MAIN, pilot: { used: 5, limit: 5 } }));
+  ok("the no-sends refusal says the account has used all 5 of its sends", "error" in spent && (spent.error as Error).message.startsWith(`No real-money sends left. This account (${shortPub}) has used all 5 of its real-money sends.`));
 
   const amounts: [string, NetId, string][] = [
     ["1,50", "testnet", "1.50"],
@@ -680,7 +695,7 @@ async function main() {
   await fresh();
   const first = await pilot.pilotStatus(PUB, { now: T0 });
   ok("the first ask goes to the MAINNET sponsor's /pilot-status with the public key, as a plain GET", asks.length === 1 && asks[0]!.url === `${MAIN_URL}/pilot-status?pubkey=${encodeURIComponent(PUB)}` && asks[0]!.init === undefined, asks[0]?.url);
-  ok("  ...the answer is read field by field and stamped", same(first, { pilot: true, approved: true, state: "approved", used: 2, limit: 5, at: T0 }));
+  ok("  ...the answer is read field by field and stamped", same(first, { pilot: true, approved: true, state: "approved", used: 2, limit: 5, revoked: false, at: T0 }));
   ok("  ...and kept in the session under the account's own key", same(await fake.session.get(storage.K.pilot(PUB)), first) && same(await pilot.cachedPilot(PUB), first));
   await pilot.pilotStatus(PUB, { now: T0 + 59_999 });
   ok("a second ask a ms inside the minute is answered from the cache: no request", asks.length === 1);
@@ -730,21 +745,33 @@ async function main() {
   ok("  ...with an old answer on file the old answer is returned", (await pilot.pilotStatus(PUB, { now: T0 + 5 * MIN })).approved === true);
   await fresh();
   reply = () => jsonResponse(200, { pilot: false, approved: false });
-  ok("a sponsor that is not running a pilot: not a pilot, not approved, state none, zeroes", same(await pilot.pilotStatus(PUB, { now: T0 }), { pilot: false, approved: false, state: "none", used: 0, limit: 0, at: T0 }));
+  ok("a sponsor that is not running a pilot: not a pilot, not approved, state none, zeroes", same(await pilot.pilotStatus(PUB, { now: T0 }), { pilot: false, approved: false, state: "none", used: 0, limit: 0, revoked: false, at: T0 }));
+  await fresh();
+  reply = () => jsonResponse(200, { pilot: false, approved: true, state: "open" });
+  ok("  ...the open answer reads as open to everyone", pilot.canSendRealMoney(await pilot.pilotStatus(PUB, { now: T0 })));
+  // LUMENIA ACCOUNT CONTRACT v1, 4: the pilot on with no state (what an older sponsor answered when
+  // its store failed) is a failed ask, never an answer: it used to be read as "approved" or "not approved".
   await fresh();
   reply = () => jsonResponse(200, { pilot: true, approved: true });
-  ok("approved without a state reads as state approved", (await pilot.pilotStatus(PUB, { now: T0 })).state === "approved");
+  ok("the pilot on with no state, approved true: pilot-unknown, nothing cached", codeOf(await outcome(pilot.pilotStatus(PUB, { now: T0 }))) === "pilot-unknown" && (await pilot.cachedPilot(PUB)) === null);
   await fresh();
   reply = () => jsonResponse(200, { pilot: true, approved: "yes", used: "3", limit: "abc" });
-  ok("an answer whose approved is not a boolean is not an answer: pilot-unknown, and nothing cached", codeOf(await outcome(pilot.pilotStatus(PUB, { now: T0 }))) === "pilot-unknown" && (await pilot.cachedPilot(PUB)) === null);
+  ok("an answer whose approved is not a boolean and that has no state is not an answer: pilot-unknown, and nothing cached", codeOf(await outcome(pilot.pilotStatus(PUB, { now: T0 }))) === "pilot-unknown" && (await pilot.cachedPilot(PUB)) === null);
   await fresh();
   reply = () => jsonResponse(200, { pilot: true, approved: false, used: "3", limit: "abc" });
+  ok("the pilot on with no state, approved false: pilot-unknown, nothing cached (never 'not approved')", codeOf(await outcome(pilot.pilotStatus(PUB, { now: T0 }))) === "pilot-unknown" && (await pilot.cachedPilot(PUB)) === null);
+  await fresh();
+  reply = () => jsonResponse(200, { pilot: true, state: "none", approved: false, used: "3", limit: "abc", revoked: "yes" });
   const loose = await pilot.pilotStatus(PUB, { now: T0 });
-  ok("  ...the numbers of a real answer are read strictly: numbers only if numbers", loose.approved === false && loose.used === 3 && loose.limit === 0);
+  ok("  ...the numbers of a real answer are read strictly: numbers only if numbers, a flag only if true", loose.approved === false && loose.used === 3 && loose.limit === 0 && loose.revoked === false);
+  await fresh();
+  reply = () => jsonResponse(200, { pilot: true, state: "rejected", approved: false, used: 1, limit: 5, revoked: true });
+  ok("  ...and the taken-off flag is kept", (await pilot.pilotStatus(PUB, { now: T0 })).revoked === true);
 
-  const approvedP = (o: Partial<PilotInfo>): PilotInfo => ({ pilot: true, approved: true, state: "approved", used: 0, limit: 5, at: T0, ...o });
+  const approvedP = (o: Partial<PilotInfo>): PilotInfo => ({ pilot: true, approved: true, state: "approved", used: 0, limit: 5, revoked: false, at: T0, ...o });
   ok("canSendRealMoney: approved with sends left", pilot.canSendRealMoney(approvedP({ used: 0 })) && pilot.canSendRealMoney(approvedP({ used: 4 })));
   ok("  ...not at the limit, not past it, not when unapproved", !pilot.canSendRealMoney(approvedP({ used: 5 })) && !pilot.canSendRealMoney(approvedP({ used: 6 })) && !pilot.canSendRealMoney(approvedP({ approved: false })));
+  ok("  ...not while waiting, declined or taken off", !pilot.canSendRealMoney(approvedP({ approved: false, state: "pending" })) && !pilot.canSendRealMoney(approvedP({ approved: false, state: "rejected" })) && !pilot.canSendRealMoney(approvedP({ approved: false, state: "rejected", revoked: true })));
   ok("  ...a limit the sponsor did not report (0) does not block: the sponsor still enforces its own", pilot.canSendRealMoney(approvedP({ limit: 0, used: 3 })));
 
   globalThis.fetch = (async () => {

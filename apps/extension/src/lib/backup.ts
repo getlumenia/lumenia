@@ -7,14 +7,21 @@
  * Nothing new is decrypted here: the box was wrapped with the account password when the account
  * was created (background/account.ts createAccount). The signature that binds the stored row to
  * this account comes from the unlocked key, so a backup needs an unlocked extension.
+ *
+ * One email backs up one account. When the email already backs up another one, the server says so
+ * only after the code proved the inbox is the person's own, and stores nothing (lib/recovery-client.ts
+ * BackupConflict); the worker then offers that account, another email, or (for a backup tied to no
+ * account yet) replacing it.
  */
 import type { RecoveryBox, Signer } from "../core";
 import { ExtError, fail } from "./errors";
+import { BackupConflict } from "./recovery-client";
 import { networkFailure, normalizeCode, validEmail } from "./restore";
 
 export interface BackupDeps {
   requestOtp(email: string): Promise<void>;
-  store(email: string, code: string, box: RecoveryBox, signer: Signer | undefined): Promise<void>;
+  /** resolves with whether the server says the row is now tied to this account (null: it does not say) */
+  store(email: string, code: string, box: RecoveryBox, signer: Signer): Promise<{ bound: boolean | null }>;
 }
 
 /** Step 1: mail a code to `email`. */
@@ -29,18 +36,20 @@ export async function startBackup(deps: BackupDeps, email: string): Promise<void
 
 /**
  * The sponsor's own refusals of a write it will not take, in its words (apps/sponsor/src/lib/
- * recovery-store.ts, PublicRefusal): an address that already holds another account's backup, or a
- * bound row that needs that account's signature. Nothing was stored.
+ * recovery-store.ts, PublicRefusal): an address that already holds another account's backup (an
+ * older server says it this way), or a bound row that needs that account's signature. Nothing was
+ * stored.
  */
 const REFUSED = /already holds a backup for a different account|needs a signature from the account/i;
 
-/** Step 2: trade the code for a stored backup. */
-export async function finishBackup(deps: BackupDeps, email: string, code: string, box: RecoveryBox, signer: Signer | undefined): Promise<void> {
+/** Step 2: trade the code for a stored backup. A BackupConflict passes through for the caller. */
+export async function finishBackup(deps: BackupDeps, email: string, code: string, box: RecoveryBox, signer: Signer): Promise<{ bound: boolean | null }> {
   const c = normalizeCode(code);
   if (!/^\d{6}$/.test(c)) throw fail("bad-code");
   try {
-    await deps.store(email.trim(), c, box, signer);
+    return await deps.store(email.trim(), c, box, signer);
   } catch (e) {
+    if (e instanceof BackupConflict || e instanceof ExtError) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     if (/wrong or has expired/i.test(msg)) throw fail("bad-code");
     if (REFUSED.test(msg)) throw new ExtError("backup-refused", msg.trim().replace(/\.?$/, "."));

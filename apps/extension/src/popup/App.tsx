@@ -16,13 +16,14 @@ import { holdOpen, onLinksChanged } from "../lib/client";
 import { sortRecords } from "../lib/links";
 import type { LinkRecord, SendOutcome, WorkerState } from "../lib/types";
 import { ask, onStale } from "./api";
-import { AppCtx, type AppApi, type View } from "./context";
+import { AppCtx, type AppApi, type Restored, type View } from "./context";
 import { runEscape } from "./escape";
 import { EMPTY_DRAFT, draftAfterLink, type Draft, type Flow, type FormError, recentReady } from "./flow";
-import { plainSentence } from "./format";
+import { plainSentence, shortAddress } from "./format";
 import { sleep } from "./hooks";
-import { describeProblem, type Problem } from "./problems";
-import { Backup } from "./screens/Backup";
+import { describeProblem, type Problem, type ProblemContext } from "./problems";
+import { AddEmail, Backup } from "./screens/Backup";
+import { Ask } from "./screens/Ask";
 import { Choose } from "./screens/Choose";
 import { Consent } from "./screens/Consent";
 import { Create } from "./screens/Create";
@@ -33,6 +34,7 @@ import { LinkReady } from "./screens/LinkReady";
 import { Links } from "./screens/Links";
 import { ProblemPanel } from "./screens/ProblemPanel";
 import { RestoreCode, RestoreEmail, RestorePassword } from "./screens/Restore";
+import { RestoredBeat } from "./screens/Restored";
 import { SendForm, type SendInput } from "./screens/Send";
 import { Sending } from "./screens/Sending";
 import { Settings } from "./screens/Settings";
@@ -46,6 +48,11 @@ import { readDismissed, writeDismissed } from "./local";
 /** How long the popup waits for a send it lost sight of before it stops and points at Links. */
 const SETTLE_WAIT_MS = 100_000;
 
+/** The account in use, for the refusals that name it (its short address, its real-money sends). */
+function problemContext(w: WorkerState | null | undefined): ProblemContext {
+  return { short: w?.account ? shortAddress(w.account.pubkey) : "", used: w?.pilot?.used, limit: w?.pilot?.limit };
+}
+
 export function App() {
   const [ws, setWs] = useState<WorkerState | null>(null);
   const [unreachable, setUnreachable] = useState(false);
@@ -58,6 +65,8 @@ export function App() {
   const [started, setStarted] = useState(false);
   /** an account was just made here: the "you're in" beat shows once */
   const [fresh, setFresh] = useState(false);
+  /** an account was just restored (or brought in place of another): named once */
+  const [restored, setRestored] = useState<Restored | null>(null);
   const [flow, setFlow] = useState<Flow>({ kind: "form" });
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [formError, setFormError] = useState<FormError | null>(null);
@@ -230,7 +239,7 @@ export function App() {
           },
         });
       } else {
-        setFlow({ kind: "problem", problem: describeProblem("uncertain", "", net) });
+        setFlow({ kind: "problem", problem: describeProblem("uncertain", "", net, problemContext(live.current.ws)) });
       }
       void refresh();
     },
@@ -243,7 +252,7 @@ export function App() {
         setDraft(draftAfterLink);
         setFlow({ kind: "ready", record: o.record, link: o.link ?? null, inserted: Boolean(o.inserted) });
       } else {
-        setFlow({ kind: "problem", problem: describeProblem("uncertain", "", o.record.net) });
+        setFlow({ kind: "problem", problem: describeProblem("uncertain", "", o.record.net, problemContext(live.current.ws)) });
       }
       void reloadRecords();
       void refresh();
@@ -282,7 +291,7 @@ export function App() {
           const next = await refresh();
           const rerouted =
             next !== null && (next.settings.consentAt === null || !next.hostAccess || !next.account || !next.unlocked);
-          setFlow(rerouted ? { kind: "form" } : { kind: "problem", problem: describeProblem(r.code, r.message, net) });
+          setFlow(rerouted ? { kind: "form" } : { kind: "problem", problem: describeProblem(r.code, r.message, net, problemContext(next)) });
           return;
         }
         case "bad-amount":
@@ -300,7 +309,7 @@ export function App() {
           await reloadRecords();
           return;
         default:
-          setFlow({ kind: "problem", problem: describeProblem(r.code, r.message, net) });
+          setFlow({ kind: "problem", problem: describeProblem(r.code, r.message, net, problemContext(live.current.ws)) });
           void reloadRecords();
       }
     },
@@ -318,9 +327,29 @@ export function App() {
           back();
           setView("links");
           return;
-        case "join":
-          openUrl(URLS.pilot);
+        case "ask":
+          // Ask to join (or for more sends) right here, for the key this extension holds.
+          back();
+          setView("ask");
           return;
+        case "check":
+          await ask("pilot.status", { force: true });
+          if (!alive.current) return;
+          back();
+          await refresh();
+          return;
+        case "open-real": {
+          const r = await ask("account.openReal");
+          if (!alive.current) return;
+          if (r.ok) {
+            back();
+            await refresh();
+            return;
+          }
+          const w = live.current.ws;
+          setFlow({ kind: "problem", problem: describeProblem(r.code, r.message, w?.settings.net ?? "public", problemContext(w)) });
+          return;
+        }
         case "web-settings":
           openUrl(URLS.settings);
           return;
@@ -419,6 +448,7 @@ export function App() {
             leaveRestore: () => setGuest("choose"),
             startCreate: () => setGuest("create"),
             justCreated: () => setFresh(true),
+            justRestored: (r: Restored) => setRestored(r),
           }
         : null,
     [ws, records, refresh, reloadRecords, setRecords],
@@ -483,6 +513,7 @@ export function App() {
     }
 
     if (fresh) return <Created onDone={() => setFresh(false)} />;
+    if (restored) return <RestoredBeat restored={restored} onDone={() => setRestored(null)} />;
 
     if (view === "links") {
       return (
@@ -499,6 +530,36 @@ export function App() {
           <Backup />
         </>
       );
+    }
+    if (view === "change-email") {
+      return (
+        <>
+          <SubBar title="Change backup email" onBack={() => setView("settings")} />
+          <Backup again />
+        </>
+      );
+    }
+    if (view === "add-email") {
+      return (
+        <>
+          <SubBar title="Your backup email" onBack={() => setView("settings")} />
+          <AddEmail />
+        </>
+      );
+    }
+    if (view === "ask") {
+      return (
+        <>
+          <SubBar title="Real money" onBack={() => setView("home")} />
+          <Ask />
+        </>
+      );
+    }
+    if (view === "switch") {
+      // Use another account: the restore steps, in place of the account held here. The worker keeps
+      // the step (state.restore), so leaving and coming back lands on it again.
+      if (w.restore?.switching) return w.restore.step === "code" ? <RestoreCode /> : <RestorePassword />;
+      return <RestoreEmail switching />;
     }
     if (view === "settings") {
       return (

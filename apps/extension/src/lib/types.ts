@@ -93,17 +93,38 @@ export interface PilotInfo {
   state: string;
   used: number;
   limit: number;
+  /** the sponsor took this account off real money after approving it (an older sponsor never says) */
+  revoked: boolean;
   /** unix ms the answer was read */
   at: number;
 }
 
+/**
+ * What this browser knows about one account's email backup (storage.local "backups", keyed by the
+ * account's G... key; LUMENIA ACCOUNT CONTRACT v1, section 6).
+ */
+export interface BackupRecord {
+  /** the email it is backed up with; null when this browser never learned it (a record from 0.1.3 or earlier) */
+  email: string | null;
+  /** unix ms it was stored, restored or confirmed */
+  at: number;
+  /**
+   * true only after the server said the backup is tied to this account (a signed write it answered
+   * with bound true, or /recovery-check answering mine); false when it said the backup is not tied
+   * to it; null when nothing said either way (an older server, a record from 0.1.3 or earlier)
+   */
+  bound: boolean | null;
+}
+
 export interface WorkerState {
-  account: { pubkey: string } | null;
+  /** the account held here, the email it is backed up with and whether that backup is confirmed as its own */
+  account: { pubkey: string; email: string | null; bound: boolean | null } | null;
   unlocked: boolean;
   /** unix ms the session locks itself, while unlocked */
   lockAt: number | null;
   settings: Settings;
-  restore: { step: "code" | "password"; email: string; codeSentAt: number } | null;
+  /** a restore in progress; `switching` when it brings another account in place of the one held */
+  restore: { step: "code" | "password"; email: string; codeSentAt: number; switching: boolean } | null;
   /** the cached pilot answer for this account, possibly stale; null = never asked */
   pilot: PilotInfo | null;
   sending: { startedAt: number; linkHex?: string } | null;
@@ -123,6 +144,18 @@ export type ErrorCode =
   | "needs-backup"
   | "not-approved"
   | "pilot-unknown"
+  /** this account asked to join real money and is waiting for an answer */
+  | "pilot-pending"
+  /** this account's request to join real money was declined */
+  | "pilot-declined"
+  /** this account was taken off real money */
+  | "pilot-revoked"
+  /** asking to join needs the email confirmed with a mailed code first */
+  | "pilot-code-required"
+  /** the email already backs up another account (a backup, or an ask to join, with that email) */
+  | "email-taken"
+  /** the email given does not back up the account held here */
+  | "backup-not-mine"
   | "slots-used"
   | "over-cap"
   | "rate-limited"
@@ -180,10 +213,21 @@ export interface BalanceInfo {
 
 /** Where this account's backup stands. */
 export interface BackupView {
-  /** the account was made in this extension and is not backed up yet: it exists only here */
+  /**
+   * the account held here has no backup this browser knows of: it was made here and not backed up
+   * yet, or nothing records that it was (a create that was interrupted), so it may exist only here
+   */
   needed: boolean;
   /** a backup in progress: the code was mailed to `email` at `codeSentAt` */
   step: "code" | null;
   email: string;
   codeSentAt: number | null;
+  /**
+   * after the code, the email turned out to back up another account (LUMENIA ACCOUNT CONTRACT v1,
+   * 5.4): whether that backup is tied to an account yet, whether it may still be bound or replaced
+   * without a new code (a ticket), and the account it opened to once a password opened it
+   */
+  conflict: { email: string; unbound: boolean; ticket: boolean; other: string | null } | null;
+  /** a new backup of an account that is already backed up (Change backup email, Back it up again) */
+  again: boolean;
 }

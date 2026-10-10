@@ -7,6 +7,7 @@
  * it is the one message that must stop a second send.
  */
 import { CAPS_SENTENCE } from "../lib/copy";
+import { standingCopy, type Standing } from "../lib/standing";
 import type { ErrorCode, NetId } from "../lib/types";
 import { plainSentence } from "./format";
 
@@ -14,7 +15,9 @@ import { plainSentence } from "./format";
 export type ProblemAction =
   | "back" // dismiss the panel, keep the form as it was
   | "links" // open Links
-  | "join" // open the pilot page on the web
+  | "ask" // open the Ask to join screen here (to join, or for more sends)
+  | "check" // ask the real-money server again where this account stands
+  | "open-real" // open this account on real money
   | "refresh" // re-read the worker (it will route to Unlock, Consent or Connect)
   | "practice" // ask for practice dollars, then back to the form
   | "use-practice" // switch to practice money, then back to the form
@@ -33,7 +36,14 @@ export interface Problem {
 const UNCERTAIN =
   "We sent it, but couldn't confirm it yet. Don't send it again. We'll keep checking, and it will show up in Links.";
 
-export function describeProblem(code: ErrorCode, message: string, net: NetId): Problem {
+/** The account in use, for the lines that name it (its short address, and its sends when known). */
+export interface ProblemContext {
+  short?: string;
+  used?: number;
+  limit?: number;
+}
+
+export function describeProblem(code: ErrorCode, message: string, net: NetId, ctx: ProblemContext = {}): Problem {
   const real = net === "public";
   const worker = plainSentence(message);
   const make = (title: string, own: string, action: ProblemAction, label: string, preferOwn = false): Problem => ({
@@ -43,6 +53,13 @@ export function describeProblem(code: ErrorCode, message: string, net: NetId): P
     action,
     label,
   });
+  const short = ctx.short ?? "";
+  /* A standing is always told in the contract's words with the account's short address
+     (lib/standing.ts), never in a sentence that could mix one standing up with another. */
+  const standing = (s: Standing, action: ProblemAction, label: string): Problem => {
+    const c = standingCopy(s, { short, limit: ctx.limit ?? 0, left: Math.max(0, (ctx.limit ?? 0) - (ctx.used ?? 0)) });
+    return make(c.title, c.line, action, label, true);
+  };
 
   switch (code) {
     case "uncertain":
@@ -74,19 +91,21 @@ export function describeProblem(code: ErrorCode, message: string, net: NetId): P
       if (/settings|accept/i.test(message)) {
         return make("One step first", "Read the real-money note in Settings and accept it first.", "settings", "Open settings");
       }
-      return make(
-        "Not on the list yet",
-        "Real money is invite-only for now, and this account isn't approved yet.",
-        "join",
-        "Ask to join",
-      );
+      return standing("none", "ask", "Ask to join");
+    case "pilot-pending":
+      return standing("pending", "check", "Check again");
+    case "pilot-declined":
+      return standing("declined", "back", "Back");
+    case "pilot-revoked":
+      return standing("revoked", "back", "Back");
     case "slots-used":
-      return make(
-        "No real-money sends left",
-        "You've used all your real-money sends in the pilot. Practice money still works.",
-        "use-practice",
-        "Use practice money",
-      );
+      return standing("no-sends", "ask", "Ask for more sends");
+    case "pilot-code-required":
+      return make("Confirm your email first", "Confirm your email with a code first.", "ask", "Ask to join");
+    case "email-taken":
+      return make("That email is in use", "This email already backs up another Lumenia account.", "back", "Back");
+    case "backup-not-mine":
+      return make("That email doesn't match", "That email doesn't back up this account.", "back", "Back", true);
     case "over-cap":
       return make(
         "That's over the limit",
@@ -111,9 +130,10 @@ export function describeProblem(code: ErrorCode, message: string, net: NetId): P
       return real
         ? make(
             "Your account isn't open here yet",
-            "This account isn't on real money yet. Add dollars to it on getlumenia.com first.",
-            "web-settings",
-            "Open getlumenia.com",
+            short ? `This account (${short}) isn't open on real money yet.` : "This account isn't open on real money yet.",
+            "open-real",
+            "Open it on real money",
+            true,
           )
         : make(
             "Your account isn't open here yet",
@@ -143,12 +163,7 @@ export function describeProblem(code: ErrorCode, message: string, net: NetId): P
         "Open Lumenia settings",
       );
     case "pilot-unknown":
-      return make(
-        "We couldn't check your access",
-        "We couldn't check whether real money is open for this account. Try again in a minute.",
-        "back",
-        "Back",
-      );
+      return standing("unknown", "check", "Try again");
     case "no-account":
       return make("No account here yet", "Restore your Lumenia account first.", "refresh", "Continue");
     case "host-access":

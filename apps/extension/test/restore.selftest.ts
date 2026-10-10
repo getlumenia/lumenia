@@ -1,14 +1,17 @@
 /**
  * Restore self-test: email -> one-time code -> password, src/lib/restore.ts with the REAL recovery
- * client (apps/web/lib/recovery-api.ts) and the REAL box crypto (Argon2id + AES-GCM,
- * apps/web/lib/recovery.ts). Only `fetch` is faked, as the sponsor's /recovery-otp and
- * /recovery-fetch; `save` and `publicKeyOf` are plain functions.
+ * clients (the code mail through apps/web/lib/recovery-api.ts, the box through the extension's own
+ * src/lib/recovery-client.ts) and the REAL box crypto (Argon2id + AES-GCM, apps/web/lib/recovery.ts).
+ * Only `fetch` is faked, as the sponsor's /recovery-otp and /recovery-fetch; `save` and
+ * `publicKeyOf` are plain functions.
  *
  *   [a] step 1, the mailed code: a bad address makes no request; the request is the trimmed address
  *       and nothing else, to the TESTNET Worker (recovery lives on that one host for both networks)
  *   [b] step 2, the code for the box: a code that is not six digits makes no request; the request
- *       carries SHA-256(trimmed lowercased email) and the code, never the email or a password; and
- *       every answer the server can give maps to one named failure
+ *       carries SHA-256(trimmed lowercased email) and the code, never the email or a password; every
+ *       answer the server can give maps to one named failure; and whether the backup is tied to an
+ *       account (`bound`, with a single-use `ticket` when it is not) is read, an older server's
+ *       silence being "unknown" (null), never "no"
  *   [c] step 3, the password: wrong, out-of-bounds, wrong-length and unsaveable boxes fail closed,
  *       and the right one returns the account's key and keeps it exactly once
  *   [d] the whole flow end to end, and that nothing but ciphertext ever left the device
@@ -50,6 +53,7 @@ async function main() {
   const { startRestore, submitCode, openBox, validEmail, normalizeCode } = await import("../src/lib/restore");
   const { ExtError, MESSAGES } = await import("../src/lib/errors");
   const account = await import("../src/background/account");
+  const client = await import("../src/lib/recovery-client");
 
   // A real account's seed, and real boxes made from it.
   const kp = Keypair.random();
@@ -98,7 +102,7 @@ async function main() {
   let lastUnwrapped: Uint8Array | null = null;
   const deps: RestoreDeps = {
     requestOtp: core.requestRecoveryOtp,
-    fetchBox: core.fetchRecoveryBox,
+    fetchBox: client.fetchBox,
     findPasswordCopy: (box) => core.findCopy(box, "password"),
     unwrap: async (copy: PasswordCopy, password: string) => (lastUnwrapped = await core.unwrapWithPassword(copy, password)),
     publicKeyOf: (s) => Keypair.fromRawEd25519Seed(Buffer.from(s)).publicKey(),
@@ -154,7 +158,8 @@ async function main() {
   reset();
   const got = await outcome(submitCode(deps, `  ${EMAIL}  `, "123 456"));
   const f1 = calls[0];
-  ok("a good code (pasted with a space) fetches the box and returns it", codeOf(got) === "returned" && "value" in got && same(got.value, goodBox) && calls.length === 1);
+  ok("a good code (pasted with a space) fetches the box and returns it", codeOf(got) === "returned" && "value" in got && same(got.value.box, goodBox) && calls.length === 1);
+  ok("  ...an older server that does not say whether it is tied: bound null (unknown, never 'no'), no ticket", "value" in got && got.value.bound === null && got.value.ticket === undefined);
   ok("  ...from the TESTNET Worker's /recovery-fetch, as a JSON POST", f1?.url === `${TESTNET_WORKER}/recovery-fetch` && f1.method === "POST" && f1.headers["content-type"] === "application/json", f1?.url);
   ok("  ...the body is exactly { id, code }", same(Object.keys(f1?.body ?? {}).sort(), ["code", "id"]));
   ok("  ...id is SHA-256 of the trimmed, lower-cased email, in hex", f1?.body.id === BOX_ID && /^[0-9a-f]{64}$/.test(String(f1?.body.id)), String(f1?.body.id).slice(0, 12));
@@ -164,6 +169,21 @@ async function main() {
   await outcome(submitCode(deps, "AYSE@EXAMPLE.COM", CODE));
   ok("  ...another spelling of the same address (upper case) asks for the very same box id", calls[1]?.body.id === BOX_ID);
   ok("fetching the box saves nothing and opens nothing", saves.length === 0 && lastUnwrapped === null);
+
+  const TICKET = "ab".repeat(32);
+  const bindRows: [string, () => Response, boolean | null, string | undefined][] = [
+    ["tied to an account", () => jsonResponse(200, { box: goodBox, bound: true }), true, undefined],
+    ["tied to an account, with a stray ticket (ignored)", () => jsonResponse(200, { box: goodBox, bound: true, ticket: TICKET }), true, undefined],
+    ["tied to no account yet, with its ticket", () => jsonResponse(200, { box: goodBox, bound: false, ticket: TICKET }), false, TICKET],
+    ["tied to no account yet, a ticket that is not 64 hex (dropped)", () => jsonResponse(200, { box: goodBox, bound: false, ticket: "zz" }), false, undefined],
+    ["a bound field that is not a boolean (unknown)", () => jsonResponse(200, { box: goodBox, bound: "yes" }), null, undefined],
+  ];
+  for (const [what, reply, bound, ticket] of bindRows) {
+    reset();
+    server.fetch = reply;
+    const r = await outcome(submitCode(deps, EMAIL, CODE));
+    ok(`the box comes back ${what}: bound ${String(bound)}${ticket ? ", the ticket kept" : ""}`, "value" in r && same(r.value.box, goodBox) && r.value.bound === bound && r.value.ticket === ticket, "value" in r ? JSON.stringify({ bound: r.value.bound, ticket: r.value.ticket }) : codeOf(r));
+  }
 
   const fetchRows: [string, () => Response | Promise<Response>, string, RegExp?][] = [
     ["the server answers 401", () => jsonResponse(401, { error: "That code is wrong or has expired." }), "bad-code"],
@@ -258,7 +278,7 @@ async function main() {
   saves.length = 0;
   await startRestore(deps, `  ${EMAIL.toUpperCase()} `);
   const flowBox = await submitCode(deps, `  ${EMAIL.toUpperCase()} `, "123 456");
-  const flow = await openBox(deps, flowBox, PASSWORD);
+  const flow = await openBox(deps, flowBox.box, PASSWORD);
   ok("email -> code -> password restores the account it was made from", flow.pubkey === kp.publicKey() && hex(flow.seed) === hex(seed) && saves.length === 1);
   ok("exactly two requests were made, in order: /recovery-otp then /recovery-fetch", same(calls.map((c) => c.path), ["/recovery-otp", "/recovery-fetch"]));
   ok("  ...both to the testnet Worker, and never to the real-money Worker", calls.every((c) => c.url.startsWith(`${TESTNET_WORKER}/`)) && calls.every((c) => !c.url.startsWith(MAINNET_WORKER)));
@@ -310,6 +330,20 @@ async function main() {
     await account.restoreCancel();
     ok(`[${net}] cancelling forgets the restore (and the box)`, (await account.restoreState()) === null && (await fake.session.get(L.restore)) === undefined);
   }
+  await clean();
+  await storage.writeSettings({ consentAt: Date.now() });
+  await account.restoreRequestCode(EMAIL);
+  server.fetch = () => jsonResponse(200, { box: goodBox, bound: false, ticket: "cd".repeat(32) });
+  await account.restoreSubmitCode(CODE);
+  const keptT = await fake.session.get<{ bound?: unknown; ticket?: unknown }>(L.restore);
+  const viewT = await account.restoreState();
+  ok(
+    "a backup tied to no account yet: the session keeps bound false and its ticket for the password step",
+    keptT?.bound === false && keptT.ticket === "cd".repeat(32),
+    JSON.stringify({ bound: keptT?.bound, ticket: keptT?.ticket }),
+  );
+  ok("  ...and the state the popup reads shows neither the box nor the ticket", !!viewT && !("box" in viewT) && !("ticket" in viewT) && viewT.switching === false);
+  await account.restoreCancel();
   await clean();
   await storage.writeSettings({ consentAt: Date.now() });
   ok("a code or a password with no restore in progress: told to start again", codeOf(await outcome(account.restoreSubmitCode(CODE))) === "internal" && codeOf(await outcome(account.restoreSubmitPassword(PASSWORD))) === "internal" && calls.length === 0);

@@ -7,7 +7,9 @@
  *       does not open (the id is authenticated); the same seed always opens its own links.
  *   [b] the paste function refuses a page whose host is not the one the person picked (a frame that
  *       navigated away between the right-click and the link being ready), before it touches anything.
- *   [c] a cached real-money approval stands in for a failed ask for five minutes at most.
+ *   [c] a cached real-money approval stands in for a failed ask for five minutes at most, and an
+ *       answer that does not say where the account stands (the pilot on with no state: what an older
+ *       sponsor said when its store failed) is never read as "not approved" and never cached.
  *   [d] link records belong to the account this extension holds: another account's record is not
  *       listed, not returned, and cannot be written (a write throws, so a send stops before posting).
  *   [e] the key that opens kept links is refused while locked, and while unlocked it opens what the
@@ -91,6 +93,21 @@ run("SECURITY", "kept links, the paste guard, the stale pilot bound, record scop
     reply = () => jsonResponse(503, { error: "down" });
     ok("  ...and after a 503", codeOf(await outcome(pilot.pilotStatus(PUB, { now: T0 + 30 * MIN }))) === "pilot-unknown");
     ok("the bound is five minutes", pilot.PILOT_STALE_MAX_MS === 5 * MIN);
+
+    // LUMENIA ACCOUNT CONTRACT v1, section 4: "pilot true without a string state" is a failed ask.
+    await fake.session.clear();
+    reply = () => jsonResponse(200, { pilot: true, approved: false });
+    ok("200 {pilot:true, approved:false} with no state: pilot-unknown, never 'not approved'", codeOf(await outcome(pilot.pilotStatus(PUB, { now: T0 }))) === "pilot-unknown");
+    ok("  ...and nothing is cached from it", (await pilot.cachedPilot(PUB)) === null && (await fake.session.get(K.pilot(PUB))) === undefined);
+    reply = () => jsonResponse(200, { pilot: true, approved: true, state: "approved", used: 1, limit: 5 });
+    await pilot.pilotStatus(PUB, { now: T0 });
+    reply = () => jsonResponse(200, { pilot: true, approved: false });
+    const kept = await pilot.pilotStatus(PUB, { now: T0 + 2 * MIN });
+    ok("  ...with a real answer on file, that answer stands, with its own age", kept.approved === true && kept.at === T0);
+    ok("  ...and the cache still holds the real answer, not the empty one", (await pilot.cachedPilot(PUB))?.state === "approved");
+    reply = () => jsonResponse(200, { pilot: "yes", approved: false, state: "none" });
+    await fake.session.clear();
+    ok("a pilot field that is not a boolean: pilot-unknown, nothing cached", codeOf(await outcome(pilot.pilotStatus(PUB, { now: T0 }))) === "pilot-unknown" && (await pilot.cachedPilot(PUB)) === null);
   } finally {
     globalThis.fetch = realFetch;
   }

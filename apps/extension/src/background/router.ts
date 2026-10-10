@@ -14,13 +14,19 @@ import { ExtError, MESSAGES, fail, openLinksMessage, toFailure } from "../lib/er
 import { openLinks } from "../lib/links";
 import { RequestSchema, type Request, type ResponseMap } from "../lib/messages";
 import { sealLink, unsealLink } from "../lib/sealed";
+import { pilotStanding, standingError } from "../lib/standing";
 import { K, readSettings, session, writeSettings } from "../lib/storage";
 import type { LinkRecord, Result, WorkerState } from "../lib/types";
 import {
+  accountView,
+  backupAgain,
   backupCancel,
+  backupReplace,
   backupRequestCode,
   backupSubmitCode,
+  backupUseExisting,
   backupView,
+  checkBackupEmail,
   createAccount,
   currentAccount,
   forget,
@@ -38,8 +44,10 @@ import {
 } from "./account";
 import { clearPendingInsert, insertLink, readPendingInsert } from "./insert";
 import { keepAlive } from "./keepalive";
+import { runOpenReal } from "./open-real";
 import { addPracticeDollars } from "./practice";
-import { cachedPilot, canSendRealMoney, pilotStatus } from "./pilot";
+import { cachedPilot, pilotStatus } from "./pilot";
+import { pilotRequest, pilotRequestCode } from "./pilot-ask";
 import { allRecords, getRecord, putRecord } from "./records";
 import { runReclaim } from "./reclaim";
 import { runSend } from "./send";
@@ -124,14 +132,14 @@ async function hostAccess(): Promise<boolean> {
 async function workerState(): Promise<WorkerState> {
   const [settings, acct, unlocked, restore, pending, backup] = await Promise.all([
     readSettings(),
-    currentAccount(),
+    accountView(),
     isUnlockedNow(),
     restoreState(),
     readPendingInsert(),
     backupView(),
   ]);
   return {
-    account: acct ? { pubkey: acct.pubkey } : null,
+    account: acct,
     unlocked: unlocked.unlocked,
     lockAt: unlocked.lockAt,
     settings,
@@ -162,11 +170,15 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
       return workerState();
     }
     case "restore.requestCode":
-      return restoreRequestCode(req.email);
+      // Bringing another account in: never in the middle of a send or a take-back (their records
+      // belong to the account held now, and would be written after it left).
+      if (req.switching && (sending || reclaiming.size > 0)) throw fail("busy");
+      return restoreRequestCode(req.email, { switching: req.switching === true });
     case "restore.submitCode":
       return restoreSubmitCode(req.code);
     case "restore.submitPassword": {
-      const out = await restoreSubmitPassword(req.password);
+      if ((await restoreState())?.switching && (sending || reclaiming.size > 0)) throw fail("busy");
+      const out = await keepAlive(restoreSubmitPassword(req.password));
       void runSettle();
       return out;
     }
@@ -182,7 +194,46 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
     case "backup.submitCode":
       return backupSubmitCode(req.code);
     case "backup.cancel":
-      return backupCancel();
+      return backupCancel({ end: req.end === true });
+    case "backup.useExisting": {
+      if (sending || reclaiming.size > 0) throw fail("busy");
+      const out = await keepAlive(
+        backupUseExisting(req.password, {
+          loseAccount: req.loseAccount === true,
+          leaveOpenLinks: req.leaveOpenLinks === true,
+          open: openLinks(await allRecords()),
+        }),
+      );
+      void runSettle();
+      return out;
+    }
+    case "backup.replace":
+      return keepAlive(backupReplace());
+    case "backup.again":
+      return keepAlive(backupAgain(req.password));
+    case "account.checkBackupEmail":
+      return checkBackupEmail(req.email);
+    case "account.openReal":
+      // The same gates as the switch to real money, then a forced ask: an account is opened on real
+      // money only while it may use it (open-real.ts).
+      return keepAlive(
+        runOpenReal({
+          consentAt: async () => (await readSettings()).consentAt,
+          account: currentAccount,
+          backupNeeded: async () => (await backupView()).needed,
+          signer: signerFor,
+          pilot: (pubkey) => pilotStatus(pubkey, { force: true }),
+          balance: readBalance,
+          prepare: async (signer, n) => {
+            await prepareAccount({ sponsorUrl: n.sponsorUrl, signer, net: n });
+          },
+          net: netConfig("public"),
+        }),
+      );
+    case "pilot.requestCode":
+      return pilotRequestCode(req.email);
+    case "pilot.request":
+      return keepAlive(pilotRequest(req.email, req.code));
     case "unlock":
       return unlock(req.password);
     case "lock":
@@ -212,10 +263,13 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
            approval used to stand between it and real money; with the pilot retired the sponsor
            admits every wallet, so this is where the backup rule holds (and again in runSend). */
         if ((await backupView()).needed) throw fail("needs-backup");
+        // Approved (with or without sends left: with none, the balance and the take-backs are still
+        // there) or open to everyone goes on; waiting, declined, taken off and unknown are each said
+        // as such (lib/standing.ts).
         const p = await pilotStatus(acct.pubkey);
-        if (!p.approved) throw fail("not-approved");
+        const refused = standingError(pilotStanding(p), "switch", { pubkey: acct.pubkey, used: p.used, limit: p.limit });
+        if (refused) throw refused;
         if (!(await readSettings()).mainnetAck) throw new ExtError("not-approved", "Read the real-money note and accept it first.");
-        if (!canSendRealMoney(p)) throw fail("slots-used");
       }
       return writeSettings({ net: req.net });
     }

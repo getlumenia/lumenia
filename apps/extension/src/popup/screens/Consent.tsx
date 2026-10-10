@@ -4,6 +4,7 @@
  */
 import { useState } from "preact/hooks";
 import { URLS } from "../../config";
+import { DISCLOSE_EMAIL_KEPT, DISCLOSE_PILOT_ASK, DISCLOSE_PILOT_CHECK, disclosureParts } from "../../lib/copy";
 import { ask } from "../api";
 import { useApp } from "../context";
 import { plainSentence } from "../format";
@@ -44,6 +45,9 @@ export function Consent() {
             <strong>Send or take back:</strong> the transfer you signed, so Lumenia can pay the fee. Other checks send only your public
             key.
           </li>
+          {/* The real-money sentences are the ones every surface uses, word for word (lib/copy.ts). */}
+          <Disclosure sentence={DISCLOSE_PILOT_CHECK} />
+          <Disclosure sentence={DISCLOSE_PILOT_ASK} />
           <li>
             <strong>Counting:</strong> event names like "link created" with one-way hashes. Never a web address, a link's secret or page
             content.
@@ -55,6 +59,7 @@ export function Consent() {
           <li>
             <strong>On this device:</strong> your key, locked with your password, and your links, encrypted.
           </li>
+          <Disclosure sentence={DISCLOSE_EMAIL_KEPT} />
         </ul>
         <div class="screen__spacer" />
         {error ? <Notice tone="error">{error}</Notice> : null}
@@ -66,5 +71,15 @@ export function Consent() {
         </p>
       </main>
     </>
+  );
+}
+
+/** One shared disclosure sentence, its label in bold. */
+function Disclosure({ sentence }: { sentence: string }) {
+  const { label, rest } = disclosureParts(sentence);
+  return (
+    <li>
+      <strong>{label}</strong> {rest}
+    </li>
   );
 }

@@ -8,9 +8,10 @@ This is the sender's surface only. It is a small Chrome MV3 / Firefox MV3 extens
 the website's own sender code (`apps/web/lib`) instead of re-implementing anything that moves
 money.
 
-This folder is version **0.1.3**. addons.mozilla.org serves 0.1.3 since 2026-10-09; the Chrome Web
-Store still serves 0.1.2 until it has reviewed 0.1.3 (submitted on 2026-10-09). "Published
-builds" below says what each published version does differently from this source.
+This folder is version **0.1.4**, not submitted to either store yet. addons.mozilla.org serves 0.1.3
+since 2026-10-09; the Chrome Web Store still serves 0.1.2 until it has reviewed 0.1.3 (submitted on
+2026-10-09). "Published builds" below says what each published version does differently from this
+source.
 
 ## Install
 
@@ -22,11 +23,28 @@ builds" below says what each published version does differently from this source
 
 | Version | Where | Public since | Built from | Package sha256 | The links it makes |
 |---|---|---|---|---|---|
+| 0.1.4 | not submitted yet | - | this folder | - | Private, as 0.1.3 |
 | 0.1.3 | addons.mozilla.org (listed) | 2026-10-09 | commit `00aa0a5` | signed file AMO serves: `17b2da7ee288d3c1a5570634bac5a466215c7447b3cabb0acbb2fdeb7ce07c3c` | Private: `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<name>][&p=1]`. No amount anywhere in the link, and a name only when the sender types one, after the `#` |
 | 0.1.3 | Chrome Web Store | submitted 2026-10-09, in review | commit `00aa0a5` | the package as built: `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73`; the served CRX's hash is recorded once the store publishes it | Private, as above |
 | 0.1.2 | Chrome Web Store | 2026-10-06 | commit `062725f` | CRX as served on 2026-10-09: `0a62ccc9736aa6b2c40b0f2895ee099c184f9f61855b364f26f099bad43e85a7` | Pre-D2: `/v2/c/<id>?a=<amount>&s=<name>[&p=1][&n=public]&src=ext#<key>`, the amount and the name in the query (the name is "Someone" when none was typed) |
 | 0.1.2 | addons.mozilla.org (listed) | 2026-10-07 | commit `062725f` | signed file AMO serves: `988e3c69014d041b79288b06af5c56e24ede379a221a68d6753d7a12b15103a0` | Pre-D2, as above |
 | 0.1.1 | Firefox, unlisted (signed by Mozilla), self-hosted at getlumenia.com/extension/lumenia-firefox.xpi | 2026-10-04 | commit `3d80c78`, the same code as 0.1.2 apart from its version string | `792667fbce088a10fe5e71287f27fc305dac49684486a53eda1e081764e2039e` | Pre-D2, as above |
+
+What the published 0.1.3 does differently from this source (the account model of the "LUMENIA
+ACCOUNT CONTRACT v1", shared with the website and the sponsor):
+
+- It cannot ask to join real money for the account it holds: "Ask to join" opens getlumenia.com/pilot,
+  which files the request for the website's own account, a different key. It says "invite-only" for
+  every answer that is not an approval, so an account that is waiting, declined or taken off reads
+  the same as one that never asked.
+- It never names which account it holds beyond its address, nor the email that backs it up.
+- A backup to an email that already backs up another account ends in a refusal with no way forward,
+  and, against the sponsor as it was deployed before this change, an older backup that is not tied
+  to any account is replaced without a word.
+- There is no way to bring another account in without forgetting this one and its list of links,
+  and no way to change the backup email.
+- An approved account that never received real money cannot be opened on real money from the
+  extension.
 
 What the published 0.1.2 (and 0.1.1) does differently from this source, besides the link shape:
 
@@ -58,6 +76,13 @@ the build reads the version from `package.json`, so the zips come out under that
 - **Or brings your existing account here** ("Yes, bring it here") from your own backup: your
   email, the one-time code we mail you, and your backup password. A passkey-only backup opens on
   getlumenia.com only; add a password there first.
+- **Names the account in use**, the same way the website does: its short address and the email it
+  is backed up with ("GCFIRY...XVYOJR, backed up with f***@example.com"), under the header and in
+  Settings. One email backs up one account: a backup to an email that already backs up another
+  account is never stored over it (after the code, you bring that account here, use another email,
+  or, only for an older backup that is not tied to any account, replace it on purpose). Settings
+  has "Use another account" (once this one's backup is confirmed, its links show again when you
+  bring it back) and "Change backup email".
 - **Makes a payment link**: the amount goes into the Lumenia escrow (a Stellar smart contract)
   behind a fresh link key whose secret lives only in the link's `#fragment`. Optionally the
   recipient must also know a password you tell them some other way. The link carries no amount (the
@@ -82,7 +107,10 @@ the build reads the version from `package.json`, so the zips come out under that
   been reviewed by an outside security firm yet. You can lose money, so keep amounts small." It is
   capped at $5 a link and up to $25 a day from you ($50 a day across the whole pilot). The worker
   checks all of that again before it changes the money, and the sponsor enforces the pilot and the
-  caps.
+  caps. You ask to join from the extension, for the account it holds (a request signed by that
+  account, with the email that backs it up), and it says where that account stands: invite-only, on
+  the list, approved, no sends left, not approved for now, or taken off. An approved account that
+  never received real money is opened on real money from the home screen ("Open it on real money").
 - **Works with the website**: an account backed up here opens on getlumenia.com ("Yes, bring it
   here"), and one made on the website opens here the same way; getlumenia.com/extension is where
   the website points people to install it.
@@ -112,6 +140,7 @@ the build reads the version from `package.json`, so the zips come out under that
 | Each full link (with its secret) | IndexedDB `lumenia-ext-links` | AES-256-GCM under a key derived from your account key (HKDF-SHA-256) and bound to the link's id. That key is never stored: the links can be read back only while the extension is unlocked (`src/lib/sealed.ts`) |
 | The list of links you made | `storage.local` | Amount, link id, network, status, transaction hashes, and the name you typed for that link, if any. Never the link's secret |
 | Settings | `storage.local` | Network, auto-lock, whether the real-money note was accepted, consent time. No default "from" name: 0.1.2 and earlier kept the last one, and this version removes it when it starts |
+| The email each account is backed up with | `storage.local` (`backups`) | On this device: the email each account is backed up with, so it can show it to you and use it when you ask to join. Next to it, when it was recorded and whether Lumenia's server confirmed that backup is tied to the account |
 
 "Forget this account" in Settings removes all of it. If the account was made here and never backed
 up, it first says that forgetting it deletes the account and any money in it for good, and offers
@@ -124,11 +153,14 @@ restore the account again.
 
 | When | What | To |
 |---|---|---|
-| Restoring your account | Your email address, then the 6-digit code | `lumenia-sponsor.avakit.workers.dev` (`/recovery-otp`, `/recovery-fetch`; returns ciphertext only) |
-| Backing up an account made here | Your email address, then the 6-digit code, the backup ciphertext, and a signature from the account that binds the stored backup to it | `lumenia-sponsor.avakit.workers.dev` (`/recovery-otp`, `/recovery`) |
+| Restoring your account | Your email address, then the 6-digit code; when the backup is not tied to any account yet, the same backup again with a signature from the restored account that ties it to it | `lumenia-sponsor.avakit.workers.dev` (`/recovery-otp`, `/recovery-fetch`, which returns ciphertext only; `/recovery`) |
+| Backing up (or changing the backup email) | Your email address, then the 6-digit code, the backup ciphertext, and a signature from the account that binds the stored backup to it. After a change, a signature asking the server to delete the old email's backup of this account | `lumenia-sponsor.avakit.workers.dev` (`/recovery-otp`, `/recovery`, `/recovery-release`) |
+| Adding your backup email (an account restored by an older version) | The email's one-way hash and a signature from the account; the answer says only whether that email backs up this account | `lumenia-sponsor.avakit.workers.dev/recovery-check` |
 | Practice dollars (practice money only) | Your public key, and for a new account the signed "open the account and add the dollar line" transaction the sponsor built | `lumenia-sponsor.avakit.workers.dev` (`/create-account`, `/faucet`) |
 | Sending or taking back | The signed transaction (your public key, the amount, the link id) | The network's sponsor: `lumenia-sponsor.avakit.workers.dev` (practice) or `lumenia-sponsor-mainnet.avakit.workers.dev` (real money) |
-| Real money only | Your public key, to ask whether the pilot approved it (at most once a minute on its own; pressing Real money asks again, never more often than every 10 seconds) | `lumenia-sponsor-mainnet.avakit.workers.dev/pilot-status` |
+| Checking the pilot | To check the pilot: your account's public key, to the real-money server, when you press Real money or Check again, while you use real money, and while this account's request to join is waiting. At most once a minute on its own; pressing Real money or Check again asks again, never more often than every 10 seconds | `lumenia-sponsor-mainnet.avakit.workers.dev/pilot-status` |
+| Asking to join real money | To ask to join real money: your account's public key, the email that backs it up, a signature from your account and, if asked, a 6-digit code, to the real-money server. | `lumenia-sponsor-mainnet.avakit.workers.dev` (`/pilot-request`; `/recovery-otp` for the code) |
+| Opening an approved account on real money ("Open it on real money") | Your public key, to the real-money server, which builds the "open the account and add the dollar line" transaction; that transaction, once checked and signed here, to the public Stellar server | `lumenia-sponsor-mainnet.avakit.workers.dev/create-account`, then `horizon.stellar.org` |
 | After you agree on first run (on Firefox, only while you keep its optional "technical and interaction data" permission) | Usage counters: an event name, two one-way SHA-256 hashes cut to 8 bytes (of your account and of the link: pseudonymous, not anonymous, since anyone holding the address can compute the same hash), and the marker `src: "ext"`. Never a URL, never a link secret, never an address | The network's sponsor, `/events`, which keeps counters and hashed-id sets, no event log |
 | Showing balances and statuses | Public reads of your account and of the escrow | `horizon-testnet.stellar.org`, `horizon.stellar.org`, `soroban-testnet.stellar.org`, `mainnet.sorobanrpc.com` |
 
@@ -220,6 +252,10 @@ none at all, and testnet and ui that a typed name rides after the `#`. Their las
   browser profile is lost before that, the account and its money are lost with it.
 - Links made here are listed here; links made on getlumenia.com are listed there. There is no
   shared list.
+- The extension holds one account at a time, and it can be a different account from the one on
+  getlumenia.com (each has its own key, backup email and real-money standing). Every screen names
+  the account in use; to use the website's account here, bring it here with its email and password
+  ("Use another account" in Settings).
 - The escrow marks a claim and a take-back the same way, so the list says only what it knows:
   "Reclaimed" needs this extension's own confirmed take-back; "Claimed" means the money left the
   escrow and no take-back of ours can be involved; "Closed" means one of the two happened and we

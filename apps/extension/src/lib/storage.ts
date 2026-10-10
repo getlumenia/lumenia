@@ -10,7 +10,7 @@
  */
 import { ext } from "./browser";
 import { DEFAULT_AUTOLOCK_MIN, AUTOLOCK_CHOICES } from "../config";
-import type { Settings } from "./types";
+import type { BackupRecord, Settings } from "./types";
 
 export interface Area {
   get<T = unknown>(key: string): Promise<T | undefined>;
@@ -67,7 +67,12 @@ export const K = {
   account: "account",
   /** an account made HERE that is not backed up yet: its password copy, ciphertext only */
   pendingBackup: "pendingBackup",
-  /** when this account's backup was stored (made here and backed up, or restored from one) */
+  /** what this browser knows of each account's email backup: { G...: BackupRecord } */
+  backups: "backups",
+  /**
+   * 0.1.3 and earlier: `{at}` when the one account held was backed up or restored. Read as that
+   * account's record with its email and binding unknown, and folded into `backups` on the next write.
+   */
   backedUp: "backedUp",
   // session
   seed: "seed",
@@ -76,6 +81,10 @@ export const K = {
   restore: "restore",
   /** a backup in progress: the email the code was sent to */
   backup: "backup",
+  /** after the code, the email turned out to back up another account: { email, box, unbound, ticket?, other? } */
+  backupConflict: "backupConflict",
+  /** a new backup copy of an account that is already backed up (Change backup email), ciphertext only */
+  rebackup: "rebackup",
   sending: "sending",
   pendingInsert: "pendingInsert",
   pilot: (pubkey: string) => `pilot:${pubkey}`,
@@ -118,4 +127,77 @@ export async function dropLegacyDefaultName(): Promise<boolean> {
   if (!raw || typeof raw !== "object" || !("from" in raw)) return false;
   await writeSettings({});
   return true;
+}
+
+/* ------------------------------------ backup records ------------------------------------ */
+
+function asBackupRecord(v: unknown): BackupRecord | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  return {
+    email: typeof r.email === "string" && r.email.includes("@") ? r.email : null,
+    at: typeof r.at === "number" && Number.isFinite(r.at) ? r.at : 0,
+    bound: typeof r.bound === "boolean" ? r.bound : null,
+  };
+}
+
+/** Every account's record, repaired field by field (a damaged entry reads as one with nothing known). */
+export async function readBackups(): Promise<Record<string, BackupRecord>> {
+  const raw = await local().get<Record<string, unknown>>(K.backups);
+  const out: Record<string, BackupRecord> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [pubkey, v] of Object.entries(raw)) {
+    const rec = asBackupRecord(v);
+    if (rec && /^G[A-Z2-7]{55}$/.test(pubkey)) out[pubkey] = rec;
+  }
+  return out;
+}
+
+async function heldMirror(): Promise<string | null> {
+  const a = await local().get<{ pubkey?: unknown }>(K.account);
+  return a && typeof a.pubkey === "string" ? a.pubkey : null;
+}
+
+/**
+ * What this browser knows about `pubkey`'s backup, or null when it knows of none. The 0.1.3 marker
+ * (`backedUp`) belongs to the account held when it was written, so it is read for that account only.
+ */
+export async function backupRecordFor(pubkey: string): Promise<BackupRecord | null> {
+  const all = await readBackups();
+  if (all[pubkey]) return all[pubkey]!;
+  const legacy = await local().get<{ at?: unknown }>(K.backedUp);
+  if (legacy && typeof legacy === "object" && (await heldMirror()) === pubkey) {
+    return { email: null, at: typeof legacy.at === "number" ? legacy.at : 0, bound: null };
+  }
+  return null;
+}
+
+/**
+ * Fold the 0.1.3 marker into `backups` under the account it was written for, and drop it. Run before
+ * the account held here changes, so the marker can never be read as the next account's.
+ */
+export async function migrateLegacyBackup(): Promise<void> {
+  const legacy = await local().get<{ at?: unknown }>(K.backedUp);
+  if (legacy === undefined) return;
+  const held = await heldMirror();
+  const all = await readBackups();
+  if (held && !all[held]) all[held] = { email: null, at: legacy && typeof legacy.at === "number" ? legacy.at : 0, bound: null };
+  await local().set({ [K.backups]: all });
+  await local().remove(K.backedUp);
+}
+
+/** Keep `rec` as `pubkey`'s record. */
+export async function writeBackupRecord(pubkey: string, rec: BackupRecord): Promise<void> {
+  await migrateLegacyBackup();
+  const all = await readBackups();
+  await local().set({ [K.backups]: { ...all, [pubkey]: rec } });
+}
+
+/** Forget `pubkey`'s record (its key left this browser). */
+export async function dropBackupRecord(pubkey: string): Promise<void> {
+  await migrateLegacyBackup();
+  const all = await readBackups();
+  if (!(pubkey in all)) return;
+  delete all[pubkey];
+  await local().set({ [K.backups]: all });
 }

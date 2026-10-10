@@ -5,14 +5,17 @@
  *
  * The box that comes back is ciphertext the server cannot open; only the password copy is usable
  * here (a passkey copy is bound to getlumenia.com's origin and can never open in an extension). The
- * fetch does not change the stored box.
+ * fetch does not change the stored box. It also says whether that backup is tied to an account yet
+ * (and, when it is not, hands back a single-use ticket the restored key binds it with: the worker
+ * does that once the password opened it, lib/recovery-client.ts).
  */
 import type { PasswordCopy, RecoveryBox } from "../core";
 import { ExtError, MESSAGES, fail } from "./errors";
+import type { FetchedBox } from "./recovery-client";
 
 export interface RestoreDeps {
   requestOtp(email: string): Promise<void>;
-  fetchBox(email: string, code: string): Promise<RecoveryBox | null>;
+  fetchBox(email: string, code: string): Promise<FetchedBox | null>;
   findPasswordCopy(box: RecoveryBox): PasswordCopy | undefined;
   unwrap(copy: PasswordCopy, password: string): Promise<Uint8Array>;
   publicKeyOf(seed: Uint8Array): string;
@@ -37,6 +40,8 @@ export function networkFailure(e: unknown, fallback: string): ExtError {
   const msg = e instanceof Error ? e.message : String(e);
   // Only a request that never got an answer is "offline"; any other TypeError is a bad answer.
   if (/Failed to fetch|NetworkError|fetch failed|Load failed/i.test(msg)) return fail("offline");
+  // The per-email code budget says how long to wait in its own words; any other limit is ours.
+  if (/too many tries for this email/i.test(msg)) return new ExtError("rate-limited", msg.trim());
   if (/rate limit|too many/i.test(msg)) return fail("rate-limited");
   return new ExtError("internal", fallback);
 }
@@ -57,21 +62,22 @@ export async function startRestore(deps: RestoreDeps, email: string): Promise<vo
 }
 
 /** Step 2: trade the code for the box. Refuses a box that has no password copy. */
-export async function submitCode(deps: RestoreDeps, email: string, code: string): Promise<RecoveryBox> {
+export async function submitCode(deps: RestoreDeps, email: string, code: string): Promise<FetchedBox> {
   const c = normalizeCode(code);
   if (!/^\d{6}$/.test(c)) throw fail("bad-code");
-  let box: RecoveryBox | null;
+  let got: FetchedBox | null;
   try {
-    box = await deps.fetchBox(email.trim(), c);
+    got = await deps.fetchBox(email.trim(), c);
   } catch (e) {
+    if (e instanceof ExtError) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     if (/wrong or has expired/i.test(msg)) throw fail("bad-code");
     throw networkFailure(e, "We couldn't reach your backup. Try again.");
   }
-  if (box === null) throw fail("no-backup");
-  if (!isBox(box)) throw new ExtError("unsupported-backup", MESSAGES["unsupported-backup"]);
-  if (!deps.findPasswordCopy(box)) throw fail("no-password-copy");
-  return box;
+  if (got === null) throw fail("no-backup");
+  if (!isBox(got.box)) throw new ExtError("unsupported-backup", MESSAGES["unsupported-backup"]);
+  if (!deps.findPasswordCopy(got.box)) throw fail("no-password-copy");
+  return got;
 }
 
 /**

@@ -105,6 +105,17 @@ export async function unsealLink(id: string, key: CryptoKey): Promise<string | n
   return decryptLink(key, id, rec);
 }
 
+/**
+ * Drop the kept links of these ids only: an account that leaves this browser while another one
+ * comes in (its key, and with it the only way to open them, is gone). Throws if they could not be
+ * dropped.
+ */
+export async function forgetSealedIds(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await withStore("readwrite", (s) => s.delete(id) as IDBRequest<undefined>);
+  }
+}
+
 /** Drop every kept link ("Forget this account"). */
 export async function forgetSealed(): Promise<void> {
   await new Promise<void>((resolve, reject) => {

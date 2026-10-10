@@ -95,7 +95,10 @@ async function main() {
   await p.getByLabel("6-digit code").fill(code);
   await p.getByLabel("Backup password").fill(PASSWORD, { timeout: 60_000 });
   await p.getByRole("button", { name: /^Restore$/ }).click();
-  await p.getByLabel("Amount").waitFor({ timeout: 90_000 });
+  // The restore names the account once ("This is G..., backed up with ..."), then the home screen.
+  await p.getByRole("heading", { name: "Your account is here" }).waitFor({ timeout: 90_000 });
+  await p.getByRole("button", { name: "Done" }).click();
+  await p.getByLabel("Amount").waitFor({ timeout: 30_000 });
   const { pubkey } = (await ext.ask({ type: "state" })).account;
   evidence.account = pubkey;
   const same = short.startsWith(pubkey.slice(0, 6)) && short.endsWith(pubkey.slice(-6));

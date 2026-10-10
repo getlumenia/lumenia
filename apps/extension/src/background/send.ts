@@ -29,8 +29,8 @@ import { LINK_TTL_S, SRC, WEB_ORIGIN } from "../config";
 import { exceedsBalance, parseAmount } from "../lib/amount";
 import { ExtError, MESSAGES, fail, judgeDepositFailure, toFailure } from "../lib/errors";
 import { confirm, fromPrepared, markFailed, markUncertain, unconfirmedSend } from "../lib/links";
+import { pilotStanding, standingError } from "../lib/standing";
 import type { BalanceInfo, LinkRecord, NetId, PilotInfo, SendOutcome, Settings } from "../lib/types";
-import { canSendRealMoney } from "./pilot";
 
 export interface SendRequest {
   amount: string;
@@ -82,9 +82,12 @@ export async function runSend(deps: SendDeps, req: SendRequest): Promise<SendOut
        every wallet, so the backup rule holds here, as wallet.tsx getSigner holds it on the web. */
     if (await deps.backupNeeded()) throw fail("needs-backup");
     if (!settings.mainnetAck) throw new ExtError("not-approved", "Read the real-money note in Settings and accept it first.");
+    // The standing, as every surface reads it (lib/standing.ts): only approved with a send left, or
+    // real money open to everyone, goes on. Waiting, declined and taken off are said as such, never
+    // as "not on the list".
     const p = await deps.pilot(acct.pubkey);
-    if (!p.approved) throw fail("not-approved");
-    if (!canSendRealMoney(p)) throw fail("slots-used");
+    const refused = standingError(pilotStanding(p), "send", { pubkey: acct.pubkey, used: p.used, limit: p.limit });
+    if (refused) throw refused;
   }
 
   const signer = await deps.signer(acct.pubkey);

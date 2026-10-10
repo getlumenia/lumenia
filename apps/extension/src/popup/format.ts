@@ -1,24 +1,75 @@
 /**
- * Small pure helpers for the popup: dates in words, a shortened address, whole cents, and the test
- * for "is this worker message a plain sentence a person can read".
+ * Small pure helpers for the popup: dates in words, a shortened address, a masked email, the
+ * account line, the restore and ask-to-join results, whole cents, and the test for "is this worker
+ * message a plain sentence a person can read".
  */
+import type { ResponseMap } from "../lib/messages";
+import { maskEmail, shortAddress } from "../lib/identity";
+import { pilotStanding, standingCopy } from "../lib/standing";
 import type { PilotInfo } from "../lib/types";
 
+export { maskEmail, shortAddress };
+
 /**
- * The header switch's description of real money, from the pilot answer this browser last got. It was
- * a fixed "invite-only, capped", which stayed on screen after the pilot was retired and told every
- * wallet the sponsor now admitted that it could not use real money. With no answer yet it names
- * only what is true either way: the caps.
+ * The header switch's description of real money, from the pilot answer this browser last got, in the
+ * standing's own words (lib/standing.ts), so the switch never says "invite-only" to an account that
+ * is waiting, declined or approved. With no answer yet it names only what is true either way: the caps.
  */
-export function realMoneyTitle(pilot: PilotInfo | null): string {
+export function realMoneyTitle(pilot: PilotInfo | null, short = ""): string {
   if (!pilot) return "Real money: capped per link";
-  if (!pilot.pilot) return "Real money: open to everyone, capped per link";
-  return pilot.approved ? "Real money: you're in the pilot, capped per link" : "Real money: invite-only, capped";
+  const { title } = standingCopy(pilotStanding(pilot), { short, left: Math.max(0, pilot.limit - pilot.used), limit: pilot.limit });
+  return /real[- ]money/i.test(title) ? title : `Real money. ${title}`;
 }
 
-/** G12345...123456: six characters from each end. */
-export function shortAddress(a: string): string {
-  return a.length > 15 ? `${a.slice(0, 6)}...${a.slice(-6)}` : a;
+/** What one account line says (LUMENIA ACCOUNT CONTRACT v1, 5.3), and the one thing to do about it. */
+export interface AccountLine {
+  text: string;
+  action: { kind: "add-email" | "back-up-again"; label: string } | null;
+}
+
+/**
+ * The account in use, as every surface names it: its short address and the email it is backed up
+ * with. `needed`: the account may exist only in this browser (BackupView.needed).
+ */
+export function accountLine(a: { pubkey: string; email: string | null; bound: boolean | null }, needed: boolean): AccountLine {
+  const short = shortAddress(a.pubkey);
+  // The way to back it up sits right next to this line on every screen that shows it (the banner,
+  // the Settings note), so the line itself carries no second "Back it up".
+  if (needed) return { text: `${short}, not backed up yet`, action: null };
+  if (a.bound === false) return { text: `${short}, backup not tied to this account yet`, action: { kind: "back-up-again", label: "Back it up again" } };
+  if (a.email) return { text: `${short}, backed up with ${maskEmail(a.email)}`, action: null };
+  return { text: `${short}, backed up`, action: { kind: "add-email", label: "Add your backup email" } };
+}
+
+/** A restore's result (LUMENIA ACCOUNT CONTRACT v1, 5.5): "This is GCFIRY...XVYOJR, backed up with f***@example.com." */
+export function restoredLine(r: { pubkey: string; email: string }): string {
+  return `This is ${shortAddress(r.pubkey)}, backed up with ${maskEmail(r.email)}.`;
+}
+
+/**
+ * What an ask to join real money (or for more sends) answered, in the contract's words (5.2),
+ * naming the account and the masked email. A request that turned out to be decided already is said
+ * as that standing.
+ */
+export function askResultCopy(
+  a: ResponseMap["pilot.request"],
+  v: { short: string; masked: string; limit: number; left: number },
+): { title: string; line: string } {
+  const { short, masked } = v;
+  if (a.state === "rejected" || a.standing === "declined" || a.standing === "revoked") {
+    const c = standingCopy(a.standing === "revoked" ? "revoked" : "declined", v);
+    return { title: c.title, line: c.line };
+  }
+  if (a.state === "approved") {
+    if (a.standing === "approved" || a.standing === "open") {
+      const c = standingCopy(a.standing, v);
+      return { title: c.title, line: c.line };
+    }
+    const line = `We'll email ${masked} when this account (${short}) can send again.`;
+    return a.filed ? { title: "Asked for more sends.", line } : { title: "You've already asked for more sends.", line };
+  }
+  if (a.already) return { title: "You've already asked.", line: `This account (${short}) is on the list. We'll email ${masked} when it is approved.` };
+  return { title: "Request sent.", line: `We'll email ${masked} when this account (${short}) is approved.` };
 }
 
 /** Whole cents of a decimal string ("12.5" is 1250), or null when it is not a plain amount. No float rounding. */

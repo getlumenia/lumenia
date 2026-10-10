@@ -250,7 +250,7 @@ async function main() {
       account: async () => ({ pubkey: PUB, phase: 2 }),
       backupNeeded: async () => false,
       signer: async () => signer,
-      pilot: async () => ({ pilot: true, approved: true, state: "approved", used: 0, limit: 5, at: Date.now() }),
+      pilot: async () => ({ pilot: true, approved: true, state: "approved", used: 0, limit: 5, revoked: false, at: Date.now() }),
       balance: async () => ({ usd: "100.0000000", missing: false }),
       netConfig: config.netConfig,
       createLink: core.createV2Link, // the real one
@@ -399,7 +399,7 @@ async function main() {
       account: async () => ({ pubkey: PUB, phase: 2 }),
       backupNeeded: async () => false,
       signer: async () => signer,
-      pilot: async () => ({ pilot: true, approved: true, state: "approved", used: 0, limit: 5, at: Date.now() }),
+      pilot: async () => ({ pilot: true, approved: true, state: "approved", used: 0, limit: 5, revoked: false, at: Date.now() }),
       balance: async () => ({ usd: "100.0000000", missing: false }),
       netConfig: config.netConfig,
       createLink: core.createV2Link,

@@ -2,26 +2,29 @@
  * The home screen: how much, optionally from whom, optionally behind a password, then "Make the link".
  *
  * Everything it shows next to the form is read, not assumed: the balance comes from the worker, the
- * pilot standing is the worker's cached answer (refreshed at most once a minute, and only on real
- * money). The caps are named here so they are read BEFORE the person signs; the sponsor, and the
- * worker in front of it, are what actually enforce them.
+ * pilot standing is the worker's cached answer (refreshed at most once a minute), said in the words
+ * every surface uses (lib/standing.ts). The caps are named here so they are read BEFORE the person
+ * signs; the sponsor, and the worker in front of it, are what actually enforce them. The account in
+ * use is named under the header: its short address and the email it is backed up with.
  *
  * The name is the sender's to add, never ours: the From field starts empty for every new link (it is
  * not filled from an earlier send or a saved default), so a link carries no name unless one is typed,
  * and the claim screen then says "Someone". A typed name gets a note saying where it goes.
  */
 import { useEffect, useRef, useState } from "preact/hooks";
-import { MIN_USD, URLS } from "../../config";
+import { MIN_USD } from "../../config";
 import { claimPasswordProblem, formatUsd, sanitizeAmountInput } from "../../core";
 import { CAPS_SHORT, NAME_NOTE } from "../../lib/copy";
+import { sendsLeft, standingCopy } from "../../lib/standing";
 import type { NetId } from "../../lib/types";
 import { ask } from "../api";
 import { useApp } from "../context";
-import { type BalanceView, useBalance, usePilot } from "../data";
+import { type BalanceView, type StandingView, useBalance, useStanding } from "../data";
 import { draftName, openRecord, type Draft, type FormError } from "../flow";
-import { centsOf, plainSentence } from "../format";
+import { centsOf, plainSentence, shortAddress } from "../format";
 import { useAlive } from "../hooks";
-import { Bubble, Button, ExtLink, Mascot, Switch, TextField } from "../ui";
+import { Bubble, Button, Mascot, Switch, TextField } from "../ui";
+import { AccountLineView } from "./AccountLine";
 
 export interface SendInput {
   amount: string;
@@ -44,7 +47,7 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
   const { ws, net, records, go } = useApp();
   const alive = useAlive();
   const real = net === "public";
-  const pilot = usePilot(ws);
+  const standing = useStanding(ws);
   const balance = useBalance(net);
 
   const lock = draft.lock ?? real;
@@ -55,6 +58,7 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
   const [showPassword, setShowPassword] = useState(false);
   const [getting, setGetting] = useState(false);
   const [practiceNote, setPracticeNote] = useState("");
+  const [opening, setOpening] = useState(false);
   const [askAnyway, setAskAnyway] = useState(false);
   // The name and the link password sit behind one button; real money opens it (its password is on).
   const [more, setMore] = useState(() => lock || Boolean(draft.from));
@@ -122,9 +126,21 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
     else setPracticeNote(plainSentence(r.message) ?? "We couldn't get practice dollars just now. Try again in a moment.");
   }
 
+  /** Open this account on real money (an approved account that never received real money). */
+  async function openReal() {
+    setOpening(true);
+    setPracticeNote("");
+    const r = await ask("account.openReal");
+    if (!alive.current) return;
+    setOpening(false);
+    if (r.ok) balance.set(r.data);
+    else setPracticeNote(plainSentence(r.message) ?? "We couldn't open your account on real money just now. Try again in a moment.");
+  }
+
   return (
     <main class="screen screen--send">
       <h1 class="sr-only">Send dollars by link</h1>
+      <AccountLineView onAction={(kind) => go(kind === "add-email" ? "add-email" : "change-email")} />
       {ws.pendingInsert ? (
         <div class="banner" role="status">
           <p class="banner__text">
@@ -220,8 +236,10 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
           net={net}
           amount={draft.amount}
           getting={getting}
+          opening={opening}
           note={practiceNote}
           onGetPractice={getPractice}
+          onOpenReal={openReal}
           onRetry={balance.reload}
         />
 
@@ -288,7 +306,11 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
         )}
 
         <div class="send__foot">
-          {real ? <CapsLine pilotInfo={pilot} /> : <p class="caps">Practice money: play dollars, nothing here is real.</p>}
+          {real ? (
+            <CapsLine st={standing} short={shortAddress(ws.account?.pubkey ?? "")} onAsk={() => go("ask")} />
+          ) : (
+            <p class="caps">Practice money: play dollars, nothing here is real.</p>
+          )}
           <Button type="submit">Make the link</Button>
         </div>
       </form>
@@ -296,36 +318,43 @@ export function SendForm({ draft, patch, formError, setFormError, onSend, onCanc
   );
 }
 
-/** "You have $24.50", or why we cannot say, and the way out on practice money. */
+/**
+ * "You have $24.50", or why we cannot say, and the way out: practice dollars on practice money, and
+ * on real money, for an account that is not open there yet (or cannot hold dollars yet), opening it.
+ */
 function BalanceLine({
   view,
   net,
   amount,
   getting,
+  opening,
   note,
   onGetPractice,
+  onOpenReal,
   onRetry,
 }: {
   view: BalanceView;
   net: NetId;
   amount: string;
   getting: boolean;
+  opening: boolean;
   note: string;
   onGetPractice: () => void;
+  onOpenReal: () => void;
   onRetry: () => void;
 }) {
   const practice = net === "testnet";
   let text = "";
-  let action: "practice" | "retry" | null = null;
+  let action: "practice" | "open-real" | "retry" | null = null;
 
   if (view.state === "loading") {
     text = "Checking your balance";
   } else if (view.state === "unreadable") {
     text = "We couldn't check your balance just now.";
     action = "retry";
-  } else if (view.info.missing) {
+  } else if (view.info.missing || (!practice && view.info.line === false)) {
     text = practice ? "Your account isn't open on practice money yet." : "Your account isn't open on real money yet.";
-    if (practice) action = "practice";
+    action = practice ? "practice" : "open-real";
   } else {
     const have = centsOf(view.info.usd);
     text = have === null ? "You have a balance we can't show right now." : `You have ${formatUsd(view.info.usd ?? "0")}`;
@@ -341,6 +370,11 @@ function BalanceLine({
           Get practice dollars
         </Button>
       ) : null}
+      {action === "open-real" ? (
+        <Button variant="secondary" small onClick={onOpenReal} busy={opening} busyLabel="Opening">
+          Open it on real money
+        </Button>
+      ) : null}
       {action === "retry" ? (
         <Button variant="quiet" small onClick={onRetry}>
           Try again
@@ -351,20 +385,38 @@ function BalanceLine({
   );
 }
 
-/** "Real money: $5 a link, $25 a day. 3 of 5 sends left." */
-function CapsLine({ pilotInfo }: { pilotInfo: ReturnType<typeof usePilot> }) {
-  if (pilotInfo && pilotInfo.pilot && !pilotInfo.approved) {
+/**
+ * "Real money: $5 a link, $25 a day. 3 of 5 sends left." While the account may send real money; any
+ * other standing (it can change while real money is in use) is said in its own words, with the one
+ * thing to do about it: Ask to join or Ask for more sends here in the extension, or Check again.
+ */
+function CapsLine({ st, short, onAsk }: { st: StandingView; short: string; onAsk: () => void }) {
+  const info = st.info;
+  if (!info || st.standing === "approved" || st.standing === "open") {
+    const left = info && info.pilot && info.limit > 0 ? ` ${sendsLeft(info)} of ${info.limit} sends left.` : "";
     return (
-      <p class="caps" role="status">
-        Real money is invite-only for now. <ExtLink href={URLS.pilot}>Ask to join</ExtLink>
+      <p class="caps">
+        Real money: {CAPS_SHORT}.{left}
       </p>
     );
   }
-  const left =
-    pilotInfo && pilotInfo.pilot && pilotInfo.limit > 0 ? ` ${Math.max(0, pilotInfo.limit - pilotInfo.used)} of ${pilotInfo.limit} sends left.` : "";
+  const c = standingCopy(st.standing, { short, left: sendsLeft(info), limit: info.limit });
+  const ask = st.standing === "none" || st.standing === "no-sends";
+  const recheck = st.standing === "pending" || st.standing === "unknown";
   return (
-    <p class="caps">
-      Real money: {CAPS_SHORT}.{left}
+    <p class="caps" role="status">
+      {c.title}{" "}
+      {ask ? (
+        <button type="button" class="link link--button" onClick={onAsk}>
+          {c.action}
+        </button>
+      ) : recheck ? (
+        <button type="button" class="link link--button" onClick={st.check} disabled={st.checking}>
+          {st.checking ? "Checking" : c.action}
+        </button>
+      ) : (
+        c.line
+      )}
     </p>
   );
 }

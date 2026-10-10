@@ -4,17 +4,22 @@
  * The step is the WORKER's (state.restore), not the popup's: closing the popup in the middle of a
  * restore and opening it again lands on the same step. Only "I pressed Restore on Connect and have
  * not asked for a code yet" lives in the shell.
+ *
+ * The same steps bring another account in place of the one held here ("Use another account" in
+ * Settings, `switching`): the account held now must be confirmed backed up first, and its links show
+ * again when it is brought back.
  */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { URLS } from "../../config";
+import { EMAIL_HINT } from "../../lib/copy";
 import type { ErrorCode } from "../../lib/types";
 import { ask } from "../api";
 import { useApp } from "../context";
 import { useEscape } from "../escape";
-import { plainSentence } from "../format";
+import { maskEmail, plainSentence, shortAddress } from "../format";
 import { useAlive, useCountdown } from "../hooks";
 import { IconBack } from "../icons";
-import { BrandBar, Button, ExtLink, Heading, Mascot, Notice, Progress, TextField } from "../ui";
+import { BrandBar, Button, ExtLink, Heading, Mascot, Notice, Progress, SubBar, TextField } from "../ui";
 
 interface RestoreProblem {
   text: string;
@@ -41,6 +46,9 @@ function restoreProblem(code: ErrorCode, message: string): RestoreProblem {
       return { text: "Too many tries. Wait a few minutes, then try again." };
     case "offline":
       return { text: "We couldn't reach Lumenia. Check your connection and try again." };
+    case "needs-backup":
+    case "busy":
+      return { text: plainSentence(message) ?? "Back this account up first. It lives only in this browser." };
     default:
       return { text: plainSentence(message) ?? "Something went wrong. Try again." };
   }
@@ -69,16 +77,37 @@ function BackLink({ onClick, children }: { onClick: () => void; children: string
   );
 }
 
+/**
+ * The header of the code and password steps while another account is being brought in (Use another
+ * account): back to Settings, which ends that restore. The account held here is untouched until the
+ * password step has opened the other one.
+ */
+function SwitchBar() {
+  const { refresh, go } = useApp();
+  return (
+    <SubBar
+      title="Use another account"
+      onBack={() => {
+        void ask("restore.cancel").then(() => {
+          go("settings");
+          return refresh();
+        });
+      }}
+    />
+  );
+}
+
 /* --------------------------------- step 1: email --------------------------------- */
 
-export function RestoreEmail() {
-  const { refresh, leaveRestore } = useApp();
+export function RestoreEmail({ switching = false }: { switching?: boolean }) {
+  const { ws, refresh, leaveRestore, go } = useApp();
   const alive = useAlive();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<RestoreProblem | null>(null);
+  const leave = () => (switching ? go("settings") : leaveRestore());
   useEscape(() => {
-    leaveRestore();
+    leave();
     return true;
   });
 
@@ -88,7 +117,7 @@ export function RestoreEmail() {
     if (!value || busy) return;
     setBusy(true);
     setProblem(null);
-    const r = await ask("restore.requestCode", { email: value });
+    const r = await ask("restore.requestCode", { email: value, ...(switching ? { switching: true as const } : {}) });
     if (!alive.current) return;
     if (!r.ok) {
       setBusy(false);
@@ -99,18 +128,24 @@ export function RestoreEmail() {
     if (alive.current) setBusy(false);
   }
 
+  const held = ws.account;
   return (
     <>
-      <BrandBar />
+      {switching ? <SubBar title="Use another account" onBack={leave} /> : <BrandBar />}
       <main class="screen">
-        <BackLink onClick={leaveRestore}>Back</BackLink>
+        {switching ? null : <BackLink onClick={leaveRestore}>Back</BackLink>}
         <div class="beat beat--row">
           <Mascot pose="phone" size="sm" />
           <div class="beat__text">
-            <Heading focus={false}>Bring your account here</Heading>
+            <Heading focus={false}>{switching ? "Bring another account here" : "Bring your account here"}</Heading>
             <p class="lede">Enter the email of your backup. We'll send you a <span class="nowrap">6-digit</span> code.</p>
           </div>
         </div>
+        {switching && held ? (
+          <p class="fine">
+            This account ({shortAddress(held.pubkey)}) stays backed up{held.email ? ` with ${maskEmail(held.email)}` : ""}. Its links show again when you bring it back.
+          </p>
+        ) : null}
         <form class="stack" onSubmit={submit} noValidate>
           <TextField
             id="email"
@@ -123,10 +158,16 @@ export function RestoreEmail() {
             onValue={setEmail}
             readOnly={busy}
             invalid={Boolean(problem)}
-            describedBy={problem ? "email-problem" : undefined}
+            describedBy={problem ? "email-problem" : "email-hint"}
             autoFocus
           />
-          {problem ? <Problem id="email-problem" problem={problem} /> : null}
+          {problem ? (
+            <Problem id="email-problem" problem={problem} />
+          ) : (
+            <p class="fine" id="email-hint">
+              {EMAIL_HINT}
+            </p>
+          )}
           <Button type="submit" busy={busy} busyLabel="Sending the code" disabled={!email.trim()}>
             Send me a code
           </Button>
@@ -141,7 +182,7 @@ export function RestoreEmail() {
 const RESEND_AFTER_MS = 30_000;
 
 export function RestoreCode() {
-  const { ws, refresh, startRestore } = useApp();
+  const { ws, refresh, startRestore, go } = useApp();
   const alive = useAlive();
   const step = ws.restore!;
   const wait = useCountdown(step.codeSentAt + RESEND_AFTER_MS);
@@ -182,7 +223,7 @@ export function RestoreCode() {
     setResending(true);
     setProblem(null);
     setNote("");
-    const r = await ask("restore.requestCode", { email: step.email });
+    const r = await ask("restore.requestCode", { email: step.email, ...(step.switching ? { switching: true as const } : {}) });
     if (!alive.current) return;
     setResending(false);
     if (!r.ok) {
@@ -196,13 +237,14 @@ export function RestoreCode() {
 
   async function otherEmail() {
     await ask("restore.cancel");
-    startRestore();
+    if (step.switching) go("switch");
+    else startRestore();
     await refresh();
   }
 
   return (
     <>
-      <BrandBar />
+      {step.switching ? <SwitchBar /> : <BrandBar />}
       <main class="screen">
         <Heading focus={false}>Check your email</Heading>
         <p class="lede">
@@ -260,7 +302,7 @@ export function RestoreCode() {
 /* --------------------------------- step 3: password --------------------------------- */
 
 export function RestorePassword() {
-  const { ws, refresh, startRestore } = useApp();
+  const { ws, refresh, startRestore, go, justRestored } = useApp();
   const alive = useAlive();
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
@@ -280,23 +322,27 @@ export function RestorePassword() {
       return;
     }
     setPassword("");
+    justRestored(r.data); // named once on the next screen: "This is ..., backed up with ..."
+    go("home");
     await refresh(); // the account is here: the home screen takes over
     if (alive.current) setBusy(false);
   }
 
   async function startOver() {
+    const switching = ws.restore?.switching === true;
     await ask("restore.cancel");
-    startRestore();
+    if (switching) go("switch");
+    else startRestore();
     await refresh();
   }
 
   return (
     <>
-      <BrandBar />
+      {ws.restore?.switching ? <SwitchBar /> : <BrandBar />}
       <main class="screen">
         <Heading focus={false}>Enter your backup password</Heading>
         <p class="lede">
-          This is the password you added to the backup for <strong class="break">{ws.restore?.email}</strong> on getlumenia.com.
+          This is the password you chose when you backed up <strong class="break">{ws.restore?.email}</strong>.
         </p>
         <form class="stack" onSubmit={submit}>
           <TextField

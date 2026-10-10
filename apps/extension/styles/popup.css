@@ -1833,3 +1833,24 @@ input {
   border: 0;
   background: transparent;
 }
+
+/* The account in use: its short address and the email it is backed up with (contract 5.3). */
+.acct {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--pw-muted);
+}
+
+.acct__text {
+  overflow-wrap: anywhere;
+}
+
+.acct--center {
+  justify-content: center;
+  text-align: center;
+}

@@ -23,3 +23,29 @@ export const CAPS_SENTENCE = `Real money is capped at ${CAPS}.`;
  * one, and a typed name rides after the '#' with the key (apps/web/lib/link-fragment.ts).
  */
 export const NAME_NOTE = "Your name travels inside the link, after the #. Anyone who can read the chat can read it.";
+
+/**
+ * Under every backup and restore email field (LUMENIA ACCOUNT CONTRACT v1, 5.5): the server files a
+ * backup under the exact address typed (lowercased), so a provider's own aliases are separate emails.
+ */
+export const EMAIL_HINT = "Type it the same way every time: first.last@gmail.com and firstlast@gmail.com are two different emails here.";
+
+/*
+ * What leaves this browser for real money, and what stays on it, in the words the website's /privacy
+ * page, this extension's first-run screen, both store listings and the README all use (LUMENIA
+ * ACCOUNT CONTRACT v1, 5.6). Each starts with its label, then a colon.
+ */
+/** D1: the pilot check. */
+export const DISCLOSE_PILOT_CHECK =
+  "To check the pilot: your account's public key, to the real-money server, when you press Real money or Check again, while you use real money, and while this account's request to join is waiting.";
+/** D2: asking to join real money. */
+export const DISCLOSE_PILOT_ASK =
+  "To ask to join real money: your account's public key, the email that backs it up, a signature from your account and, if asked, a 6-digit code, to the real-money server.";
+/** D3: the backup email kept on this device. */
+export const DISCLOSE_EMAIL_KEPT = "On this device: the email each account is backed up with, so it can show it to you and use it when you ask to join.";
+
+/** A disclosure sentence split at its label, for a list that sets the label in bold. */
+export function disclosureParts(sentence: string): { label: string; rest: string } {
+  const i = sentence.indexOf(": ");
+  return i < 0 ? { label: "", rest: sentence } : { label: sentence.slice(0, i + 1), rest: sentence.slice(i + 2) };
+}

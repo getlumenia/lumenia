@@ -6,7 +6,22 @@ import { createContext } from "preact";
 import { useContext } from "preact/hooks";
 import type { LinkRecord, NetId, WorkerState } from "../lib/types";
 
-export type View = "home" | "links" | "settings" | "backup";
+/**
+ * The screens of an account that is here and unlocked: the home screen, Links, Settings, the backup
+ * steps, Ask to join real money, Use another account (the restore steps in place of this account),
+ * Change backup email (the backup steps for an account that is already backed up), and Add your
+ * backup email (an account restored by an older version, which never kept it).
+ */
+export type View = "home" | "links" | "settings" | "backup" | "ask" | "switch" | "change-email" | "add-email";
+
+/** What a restore just brought here, named once on the screen after it. */
+export interface Restored {
+  pubkey: string;
+  email: string;
+  bound: boolean | null;
+  /** it was the account already held here (Use another account, with its own email) */
+  same: boolean;
+}
 
 export interface AppApi {
   ws: WorkerState;
@@ -30,6 +45,8 @@ export interface AppApi {
   startCreate(): void;
   /** an account was just made here: show the "you're in" beat, once */
   justCreated(): void;
+  /** an account was just restored here: name it once (LUMENIA ACCOUNT CONTRACT v1, 5.5) */
+  justRestored(r: Restored): void;
 }
 
 export const AppCtx = createContext<AppApi | null>(null);

@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { PILOT_CACHE_MS } from "../config";
+import { pilotStanding, type Standing } from "../lib/standing";
 import type { BalanceInfo, NetId, PilotInfo, WorkerState } from "../lib/types";
 import { ask } from "./api";
 import { useAlive } from "./hooks";
@@ -40,12 +41,28 @@ export function useBalance(net: NetId): { view: BalanceView; reload: () => void;
 // at most once a minute however many screens want the answer.
 let lastPilotAsk = 0;
 
+export interface StandingView {
+  /** the last answer this browser has for the account, possibly old; null when there is none */
+  info: PilotInfo | null;
+  /** where that answer says the account stands ("unknown" with no answer, or after a failed ask) */
+  standing: Standing;
+  /** a check is on its way */
+  checking: boolean;
+  /** the last check failed: `info`, if any, is the older answer, shown with its age */
+  failed: boolean;
+  /** ask again now (Check again, Try again) */
+  check: () => void;
+}
+
 /**
- * The pilot standing of this account: what the worker has cached, refreshed when it is older than
- * a minute and the money in use is real. Never asked on practice money, never on every render.
+ * The pilot standing of this account: what the worker has cached, refreshed when it is older than a
+ * minute and either the money in use is real or this account's request to join is waiting (the
+ * disclosure says both, LUMENIA ACCOUNT CONTRACT v1 5.6 D1). Never on every render.
  */
-export function usePilot(ws: WorkerState): PilotInfo | null {
+export function useStanding(ws: WorkerState): StandingView {
   const [info, setInfo] = useState<PilotInfo | null>(ws.pilot);
+  const [checking, setChecking] = useState(false);
+  const [failed, setFailed] = useState(false);
   const pubkey = ws.account?.pubkey ?? null;
   const alive = useAlive();
 
@@ -53,16 +70,38 @@ export function usePilot(ws: WorkerState): PilotInfo | null {
     setInfo((cur) => (ws.pilot && (!cur || ws.pilot.at >= cur.at) ? ws.pilot : cur));
   }, [ws.pilot]);
 
+  const run = useCallback(
+    (force: boolean) => {
+      setChecking(true);
+      void ask("pilot.status", force ? { force: true } : {}).then((r) => {
+        if (!alive.current) return;
+        setChecking(false);
+        setFailed(!r.ok);
+        if (r.ok && r.data) setInfo(r.data);
+      });
+    },
+    [alive],
+  );
+
   useEffect(() => {
-    if (ws.settings.net !== "public" || !pubkey) return;
+    if (!pubkey) return;
+    const waiting = ws.pilot !== null && pilotStanding(ws.pilot) === "pending";
+    if (ws.settings.net !== "public" && !waiting) return;
     const age = ws.pilot ? Date.now() - ws.pilot.at : Number.POSITIVE_INFINITY;
     if (age <= PILOT_CACHE_MS) return;
     if (Date.now() - lastPilotAsk < PILOT_CACHE_MS) return;
     lastPilotAsk = Date.now();
-    void ask("pilot.status").then((r) => {
-      if (alive.current && r.ok && r.data) setInfo(r.data);
-    });
-  }, [ws.settings.net, pubkey, ws.pilot]);
+    run(false);
+  }, [ws.settings.net, pubkey, ws.pilot, run]);
 
-  return info;
+  return {
+    info,
+    standing: info ? pilotStanding(info) : "unknown",
+    checking,
+    failed,
+    check: () => {
+      lastPilotAsk = Date.now();
+      run(true);
+    },
+  };
 }

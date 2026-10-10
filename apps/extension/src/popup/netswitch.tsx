@@ -3,28 +3,31 @@
  * and the same switch in Settings. Both run the logic below, so the two can never disagree.
  *
  * Practice money is one tap. Real money keeps its ceremony, because it is the one switch with
- * consequences: an account that lives only in this browser is sent to back it up first (the pilot's
- * approval no longer stands between such an account and real money once the pilot is retired), the
- * pilot is asked first (forced, so the answer is fresh), an account that is not on
- * the list hears "invite-only", the real-money note is shown once and waits for "I understand",
- * and only then does the worker change the money. The worker checks all of it again (router.ts,
- * network.set), so a popup that skipped a step still could not switch.
+ * consequences: an account that lives only in this browser is sent to back it up first, the pilot is
+ * asked first (forced, so the answer is fresh), and its answer is said as the account's standing in
+ * the words every surface uses (lib/standing.ts): invite-only (with Ask to join, here in the
+ * extension, for this account), on the list, not approved for now, taken off, or could not check.
+ * The real-money note is shown once and waits for "I understand", and only then does the worker
+ * change the money. The worker checks all of it again (router.ts, network.set), so a popup that
+ * skipped a step still could not switch.
  */
 import { useState } from "preact/hooks";
 import { URLS } from "../config";
 import { CAPS_SENTENCE, REAL_MONEY_WARNING } from "../lib/copy";
-import type { NetId, PilotInfo } from "../lib/types";
+import { CHECKING, pilotStanding, sendsLeft, standingCopy, type Standing } from "../lib/standing";
+import type { ErrorCode, NetId, PilotInfo } from "../lib/types";
 import { ask } from "./api";
 import { useApp } from "./context";
 import { useEscape } from "./escape";
-import { plainSentence, realMoneyTitle } from "./format";
+import { plainSentence, realMoneyTitle, shortAddress, when } from "./format";
 import { useAlive } from "./hooks";
 import { Button, ExtLink, Notice, TopBar } from "./ui";
 
 export type NetUi =
   | { kind: "idle" }
   | { kind: "checking" }
-  | { kind: "invite-only" }
+  /** a standing that does not open real money: said in its own words, with what can be done */
+  | { kind: "standing"; standing: Standing }
   /** the account lives only in this browser: real money waits for the backup */
   | { kind: "backup-first" }
   | { kind: "warning" }
@@ -40,11 +43,35 @@ export interface NetSwitchState {
   checked: PilotInfo | null;
   /** the header's description of real money, from the last pilot answer (format.ts realMoneyTitle) */
   realTitle: string;
+  /** the short address of the account in use */
+  short: string;
   pick: (target: NetId) => void;
   /** open the backup steps (the "back it up first" answer) */
   backUp: () => void;
+  /** open the Ask to join screen for this account */
+  askToJoin: () => void;
+  /** ask the pilot again (Check again, Try again) */
+  recheck: () => void;
   understand: () => void;
   dismiss: () => void;
+}
+
+/** The standing a refusal from network.set names, when it names one. */
+function standingOf(code: ErrorCode, message: string): Standing | null {
+  switch (code) {
+    case "not-approved":
+      return /settings|accept/i.test(message) ? null : "none";
+    case "pilot-pending":
+      return "pending";
+    case "pilot-declined":
+      return "declined";
+    case "pilot-revoked":
+      return "revoked";
+    case "pilot-unknown":
+      return "unknown";
+    default:
+      return null;
+  }
 }
 
 export function useNetSwitch(): NetSwitchState {
@@ -54,6 +81,7 @@ export function useNetSwitch(): NetSwitchState {
   const [checked, setChecked] = useState<PilotInfo | null>(null);
   const net = ws.settings.net;
   const busy = ui.kind === "checking" || ui.kind === "switching";
+  const short = shortAddress(ws.account?.pubkey ?? "");
 
   async function switchTo(target: NetId): Promise<void> {
     setUi({ kind: "switching", to: target });
@@ -64,6 +92,11 @@ export function useNetSwitch(): NetSwitchState {
       return;
     }
     if (!r.ok) {
+      const s = standingOf(r.code, r.message);
+      if (s) {
+        setUi({ kind: "standing", standing: s });
+        return;
+      }
       setUi({
         kind: "error",
         text: plainSentence(r.message) ?? "We couldn't switch just now. Try again in a moment.",
@@ -86,16 +119,15 @@ export function useNetSwitch(): NetSwitchState {
     const p = await ask("pilot.status", { force: true });
     if (!alive.current) return;
     if (!p.ok || !p.data) {
-      setUi({ kind: "error", text: (!p.ok && plainSentence(p.message)) || "We couldn't check right now. Try again in a moment." });
+      // Could not ask: "unknown", never "not approved".
+      setUi({ kind: "standing", standing: "unknown" });
       return;
     }
     setChecked(p.data);
-    if (!p.data.approved) {
-      setUi({ kind: "invite-only" });
-      return;
-    }
-    if (p.data.limit > 0 && p.data.used >= p.data.limit) {
-      setUi({ kind: "error", text: "You've used all your real-money sends in the pilot. Practice money still works." });
+    const s = pilotStanding(p.data);
+    if (s !== "approved" && s !== "no-sends" && s !== "open") {
+      setUi({ kind: "standing", standing: s });
+      void refresh(); // the header title follows the fresh answer
       return;
     }
     if (!ws.settings.mainnetAck) {
@@ -121,7 +153,8 @@ export function useNetSwitch(): NetSwitchState {
     ui,
     busy,
     checked,
-    realTitle: realMoneyTitle(ws.pilot),
+    realTitle: realMoneyTitle(ws.pilot, short),
+    short,
     pick: (target) => {
       if (busy || target === net) return;
       void (target === "public" ? chooseReal() : switchTo("testnet"));
@@ -130,6 +163,11 @@ export function useNetSwitch(): NetSwitchState {
       setUi({ kind: "idle" });
       go("backup");
     },
+    askToJoin: () => {
+      setUi({ kind: "idle" });
+      go("ask");
+    },
+    recheck: () => void chooseReal(),
     understand: () => void understandNote(),
     dismiss: () => setUi({ kind: "idle" }),
   };
@@ -137,12 +175,13 @@ export function useNetSwitch(): NetSwitchState {
 
 /** What the switch has to say, when it has something to say: the check, the answer, the note. */
 export function NetPanel({ sw }: { sw: NetSwitchState }) {
+  const { ws } = useApp();
   const { ui, checked } = sw;
   switch (ui.kind) {
     case "checking":
       return (
         <p class="fine" role="status">
-          Checking your access to real money
+          {CHECKING}
         </p>
       );
     case "switching":
@@ -151,22 +190,33 @@ export function NetPanel({ sw }: { sw: NetSwitchState }) {
           {ui.to === "public" ? "Switching to real money" : "Switching to practice money"}
         </p>
       );
-    case "invite-only":
+    case "standing": {
+      const info = checked ?? ws.pilot;
+      const c = standingCopy(ui.standing, { short: sw.short, left: info ? sendsLeft(info) : 0, limit: info?.limit ?? 0 });
       return (
         <>
-          <Notice>
-            <strong>Real money is invite-only for now.</strong> This account isn't on the list yet.{" "}
-            <ExtLink href={URLS.pilot} class="nowrap">
-              Ask to join
-            </ExtLink>
+          <Notice tone={ui.standing === "unknown" ? "error" : "info"}>
+            <strong>{c.title}</strong> {c.line}
+            {ui.standing === "unknown" && ws.pilot ? <> Last checked {when(ws.pilot.at)}.</> : null}
           </Notice>
           <div class="row">
+            {ui.standing === "none" ? (
+              <Button small onClick={sw.askToJoin}>
+                {c.action}
+              </Button>
+            ) : null}
+            {ui.standing === "pending" || ui.standing === "unknown" ? (
+              <Button small onClick={sw.recheck}>
+                {c.action}
+              </Button>
+            ) : null}
             <Button small variant="secondary" onClick={sw.dismiss}>
               Not now
             </Button>
           </div>
         </>
       );
+    }
     case "backup-first":
       return (
         <>
@@ -192,7 +242,7 @@ export function NetPanel({ sw }: { sw: NetSwitchState }) {
           <p>{REAL_MONEY_WARNING}</p>
           <p>
             {CAPS_SENTENCE}
-            {checked && checked.pilot && checked.limit > 0 ? ` This account has ${Math.max(0, checked.limit - checked.used)} of ${checked.limit} sends left.` : ""}
+            {checked && checked.pilot && checked.limit > 0 ? ` This account has ${sendsLeft(checked)} of ${checked.limit} sends left.` : ""}
           </p>
           <div class="row">
             <Button small onClick={sw.understand}>

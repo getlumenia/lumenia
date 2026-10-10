@@ -78,10 +78,14 @@ export const URLS = {
    */
   backup: `${WEB_ORIGIN}/account`,
   settings: `${WEB_ORIGIN}/settings`,
-  pilot: `${WEB_ORIGIN}/pilot`,
+  // No link to the website's /pilot page: it files a request for the WEBSITE's account, a different
+  // key. Asking to join happens here, for the key this extension holds (background/pilot-ask.ts).
   privacy: `${WEB_ORIGIN}/privacy`,
-  /** The website's way in: "Yes, bring it here" opens a backed-up account on any phone or computer. */
-  start: `${WEB_ORIGIN}/start`,
+  /**
+   * The website's way in, straight to bringing a backed-up account there: on a browser with no
+   * account it is the restore, and next to an account already there it adds this one beside it.
+   */
+  start: `${WEB_ORIGIN}/start?step=restore`,
 } as const;
 
 /** The network a stored choice names. Mainnet is configured at build time; a missing one throws. */
