@@ -18,6 +18,101 @@ Everything since 0.2.1; nothing has been tagged since. The Instawards follow-on 
 2026-09-17 to 2026-10-16) is grouped by deliverable and dated, newest first. Its evidence,
 metric by metric, is in [EVIDENCE.md](EVIDENCE.md).
 
+### 2026-10-10: one account model, the watchdog on a busy source, extension 0.1.3 on both stores (live on the web and both Workers)
+
+Committed and deployed on 2026-10-10. The testnet Worker runs version `b7876a09` (tag `e4f57db`)
+since 09:37 UTC; an earlier deploy that day, `afb6aa3c` (tag `7e699f0`), carried the watchdog fix
+alone. The mainnet Worker runs version `dd9408b4` (tag `c961c69`) since 13:16 UTC, deployed by the
+owner, with `PILOT_MODE=1` kept and the caps unchanged ($5 a link, $25 a day per sender, $50 a day
+in total, a 15 XLM fee budget). The website runs `main` at `c961c69` (the Vercel production
+deployment succeeded). Read at 13:26 UTC, both Workers' `/health` showed those versions and an `env`
+signer: the KMS cutover, and metrics 1 and 2 of SOW 2, are still pending.
+
+Checked after the deploys: the full offline gate on `c961c69`, 54 commands, all green (sponsor
+pilot 190, recovery-store 149, identity 73, identity-routes 49, watchdog-offline 240, antidrain 82;
+web recovery 125, receive 23, extseam 175, pilotaccess 217, claimhome 44, horizon 71, claimerr 75;
+extension 3,314: url 359, links 225, send 279, session 54, restore 105, security 28, router 112,
+account 126, popup 2,026); on production after the website deploy, the claim (testnet
+`6d3d493d...2cc1e1`), the private-link preview (the preview bots saw no amount and no name; the page
+showed $0.20 read from the ledger) and the send loop, 3 of 3; and the extension's create run with
+0.1.4 against the new testnet Worker: an account made in the extension (`GDT56AWE...`), 1.00
+practice dollar, a link claimed on the web with no extension (claim `45d05850...ae59b7`), read as
+Claimed, backed up by email, and restored in a fresh browser profile to the same address.
+
+#### Fixed (sponsor): the watchdog on a busy source (`7e699f0`)
+
+- The mainnet watchdog paged five times on 2026-10-10 (11:45, 12:45, 13:30, 15:00 and 15:30
+  Istanbul, 08:45 to 12:30 UTC) because the public Soroban RPC answered HTTP 429 "error code:
+  1015" to three quick attempts. A busy or unreachable source (a throttle, a 5xx, a gateway page, no
+  connection) now pages only once every scheduled run for 45 minutes found it so, with retries paced
+  1 s then 3 s and `Retry-After` honoured up to 4 s. A refusal (a JSON-RPC error object, a 4xx other
+  than 429), an operator's run, or a store that cannot keep the start time still pages at once.
+  Both auto-halt tripwires still halt in the first run that can see them, the cursors re-scan what
+  an outage hid, and the dead-man heartbeat still opens an issue after 3 hours without a full run. A
+  review of the first version found five defects, fixed before it shipped. Held by
+  `test:watchdog-offline` (240).
+
+#### Changed (sponsor, web, extension): one account model
+
+The founder reported on 9 and 10 October that the website and the extension held two different
+keys, that the extension's "Ask to join" filed the website's key, and that a backup from one surface
+could replace another account's email backup. A review in six lenses gave 84 findings; a second,
+skeptical pass checked 31 of them (30 real, 1 refuted); the real ones were all fixed in `df31e02`
+(sponsor), `2d37df8` (web), `e4f57db` (extension 0.1.4) and `c961c69` (practice dollars).
+
+- **One email backs up one account.** The server never overwrites a backup row bound to another
+  key: such a write answers 409 with the stored box and, for a row tied to no account, a single-use
+  ticket. That an email already backs up another account is said only after the inbox code, and the
+  person can open that account instead. New routes `/recovery-check` (does this email back up my
+  account?) and `/recovery-release` (untie it). `test:recovery-store` 149, web `test:recovery` 125.
+- **A request to join real money is signed by the key in use** and carries that key's backup
+  email, confirmed by that backup or by an emailed code; `/pilot-status` has its own rate-limit
+  buckets and no longer answers a store failure as "not approved"; the owner's approve and decline
+  links confirm before acting, and the mails name the account. `test:pilot` 190.
+- **The same pilot states on both surfaces**: none, pending, approved, declined, revoked, no sends
+  left, unknown (`test:pilotaccess` 217 on the web, `test:router` and `test:popup` in the
+  extension).
+- **Every surface names the account in use** (its short address and its backup email); a second
+  account can be brought in without wiping the first; Leave this device sizes its warning by every
+  account it deletes.
+- **Practice dollars count as added only once the ledger shows them** (`c961c69`). A 202 from the
+  faucet (sent, not yet seen landing) is looked up by its hash for up to 30 s and is otherwise a
+  plain "try again"; it used to show "You have $0.00". Found by the extension's live create run
+  that day (`test:receive` 23).
+- **/privacy updated 2026-10-10**: one email, one account; which older backups carry no account
+  hash; when the app asks the real-money server where an account stands; the signed request to
+  join with its backup email; the backup email the extension keeps on the device.
+- **Two server switches, off for the transition**: `PILOT_REQUIRE_PROOF=1` on the mainnet Worker
+  refuses an unsigned request to join, and `RECOVERY_REQUIRE_OWNER=1` on the testnet Worker refuses a
+  first backup no account signed. The owner turns them on once the new website and extension are
+  live.
+
+#### Extension
+
+- **0.1.3 is public on the Chrome Web Store** since 2026-10-10, 13:32 Istanbul (10:32 UTC), per the
+  store's "published" mail to the owner; the listing reads Version 0.1.3, Updated October 10, 2026,
+  3 users. The package it serves (downloaded 2026-10-10: sha256
+  `94e119a4bf64f81125b36d8d04dce30da801aac6fae4eefb2699b76645a951bd`, 569,213 bytes) matches
+  `lumenia-chrome-0.1.3.zip` file for file, apart from what the store adds
+  (`_metadata/verified_contents.json` and an `update_url` line in `manifest.json`); `background.js`
+  is identical. Both stores now serve a version that makes private links: the Chrome Web Store 0.1.3,
+  addons.mozilla.org 0.1.3 since 2026-10-09 (08:36 UTC) and 0.1.4 since 2026-10-10 (13:26 UTC). What
+  can still make a pre-D2 link: an install that has not updated yet, and the self-hosted
+  getlumenia.com/extension/lumenia-firefox.xpi (0.1.1).
+- **0.1.4** (`e4f57db`, built from `c961c69`): "Ask to join" files the extension's own key, signed,
+  with its backup email; the real-money switch shows each pilot state; an approved account that
+  never received real money opens on real money from the extension; a backup never takes over
+  another account's email; the account in use is shown with its email; Settings has "Use another
+  account" and "Change backup email"; and it bundles the practice-dollar fix. Packages:
+  `lumenia-chrome-0.1.4.zip` sha256
+  `0af592130bb768430cd6abef2f4a3217a0636be7cb4f5412b4c67bf6f2fb39d6`, `lumenia-firefox-0.1.4.zip`
+  sha256 `dea18be9442c016b8a1ed5aea1bab15153b7312eed25845f6269a5a123d49d8f`,
+  `lumenia-extension-sources-0.1.4.zip` sha256
+  `338361e1d273d2b7153dd8290eea00ba7a3f5e09a8f7614a00cbac2e84bfec7b`; a clean-room rebuild from the
+  sources archive gave `dist/chrome` and `dist/firefox` byte-identical. Submitted to
+  addons.mozilla.org on 2026-10-10 (listed channel, validation passed, sources uploaded, AMO version
+  6561729), in review. The Chrome Web Store upload is the owner's step, not done yet.
+
 ### 2026-10-09: sponsor and web fixes (live on the web and both Workers)
 
 Merged on 2026-10-09 and held by the offline gate on the merged tree (40 suites / 4,388
@@ -154,7 +249,7 @@ see the D3 entry below) and ends on version `32067caf`, the same release in its 
   ([`evidence/ZK_SPIKE_REPORT.md`](evidence/ZK_SPIKE_REPORT.md)). Testnet only, and it does not
   hide the amount.
 
-### SOW 2, D1: the sender-side browser extension, 0.1.0 to 0.1.3 (from 2026-10-03)
+### SOW 2, D1: the sender-side browser extension, 0.1.0 to 0.1.4 (from 2026-10-03)
 
 - **0.1.0** (2026-10-03): the extension for Chrome and Firefox MV3 (`apps/extension`), reusing
   the website's sender code. Make a payment link from your own account, paste it into a text
@@ -166,7 +261,8 @@ see the D3 entry below) and ends on version `32067caf`, the same release in its 
   0.1.1. Public on the Chrome Web Store by 2026-10-06 and on addons.mozilla.org since
   2026-10-07. Its links still carry the amount and the sender's name in the query.
 - **0.1.3** (built 2026-10-09 from commit `00aa0a5`; **public on addons.mozilla.org since 2026-10-09**,
-  its listing's privacy-policy field filled the same day; submitted to the Chrome Web Store on 2026-10-09, in review): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
+  its listing's privacy-policy field filled the same day, **and on the Chrome Web Store since
+  2026-10-10**, 10:32 UTC): links of the shape `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<typed name>][&p=1]`, with
   no amount anywhere and no name unless one is typed; the From field starts empty, and the name
   0.1.2 saved is deleted at startup; the one-time real-money note "Real money on Lumenia is an
   early pilot. It has not been reviewed by an outside security firm yet. You can lose money, so
@@ -181,9 +277,12 @@ see the D3 entry below) and ends on version `32067caf`, the same release in its 
   `lumenia-extension-sources-0.1.3.zip` sha256
   `a4bbcb530ea164c6e8a374fb06626d51e98296d59a5f282a69f58c6cbea627b5`; a clean-room rebuild from
   the sources archive is byte-identical to `dist/chrome` and `dist/firefox` (the zips differ only
-  in file times). It reaches each store after that store's review. On 2026-10-09 the Firefox
+  in file times). Both stores serve it since 2026-10-10. On 2026-10-09 the Firefox
   package ran end to end in Firefox 155 on practice money: an account made, a $0.25 link claimed
   on getlumenia.com in another browser, the Links screen reading Claimed (readiness report D1.3).
+- **0.1.4** (built 2026-10-10 from `c961c69`; public on addons.mozilla.org since 2026-10-10, 13:26 UTC;
+  its Chrome Web Store upload is the owner's step, not done yet): the account model of 2026-10-10 (see
+  that entry above). Links keep the 0.1.3 shape.
 
 ### Removed (2026-10-03)
 

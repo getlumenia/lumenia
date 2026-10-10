@@ -1,12 +1,23 @@
 # SOW 2 D3 operations note: the retirement switch, the KMS signer, the watchdog heartbeat
 
-Status: **2026-10-09. Code done and tested, and deployed on both Workers on 2026-10-08 (the mainnet
+Status: **2026-10-10. Code done and tested, and deployed on both Workers on 2026-10-08 (the mainnet
 one with `PILOT_MODE=1` kept); the watchdog heartbeat is live (section 3).** The release merged on
 2026-10-09 is deployed on 2026-10-09: the testnet Worker as version `213a2832` (08:49 UTC) and the mainnet Worker as version `baaeaae0` (08:52 UTC, `PILOT_MODE=1` kept), both tagged `215cfb2`, so each Worker names its sponsor account as the cutover script
 needs, and the heartbeat alert drill ran (section 3). The retirement switch was rehearsed on the
 deployed testnet Worker on 2026-10-09, 08:57 to 09:03 UTC: six phases, 22 logged steps, every one
 PASS (section 1.4); its last deploy left that Worker on version `32067caf`, the same release in its
-normal configuration. Still to run, the owner's: the KMS cutover (section 2.2, two scripts).
+normal configuration. On 2026-10-10 both Workers took the watchdog's busy-source fix (`7e699f0`,
+section 3) and the server half of the account-management release (`df31e02`): the testnet Worker
+as version `afb6aa3c` (tag `7e699f0`, the watchdog fix alone), then `b7876a09` (tag `e4f57db`) from
+09:37 UTC, and the mainnet Worker as version `dd9408b4` (tag `c961c69`) from 13:16 UTC, deployed by
+the owner with `PILOT_MODE=1` kept and every cap unchanged. Read at 13:26 UTC that day, both
+`/health` pages showed those versions, `"accountSource": "SPONSOR_ACCOUNT_ID"` and
+`"signer": {"kind": "env"}`. That release adds two switches, unset on both Workers:
+`PILOT_REQUIRE_PROOF=1` on the mainnet Worker refuses an unsigned request to join real money, and
+`RECOVERY_REQUIRE_OWNER=1` on the testnet Worker refuses a first backup that no account signed. The
+owner sets them once the new website (live since 2026-10-10) and extension 0.1.4 (in
+addons.mozilla.org's review, not yet uploaded to the Chrome Web Store) are live. Still to run, the
+owner's: the KMS cutover (section 2.2, two scripts).
 Every step that touches a deployed Worker, AWS or the chain is marked "owner"
 below with the exact command, and each log has a row per step; rows still marked _pending_ are
 filled in when the owner runs them. Nothing here contains a secret: secrets are named, never shown,
@@ -71,8 +82,9 @@ retired, the wallet refuses to sign any money movement on real money from an acc
 locked with a password and backed up on this device (`backupBlocksRealMoney` in
 `apps/web/lib/pilot-access.ts`, enforced in `getSigner` in `apps/web/lib/wallet.tsx`), and the switch
 sends such an account to `/pilot`'s secure step first. The browser extension has the same rule (it
-refuses the switch and the send while its account has no backup) from 0.1.3 on; the published 0.1.2
-does not, which is why the flip waits for 0.1.3 (section 1.2). The rules are held by
+refuses the switch and the send while its account has no backup) from 0.1.3 on, which both stores
+serve since 2026-10-10; 0.1.2 and the self-hosted 0.1.1 do not, which is why the flip waits until no
+store serves an older build and the self-hosted file is replaced or no longer offered (section 1.2). The rules are held by
 `test:pilotaccess` (as pure functions) and the extension's `test:router` and `test:send`; their use
 inside the web's wallet provider (`apps/web/lib/wallet.tsx`) is not under test, because no component
 test exists. A device
@@ -109,17 +121,21 @@ below is what the owner confirms on the day it arrives, before step 1.
 - [x] The rehearsal on the deployed testnet Worker has passed (section 1.4: 2026-10-09, every step
   PASS).
 - [ ] Extension 0.1.3 or later is live on both stores, and the self-hosted Firefox file is replaced or
-  no longer offered: the published 0.1.2 reads the open answer as approved and has no backup rule
-  for real money.
+  no longer offered: 0.1.2 and the self-hosted 0.1.1 read the open answer as approved and have no
+  backup rule for real money. The first half is done: both stores serve 0.1.3 or later since 2026-10-10
+  (addons.mozilla.org since 2026-10-09, 0.1.4 there since 2026-10-10, 13:26 UTC; the Chrome Web Store
+  since 2026-10-10, 10:32 UTC). The
+  self-hosted getlumenia.com/extension/lumenia-firefox.xpi is still 0.1.1, and an install of 0.1.2
+  that has not updated yet keeps the old behaviour.
 - [ ] The web flag `NEXT_PUBLIC_REAL_MONEY_OPEN=1` is set with the flip (step 5): it retires the
   waitlist calls to action, which do not read `/pilot-status`.
 
 The flip:
 
 0. The web from the D3 commit is live in production, and extension 0.1.3 or later is live in both
-   stores (the checklist above). A web build from before D3 reads the answer `"state": "open"` as no
-   state at all and shows everyone "Join the pilot", and the published 0.1.2 reads it as approved
-   with no backup rule, so the Worker must not flip first.
+   stores (the checklist above; true since 2026-10-10). A web build from before D3 reads the answer
+   `"state": "open"` as no state at all and shows everyone "Join the pilot", and 0.1.2 reads it as
+   approved with no backup rule, so the Worker must not flip first.
 1. Delete the line `PILOT_MODE = "1"` from `[env.mainnet.vars]` in `wrangler.toml`.
 2. `npx wrangler deploy --env mainnet`
 3. `curl -s https://lumenia-sponsor-mainnet.avakit.workers.dev/health` shows `"pilotMode": false`.
@@ -371,8 +387,8 @@ KMS; the old key remains a signer as the rollback, held offline, until the date 
 
 ### 2.4 Cutover log
 
-Not run yet on either network (both `/health` pages read `"signer": {"kind": "env"}` at 00:16 UTC on
-2026-10-09). What goes here is public: `kms-check`'s PASS line and the KMS key's G address, never the
+Not run yet on either network (both `/health` pages read `"signer": {"kind": "env"}` at 13:26 UTC on
+2026-10-10). What goes here is public: `kms-check`'s PASS line and the KMS key's G address, never the
 key's ARN, which names the AWS account (keep it out of CloudTrail screenshots too). The first
 KMS-signed transaction can be checked by anyone from its envelope: its signature verifies under the
 KMS key's address and not under the old key (readiness report D3.6).
@@ -430,6 +446,24 @@ started 4 to 7 hours after their cron time, and this one ran once on schedule in
 (the log below). So its real detection delay is hours, not 45 minutes: the workflow is a second
 line, and an independent cron monitor pinged by each watchdog run would be the first (not built).
 
+**Busy sources (from `7e699f0`, 2026-10-10).** On 2026-10-10 the mainnet watchdog paged five times,
+at 11:45, 12:45, 13:30, 15:00 and 15:30 Istanbul time (08:45 to 12:30 UTC), because the public
+Soroban RPC answered HTTP 429 "error code: 1015" to three quick attempts, so a check could not run;
+none of the five was a finding. Since the fix, a check that fails because its source was busy or out
+of reach (a throttle, a 5xx, a gateway page, no connection) pages on the Worker's scheduled run only
+once every run for 45 minutes found it so (three missed runs, with five minutes of slack for when a
+run starts); until then each run writes it to the log as information, not as a page. Retries are
+paced 1 s then 3 s, and honour `Retry-After` up to 4 s. The time each such failure began is kept in
+one store key, `watchdog:<network>:blind`. What still pages at once: a refusal (a JSON-RPC error
+object, a 4xx other than 429), an operator's run (`runWatchdog` without the scheduled run's flags),
+and a run whose store cannot read or keep that start time. Both automatic-halt tripwires still halt
+in the first run that can see them, and the scan cursors re-scan what an outage hid (section 4).
+The dead-man side is unchanged: a check that stays blind keeps `lastfull` from moving, and the
+workflow opens an issue after 3 hours without a full run. A review of the first version found five
+defects, all fixed before it shipped. Held by `test:watchdog-offline` (240 at `c961c69`). Live on the
+testnet Worker since its deploys of 2026-10-10 (version `afb6aa3c`, then `b7876a09`) and on the
+mainnet Worker since 13:16 UTC that day (version `dd9408b4`).
+
 Log:
 
 | | |
@@ -439,6 +473,8 @@ Log:
 | `/health` stamp on the testnet Worker | 18:00:36 UTC, as read at 18:13 UTC on 2026-10-08 (the stamp the readiness report's D3.5 records for both Workers). Not its first: this Worker ran the D3 code from about 17:03 UTC, and its earlier full runs, read during the live adversarial runs, were at 17:15:34, 17:30:38 and 17:45:31 UTC. Read again at 00:16 UTC on 2026-10-09: 00:16:05 UTC |
 | `/health` stamp on the mainnet Worker | 18:00:36 UTC, its first: `null` at 17:54 UTC right after the deploy, then 18:00:36, read at 18:02 UTC (readiness report D3.5). Read again at 00:16 UTC on 2026-10-09: 00:16:10 UTC |
 | The alert path (an issue opened, then closed) | proven 2026-10-09: the drill run [37905050169](https://github.com/getlumenia/lumenia/actions/runs/37905050169) (`test_alert` ticked) failed its probe on purpose and opened [issue #46](https://github.com/getlumenia/lumenia/issues/46) with the label `watchdog-heartbeat`; the next run, [37905107528](https://github.com/getlumenia/lumenia/actions/runs/37905107528), found both Workers healthy and closed it at 08:28:08 UTC |
+| The watchdog's own pages on a busy source | 2026-10-10: the mainnet watchdog paged five times (08:45 to 12:30 UTC) on a public RPC that answered HTTP 429; the busy-source rule above is live on the mainnet Worker since 13:16 UTC that day |
+| `/health` stamps after the deploys of 2026-10-10 | read at 13:26 UTC: both Workers' last full run 13:15:24 UTC, neither halted, alerting configured on both; testnet version `b7876a09`, mainnet version `dd9408b4` |
 
 Rollback: disable the workflow in the Actions tab. The stamp costs one store write per run.
 
@@ -469,7 +505,8 @@ design (section 2.2, step 5). That is the live proof of the auto-halt; the cutov
 The auto-halt has not fired on a deployed Worker yet: the testnet cutover will be its first live
 firing. From the release merged on 2026-10-09 the run writes the halt the moment a tripwire is
 raised, before its remaining reads (`test:watchdog-offline` 201); both Workers run it since their
-deploys of 2026-10-09.
+deploys of 2026-10-09. The busy-source rule of 2026-10-10 (section 3) holds back only the page about
+a check that could not run, never a halt: a tripwire still halts in the first run that can see it.
 
 To resume after confirming the finding was expected: read the store's address and token first with
 `read -rs KV_REST_API_URL && export KV_REST_API_URL` and `read -rs KV_REST_API_TOKEN && export

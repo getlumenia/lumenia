@@ -8,10 +8,9 @@ This is the sender's surface only. It is a small Chrome MV3 / Firefox MV3 extens
 the website's own sender code (`apps/web/lib`) instead of re-implementing anything that moves
 money.
 
-This folder is version **0.1.4**, not submitted to either store yet. addons.mozilla.org serves 0.1.3
-since 2026-10-09; the Chrome Web Store still serves 0.1.2 until it has reviewed 0.1.3 (submitted on
-2026-10-09). "Published builds" below says what each published version does differently from this
-source.
+This folder is version **0.1.4**, public on addons.mozilla.org since 2026-10-10 (13:26 UTC) and not
+uploaded to the Chrome Web Store yet, which serves 0.1.3 since 2026-10-10. "Published builds" below says what each published version
+does differently from this source.
 
 ## Install
 
@@ -23,15 +22,21 @@ source.
 
 | Version | Where | Public since | Built from | Package sha256 | The links it makes |
 |---|---|---|---|---|---|
-| 0.1.4 | not submitted yet | - | this folder | - | Private, as 0.1.3 |
+| 0.1.4 | addons.mozilla.org (listed) | 2026-10-10, 13:26 UTC (AMO version 6561729) | commit `c961c69` (this folder) | `lumenia-firefox-0.1.4.zip` as built: `dea18be9442c016b8a1ed5aea1bab15153b7312eed25845f6269a5a123d49d8f`; the signed file AMO serves: `3f5c82be654ab9c73794d5629373008c1b7b9faad779708a16dc0bbedc11a39b` | Private, as 0.1.3 |
+| 0.1.4 | Chrome Web Store | not uploaded yet (the owner's step) | commit `c961c69` (this folder) | `lumenia-chrome-0.1.4.zip` as built: `0af592130bb768430cd6abef2f4a3217a0636be7cb4f5412b4c67bf6f2fb39d6` | Private, as 0.1.3 |
 | 0.1.3 | addons.mozilla.org (listed) | 2026-10-09 | commit `00aa0a5` | signed file AMO serves: `17b2da7ee288d3c1a5570634bac5a466215c7447b3cabb0acbb2fdeb7ce07c3c` | Private: `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<name>][&p=1]`. No amount anywhere in the link, and a name only when the sender types one, after the `#` |
-| 0.1.3 | Chrome Web Store | submitted 2026-10-09, in review | commit `00aa0a5` | the package as built: `b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73`; the served CRX's hash is recorded once the store publishes it | Private, as above |
-| 0.1.2 | Chrome Web Store | 2026-10-06 | commit `062725f` | CRX as served on 2026-10-09: `0a62ccc9736aa6b2c40b0f2895ee099c184f9f61855b364f26f099bad43e85a7` | Pre-D2: `/v2/c/<id>?a=<amount>&s=<name>[&p=1][&n=public]&src=ext#<key>`, the amount and the name in the query (the name is "Someone" when none was typed) |
-| 0.1.2 | addons.mozilla.org (listed) | 2026-10-07 | commit `062725f` | signed file AMO serves: `988e3c69014d041b79288b06af5c56e24ede379a221a68d6753d7a12b15103a0` | Pre-D2, as above |
+| 0.1.3 | Chrome Web Store | 2026-10-10, 10:32 UTC (the store's "published" mail) | commit `00aa0a5` | CRX as served on 2026-10-10: `94e119a4bf64f81125b36d8d04dce30da801aac6fae4eefb2699b76645a951bd` (569,213 bytes). Unpacked, it matches the package as built (`b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73`) file for file, apart from what the store adds (`_metadata/verified_contents.json` and an `update_url` line in `manifest.json`) | Private, as above |
+| 0.1.2 | Chrome Web Store | 2026-10-06, until 0.1.3 replaced it on 2026-10-10 | commit `062725f` | CRX as served on 2026-10-09: `0a62ccc9736aa6b2c40b0f2895ee099c184f9f61855b364f26f099bad43e85a7` | Pre-D2: `/v2/c/<id>?a=<amount>&s=<name>[&p=1][&n=public]&src=ext#<key>`, the amount and the name in the query (the name is "Someone" when none was typed) |
+| 0.1.2 | addons.mozilla.org (listed) | 2026-10-07, until 0.1.3 replaced it on 2026-10-09 | commit `062725f` | signed file AMO served: `988e3c69014d041b79288b06af5c56e24ede379a221a68d6753d7a12b15103a0` | Pre-D2, as above |
 | 0.1.1 | Firefox, unlisted (signed by Mozilla), self-hosted at getlumenia.com/extension/lumenia-firefox.xpi | 2026-10-04 | commit `3d80c78`, the same code as 0.1.2 apart from its version string | `792667fbce088a10fe5e71287f27fc305dac49684486a53eda1e081764e2039e` | Pre-D2, as above |
 
+0.1.4's sources archive, `lumenia-extension-sources-0.1.4.zip` (the file AMO asks for), has sha256
+`338361e1d273d2b7153dd8290eea00ba7a3f5e09a8f7614a00cbac2e84bfec7b`; on 2026-10-10 a clean-room
+rebuild from it gave a `dist/chrome` and a `dist/firefox` byte-identical to the build above.
+
 What the published 0.1.3 does differently from this source (the account model of the "LUMENIA
-ACCOUNT CONTRACT v1", shared with the website and the sponsor):
+ACCOUNT CONTRACT v1", shared with the website and the sponsor, live on the website and both of
+Lumenia's servers since 2026-10-10):
 
 - It cannot ask to join real money for the account it holds: "Ask to join" opens getlumenia.com/pilot,
   which files the request for the website's own account, a different key. It says "invite-only" for
@@ -46,7 +51,8 @@ ACCOUNT CONTRACT v1", shared with the website and the sponsor):
 - An approved account that never received real money cannot be opened on real money from the
   extension.
 
-What the published 0.1.2 (and 0.1.1) does differently from this source, besides the link shape:
+What 0.1.2 (public until 0.1.3 replaced it, and still running in an install that has not updated
+yet) and the self-hosted 0.1.1 do differently from this source, besides the link shape:
 
 - The From field is filled with the name typed for the previous link, so a link carries a name
   unless the sender clears it. Here it starts empty for every link.
@@ -243,8 +249,14 @@ packaged.
 `e2e/ui.e2e.mjs` drives the same flow through the popup's own screens and takes the store
 screenshots on the way. All three check that a link they made has no amount and no name in its
 query (no `a`, no `s`); create and ui also check that a link made without typing a name carries
-none at all, and testnet and ui that a typed name rides after the `#`. Their last recorded runs
-(2026-10-03) predate the private link shape; those checks were added for 0.1.3.
+none at all, and testnet and ui that a typed name rides after the `#`. The last recorded runs of
+testnet and ui (2026-10-03) predate the private link shape; those checks were added for 0.1.3. The
+last recorded run of create (2026-10-10, 09:43 UTC, with 0.1.4 against the testnet sponsor deployed
+at 09:37 UTC that day) made an account (`GDT56AWE3K3AVJDWJ3YQIANKNY4AN2XYP6QRTE3H24F4I7VPX2IWGJDL`), added 1.00
+practice dollar, had a link with no amount and no name claimed on getlumenia.com in a browser with no
+extension (claim `45d05850bc8ecd48b4726376773a7fa045ffa9ce7be98945094f60cf8dae59b7` on testnet), read
+it as Claimed, backed the account up with a disposable inbox, and restored it in a fresh profile to
+the same address.
 
 ## Known limits, stated plainly
 
@@ -270,8 +282,9 @@ none at all, and testnet and ui that a typed name rides after the `#`. Their las
   never sends to the claim page's server, so the name stays out of its logs and out of a chat app's
   link preview. Anyone who sees the whole link (the chat service it travels through, and the page
   you paste it into) can still read it, just as they can read the secret. Links made by 0.1.2 and
-  earlier, the versions in the stores until 0.1.3 is live there (see "Published builds"), carry the
-  amount and the name in the query instead; getlumenia.com/privacy says the same.
+  earlier carry the amount and the name in the query instead; getlumenia.com/privacy says the same.
+  Both stores serve 0.1.3 or later since 2026-10-10 (see "Published builds"), so such links now come from an
+  install of 0.1.2 that has not updated yet, or from the self-hosted 0.1.1.
 - The link is pasted into whichever box has focus, on the page and in the frame you picked, at the
   moment the link is ready; if that page has since moved to another site, nothing is pasted. An
   automated browser cannot make a real right-click, so the tests call the menu item's handler
