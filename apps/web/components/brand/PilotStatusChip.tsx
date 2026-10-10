@@ -1,39 +1,43 @@
 "use client";
 
 /**
- * PilotStatusChip — a compact, glanceable chip of THIS account's mainnet-pilot standing, for the
- * account header. The full NetworkSwitcher card (with the switch action + copy) still lives lower
- * on the page; this is just the "am I approved for real money yet?" answer at a glance, before you
- * scroll or try to cash out.
+ * PilotStatusChip: a compact, glanceable chip of THIS account's real-money standing, for the account
+ * header. The full NetworkSwitcher card (with the switch action and the account's own line) still
+ * lives lower on the page; this is the "am I approved for real money yet?" answer at a glance.
  *
- * Same honest framing as NetworkSwitcher + PilotStatusBadge: it never says "rejected" and never
- * uses red — a not-yet is "on the list". Only two states carry the strong money accent: already on
- * real money, and approved to switch up.
+ * The same standing and the same words as every other surface (lib/pilot-access.ts pilotStanding
+ * and standingCopy, contract 5.1): the chip shows the title, and its tooltip the line, which names
+ * the account by its short address. A declined account is never "on the list". Only two states
+ * carry the strong money accent: already on real money, and approved to switch up.
  */
 import { useWallet } from "../../lib/wallet";
+import { shortAddress } from "../../lib/account-label";
+import { standingCopy } from "../../lib/pilot-access";
 
 export function PilotStatusChip() {
-  const { network, pilotState } = useWallet();
+  const { account, network, pilotStanding, pilotUsed, pilotLimit } = useWallet();
   const onMainnet = network === "public";
+  const short = account ? shortAddress(account.address) : "";
+  const left = pilotLimit !== null && pilotUsed !== null ? Math.max(0, pilotLimit - pilotUsed) : null;
+  const words = standingCopy(pilotStanding, { short, left, limit: pilotLimit });
 
-  const chip = onMainnet
-    ? { label: "Real money", cls: "border-money bg-money text-primary-foreground", dot: true }
-    : pilotState === "open"
-      ? { label: "Real money is open", cls: "border-money bg-secondary text-money", dot: true }
-      : pilotState === "approved"
-      ? { label: "Approved for real money", cls: "border-money bg-secondary text-money", dot: true }
-      : pilotState === "pending"
-        ? { label: "On the pilot list", cls: "border-transparent bg-secondary text-ink", dot: false }
-        : pilotState === "rejected"
-          ? { label: "On the pilot list", cls: "border-line text-ink-soft", dot: false }
-          : { label: "Practice mode", cls: "border-line text-ink-soft", dot: false };
+  const strong = onMainnet;
+  const accent = !onMainnet && (pilotStanding === "approved" || pilotStanding === "open");
+  const cls = strong
+    ? "border-money bg-money text-primary-foreground"
+    : accent
+      ? "border-money bg-secondary text-money"
+      : pilotStanding === "pending"
+        ? "border-transparent bg-secondary text-ink"
+        : "border-line text-ink-soft";
 
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${chip.cls}`}
+      title={words.line || undefined}
+      className={`inline-flex max-w-[60%] items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${cls}`}
     >
-      {chip.dot && <span className="size-1.5 rounded-full bg-current" />}
-      {chip.label}
+      {(strong || accent) && <span className="size-1.5 shrink-0 rounded-full bg-current" />}
+      <span className="truncate">{onMainnet ? "Real money" : words.title.replace(/\.$/, "")}</span>
     </span>
   );
 }

@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { activeNetwork } from "../../../lib/network";
 import { loadBalance, loadTotalUsd, loadXlmBalance } from "../../../lib/horizon";
+import { accountsForTotal } from "../../../lib/accounts-total";
 import { formatXlm, shouldOfferConversion, spendableXlm } from "../../../lib/swap";
 import { prepareAccount } from "../../../lib/sponsor";
 import { isNeedsPassword } from "../../../lib/signer-error";
@@ -77,7 +78,9 @@ export default function AddMoneyPage() {
 
   // The whole point of this screen is waiting for something to land, so it watches. Visible-tab
   // only, with backoff, and it says when it last looked rather than spinning forever (lib/poll).
-  const addresses = accounts.length ? accounts.map((a) => a.address) : account ? [account.address] : [];
+  // The account in use and the claim accounts on their way into it (lib/accounts-total.ts): money
+  // that lands in another deliberate account is that account's, not this one's.
+  const addresses = account ? accountsForTotal(account.address, accounts) : [];
   const poll = usePolling(
     async () => {
       if (addresses.length === 0) return;

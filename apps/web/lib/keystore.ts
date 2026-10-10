@@ -263,6 +263,19 @@ export async function setAccountKind(pubkey: string, kind: AccountKind): Promise
   await idbPut({ ...rec, kind });
 }
 
+/**
+ * Write `kind` onto a record that has none, and leave a record that has one alone. Returns whether
+ * it wrote. A kindless record is "user" only while it is the active one (kindOf), so the moment
+ * another account became active the old home read as a throwaway and /home swept and CLOSED it:
+ * this is what pins it first (lib/account-add.ts pinActiveAsUser).
+ */
+export async function pinKindIfMissing(pubkey: string, kind: AccountKind): Promise<boolean> {
+  const rec = await getAccountRecord(pubkey);
+  if (!rec || rec.kind) return false;
+  await idbPut({ ...rec, kind });
+  return true;
+}
+
 /* ------------------------- Published addresses ------------------------------
  * An address becomes PUBLISHED the moment the user hands it to somebody else: pasted into an
  * exchange's withdrawal screen, shown as a QR, written down. That changes what the app is allowed

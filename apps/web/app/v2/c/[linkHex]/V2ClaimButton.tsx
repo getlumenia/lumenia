@@ -48,7 +48,7 @@ import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../../lib/claim-error";
 import { copy } from "../../../../lib/copy";
 import { formatUsd } from "../../../../lib/money";
-import { savePhase1 } from "../../../../lib/keystore";
+import { getHome, savePhase1 } from "../../../../lib/keystore";
 import { isSeededLink, sendEvent } from "../../../../lib/events";
 import { resolveNetwork, setActiveNetwork, type NetworkConfig } from "../../../../lib/network";
 
@@ -430,7 +430,11 @@ export default function V2ClaimButton({
         onAccountReady: async (publicKey, seed) => {
           claimedAccount.current = publicKey;
           try {
-            await savePhase1(publicKey, seed);
+            /* With no home on this device the claim's account becomes it, and is the person's own
+               account from here on: kept as "user", it can never later read as a sweepable throwaway
+               (a kindless record is "user" only while it is the active one, lib/keystore.ts kindOf).
+               With a home it stays kindless, the throwaway /home gathers in, as before. */
+            await savePhase1(publicKey, seed, (await getHome()) ? undefined : "user");
           } catch {
             /* storage blocked (private mode, a locked-down webview). Not fatal, and NOT a reason to
                tell someone their claim failed — the money still moves and the receipt still shows

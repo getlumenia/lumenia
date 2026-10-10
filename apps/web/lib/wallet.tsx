@@ -16,7 +16,7 @@ import { NeedsBackupError, NeedsPasswordError } from "./signer-error";
 import { passwordStrength } from "./password-strength";
 import { activeNetwork, setActiveNetwork, mainnetConfig, type NetworkId } from "./network";
 import { DEFAULT_ARGON } from "./argon";
-import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, emptyBox, putCopy, findCopy, prfToBoxId, prfToAliasProof, type RecoveryBox } from "./recovery";
+import { wrapWithPassword, unwrapWithPassword, wrapWithPrf, unwrapWithPrf, emptyBox, putCopy, findCopy, prfToBoxId, prfToAliasProof, type PasswordCopy, type RecoveryBox } from "./recovery";
 import { enrollPasskeyPrf, derivePasskeyPrf, assertPasskeyPrf } from "./passkey-prf";
 import { fetchRecoveryBoxByPrfId } from "./recovery-api";
 import { migrateLegacySentLinks } from "./sent-links";
@@ -28,10 +28,15 @@ import {
   backupBlocksRealMoney,
   mainnetSwitchBlock,
   mainnetWarningPlan,
+  pilotStanding as standingOf,
   type MainnetWarning,
+  type PilotRead,
+  type PilotStanding,
   type PilotState,
 } from "./pilot-access";
-import { hasBackup } from "./recovery-api";
+import { forgetBackupRecord, hasBackup } from "./backup-record";
+import { addRestoredAccount as addRestoredToKeystore, pinActiveAsUser } from "./account-add";
+import { DEFAULT_AUTO_LOCK, idleLockDue, readAutoLock, writeAutoLock, type AutoLockMinutes } from "./lock";
 import { StrKey } from "@stellar/stellar-sdk";
 import { Buffer } from "buffer";
 
@@ -87,19 +92,36 @@ interface WalletState {
    * recovery. Only ciphertext leaves this module — `commit` is handed the box and must put it
    * somewhere durable; the local Phase-2 lock is written only after it resolves.
    *
+   * `commit` is also handed the account's own signer, built from the seed this call already holds.
+   * The store signs every backup with it (lib/recovery-client.ts storeBox), which is what ties the
+   * row to this account. It used to ask getSigner() instead, and getSigner refuses an account with
+   * no password on real money, so exactly those backups went out unsigned and stayed replaceable.
+   *
    * `newPassword` REPLACES an existing one, which is the only way past a password too weak to be
    * the offline-crack floor for the box.
    */
   secureRecovery: (
     password: string,
-    commit: (box: RecoveryBox) => Promise<void>,
+    commit: (box: RecoveryBox, signer: Signer) => Promise<void>,
     newPassword?: string,
   ) => Promise<void>;
   /**
    * Restore on a fresh device: open a fetched box with `password`, adopt the seed as the
-   * home account (locked with that password), and unlock it for the session.
+   * home account (locked with that password), and unlock it for the session. `afterSave` runs with
+   * the restored account's signer once it is stored (to tie its backup row to it, or check that it
+   * is).
    */
-  restoreRecovery: (box: RecoveryBox, password: string) => Promise<void>;
+  restoreRecovery: (box: RecoveryBox, password: string, afterSave?: (signer: Signer) => Promise<void>) => Promise<{ address: string }>;
+  /**
+   * Bring ANOTHER backed-up account to this device without touching the one in use: stored beside
+   * it as a deliberate account, locked with the backup's password. Moves no pointer, starts no
+   * session (lib/account-add.ts). `alreadyHere` when that account was on this device already.
+   */
+  addRestoredAccount: (
+    box: RecoveryBox,
+    password: string,
+    afterSave?: (signer: Signer) => Promise<void>,
+  ) => Promise<{ address: string; alreadyHere: boolean }>;
   /**
    * Face ID UPGRADE (real browser only; RECOVERY_ARCHITECTURE §12 step 5): enroll a passkey
    * and wrap the seed with its PRF output, adding a second (PRF) copy to `box`. Returns the
@@ -113,9 +135,19 @@ interface WalletState {
    * account's public key. Throws with a plain-language reason when there is no backup for this
    * passkey, which is NOT the same as "you have no backup".
    */
-  findAccountWithFaceId: () => Promise<{ address: string; alreadyHere: boolean; hasPasswordCopy: boolean }>;
-  /** Lock a Phase-1 account with a password (used right after a Face-ID restore). */
-  lockWithPassword: (password: string) => Promise<void>;
+  findAccountWithFaceId: () => Promise<{
+    address: string;
+    alreadyHere: boolean;
+    hasPasswordCopy: boolean;
+    /** The backup's password copy (ciphertext), so the lock step can tell a typed password that already opens it. */
+    passwordCopy: PasswordCopy | null;
+  }>;
+  /**
+   * Lock the account with a password (used right after a Face-ID restore, and to set a new one after
+   * a Face ID unlock). `verified` skips the strength floor for a password that has just been shown
+   * to open this account's own email backup: it already guards that backup, it is not a new choice.
+   */
+  lockWithPassword: (password: string, opts?: { verified?: boolean }) => Promise<void>;
   /**
    * Unlock THIS SESSION with Face ID instead of the password, for an account that is already on
    * this device and already password-locked. Deliberately NOT findAccountWithFaceId: it writes
@@ -123,7 +155,7 @@ interface WalletState {
    */
   unlockWithFaceId: () => Promise<void>;
   /** Restore on a fresh device via Face ID: unwrap the box's PRF copy with the passkey. */
-  restoreWithFaceId: (box: RecoveryBox) => Promise<void>;
+  restoreWithFaceId: (box: RecoveryBox, afterSave?: (signer: Signer) => Promise<void>) => Promise<{ address: string }>;
   /** The network the classic value path uses right now on this device (testnet unless switched). */
   network: NetworkId;
   /**
@@ -144,6 +176,27 @@ interface WalletState {
    * money (lib/pilot-access.ts backupBlocksRealMoney).
    */
   pilotKnown: boolean;
+  /**
+   * Where THIS account stands for real money, the same table the extension uses (lib/pilot-access.ts
+   * pilotStanding, contract 4): "checking" until the first ask settles, then the last answer the
+   * sponsor gave. A failed ask never demotes it: with an earlier answer that answer stays, marked
+   * `pilotStale` with its age (`pilotCheckedAt`); with none it is "unknown".
+   */
+  pilotStanding: PilotStanding;
+  /** Real-money sends this account has used and may make, when the sponsor said. */
+  pilotUsed: number | null;
+  pilotLimit: number | null;
+  /** When the standing above was last answered (ms), or null. */
+  pilotCheckedAt: number | null;
+  /** The latest ask failed; the standing is the last answer that came back. */
+  pilotStale: boolean;
+  /** Ask again now ("Check again", "Try again"). */
+  recheckPilot: () => void;
+  /** Drop the unlocked key now; the next signature asks for the password again. */
+  lockNow: () => void;
+  /** Minutes without use before the website locks itself (5, 15 or 60; localStorage "lumenia.autolock"). */
+  autoLockMinutes: AutoLockMinutes;
+  setAutoLockMinutes: (minutes: AutoLockMinutes) => void;
   /** Switch this device's active network (mainnet only sticks if approved + configured); reloads. */
   switchNetwork: (id: NetworkId) => void;
   /**
@@ -152,7 +205,7 @@ interface WalletState {
    * unlocked seed belongs to the account it was unlocked for, and every money module reads the
    * active account at call time.
    */
-  switchAccount: (address: string) => Promise<void>;
+  switchAccount: (address: string, next?: string) => Promise<void>;
   /**
    * Open a brand-new account (sponsored, 0 XLM, USDC trustline) and switch to it. Lands at Phase 1,
    * so the caller should offer the password step straight away — real money cannot be sent from an
@@ -177,6 +230,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [mainnetApproved, setMainnetApproved] = useState(false);
   const [pilotState, setPilotState] = useState<PilotState>("none");
   const [pilotKnown, setPilotKnown] = useState(false);
+  /** The last answer /pilot-status gave for this account, whole (the standing reads all of it). */
+  const [pilotRead, setPilotRead] = useState<PilotRead | null>(null);
+  /** The first ask for this account has come back, answered or failed: no longer "checking". */
+  const [pilotSettled, setPilotSettled] = useState(false);
+  const [pilotStale, setPilotStale] = useState(false);
+  const [pilotCheckedAt, setPilotCheckedAt] = useState<number | null>(null);
+  /** Bumped by recheckPilot, which re-runs the ask effect below. */
+  const [pilotAskTick, setPilotAskTick] = useState(0);
+  const [autoLockMinutes, setAutoLockState] = useState<AutoLockMinutes>(DEFAULT_AUTO_LOCK);
   /* Read by getSigner through a ref, so the signer's identity does not change when an answer
      arrives: screens key effects on getSigner, and a new identity would re-run their signed reads. */
   const pilotRef = useRef<{ state: PilotState; known: boolean }>({ state: "none", known: false });
@@ -204,9 +266,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    /* Then, once, pin the active account as deliberate if its record has no kind (lib/account-add.ts):
+       a v2 claim on a fresh device, or any record older than kinds, is "user" only while it is
+       active, and would be swept and closed the moment another account became active. */
+    void refresh().then(() => pinActiveAsUser().catch(() => false));
     // One-shot cleanup for devices that already hold plaintext claim links (see sent-links.ts).
     void migrateLegacySentLinks();
+    setAutoLockState(readAutoLock());
   }, [refresh]);
 
   // Reflect the device's chosen network once mounted (localStorage is client-only, not at SSR).
@@ -229,6 +295,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
      the pilot retired, the backup rule in getSigner. */
   const address = account?.address ?? null;
   const askedFor = useRef<string | null | undefined>(undefined);
+  /** When the last ask went out, so coming back to the tab asks at most once a minute. */
+  const lastPilotAsk = useRef(0);
+  /** Read by the poll, which must not restart every time an answer lands. */
+  const pollWanted = useRef(false);
+  const standing: PilotStanding = !pilotSettled
+    ? "checking"
+    : pilotRead
+      ? standingOf(pilotRead)
+      : mainnetConfig()
+        ? "unknown"
+        : "none";
+  useEffect(() => {
+    pollWanted.current = standing === "pending" || standing === "unknown" || pilotStale;
+  }, [standing, pilotStale]);
   useEffect(() => {
     // Not before the keystore has been read: the first answer would be for "no account" and be
     // thrown away a moment later.
@@ -238,6 +318,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setMainnetApproved(false);
       setPilotState("none");
       setPilotKnown(true); // no real money in this build: there is nothing left to learn
+      setPilotRead(null);
+      setPilotSettled(true);
       return;
     }
     /* A different account is a different question: its answer must not inherit the previous one's,
@@ -247,35 +329,53 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setMainnetApproved(false);
       setPilotState("none");
       setPilotKnown(false);
+      setPilotRead(null);
+      setPilotSettled(false);
+      setPilotStale(false);
+      setPilotCheckedAt(null);
     }
     let alive = true;
-    const ask = () =>
-      askPilotStatus({ sponsorUrl: mainnet.sponsorUrl, pubkey: address }).then((read) => {
-        /* null is a FAILED ask (a 429, an error page, no connection), and a failed ask is not a
-           rejection. It used to be read as one twice over: a thrown fetch demoted an approved pilot
-           user to "none", and later any JSON error body did, so a rate-limited open-mode user was
-           told "invite-only". Keep the last known answer and try again on the next tick. */
-        if (!alive || read === null) return;
+    const ask = () => {
+      lastPilotAsk.current = Date.now();
+      return askPilotStatus({ sponsorUrl: mainnet.sponsorUrl, pubkey: address }).then((read) => {
+        if (!alive) return;
+        setPilotSettled(true);
+        /* null is a FAILED ask (a 429, a 503, an error page, no connection, an answer with no
+           state), and a failed ask is not a rejection. It used to be read as one twice over: a
+           thrown fetch demoted an approved pilot user to "none", and later any JSON error body did,
+           so a rate-limited open-mode user was told "invite-only". Keep the last known answer, mark
+           it stale, and try again on the next tick. */
+        if (read === null) {
+          setPilotStale(true);
+          return;
+        }
+        setPilotStale(false);
+        setPilotCheckedAt(Date.now());
+        setPilotRead(read);
         /* `pilot:false` is the sponsor saying the allowlist is retired: it admits every wallet,
            never "not approved" (lib/pilot-access.ts readPilotStatus, test:pilotaccess). */
         setMainnetApproved(read.mainnetApproved);
         setPilotState(read.pilotState);
         setPilotKnown(true);
       });
+    };
 
     void ask();
 
     /* Approval happens on the OWNER's phone, minutes or hours later, and nothing pushes that back
-       here. The status was read exactly once per hard page load, and `account` does not change in
-       normal use — so on an installed PWA an approved user could sit on "You're on the list,
-       nothing to do right now" for days, with no button anywhere to check. Poll while the answer is
-       still pending, only when the tab is visible, and stop as soon as it lands. (Without an
-       account there is no approval to wait for: the answer is re-read when the tab comes back.) */
+       here, so a request that is WAITING is asked about once a minute while the tab is visible, and
+       so is an answer that could not be read. Nothing else is: an approved, declined or never-asked
+       account used to be asked every minute for as long as the app was open, which told the
+       real-money server that this account was online all day for no answer that could change.
+       Coming back to the tab asks again, at most once a minute. (Without an account there is no
+       approval to wait for: only the tab coming back asks.) */
     const poll = window.setInterval(() => {
-      if (address && document.visibilityState === "visible") void ask();
+      if (address && pollWanted.current && document.visibilityState === "visible") void ask();
     }, 60_000);
     const onShow = () => {
-      if (document.visibilityState === "visible") void ask();
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastPilotAsk.current < 60_000) return;
+      void ask();
     };
     document.addEventListener("visibilitychange", onShow);
 
@@ -284,7 +384,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       window.clearInterval(poll);
       document.removeEventListener("visibilitychange", onShow);
     };
-  }, [address, status]);
+  }, [address, status, pilotAskTick]);
+
+  const recheckPilot = useCallback(() => setPilotAskTick((t) => t + 1), []);
 
   // A network switch changes which chain every value call builds for. Reload so every module
   // re-reads it cleanly and a stale unlocked session never carries across networks.
@@ -333,10 +435,62 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [mainnetApproved, pilotState, account, performSwitch],
   );
 
+  /* The session keeps its OWN copy. The idle lock below zeroes it in place, and it must never zero
+     an array a caller is still using: secureRecovery and lockWithPassword hand the same seed to
+     savePhase2 after this, and a lock landing in between would have written a key of zeros. */
   const setSessionSeed = useCallback((seed: Uint8Array) => {
-    sessionSeed.current = seed;
+    sessionSeed.current?.fill(0);
+    sessionSeed.current = seed.slice();
     setUnlocked(true);
   }, []);
+
+  /** Drop the unlocked key: the next signature on a password-locked account goes to /unlock. */
+  const lockNow = useCallback(() => {
+    sessionSeed.current?.fill(0);
+    sessionSeed.current = null;
+    setUnlocked(false);
+  }, []);
+
+  const setAutoLockMinutes = useCallback((minutes: AutoLockMinutes) => {
+    writeAutoLock(minutes);
+    setAutoLockState(minutes);
+  }, []);
+
+  /* THE WEBSITE LOCKS ITSELF. An unlocked key used to stay in memory for as long as the tab lived,
+     so a laptop left open on /home could sign for real money hours later with nobody there. After
+     the chosen minutes without input, or with the tab hidden that long, the key is wiped and the
+     next money movement asks for the password again (getSigner throws "locked", which every money
+     screen already sends to /unlock?next=). Pure rule in lib/lock.ts idleLockDue. */
+  const lastInput = useRef(Date.now());
+  const hiddenSince = useRef<number | null>(null);
+  useEffect(() => {
+    if (!unlocked) return;
+    lastInput.current = Date.now();
+    hiddenSince.current = document.visibilityState === "hidden" ? Date.now() : null;
+    const mark = () => {
+      lastInput.current = Date.now();
+    };
+    const check = () => {
+      if (idleLockDue(lastInput.current, hiddenSince.current, autoLockMinutes, Date.now())) lockNow();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenSince.current = Date.now();
+        return;
+      }
+      check();
+      hiddenSince.current = null;
+    };
+    const inputs = ["pointerdown", "keydown", "touchstart", "wheel"] as const;
+    for (const e of inputs) window.addEventListener(e, mark, { passive: true });
+    document.addEventListener("visibilitychange", onVisibility);
+    const timer = window.setInterval(check, 30_000);
+    return () => {
+      for (const e of inputs) window.removeEventListener(e, mark);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(timer);
+    };
+  }, [unlocked, autoLockMinutes, lockNow]);
 
   const getSigner = useCallback(async (opts?: { movesMoney?: boolean }): Promise<Signer> => {
     if (!account) throw new Error("no local account");
@@ -396,7 +550,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const secureRecovery = useCallback(
     async (
       password: string,
-      commit: (box: RecoveryBox) => Promise<void>,
+      commit: (box: RecoveryBox, signer: Signer) => Promise<void>,
       newPassword?: string,
     ): Promise<void> => {
       if (!account) throw new Error("no local account");
@@ -412,14 +566,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         ? await unlockPhase1(account.address)
         : // Already locked: verify the password by decrypting with it (throws if wrong).
           (await unlockPhase2(password, account.address)).seed;
-      const box = putCopy(emptyBox(), await wrapWithPassword(seed, key));
-      setSessionSeed(seed); // keep unlocked this session (the session owns the seed)
-      // The backup has to LAND before this device is locked to the password behind it. Locking
-      // first left anyone whose emailed code was wrong or expired holding a Phase-2 account whose
-      // password had been typed exactly once and whose seed existed nowhere else.
-      await commit(box);
-      if (wasPhase1 || newPassword) {
-        await savePhase2(account.address, seed, key, DEFAULT_ARGON);
+      try {
+        // The account's own key signs the backup. Built here, from the seed in hand, so it works for
+        // exactly the account getSigner() refuses: one with no password yet, on real money.
+        const signer = localSignerFromSeed(seed);
+        if (signer.publicKey() !== account.address) throw new Error("unlocked key does not match this account");
+        const box = putCopy(emptyBox(), await wrapWithPassword(seed, key));
+        setSessionSeed(seed); // keep unlocked this session (the session keeps its own copy)
+        // The backup has to LAND before this device is locked to the password behind it. Locking
+        // first left anyone whose emailed code was wrong or expired holding a Phase-2 account whose
+        // password had been typed exactly once and whose seed existed nowhere else.
+        await commit(box, signer);
+        if (wasPhase1 || newPassword) {
+          await savePhase2(account.address, seed, key, DEFAULT_ARGON);
+        }
+      } finally {
+        seed.fill(0);
       }
       await refresh(); // the phase may have changed 1 → 2
     },
@@ -439,6 +601,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    * fully stored, still counted in the balance, and can be made home deliberately later.
    */
   const adoptRestored = useCallback(async (pub: string): Promise<void> => {
+    // The account in use may be about to stop being the active one: pin it first, or a record with
+    // no kind would read as a throwaway the moment the pointer moves, and be swept and closed.
+    await pinActiveAsUser().catch(() => false);
     const home = await getHome();
     if (!home || home.pubkey === pub) {
       await setHome(pub);
@@ -448,17 +613,37 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const restoreRecovery = useCallback(
-    async (box: RecoveryBox, password: string): Promise<void> => {
+    async (box: RecoveryBox, password: string, afterSave?: (signer: Signer) => Promise<void>): Promise<{ address: string }> => {
       const copy = findCopy(box, "password");
       if (!copy) throw new Error("This backup can only be opened with Face ID.");
       const seed = await unwrapWithPassword(copy, password); // throws on a wrong password
-      const pub = localSignerFromSeed(seed).publicKey();
-      await savePhase2(pub, seed, password, DEFAULT_ARGON, "user"); // restored on purpose → never swept
-      await adoptRestored(pub);
-      setSessionSeed(seed);
-      await refresh();
+      try {
+        const signer = localSignerFromSeed(seed);
+        const pub = signer.publicKey();
+        await savePhase2(pub, seed, password, DEFAULT_ARGON, "user"); // restored on purpose → never swept
+        await adoptRestored(pub);
+        setSessionSeed(seed);
+        await afterSave?.(signer);
+        await refresh();
+        return { address: pub };
+      } finally {
+        seed.fill(0);
+      }
     },
     [adoptRestored, refresh, setSessionSeed],
+  );
+
+  const addRestoredAccount = useCallback(
+    async (
+      box: RecoveryBox,
+      password: string,
+      afterSave?: (signer: Signer) => Promise<void>,
+    ): Promise<{ address: string; alreadyHere: boolean }> => {
+      const out = await addRestoredToKeystore(box, password, afterSave);
+      await refresh();
+      return out;
+    },
+    [refresh],
   );
 
   const addFaceIdBackup = useCallback(
@@ -470,7 +655,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       // learn WHICH account it just unlocked without the user typing anything.
       const userId = StrKey.decodeEd25519PublicKey(account.address);
       const { prf } = await enrollPasskeyPrf({ userId, userName: `Lumenia ${account.address.slice(0, 6)}` });
-      const updated = putCopy(box, await wrapWithPrf(sessionSeed.current, prf));
+      // A copy: the idle lock may wipe the session's own while the wrap is in flight.
+      const seed = sessionSeed.current?.slice();
+      if (!seed) throw new Error("locked");
+      let updated: RecoveryBox;
+      try {
+        updated = putCopy(box, await wrapWithPrf(seed, prf));
+      } finally {
+        seed.fill(0);
+      }
       // The second, independent value from the same PRF: where this box will be findable later
       // with no email and no code. Derived here so the raw PRF never leaves this module.
       const aliasId = await prfToBoxId(prf);
@@ -484,19 +677,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   );
 
   const restoreWithFaceId = useCallback(
-    async (box: RecoveryBox): Promise<void> => {
+    async (box: RecoveryBox, afterSave?: (signer: Signer) => Promise<void>): Promise<{ address: string }> => {
       const copy = findCopy(box, "prf");
       if (!copy) throw new Error("This backup has no Face ID key. Use your password.");
       const prf = await derivePasskeyPrf();
       const seed = await unwrapWithPrf(copy, prf); // throws on a wrong passkey / tampered copy
       prf.fill(0);
-      const pub = localSignerFromSeed(seed).publicKey();
-      // Adopt device-locally with the device key (Phase 1) — they authenticated biometrically,
-      // so no separate password; the "Back up your money" card can add one later.
-      await savePhase1(pub, seed, "user"); // restored on purpose → never swept
-      await adoptRestored(pub);
-      setSessionSeed(seed);
-      await refresh();
+      try {
+        const signer = localSignerFromSeed(seed);
+        const pub = signer.publicKey();
+        // Adopt device-locally with the device key (Phase 1) — they authenticated biometrically,
+        // so no separate password; the "Back up your money" card can add one later.
+        await savePhase1(pub, seed, "user"); // restored on purpose → never swept
+        await adoptRestored(pub);
+        setSessionSeed(seed);
+        await afterSave?.(signer);
+        await refresh();
+        return { address: pub };
+      } finally {
+        seed.fill(0);
+      }
     },
     [adoptRestored, refresh, setSessionSeed],
   );
@@ -517,6 +717,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     address: string;
     alreadyHere: boolean;
     hasPasswordCopy: boolean;
+    passwordCopy: PasswordCopy | null;
   }> => {
     const { prf, userHandle } = await assertPasskeyPrf();
     let seed: Uint8Array;
@@ -543,14 +744,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       if (named !== pub) throw new Error("This passkey doesn't match the backup it opened.");
     }
     const before = await getHome();
-    await savePhase1(pub, seed, "user"); // found on purpose → never swept
-    await adoptRestored(pub);
-    setSessionSeed(seed);
+    try {
+      await savePhase1(pub, seed, "user"); // found on purpose → never swept
+      await adoptRestored(pub);
+      setSessionSeed(seed);
+    } finally {
+      seed.fill(0);
+    }
     await refresh();
+    const passwordCopy = findCopy(box, "password") ?? null;
     return {
       address: pub,
       alreadyHere: before?.pubkey === pub,
-      hasPasswordCopy: Boolean(findCopy(box, "password")),
+      hasPasswordCopy: Boolean(passwordCopy),
+      passwordCopy,
     };
   }, [adoptRestored, refresh, setSessionSeed]);
 
@@ -561,15 +768,27 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    * undoes that, offered immediately rather than left to a card the user may never open.
    */
   const lockWithPassword = useCallback(
-    async (password: string): Promise<void> => {
+    async (password: string, opts?: { verified?: boolean }): Promise<void> => {
       if (!account) throw new Error("no local account");
       // The same floor as the wrap: this password becomes the account's password, and a later
-      // backup hands it verbatim to secureRecovery as the key to server-stored ciphertext.
-      const strong = passwordStrength(password);
-      if (!strong.ok) throw new Error(strong.reason ?? "Pick a stronger password.");
-      const seed = sessionSeed.current ?? (await unlockPhase1(account.address));
-      await savePhase2(account.address, seed, password, DEFAULT_ARGON);
-      setSessionSeed(seed);
+      // backup hands it verbatim to secureRecovery as the key to server-stored ciphertext. A
+      // password just shown to open this account's own email backup is exempt: it already guards
+      // that ciphertext, and refusing it would only push the person to a second password
+      // (FindWithFaceId, lib/lock.ts lockPasswordPlan). secureRecovery still asks for a stronger
+      // one before it wraps anything new with it.
+      if (!opts?.verified) {
+        const strong = passwordStrength(password);
+        if (!strong.ok) throw new Error(strong.reason ?? "Pick a stronger password.");
+      }
+      // A copy, so the idle lock cannot wipe the bytes savePhase2 is about to encrypt.
+      const seed = sessionSeed.current ? sessionSeed.current.slice() : await unlockPhase1(account.address);
+      try {
+        if (localSignerFromSeed(seed).publicKey() !== account.address) throw new Error("unlocked key does not match this account");
+        await savePhase2(account.address, seed, password, DEFAULT_ARGON);
+        setSessionSeed(seed);
+      } finally {
+        seed.fill(0);
+      }
       await refresh();
     },
     [account, refresh, setSessionSeed],
@@ -607,9 +826,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     // the same phone). Unlocking this one with that seed would sign for the wrong account, so it
     // fails loudly instead.
     if (localSignerFromSeed(seed).publicKey() !== account.address) {
+      seed.fill(0);
       throw new Error("That Face ID belongs to different money on this phone.");
     }
     setSessionSeed(seed);
+    seed.fill(0);
   }, [account, setSessionSeed]);
 
   /**
@@ -618,19 +839,26 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
    * it — a soft route change would leave one screen signing for an account another screen is no
    * longer showing. Reloading throws all of that away, which is the only cheap way to be sure.
    */
-  const switchAccount = useCallback(async (address: string): Promise<void> => {
+  const switchAccount = useCallback(async (address: string, next = "/home"): Promise<void> => {
     const known = await listAccounts();
     if (!known.some((a) => a.pubkey === address)) throw new Error("that account is not on this phone");
+    // Pinned BEFORE the pointer moves: a kindless active record becomes a sweepable throwaway after.
+    await pinActiveAsUser();
     sessionSeed.current?.fill(0);
     sessionSeed.current = null;
+    setUnlocked(false);
     await setActive(address);
-    window.location.assign("/home");
+    // Only a path on this site: the approval link hands its own back here (app/(app)/account).
+    window.location.assign(next.startsWith("/") && !next.startsWith("//") ? next : "/home");
   }, []);
 
   const createAccount = useCallback(async (): Promise<{ address: string }> => {
+    await pinActiveAsUser();
     const { address } = await createUserAccount({ sponsorUrl: activeNetwork().sponsorUrl, makeActive: true });
     sessionSeed.current?.fill(0);
     sessionSeed.current = null;
+    // The unlocked key belonged to the account that was active; the new one starts locked.
+    setUnlocked(false);
     await refresh();
     return { address };
   }, [refresh]);
@@ -639,6 +867,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     async (address: string): Promise<void> => {
       if (account?.address === address) throw new Error("that is the account you are using");
       await removeAccount(address, true); // deliberate: the UI has already confirmed it
+      forgetBackupRecord(address); // its backup email is not kept for an account no longer here
       await refresh();
     },
     [account, refresh],
@@ -658,7 +887,40 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <WalletContext.Provider
-      value={{ status, account, accounts, unlocked, network, mainnetApproved, pilotState, pilotKnown, switchNetwork, switchAccount, createAccount, forgetAccount, refresh, setSessionSeed, getSigner, secureRecovery, restoreRecovery, addFaceIdBackup, restoreWithFaceId, findAccountWithFaceId, lockWithPassword, unlockWithFaceId }}
+      value={{
+        status,
+        account,
+        accounts,
+        unlocked,
+        network,
+        mainnetApproved,
+        pilotState,
+        pilotKnown,
+        pilotStanding: standing,
+        pilotUsed: pilotRead?.used ?? null,
+        pilotLimit: pilotRead?.limit ?? null,
+        pilotCheckedAt,
+        pilotStale,
+        recheckPilot,
+        lockNow,
+        autoLockMinutes,
+        setAutoLockMinutes,
+        switchNetwork,
+        switchAccount,
+        createAccount,
+        forgetAccount,
+        refresh,
+        setSessionSeed,
+        getSigner,
+        secureRecovery,
+        restoreRecovery,
+        addRestoredAccount,
+        addFaceIdBackup,
+        restoreWithFaceId,
+        findAccountWithFaceId,
+        lockWithPassword,
+        unlockWithFaceId,
+      }}
     >
       {children}
       {/* What each button does was decided by mainnetWarningPlan when the sheet was opened; where

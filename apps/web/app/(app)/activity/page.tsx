@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "../../../lib/wallet";
 import { loadActivityForAccounts, loadTotalUsd, type ActivityItem } from "../../../lib/horizon";
+import { accountsForTotal } from "../../../lib/accounts-total";
 import { ActivityRow } from "../../../components/brand/ActivityRow";
 
 export default function ActivityPage() {
@@ -21,10 +22,11 @@ export default function ActivityPage() {
     if (!account) return;
     setLoading(true);
     let live = true;
-    /* Read every stored account, not just home. A v2 claim lands in a fresh sponsored account, so
-       the page billed as the full history was the only one that couldn't see it — /home and
-       /account both sum across accounts. */
-    void loadTotalUsd(accounts.map((a) => a.address))
+    /* Read the account in use and the claim accounts on their way into it, not just home. A v2
+       claim lands in a fresh sponsored account, so the page billed as the full history was the only
+       one that couldn't see it. Another deliberate account has its own history, shown when it is
+       the one in use (lib/accounts-total.ts). */
+    void loadTotalUsd(accountsForTotal(account.address, accounts))
       .then((total) =>
         loadActivityForAccounts(
           total.perAccount.map((p) => ({

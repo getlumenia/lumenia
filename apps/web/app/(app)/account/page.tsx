@@ -26,10 +26,12 @@
  * record", never wallet / crypto / address-as-jargon. The one honest hard truth — there is no
  * password reset — is stated plainly, because softening it would be a lie about what we can do.
  *
- * Deep link: the mainnet-approval email's button lands on /account?switch=mainnet. When THIS
- * account is on the pilot allowlist we flip the device to real money and strip the param, guarded by
- * a one-shot flag so it can never loop. That lives in <MainnetSwitchOnApproval>, isolated under its
- * own Suspense boundary so useSearchParams never bails the whole page out of prerender.
+ * Deep link: the mainnet-approval email's button lands on /account?switch=mainnet#for=<G...>. When
+ * THAT account is the one in use and is on the pilot allowlist we flip the device to real money and
+ * strip the param, guarded by a one-shot flag so it can never loop. When the link names another
+ * account, the page says which, and offers to use it or bring it here, rather than doing nothing.
+ * That lives in <MainnetSwitchOnApproval>, isolated under its own Suspense boundary so
+ * useSearchParams never bails the whole page out of prerender.
  */
 import { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
@@ -43,7 +45,12 @@ import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { NetworkSwitcher } from "../../../components/brand/NetworkSwitcher";
 import { PilotStatusChip } from "../../../components/brand/PilotStatusChip";
 import { DisconnectButton } from "../../../components/brand/DisconnectButton";
-import { hasBackup } from "../../../lib/recovery-api";
+import { alsoOpens, backupRecord, markBackedUp } from "../../../lib/backup-record";
+import { checkMine, EMAIL_HINT } from "../../../lib/recovery-client";
+import { accountLine, maskEmail, shortAddress, ACCOUNT_LINE_ACTION, NOT_THIS_ACCOUNTS_EMAIL } from "../../../lib/account-label";
+import { accountsForTotal } from "../../../lib/accounts-total";
+import { approvalFor, approvalLinkPlan } from "../../../lib/pilot-access";
+import { isNeedsPassword } from "../../../lib/signer-error";
 import { markPublished } from "../../../lib/keystore";
 import { ActivateMainnet } from "../../../components/brand/ActivateMainnet";
 import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
@@ -69,10 +76,30 @@ const explorer = explorerAccount;
 function MainnetSwitchOnApproval({ approved }: { approved: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { switchNetwork } = useWallet();
+  const { account, accounts, switchNetwork, switchAccount } = useWallet();
+  /* WHICH account the approval is for, from the link's #for= (contract 3.3). Read after mount: the
+     fragment never reaches the server, and window does not exist during the prerender. `undefined`
+     until it has been read, and nothing is decided before then: the switch below runs in the same
+     commit as the read, and deciding on a not-yet-read fragment would switch the account in use to
+     real money on the strength of an approval for another one. */
+  const [forPubkey, setForPubkey] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    setForPubkey(approvalFor(window.location.hash));
+  }, []);
+  const deepLink = searchParams.get("switch") === "mainnet";
+  const plan =
+    forPubkey === undefined
+      ? null
+      : approvalLinkPlan(
+          forPubkey,
+          account?.address ?? null,
+          accounts.map((a) => a.address),
+        );
 
   useEffect(() => {
-    if (searchParams.get("switch") !== "mainnet") return; // not the deep link → nothing to do
+    if (!deepLink) return; // not the deep link → nothing to do
+    // An approval for ANOTHER account never switches this one: the notice below says which it is.
+    if (plan !== "switch") return;
     if (!approved) return; // present but not approved (yet) → render, never switch, never loop
     try {
       if (sessionStorage.getItem("lumenia.switch.done") === "1") return; // already switched this session
@@ -92,9 +119,148 @@ function MainnetSwitchOnApproval({ approved }: { approved: boolean }) {
        The param is stripped first, so the reload the switch performs lands on a clean /account. */
     window.history.replaceState({}, "", "/account");
     switchNetwork("public");
-  }, [approved, searchParams, router, switchNetwork]);
+  }, [approved, deepLink, plan, router, switchNetwork]);
 
-  return null;
+  if (!deepLink || plan === null || plan === "switch" || !forPubkey || !account) return null;
+  const forShort = shortAddress(forPubkey);
+  return (
+    <MoneyCard className="p-5">
+      <p className="text-sm text-ink">
+        This approval is for {forShort}. This browser is using {shortAddress(account.address)}.
+      </p>
+      <div className="mt-3">
+        {plan === "offer-use" ? (
+          <button
+            type="button"
+            // Back to this same link once that account is in use, so its approval switch happens.
+            onClick={() => void switchAccount(forPubkey, `/account?switch=mainnet#for=${forPubkey}`)}
+            className="h-10 rounded-full border border-money px-4 text-sm font-medium text-money"
+          >
+            Use {forShort}
+          </button>
+        ) : (
+          <Link
+            href="/start?step=restore"
+            className="inline-flex h-10 items-center rounded-full border border-money px-4 text-sm font-medium text-money"
+          >
+            Bring it here
+          </Link>
+        )}
+      </div>
+    </MoneyCard>
+  );
+}
+
+/**
+ * The account and the email that backs it up (contract 5.3), and the two errands that line can
+ * carry: "Add your backup email" for a backup this browser remembers without its email (checked
+ * against the server with the account's own signature, never trusted as typed), and "Back it up
+ * again" for a backup the server said is not tied to this account. "Change backup email" moves the
+ * backup to a new email and unties the old one (lib/recovery-client.ts releaseEmail).
+ */
+function BackupLine() {
+  const { account, getSigner } = useWallet();
+  const [adding, setAdding] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [, setVersion] = useState(0);
+  if (!account) return null;
+  const record = backupRecord(account.address);
+  const line = accountLine(account.address, record);
+  const also = alsoOpens(account.address);
+
+  async function addEmail() {
+    if (!account) return;
+    setBusy(true);
+    setNote("");
+    try {
+      let signer;
+      try {
+        signer = await getSigner({ movesMoney: false }); // a signed check, not a money movement
+      } catch (e) {
+        if (isNeedsPassword(e)) {
+          setNote("Set a password on this account first.");
+          return;
+        }
+        window.location.assign(`/unlock?next=${encodeURIComponent("/account")}`);
+        return;
+      }
+      const answer = await checkMine(email, signer);
+      if (answer === "mine") {
+        markBackedUp(account.address, email, true);
+        setAdding(false);
+        setEmail("");
+        setVersion((v) => v + 1);
+      } else {
+        setNote(answer === "unknown" ? "We couldn't check that just now. Try again later." : NOT_THIS_ACCOUNTS_EMAIL);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div id="backup" className="mt-4 border-t border-line pt-4">
+      <p className="font-mono text-xs text-ink-soft">{line.text}</p>
+      {also.length > 0 && (
+        <p className="mt-1 text-xs text-ink-soft">
+          {also.map(maskEmail).join(", ")} may also open this account.
+        </p>
+      )}
+      {line.action === "back-up-again" && (
+        <p className="mt-1 text-xs text-ink-soft">
+          {ACCOUNT_LINE_ACTION["back-up-again"]} above, with the same email: once its code proves the inbox is
+          yours, the backup is tied to this account.
+        </p>
+      )}
+      <div className="mt-2 flex flex-wrap gap-3">
+        {line.action === "add-email" && (
+          <button type="button" className="text-sm font-medium text-money underline-offset-2 hover:underline" onClick={() => setAdding((v) => !v)}>
+            {ACCOUNT_LINE_ACTION["add-email"]}
+          </button>
+        )}
+        {record?.email && record.bound !== false && (
+          <button type="button" className="text-sm font-medium text-money underline-offset-2 hover:underline" onClick={() => setChanging((v) => !v)}>
+            Change backup email
+          </button>
+        )}
+      </div>
+      {adding && (
+        <div className="mt-3 flex flex-col gap-2">
+          <input
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            aria-label="Your backup email"
+            placeholder="The email you backed up with"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded-[14px] border border-line bg-paper px-3 py-3 text-[16px] text-ink"
+          />
+          <p className="text-xs text-ink-soft">{EMAIL_HINT}</p>
+          <button
+            type="button"
+            disabled={busy || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())}
+            onClick={() => void addEmail()}
+            className="self-start rounded-full border border-line px-4 py-2 text-sm font-medium text-ink disabled:opacity-40"
+          >
+            {busy ? "Checking..." : "Check it"}
+          </button>
+        </div>
+      )}
+      {note && <p className="mt-2 text-sm text-danger">{note}</p>}
+      {changing && record?.email && (
+        <div className="mt-3">
+          <p className="mb-3 text-sm text-ink-soft">
+            Back this account up with a new email. Once it is stored, {maskEmail(record.email)} stops opening it.
+          </p>
+          <RecoveryFlow mode="secure" replaceEmail={record.email} onDone={() => setVersion((v) => v + 1)} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function AccountPage() {
@@ -105,11 +271,14 @@ export default function AccountPage() {
   const [showQr, setShowQr] = useState(false);
   // null = still loading; a value = the real Horizon result (empty is an honest empty).
   const [total, setTotal] = useState<string | null>(null);
+  /** A Face ID find is under way on the no-account view: keep that view until its lock step is answered. */
+  const [faceFlow, setFaceFlow] = useState(false);
 
   useEffect(() => {
     if (!account) return;
     let alive = true;
-    const addrs = accounts.length ? accounts.map((a) => a.address) : [account.address];
+    // This account and the claim accounts on their way into it; never another deliberate account.
+    const addrs = accountsForTotal(account.address, accounts);
     // One number, for the orientation line. The activity list moved to /activity, which is the page
     // that claims to be the full history — it should not have had a rival preview here.
     loadTotalUsd(addrs)
@@ -130,28 +299,36 @@ export default function AccountPage() {
 
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
 
-  if (!account) {
+  /* A Face ID find adds the account BEFORE it offers the lock step, and this page used to swap to
+     its account view the moment the account appeared, unmounting that step: the money came back
+     unlocked and the password it asks for (and checks against the backup's own) was never offered.
+     So the find keeps this view, from the tap until the lock step is answered. */
+  if (!account || faceFlow) {
     return (
       <div className="flex flex-col gap-5 py-8">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <h1 className="text-xl font-bold text-ink">No account yet</h1>
-          <p className="max-w-xs text-ink-soft">
-            When someone sends you money with a link, you claim it and your account is created here.
-          </p>
-          <Link href="/claimed" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
-            What is this?
-          </Link>
-        </div>
+        {!faceFlow && (
+          <div className="flex flex-col items-center gap-3 text-center">
+            <h1 className="text-xl font-bold text-ink">No account yet</h1>
+            <p className="max-w-xs text-ink-soft">
+              When someone sends you money with a link, you claim it and your account is created here.
+            </p>
+            <Link href="/claimed" className="text-sm font-semibold text-money underline-offset-2 hover:underline">
+              What is this?
+            </Link>
+          </div>
+        )}
         {/* The zero-typing path first: if they backed up with Face ID, nothing below is needed. */}
-        <FindWithFaceId />
-        <MoneyCard className="p-5">
-          <p className="font-semibold text-ink">Already have money on another phone?</p>
-          <p className="mb-3 mt-1 text-sm text-ink-soft">
-            If you backed it up with a password, enter your email and we&apos;ll send a code to bring
-            your money back here.
-          </p>
-          <RecoveryFlow mode="restore" />
-        </MoneyCard>
+        <FindWithFaceId onStart={() => setFaceFlow(true)} onDone={() => setFaceFlow(false)} />
+        {!faceFlow && (
+          <MoneyCard className="p-5">
+            <p className="font-semibold text-ink">Already have money on another phone?</p>
+            <p className="mb-3 mt-1 text-sm text-ink-soft">
+              If you backed it up with a password, enter your email and we&apos;ll send a code to bring
+              your money back here.
+            </p>
+            <RecoveryFlow mode="restore" />
+          </MoneyCard>
+        )}
       </div>
     );
   }
@@ -185,7 +362,7 @@ export default function AccountPage() {
     }
   }
 
-  const short = `${account.address.slice(0, 6)}…${account.address.slice(-6)}`;
+  const short = shortAddress(account.address);
 
   return (
     <div className="flex flex-col gap-5 py-4">
@@ -328,7 +505,8 @@ export default function AccountPage() {
             Set a password and your email, and you can bring your money back on a new phone. We keep a
             sealed copy only your password can open, and we can never see inside it.
           </p>
-          <RecoveryFlow mode="secure" />
+          <RecoveryFlow mode="secure" initialEmail={backupRecord(account.address)?.email ?? undefined} />
+          <BackupLine />
         </div>
 
         {/* The honest hard truth — one expandable line, not a standing scare card. The copy is kept
@@ -356,9 +534,16 @@ export default function AccountPage() {
             button and the button says what it does. */}
         <details className="group mt-4 border-t border-line pt-4">
           <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-ink [&::-webkit-details-marker]:hidden">
-            Use a different account, or leave this device
+            Leave this device
             <ChevronDown className="size-4 text-ink-soft transition-transform group-open:rotate-180" />
           </summary>
+          <p className="mt-2 text-sm text-ink-soft">
+            To use another account here, bring it in from{" "}
+            <Link href="/settings" className="text-money underline-offset-2 hover:underline">
+              Settings, Your accounts
+            </Link>
+            .
+          </p>
           <p className="mt-2 text-sm text-ink-soft">
             This removes your keys from this phone. It does not touch your money, which lives on the
             public record and comes back with your email and password, or with Face ID.
@@ -370,7 +555,7 @@ export default function AccountPage() {
           {/* `phase === 2` is a password, not a backup. Passing it here showed the gentle one-tap
               confirmation to people whose keys existed ONLY on this device — the exact case the
               type-REMOVE wall was built for. */}
-          <DisconnectButton backedUp={hasBackup(account.address)} />
+          <DisconnectButton />
         </details>
       </MoneyCard>
 

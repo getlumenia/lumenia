@@ -1,15 +1,19 @@
 "use client";
 
 /**
- * WaysBackIn — the connections that help someone FIND their account again
+ * WaysBackIn: the connections that say which account an identity is connected to
  * (docs/IDENTITY_AND_ACCOUNTS.md §5).
  *
  * THE COPY RULE THIS COMPONENT EXISTS TO HOLD. Nothing here is a sign-in, and nothing here is
  * described as making the money "more secure". Connecting Google or a passkey files a pointer to
  * an account under something the person controls; the money still opens with the password or the
- * passkey and nothing else. So the card counts *ways back in*, and every row says what it does:
- * it finds your account. Saying "sign in with Google" would be a straightforward lie about what
- * the server is able to do, and the architecture is built so it stays a lie.
+ * passkey and nothing else. So the card counts *ways back in*, and every row says what it does
+ * TODAY: it shows which account it is connected to. It used to promise that each one would bring
+ * the account up on a new phone, but no screen looks an account up by a connection
+ * (lib/identity.ts fetchByIdentity has no caller), so that was a restore nobody could make. Bringing an account back
+ * is its backup email and password, or Face ID, and the card says so. Saying "sign in with Google"
+ * would be a straightforward lie about what the server is able to do, and the architecture is
+ * built so it stays a lie.
  *
  * TWO PROOFS, ALWAYS. A connection is not something an identity can arrange by itself: proving you
  * hold an email says nothing about whose account it should point at. So every connect also carries
@@ -71,12 +75,15 @@ function sealedBy(e: unknown, phase: 1 | 2): Sealed {
 }
 
 const BLURB: Record<Provider, string> = {
-  passkey: "One tap on a new phone finds this account.",
-  email: "A code to your inbox finds this account.",
-  google: "Finds this account with your Google account.",
-  github: "Finds this account with your GitHub account.",
-  x: "Finds this account with your X account.",
+  passkey: "Shows which account this passkey is connected to.",
+  email: "Shows which account this email is connected to.",
+  google: "Shows which account this Google account is connected to.",
+  github: "Shows which account this GitHub account is connected to.",
+  x: "Shows which account this X account is connected to.",
 };
+
+/** How an account actually comes back on a new phone (the count line says it, every time). */
+const BRING_BACK = "To bring an account back on a new phone, use its backup email and password, or Face ID.";
 
 export function WaysBackIn({ connectedTicket, ticketProvider }: { connectedTicket?: string; ticketProvider?: string }) {
   const { account, getSigner } = useWallet();
@@ -334,8 +341,8 @@ export function WaysBackIn({ connectedTicket, ticketProvider }: { connectedTicke
                 : linked === null
                   ? "We couldn't check which of these are connected just now."
                   : count === 0
-                    ? "Nothing connected yet. Connect one so a new phone can find this account."
-                    : `${count} connected. Any of them finds this account on a new phone.`}{" "}
+                    ? `Nothing connected yet. ${BRING_BACK}`
+                    : `${count} connected. ${BRING_BACK}`}{" "}
             {!error && errand && (
               <Link href={errand.href} className="underline underline-offset-2">
                 {errand.label}
@@ -348,7 +355,7 @@ export function WaysBackIn({ connectedTicket, ticketProvider }: { connectedTicke
       {/* The honest sentence. It is not a disclaimer tucked at the bottom — it is the definition of
           what every button below does, so it goes above them. */}
       <p className="mt-3 rounded-[12px] border border-line bg-paper px-3 py-2 text-xs text-ink-soft">
-        These find your account. They never open it: that still takes your password or your Face ID,
+        These show which account they are connected to. They never open it: that still takes your password or your Face ID,
         and we can&apos;t do it for you.
       </p>
 

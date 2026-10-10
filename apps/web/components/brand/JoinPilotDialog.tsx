@@ -1,40 +1,35 @@
 "use client";
 
 /**
- * "Real money is invite-only" — and here is how you ask.
+ * "Real money is invite-only", and here is how you ask, for a device with NO account yet.
  *
  * Tapping the real-money option used to end in a refusal and nothing else, which is a door with no
- * handle. This is the handle. But it deliberately does NOT become a shortcut around the two things
- * the pilot depends on, because the point of the pilot is that the money is real:
+ * handle. This is the handle. It is mounted only where there is no account (the money choice on
+ * /welcome), and there is nothing to approve there: approval is granted to one account at a time,
+ * by hand, and a person who has not opened an account does not have one yet. So it says that, and
+ * offers the two honest ways on: make the account first and ask from it (on /pilot, where the ask
+ * is signed by that account, lib/pilot-ask.ts), or leave an email to hear when real money opens to
+ * everyone (the isolated waitlist store, never joined to a pubkey).
  *
- *   - WITH NO ACCOUNT there is nothing to approve. Approval is granted to a public key by hand, and
- *     a person who has not opened an account does not have one. What they can do is leave an email
- *     and be told when real money opens — the isolated waitlist store, never joined to a pubkey.
- *
- *   - WITH AN ACCOUNT the request carries that account's address, and /pilot's precondition holds:
- *     real money must never sit under a device-only key, so an account that is not locked AND
- *     backed up is sent to do that first rather than being quietly let in. This dialog states the
- *     rule and hands over. Before the ask it shows the real-money warning verbatim (lib/real-money.ts,
- *     decision D1), the same words as /pilot and the sheet before the first switch; /pilot keeps
- *     the full page.
- *
- * A repeat ask is idempotent on the server (`already: true`), and is reported as reassurance rather
- * than as a fresh submission.
+ * It used to carry an account branch too, posting an unsigned ask with a typed email: that branch
+ * could never mount (there is no account where this sheet lives), and an unsigned ask is what let
+ * anybody file for any key. It is gone. Before the waitlist form it shows the real-money warning
+ * verbatim (lib/real-money.ts, decision D1), the same words as /pilot and the sheet before the
+ * first switch.
  */
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { X } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
-import { hasBackup } from "../../lib/recovery-api";
 import { mainnetConfig, activeNetwork } from "../../lib/network";
 import { REAL_MONEY_WARNING } from "../../lib/real-money";
 import { PrimaryButton } from "./PrimaryButton";
 
-type View = "form" | "sent" | "already";
+type View = "form" | "sent";
 
 export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { account, pilotState, switchNetwork } = useWallet();
+  const { pilotState, switchNetwork } = useWallet();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -81,27 +76,15 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
       e.preventDefault();
       setBusy(true);
       setError("");
-      // The allowlist lives on the MAINNET worker — the namespace the owner approves in.
+      // The pilot lives on the MAINNET worker: the namespace the owner approves in.
       const target = mainnetConfig()?.sponsorUrl ?? activeNetwork().sponsorUrl;
       try {
-        if (account) {
-          const res = await fetch(`${target.replace(/\/$/, "")}/pilot-request`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ pubkey: account.address, email }),
-          });
-          const body = (await res.json().catch(() => ({}))) as { already?: boolean; error?: string };
-          if (!res.ok) throw new Error(body.error ?? "Please try again.");
-          setView(body.already ? "already" : "sent");
-          return;
-        }
         // No account: there is no key to approve, so this is the waitlist — an isolated store that
         // is never joined to any account or any money.
         //
-        // SAME TARGET as the account path, deliberately. Asking to join is not a money operation,
-        // so routing it at whichever network this device happens to be flipped to would file the
-        // same question in two different places depending on a setting the person did not make for
-        // this purpose. The pilot allowlist lives on the mainnet worker, so that is where asks go.
+        // The mainnet worker, deliberately. Asking is not a money operation, so routing it at
+        // whichever network this device happens to be flipped to would file the same question in
+        // two different places depending on a setting the person did not make for this purpose.
         const res = await fetch(`${target.replace(/\/$/, "")}/waitlist`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -118,15 +101,11 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
         setBusy(false);
       }
     },
-    [account, email],
+    [email],
   );
 
   if (!open || typeof document === "undefined") return null;
 
-  /* Locked AND backed up — `phase === 2` alone would let someone who locked from /home skip the
-     backup and then be told they had one (the same trap /pilot documents). */
-  const readyToAsk = !account || (account.phase === 2 && hasBackup(account.address));
-  const asked = pilotState === "pending";
   // The pilot is retired: there is nothing to ask for, and the switch is one tap away (the
   // once-only warning sheet shows on the switch itself).
   const retired = pilotState === "open";
@@ -152,52 +131,12 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
         Not now
       </button>
     </>
-  ) : asked ? (
-    <>
-      <h2 className="app-modal-t">You&apos;re already on the list</h2>
-      <p className="app-modal-s">
-        We turn real money on for each account by hand, and we&apos;ll email you the moment your spot
-        opens. Nothing else to do.
-      </p>
-      <button type="button" className="app-modal-ghost" onClick={onClose}>
-        Close
-      </button>
-    </>
   ) : view === "sent" ? (
     <>
-      <h2 className="app-modal-t">Asked</h2>
-      <p className="app-modal-s">
-        {account
-          ? "We got it. We turn real money on for each account by hand, and we'll email you when yours is ready."
-          : "We'll email you when real money opens up. Your email is kept on its own, never tied to any account or any money."}
-      </p>
+      <h2 className="app-modal-t">You&apos;re on the waitlist</h2>
+      <p className="app-modal-s">We&apos;ll email you when real money opens to everyone.</p>
       <button type="button" className="app-modal-ghost" onClick={onClose}>
         Close
-      </button>
-    </>
-  ) : view === "already" ? (
-    <>
-      <h2 className="app-modal-t">You&apos;ve already asked</h2>
-      <p className="app-modal-s">
-        We have your request for this account — no need to send it again. We&apos;ll email you when
-        your spot opens.
-      </p>
-      <button type="button" className="app-modal-ghost" onClick={onClose}>
-        Close
-      </button>
-    </>
-  ) : !readyToAsk ? (
-    <>
-      <h2 className="app-modal-t">One thing first</h2>
-      <p className="app-modal-s">
-        Real money must never sit under a key that anyone holding this phone could use. Lock your
-        money with a password and back it up, and then you can ask to join.
-      </p>
-      <Link href="/pilot" className="app-modal-cta" onClick={onClose}>
-        Lock it and ask to join
-      </Link>
-      <button type="button" className="app-modal-ghost" onClick={onClose}>
-        Not now
       </button>
     </>
   ) : (
@@ -205,9 +144,12 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
       <h2 className="app-modal-t">Ask for real money</h2>
       <p className="app-modal-s">{REAL_MONEY_WARNING}</p>
       <p className="app-modal-s">
-        We open it one account at a time, by hand. Leave your email and we&apos;ll tell you when
-        yours is ready.
+        Real money is approved one account at a time. Make your account first, then ask from it.
       </p>
+      <Link href="/start" className="app-modal-cta" onClick={onClose}>
+        Make my account first
+      </Link>
+      <p className="app-modal-s">Or leave your email, and we&apos;ll tell you when real money opens to everyone.</p>
       <form onSubmit={submit} className="mt-3 flex flex-col gap-2">
         <input
           ref={inputRef}
@@ -221,12 +163,12 @@ export function JoinPilotDialog({ open, onClose }: { open: boolean; onClose: () 
           className="h-12 rounded-[14px] border border-line bg-surface px-3 text-ink outline-none"
         />
         <PrimaryButton type="submit" loading={busy} loadingLabel="Sending…" disabled={email.length < 5}>
-          Ask to join
+          Join the waitlist
         </PrimaryButton>
       </form>
       <p className="app-modal-fine">
-        Your email is used to tell you about the pilot and nothing else. It is kept on its own, never
-        joined to your account or your money.
+        Your email is used to tell you when real money opens and nothing else. It is kept on its own,
+        never joined to any account or any money.
       </p>
       {error && <p className="app-modal-err">{error}</p>}
     </>

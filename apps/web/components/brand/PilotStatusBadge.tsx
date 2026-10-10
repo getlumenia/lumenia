@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * PilotStatusBadge — this account's mainnet-pilot standing, in one honest chip.
+ * PilotStatusBadge: this account's real-money standing, in its own words (contract 5.1).
  *
- * Reads pilotState from the wallet (the sponsor's /pilot-status `state`): 'none' (never asked),
- * 'pending' (asked, waiting), 'approved' (may switch to real money), 'rejected' (not this round).
- * The UI never says the word "rejected" and never uses red — a "not yet" is framed as "still on
- * the list", because a waitlist is not a failure. Only the approved state carries an action (switch
- * up); pending/rejected are calm, no-op reassurance so there is nothing to anxiously retry.
+ * Reads the wallet's pilotStanding (lib/pilot-access.ts, the same table the extension uses) and
+ * says it with the account's short address in the line, because a person may hold several accounts
+ * and the website and the extension may be holding different ones. Only the standings with
+ * something to do carry an action: switch up (approved, open), ask again later (pending, unknown),
+ * ask (none), ask for more sends (no-sends). A declined account is told so plainly, never "still on
+ * the list"; a taken-off account is told its money stays its own.
  *
  * Tokens match the app brand set (see NetworkSwitcher + MoneyCard): text-ink / text-ink-soft copy,
  * money for the accent, line for neutral borders, secondary (= accent-soft #E8E3F7 in .app-pw) for
@@ -15,74 +16,39 @@
  */
 import Link from "next/link";
 import { useWallet } from "../../lib/wallet";
+import { shortAddress } from "../../lib/account-label";
+import { standingCopy } from "../../lib/pilot-access";
+
+const primary =
+  "inline-flex h-10 items-center justify-center rounded-full border border-money bg-money px-4 text-sm font-medium text-primary-foreground";
+const quiet = "inline-flex h-10 items-center justify-center rounded-full border border-line px-4 text-sm font-medium text-ink-soft";
 
 export function PilotStatusBadge() {
-  const { pilotState, switchNetwork } = useWallet();
+  const { account, pilotStanding, pilotUsed, pilotLimit, recheckPilot, switchNetwork } = useWallet();
+  const short = account ? shortAddress(account.address) : "";
+  const left = pilotLimit !== null && pilotUsed !== null ? Math.max(0, pilotLimit - pilotUsed) : null;
+  const words = standingCopy(pilotStanding, { short, left, limit: pilotLimit });
+  const calm = pilotStanding === "pending" || pilotStanding === "checking";
 
-  if (pilotState === "open") {
-    // The pilot is retired: real money is open to everyone, capped per transfer; the once-only
-    // warning sheet shows on the switch itself (lib/wallet.tsx).
-    return (
-      <div className="flex flex-col items-start gap-3">
-        <p className="text-sm font-semibold text-ink">Real money is open to everyone</p>
-        <button
-          onClick={() => switchNetwork("public")}
-          className="inline-flex h-10 items-center justify-center rounded-full border border-money bg-money px-4 text-sm font-medium text-primary-foreground"
-        >
-          Switch to real money
-        </button>
-      </div>
-    );
-  }
-
-  if (pilotState === "approved") {
-    return (
-      <div className="flex flex-col items-start gap-3">
-        <p className="text-sm font-semibold text-ink">You&apos;re approved for real money</p>
-        <button
-          onClick={() => switchNetwork("public")}
-          className="inline-flex h-10 items-center justify-center rounded-full border border-money bg-money px-4 text-sm font-medium text-primary-foreground"
-        >
-          Switch to real money
-        </button>
-      </div>
-    );
-  }
-
-  if (pilotState === "pending") {
-    // Calm accent-soft (#E8E3F7 in the app scope) chip — no spinner, no action.
-    return (
-      <div className="rounded-[14px] bg-secondary px-4 py-3">
-        <p className="text-sm font-semibold text-ink">You&apos;re on the list</p>
-        <p className="mt-1 text-sm text-ink-soft">
-          Nothing to do right now — we&apos;ll email you the moment your spot opens.
-        </p>
-      </div>
-    );
-  }
-
-  if (pilotState === "rejected") {
-    // Neutral, line-bordered chip — never red, never the word "rejected".
-    return (
-      <div className="rounded-[14px] border border-line px-4 py-3">
-        <p className="text-sm font-semibold text-ink">Not yet — you&apos;re still on the list</p>
-        <p className="mt-1 text-sm text-ink-soft">
-          Keep using practice mode. Reply to our email if you&apos;re stuck.
-        </p>
-      </div>
-    );
-  }
-
-  // 'none' — never asked.
   return (
-    <div className="flex flex-col items-start gap-3">
-      <p className="text-sm font-semibold text-ink">Want to use real money?</p>
-      <Link
-        href="/pilot"
-        className="inline-flex h-10 items-center justify-center rounded-full border border-money bg-secondary px-4 text-sm font-medium text-money"
-      >
-        Join the pilot →
-      </Link>
+    <div className={calm ? "rounded-[14px] bg-secondary px-4 py-3" : "flex flex-col items-start gap-3"}>
+      <div>
+        <p className="text-sm font-semibold text-ink">{words.title}</p>
+        {words.line && <p className="mt-1 text-sm text-ink-soft">{words.line}</p>}
+      </div>
+      {pilotStanding === "approved" || pilotStanding === "open" ? (
+        <button onClick={() => switchNetwork("public")} className={primary}>
+          {words.action}
+        </button>
+      ) : pilotStanding === "pending" || pilotStanding === "unknown" ? (
+        <button onClick={recheckPilot} className={`${quiet} mt-2`}>
+          {words.action}
+        </button>
+      ) : pilotStanding === "none" || pilotStanding === "no-sends" ? (
+        <Link href="/pilot" className={quiet}>
+          {words.action}
+        </Link>
+      ) : null}
     </div>
   );
 }

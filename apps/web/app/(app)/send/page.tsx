@@ -36,6 +36,9 @@ import { sendEvent } from "../../../lib/events";
 import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
 import { netKey } from "../../../lib/scoped-store";
 import { activeNetwork } from "../../../lib/network";
+import { accountsForTotal } from "../../../lib/accounts-total";
+import { shortAddress } from "../../../lib/account-label";
+import { standingCopy } from "../../../lib/pilot-access";
 import { copy } from "../../../lib/copy";
 import { rememberLink } from "../../../lib/sent-links";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
@@ -154,7 +157,7 @@ function shortName(name: string): string {
 }
 
 export default function SendPage() {
-  const { status, account, accounts, getSigner, createAccount, pilotState } = useWallet();
+  const { status, account, accounts, getSigner, createAccount, pilotStanding, pilotUsed, pilotLimit, recheckPilot } = useWallet();
   const router = useRouter();
   const [balance, setBalance] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
@@ -175,7 +178,8 @@ export default function SendPage() {
   const sending = useRef(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [error, setError] = useState("");
-  const [refusedByPilot, setRefusedByPilot] = useState(false);
+  /** The pilot gate refused the send: every send used ("no-sends"), or this account is not admitted. */
+  const [refusedByPilot, setRefusedByPilot] = useState<"no-sends" | "not-approved" | null>(null);
   /** The account has no password yet — a different errand from a locked one, and /unlock can't do it. */
   const [needsPassword, setNeedsPassword] = useState(false);
   /** Real money with the pilot retired, and no backup yet: /pilot's one secure step (lib/wallet.tsx getSigner). */
@@ -238,14 +242,17 @@ export default function SendPage() {
     await disconnectExternalWallet();
   }
 
-  /* Sum EVERY stored account, the way /home and /account do. Reading only the home account meant a
-     claim that had just landed in a fresh sponsored account — which is how every v2 claim arrives —
-     was invisible here: /home said "$20.00" and this screen said "You don't have any money to send
-     yet" and offered practice money. Also survives a failed read instead of reporting zero. */
+  /* The account in use plus the claim accounts on their way into it, the way /home and /account
+     add up (lib/accounts-total.ts). Reading only the home account meant a claim that had just landed
+     in a fresh sponsored account (which is how every v2 claim arrives) was invisible here: /home
+     said "$20.00" and this screen said "You don't have any money to send yet" and offered practice
+     money. And reading EVERY account counted another deliberate account's dollars as spendable from
+     this one, which it cannot sign for. Also survives a failed read instead of reporting zero. */
+  const totalKey = account ? accountsForTotal(account.address, accounts).join(",") : "";
   useEffect(() => {
-    if (!accounts.length) return;
+    if (!totalKey) return;
     let alive = true;
-    void loadTotalUsd(accounts.map((a) => a.address))
+    void loadTotalUsd(totalKey.split(","))
       .then((t) => alive && setBalance(t.usd))
       .catch(() => {
         /* leave it null: unknown is not zero, and the guards below already no-op on null */
@@ -253,7 +260,7 @@ export default function SendPage() {
     return () => {
       alive = false;
     };
-  }, [accounts]);
+  }, [totalKey]);
 
   // Prefill from a request hand-off (/r → /send). Read once on mount.
   useEffect(() => {
@@ -395,7 +402,7 @@ export default function SendPage() {
         body: JSON.stringify({ recipientPublicKey: account!.address }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "faucet unavailable");
-      const t = await loadTotalUsd(accounts.map((a) => a.address));
+      const t = await loadTotalUsd(accountsForTotal(account!.address, accounts));
       setBalance(t.usd);
       return t.usd;
     } catch (e) {
@@ -421,7 +428,7 @@ export default function SendPage() {
 
   async function sendOnce() {
     setError("");
-    setRefusedByPilot(false);
+    setRefusedByPilot(null);
     setNeedsPassword(false);
     setNeedsBackup(false);
     // Validate the ROUNDED amount — "0.001" parses > 0 but formats to "0.00",
@@ -456,7 +463,7 @@ export default function SendPage() {
         known = (await topUp.current) ?? known;
         topUp.current = null;
       } else if (known === null) {
-        known = await loadTotalUsd(accounts.map((a) => a.address))
+        known = await loadTotalUsd(accountsForTotal(account!.address, accounts))
           .then((t) => t.usd)
           .catch(() => null);
       }
@@ -641,12 +648,23 @@ export default function SendPage() {
       const msg = (e as Error).message ?? "";
       const pilotReason = /403/.test(msg) ? msg.slice(msg.indexOf("{")) : "";
       const reason = pilotReason.match(/"error"\s*:\s*"([^"]+)"/)?.[1];
-      setError(reason ? `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.` : copy.errors.moneySafe);
       /* A refusal from the pilot gate is the one error with an answer, so it carries the answer.
          Without this the sponsor's "this wallet is not on the pilot allowlist yet" was a sentence
          and nothing else: a closed door with no handle, on the screen where somebody was trying to
-         send real money. */
-      setRefusedByPilot(Boolean(reason));
+         send real money. "pilot limit reached" is the no-sends standing, said in its own words
+         (contract 5.1), and offers more sends rather than a join this account already has. */
+      const limitReached = reason ? /pilot limit reached/i.exec(reason) : null;
+      if (limitReached) {
+        const limit = Number(/(\d+)/.exec(reason!)?.[1] ?? pilotLimit ?? 0);
+        const w = standingCopy("no-sends", { short: shortAddress(account!.address), limit });
+        setError(`${w.title} ${w.line}`);
+        setRefusedByPilot("no-sends");
+      } else {
+        setError(reason ? `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.` : copy.errors.moneySafe);
+        setRefusedByPilot(reason ? "not-approved" : null);
+      }
+      // The answer the screens show may be stale: ask again.
+      if (reason) recheckPilot();
     } finally {
       setBusy(false);
     }
@@ -823,6 +841,12 @@ export default function SendPage() {
   // With an external wallet funding the link, the Lumenia balance is beside the point.
   const zeroBalance = external === null && balance !== null && Number.parseFloat(balance) <= 0;
   const paying = request !== null;
+  // This account's real-money standing, in the words every surface uses (contract 5.1).
+  const practiceWords = standingCopy(pilotStanding, {
+    short: shortAddress(account.address),
+    left: pilotLimit !== null && pilotUsed !== null ? Math.max(0, pilotLimit - pilotUsed) : null,
+    limit: pilotLimit,
+  });
 
   // Paying your own request is a guaranteed on-chain rejection (a Claimable
   // Balance may not name the same destination twice) — show the truth instead.
@@ -864,9 +888,12 @@ export default function SendPage() {
             "Get started" now opens an account and lands here, which is three taps instead of five
             but skips the screen that used to say real money exists at all. Somebody could send
             practice links for a week without learning there was anything else. One line, no
-            interruption, and it says what it costs: it is invite-only. */}
+            interruption, in the words every surface uses for this account's standing (contract
+            5.1), with the account's short address in it. Only a never-asked account is offered the
+            ask; a waiting, declined or taken-off one is told where it stands, never "still on the
+            list", and an approved one is told it may switch. */}
         {!activeNetwork().isMainnet &&
-          (pilotState === "open" ? (
+          (pilotStanding === "open" ? (
             /* The pilot is retired: "invite-only" would be false, and /pilot is the switch now. */
             <p className="mt-2 text-sm text-ink-soft">
               This is practice money. Real money is open to everyone:{" "}
@@ -875,13 +902,19 @@ export default function SendPage() {
               </Link>
               .
             </p>
+          ) : pilotStanding === "checking" ? (
+            <p className="mt-2 text-sm text-ink-soft">This is practice money.</p>
           ) : (
             <p className="mt-2 text-sm text-ink-soft">
-              This is practice money.{" "}
-              <Link href="/pilot" className="underline underline-offset-2 hover:text-ink">
-                Ask to send real money
-              </Link>
-              : it&apos;s invite-only while the pilot is small.
+              This is practice money. {practiceWords.title} {practiceWords.line}
+              {(pilotStanding === "none" || pilotStanding === "no-sends" || pilotStanding === "approved") && practiceWords.action && (
+                <>
+                  {" "}
+                  <Link href="/pilot" className="underline underline-offset-2 hover:text-ink">
+                    {practiceWords.action}
+                  </Link>
+                </>
+              )}
             </p>
           ))}
       </header>
@@ -1092,11 +1125,21 @@ export default function SendPage() {
               Lock it and back it up
             </Link>
           )}
-          {refusedByPilot && (
+          {/* Ask to join only for a never-asked account; more sends for one that used them all; for
+              any other standing, where it stands (contract 5.1). */}
+          {refusedByPilot === "no-sends" && (
             <Link href="/pilot" className="text-sm underline underline-offset-2 text-ink-soft hover:text-ink">
-              Ask to join the pilot
+              Ask for more sends
             </Link>
           )}
+          {refusedByPilot === "not-approved" &&
+            (pilotStanding === "none" ? (
+              <Link href="/pilot" className="text-sm underline underline-offset-2 text-ink-soft hover:text-ink">
+                Ask to join
+              </Link>
+            ) : pilotStanding === "pending" || pilotStanding === "declined" || pilotStanding === "revoked" ? (
+              <p className="text-sm text-ink-soft">{practiceWords.line}</p>
+            ) : null)}
           {/* Held until the balance is known when paying an ask: the amount
               arrives prefilled, so an instant tap could otherwise submit a
               guaranteed-underfunded pay before the "more than you have" guard

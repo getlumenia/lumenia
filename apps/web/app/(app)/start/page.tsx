@@ -25,6 +25,12 @@
  * Going back to hello or the question with an account in hand also goes home, so the question can
  * never be answered twice and open a second account.
  *
+ * ONE EXCEPTION: ?step=restore with an account already here is "bring ANOTHER account here" (the
+ * approval email's "Bring it here", /activate's "Bring my money back"). It used to bounce to /home,
+ * so the only way to bring a second account in was to remove the first. It renders the add flow
+ * instead (RecoveryFlow mode "add"): the account in use stays, and nothing switches until the
+ * person chooses "Use it now".
+ *
  * NOTHING HAPPENS ON ARRIVAL. Link previews and crawlers open URLs too, and every new account parks
  * a reserve with the sponsor. The tap on "No, I'm new here" is the gesture; ?step=new opened cold,
  * with no account behind it, falls back to the question.
@@ -49,6 +55,8 @@ import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { FindWithFaceId } from "../../../components/brand/FindWithFaceId";
 import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
+import { backupRecord } from "../../../lib/backup-record";
+import { maskEmail, shortAddress } from "../../../lib/account-label";
 import "./start.css";
 
 type Step = "hello" | "ask" | "new" | "restore";
@@ -108,6 +116,8 @@ function FirstRun() {
   const [faceFound, setFaceFound] = useState(false);
   const [restored, setRestored] = useState(false);
   const [faceCapable, setFaceCapable] = useState(false);
+  /** An account was already here when ?step=restore opened: this is the add flow, not a restore. */
+  const [adding, setAdding] = useState(false);
 
   const step: Step = leaving ?? pending ?? urlStep;
   const beat = step === "restore" && restored ? "restored" : step;
@@ -167,15 +177,19 @@ function FirstRun() {
     if (status !== "ready") return;
     if (!answered.current) {
       answered.current = true;
+      if (account && urlStep === "restore") {
+        setAdding(true);
+        return;
+      }
       if (account) {
         router.replace("/home");
         return;
       }
     }
-    if (leaving || creating) return;
+    if (leaving || creating || adding) return;
     if (account && (step === "hello" || step === "ask")) router.replace("/home");
     else if (!account && step === "new") replaceWith("ask");
-  }, [status, account, step, leaving, creating, router, replaceWith]);
+  }, [status, account, step, urlStep, leaving, creating, adding, router, replaceWith]);
 
   // Face ID is offered only where this device has a platform authenticator; the copy follows suit.
   useEffect(() => {
@@ -254,13 +268,15 @@ function FirstRun() {
         />
       )}
       {step === "new" && account && <InBeat heading={heading} onContinue={leaveForHome} />}
-      {step === "restore" && (
+      {step === "restore" && adding && <AddBeat heading={heading} onDone={leaveForHome} />}
+      {step === "restore" && !adding && (
         <RestoreBeat
           heading={heading}
           faceCapable={faceCapable}
           found={faceFound}
           restored={restored}
           locked={account?.phase === 2}
+          address={account?.address ?? null}
           onFound={() => setFaceFound(true)}
           onDone={() => setRestored(true)}
           onContinue={leaveForHome}
@@ -407,6 +423,7 @@ function RestoreBeat({
   found,
   restored,
   locked,
+  address,
   onFound,
   onDone,
   onContinue,
@@ -418,6 +435,8 @@ function RestoreBeat({
   restored: boolean;
   /** Read from the account itself, not assumed: the closing line asserts a safety property. */
   locked: boolean;
+  /** The account that came back, named the way every surface names it. */
+  address: string | null;
   onFound: () => void;
   onDone: () => void;
   onContinue: () => void;
@@ -429,6 +448,14 @@ function RestoreBeat({
         <h1 ref={heading} tabIndex={-1} className="fr-title">
           Your money is back.
         </h1>
+        {/* Which account came back, in the restore's own words (contract 5.5). */}
+        {address && (
+          <p className="fr-lead">
+            {backupRecord(address)?.email
+              ? `This is ${shortAddress(address)}, backed up with ${maskEmail(backupRecord(address)!.email!)}.`
+              : `This is ${shortAddress(address)}.`}
+          </p>
+        )}
         <p className="fr-lead">
           {locked
             ? "Only your password can spend it on this phone."
@@ -462,6 +489,30 @@ function RestoreBeat({
             <RecoveryFlow mode="restore" onDone={onDone} />
           </MoneyCard>
         )}
+      </div>
+    </>
+  );
+}
+
+/** e. Bringing ANOTHER account here, beside the one in use (W4). Nothing is removed or switched. */
+function AddBeat({ heading, onDone }: { heading: HeadingRef; onDone: () => void }) {
+  return (
+    <>
+      <Mascot pose="phone" size="md" />
+      <h1 ref={heading} tabIndex={-1} className="fr-title">
+        Bring another account here.
+      </h1>
+      <p className="fr-lead">
+        The account on this phone stays. Bring another one in with the email you backed it up with.
+      </p>
+      <div className="fr-restore">
+        <MoneyCard className="p-5">
+          <p className="font-semibold text-ink">With its email</p>
+          <p className="mb-3 mt-1 text-sm text-pretty text-ink-soft">
+            We&apos;ll send you a code, then its password opens it.
+          </p>
+          <RecoveryFlow mode="add" onDone={onDone} />
+        </MoneyCard>
       </div>
     </>
   );

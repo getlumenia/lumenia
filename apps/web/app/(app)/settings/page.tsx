@@ -27,7 +27,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
-import { hasBackup } from "../../../lib/recovery-api";
 import { Mascot } from "../../../components/brand/Mascot";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { HandleCard } from "../../../components/brand/HandleCard";
@@ -153,7 +152,7 @@ export default function SettingsPage() {
             <strong className="text-ink">Only do this if you have backed it up.</strong> Without a
             backup, the keys here are the only way in, and removing them ends your access for good.
           </p>
-          <DisconnectButton backedUp={hasBackup(account.address)} />
+          <DisconnectButton />
         </details>
       </MoneyCard>
 

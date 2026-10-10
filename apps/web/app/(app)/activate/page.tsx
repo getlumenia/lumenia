@@ -31,8 +31,9 @@ import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { loadBalance } from "../../../lib/horizon";
 import { MAINNET_CONFIGURED } from "../../../lib/network";
-import { backupBlocksRealMoney } from "../../../lib/pilot-access";
-import { hasBackup } from "../../../lib/recovery-api";
+import { backupBlocksRealMoney, standingAllowsRealMoney, standingCopy } from "../../../lib/pilot-access";
+import { hasBackup } from "../../../lib/backup-record";
+import { shortAddress } from "../../../lib/account-label";
 
 type StepState = "done" | "current" | "later";
 
@@ -49,7 +50,8 @@ interface Step {
 }
 
 export default function ActivatePage() {
-  const { status, account, network, pilotState, pilotKnown, mainnetApproved, switchNetwork } = useWallet();
+  const { status, account, network, pilotState, pilotKnown, pilotStanding, pilotUsed, pilotLimit, recheckPilot, mainnetApproved, switchNetwork } =
+    useWallet();
   const [usdc, setUsdc] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
@@ -95,8 +97,14 @@ export default function ActivatePage() {
     backedUp: account ? hasBackup(account.address) : false,
   });
   const isLocked = account?.phase === 2 && !needsBackupToo;
-  // "open" = the pilot is retired and real money is open to everyone: nothing left to ask for.
-  const isApproved = pilotState === "approved" || pilotState === "open";
+  /* The pilot step is done when THIS account may use real money: approved (with sends left or
+     not: an account with every send used can still receive, cash out and take links back), or the
+     pilot retired ("open"). Waiting, declined and taken-off accounts are not done, and are never
+     invited to ask again (lib/pilot-access.ts pilotStanding, the same table as the extension). */
+  const isApproved = standingAllowsRealMoney(pilotStanding);
+  const short = account ? shortAddress(account.address) : "";
+  const pilotLeft = pilotLimit !== null && pilotUsed !== null ? Math.max(0, pilotLimit - pilotUsed) : null;
+  const standingWords = standingCopy(pilotStanding, { short, left: pilotLeft, limit: pilotLimit });
   const hasMoney = usdc !== null && parseFloat(usdc) > 0;
 
   /* The order is not cosmetic — each step is genuinely blocked by the one above it, and getting it
@@ -144,10 +152,16 @@ export default function ActivatePage() {
         },
     {
       id: "pilot",
-      title: "Ask to join the pilot",
+      title: "Ask to join real money",
+      // "none" is the only standing that is asked to ask; every other one says where it stands.
       body:
-        "Real sending is invite-only for now, so we can help every early user personally. Ask here and we approve by hand, usually quickly.",
-      doneNote: pilotState === "open" ? "Real money is open to everyone; nothing to ask for." : "You are in the pilot.",
+        pilotStanding === "none"
+          ? "Real sending is invite-only for now, so we can help every early user personally. Ask here and we approve by hand, usually quickly."
+          : [standingWords.title, standingWords.line].filter(Boolean).join(" "),
+      doneNote:
+        pilotStanding === "open"
+          ? "Real money is open to everyone; nothing to ask for."
+          : [standingWords.title, standingWords.line].filter(Boolean).join(" "),
       href: "/pilot",
       cta: "Ask to join",
       state: stateFor(2),
@@ -240,16 +254,24 @@ export default function ActivatePage() {
                         <PrimaryButton onClick={() => switchNetwork("public")}>
                           {s.cta}
                         </PrimaryButton>
+                      ) : s.id === "pilot" && pilotStanding !== "none" ? (
+                        /* Only a never-asked account gets "Ask to join". A waiting one, or a check
+                           that failed, may ask the server again; declined and taken-off accounts
+                           have nothing to press. */
+                        pilotStanding === "pending" || pilotStanding === "unknown" ? (
+                          <button
+                            type="button"
+                            onClick={recheckPilot}
+                            className="inline-flex h-10 items-center rounded-full border border-line px-4 text-sm font-medium text-ink-soft"
+                          >
+                            {standingWords.action}
+                          </button>
+                        ) : null
                       ) : (
                         <Link href={s.href} className="block">
                           <PrimaryButton>{s.cta}</PrimaryButton>
                         </Link>
                       )}
-                      {s.id === "pilot" && pilotState === "pending" ? (
-                        <p className="mt-2 text-sm text-ink-soft">
-                          Your request is in. We&apos;ll email you the moment it&apos;s approved.
-                        </p>
-                      ) : null}
                       {s.id === "money" && checking ? (
                         <p className="mt-2 text-sm text-ink-soft">Checking your balance…</p>
                       ) : null}
@@ -267,10 +289,14 @@ export default function ActivatePage() {
       <MoneyCard className="p-4">
         <p className="font-semibold text-ink">Already used Lumenia on another phone?</p>
         <p className="mt-1 text-sm text-ink-soft">
-          Don&apos;t start over — bring your money here with Face ID, or your email and password.
+          {account
+            ? "Don't start over: bring that account here with its email and password. The one on this phone stays."
+            : "Don't start over: bring your money here with Face ID, or your email and password."}
         </p>
+        {/* /start?step=restore brings an account here BESIDE the one in use when there is one
+            (RecoveryFlow mode "add"), and restores it when there is none. */}
         <Link
-          href="/account"
+          href="/start?step=restore"
           className="mt-2 inline-block text-sm font-medium text-money underline-offset-2 hover:underline"
         >
           Bring my money back

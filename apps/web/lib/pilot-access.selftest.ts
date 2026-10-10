@@ -18,6 +18,12 @@
  * reading it from there rather than keeping a variant of its own. Plus the switch that retires the
  * public waitlist (`realMoneyOpen`, `waitlistCta`) and the four places that follow it.
  *
+ * And the LUMENIA ACCOUNT CONTRACT v1 on the website: one standing table and one set of words for
+ * every surface (contract 4 and 5.1), the ask signed by the account it is for (lib/pilot-ask.ts,
+ * contract 1 and 3.2, driven against a fake sponsor), the approval link that names its account,
+ * per-account approval, per-account totals, the idle lock, the Face ID password rule, the honest
+ * "ways back in", and the privacy page's three disclosures (contract 5.6) word for word.
+ *
  * RUN: pnpm --filter @lumenia/web test:pilotaccess   (offline, no keys, no network)
  */
 import { readFileSync } from "node:fs";
@@ -34,16 +40,27 @@ import {
   realMoneyOpen,
   waitlistCta,
 } from "./real-money";
+import { readdirSync, statSync } from "node:fs";
+import { Keypair } from "@stellar/stellar-sdk";
 import {
+  approvalFor,
+  approvalLinkPlan,
   arrivalDismissTarget,
   askPilotStatus,
   backupBlocksRealMoney,
+  checkedAgo,
   mainnetSwitchBlock,
   mainnetWarningPlan,
+  pilotStanding,
   readPilotStatus,
+  standingAllowsRealMoney,
+  standingCopy,
   type PilotRead,
+  type PilotStanding,
   type PilotState,
 } from "./pilot-access";
+import { accountsForTotal } from "./accounts-total";
+import { idleLockDue, lockPasswordPlan, OLD_BACKUP_PASSWORD_NOTE, DEFAULT_AUTO_LOCK, AUTO_LOCK_CHOICES } from "./lock";
 
 let passed = 0;
 let failed = 0;
@@ -68,15 +85,16 @@ function sponsor(answer: (url: string) => Response | "throw"): { fetchImpl: type
   return { fetchImpl, asked };
 }
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const same = (a: PilotRead | null, b: PilotRead | null) =>
+type Reading = Pick<PilotRead, "mainnetApproved" | "pilotState">;
+const same = (a: PilotRead | null, b: Reading | null) =>
   a === b || (a !== null && b !== null && a.mainnetApproved === b.mainnetApproved && a.pilotState === b.pilotState);
 
 /** What the provider does with an ask's result: an answer replaces, a failed ask keeps the last. */
 const settle = (last: PilotRead, read: PilotRead | null): PilotRead => read ?? last;
 
 async function asks(): Promise<void> {
-  const OPEN: PilotRead = { mainnetApproved: true, pilotState: "open" };
-  const NONE: PilotRead = { mainnetApproved: false, pilotState: "none" };
+  const OPEN: PilotRead = readPilotStatus({ pilot: false, approved: true, state: "open" });
+  const NONE: PilotRead = readPilotStatus({ pilot: true, approved: false, state: "none" });
 
   console.log("\n[5] the provider's ask, WITHOUT an account (askPilotStatus)");
   {
@@ -242,6 +260,350 @@ function warningWords(): void {
   }
 }
 
+
+/* ===========================================================================
+ * LUMENIA ACCOUNT CONTRACT v1 on the website (W6 to W15).
+ * ========================================================================= */
+
+const ascii = (t: string) => /^[\x20-\x7E]*$/.test(t);
+/** A source file with its comments removed, for "this screen never says X" checks. */
+const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+
+function standingTable(): void {
+  console.log("\n[11] where an account stands: the same table everywhere (contract 4)");
+  const of = (body: Record<string, unknown>) => pilotStanding(readPilotStatus(body));
+  const rows: [Record<string, unknown>, PilotStanding][] = [
+    [{ pilot: false, approved: true, state: "open" }, "open"],
+    [{ pilot: true, state: "none", approved: false, used: 0, limit: 5, revoked: false }, "none"],
+    [{ pilot: true, state: "pending", approved: false, used: 0, limit: 5, revoked: false }, "pending"],
+    [{ pilot: true, state: "approved", approved: true, used: 2, limit: 5, revoked: false }, "approved"],
+    [{ pilot: true, state: "approved", approved: true, used: 5, limit: 5, revoked: false }, "no-sends"],
+    [{ pilot: true, state: "rejected", approved: false, used: 1, limit: 5, revoked: false }, "declined"],
+    [{ pilot: true, state: "rejected", approved: false, used: 1, limit: 5, revoked: true }, "revoked"],
+    [{ pilot: true, state: "approved", approved: false, used: 0, limit: 5 }, "revoked"],
+    [{ pilot: true, approved: false }, "unknown"],
+  ];
+  for (const [body, want] of rows) ok(`${JSON.stringify(body)} -> ${want}`, of(body) === want, of(body));
+  ok("a failed ask is unknown, never 'not approved'", pilotStanding(null) === "unknown" && pilotStanding(readPilotStatus({ pilot: true, state: "approved", approved: true }), { failed: true }) === "unknown");
+  ok("an approved account with no limit said is approved, not no-sends", of({ pilot: true, state: "approved", approved: true }) === "approved");
+  ok("the standings that may use real money: approved, no-sends, open", (["approved", "no-sends", "open"] as const).every(standingAllowsRealMoney) && !(["none", "pending", "declined", "revoked", "unknown", "checking"] as const).some(standingAllowsRealMoney));
+  ok("checkedAgo: the age of a stale answer", checkedAgo(0, 30_000) === "Checked just now." && checkedAgo(0, 60_000) === "Checked 1 minute ago." && checkedAgo(0, 7 * 60_000) === "Checked 7 minutes ago." && checkedAgo(null) === "");
+}
+
+async function standingAsks(): Promise<void> {
+  const s = sponsor(() => json(200, { pilot: true, approved: false }));
+  ok("HTTP 200 {pilot:true, approved:false} with no state, for a wallet: a failed ask -> unknown", pilotStanding(await askPilotStatus({ sponsorUrl: SPONSOR, pubkey: PUB, fetchImpl: s.fetchImpl })) === "unknown");
+  const d = sponsor(() => json(503, { error: "pilot store unavailable" }));
+  ok("HTTP 503 -> unknown", pilotStanding(await askPilotStatus({ sponsorUrl: SPONSOR, pubkey: PUB, fetchImpl: d.fetchImpl })) === "unknown");
+  const n = sponsor(() => json(200, { pilot: true, state: "none", approved: false, used: 0, limit: 5, revoked: false }));
+  const read = await askPilotStatus({ sponsorUrl: SPONSOR, pubkey: PUB, fetchImpl: n.fetchImpl });
+  ok("the whole answer is kept: used, limit and revoked", read !== null && read.used === 0 && read.limit === 5 && read.revoked === false && read.state === "none");
+}
+
+const SHORT = "GCFIRY...XVYOJR";
+function standingWords(): void {
+  console.log("\n[12] the standing's words (contract 5.1), exactly, in ASCII");
+  const want: Record<Exclude<PilotStanding, "checking">, [string, string, string | null]> = {
+    none: ["Real money is invite-only for now.", `Ask to join with this account (${SHORT}).`, "Ask to join"],
+    pending: ["You're on the list.", `We'll email you when this account (${SHORT}) is approved.`, "Check again"],
+    approved: ["You're approved for real money.", `This account (${SHORT}) has 3 of 5 real-money sends left.`, "Switch to real money"],
+    "no-sends": [
+      "No real-money sends left.",
+      `This account (${SHORT}) has used all 5 of its real-money sends. Your money stays yours: you can still receive it, cash it out and take links back.`,
+      "Ask for more sends",
+    ],
+    declined: ["Not approved for now.", `This account (${SHORT}) isn't approved for real money yet. If you think we got it wrong, reply to our email.`, null],
+    revoked: [
+      "Real money is off for this account.",
+      `We took this account (${SHORT}) off real money. Your money stays yours: you can still receive it, cash it out and take links back.`,
+      null,
+    ],
+    open: ["Real money is open to everyone.", "Every link is capped.", "Switch to real money"],
+    unknown: ["We couldn't check real money for this account.", "Try again in a minute.", "Try again"],
+  };
+  for (const [standing, [title, line, action]] of Object.entries(want) as [Exclude<PilotStanding, "checking">, [string, string, string | null]][]) {
+    const c = standingCopy(standing, { short: SHORT, left: 3, limit: 5 });
+    ok(`${standing}: "${title}"`, c.title === title && c.line === line && c.action === action, `${c.title} | ${c.line} | ${c.action}`);
+    ok("  ...plain ASCII", ascii(c.title) && ascii(c.line) && (c.action === null || ascii(c.action)));
+  }
+  ok("checking: 'Checking real money for this account.'", standingCopy("checking", { short: SHORT }).title === "Checking real money for this account.");
+  // As in the extension (lib/standing.ts): a limit the sponsor did not report is never "0 of 0".
+  ok(
+    "a limit not reported is not read out as a number",
+    standingCopy("approved", { short: SHORT, left: 0, limit: 0 }).line === `This account (${SHORT}) is approved for real money.` &&
+      standingCopy("approved", { short: SHORT, left: null, limit: null }).line === `This account (${SHORT}) is approved for real money.` &&
+      standingCopy("no-sends", { short: SHORT, limit: null }).line.startsWith(`This account (${SHORT}) has used all of its real-money sends.`),
+  );
+  ok("no standing ever says 'still on the list'", (["none", "pending", "approved", "no-sends", "declined", "revoked", "open", "unknown", "checking"] as const).every((st) => !JSON.stringify(standingCopy(st, { short: SHORT, left: 1, limit: 5 })).includes("still on the list")));
+}
+
+const PILOT_GOLDEN = {
+  pubkey: "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR",
+  email: "  Founder@Example.com ",
+  emailId: "fb72704240c3527ba45904a8705865922f70a9c4f3c11bfa93c839f939945884",
+  message:
+    "lumenia-handle-pilot:v1:fb72704240c3527ba45904a8705865922f70a9c4f3c11bfa93c839f939945884:GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR:1760000000:0123456789abcdef:mainnet",
+  proof: "kZuq86B7rr9BIoSE0Mb2wqfQ2dgxLoRRVLRbT5JHnAvZuizmWtof0me3rY80wPHUfwA0XYWChj4FA8vtTEGnDg==",
+};
+const MAINNET_HOST = "https://lumenia-sponsor-mainnet.avakit.workers.dev";
+const TESTNET_HOST = "https://lumenia-sponsor.avakit.workers.dev";
+
+/** A sponsor that also records each request body; `answer` sees the URL and the body. */
+function recorder(answer: (url: string, body: Record<string, unknown>) => Response | "throw") {
+  const calls: { url: string; method: string; body: Record<string, unknown> }[] = [];
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+    calls.push({ url, method: init?.method ?? "GET", body });
+    const r = answer(url, body);
+    if (r === "throw") throw new TypeError("Failed to fetch");
+    return r;
+  }) as typeof fetch;
+  return { fetchImpl, calls };
+}
+
+async function theAsk(): Promise<void> {
+  await standingAsks();
+  standingWords();
+
+  console.log("\n[13] the ask is signed by the account it is for (lib/pilot-ask.ts, contract 1 and 3.2)");
+  // A build with real money configured, so the pilot host is the mainnet Worker. Set before the
+  // first import of lib/network.ts, which reads it when it loads.
+  const env = process.env as Record<string, string | undefined>;
+  env.NEXT_PUBLIC_SPONSOR_URL_MAINNET = MAINNET_HOST;
+  env.NEXT_PUBLIC_LUMENDROP_CONTRACT_MAINNET = "CTESTMAINNETCONTRACTFORTHESELFTESTONLY";
+  delete env.NEXT_PUBLIC_SPONSOR_URL;
+  const ask = await import("./pilot-ask");
+  const { localSignerFromSeed } = await import("./signer");
+  const { emailId, signOwnerProof } = await import("./owner-proof");
+  const signer = localSignerFromSeed(new Uint8Array(32).fill(1)); // TEST-ONLY
+  const pk = signer.publicKey();
+  const id = await emailId(PILOT_GOLDEN.email);
+  const verifies = (message: string, proof: string) => Keypair.fromPublicKey(pk).verify(Buffer.from(message), Buffer.from(proof, "base64"));
+
+  ok("the golden account and email id", pk === PILOT_GOLDEN.pubkey && id === PILOT_GOLDEN.emailId);
+  ok("the golden pilot/mainnet message, byte for byte", ask.pilotProofMessage(id, pk, 1760000000, "0123456789abcdef", "mainnet") === PILOT_GOLDEN.message);
+  ok("the golden pilot/mainnet signature", (await signOwnerProof(signer, "pilot", id, "mainnet", { ts: 1760000000, nonce: "0123456789abcdef" })).proof === PILOT_GOLDEN.proof);
+  ok("the pilot host is the real-money Worker, and signs for mainnet", ask.pilotHost() === MAINNET_HOST && ask.pilotHostNetwork(MAINNET_HOST) === "mainnet" && ask.pilotHostNetwork(`${MAINNET_HOST}/`) === "mainnet");
+  ok("  ...the practice Worker signs for testnet", ask.pilotHostNetwork(TESTNET_HOST) === "testnet");
+
+  const CODE_FIRST = "Confirm your email with a code first.";
+  {
+    // The /pilot sequence: ask with no code; the server asks for one; mail it; ask again with it.
+    let round = 0;
+    const s = recorder((url) => {
+      if (url.endsWith("/recovery-otp")) return json(200, { ok: true });
+      round++;
+      return round === 1 ? json(401, { error: CODE_FIRST, code: "code-required" }) : json(200, { ok: true, state: "pending", filed: true });
+    });
+    const first = await ask.askToJoin({ host: ask.pilotHost(), signer, email: PILOT_GOLDEN.email, src: "web", fetchImpl: s.fetchImpl });
+    const b1 = s.calls[0]!.body;
+    const owner = b1.owner as { pubkey: string; ts: number; nonce: string; proof: string };
+    ok("the first ask goes to the pilot host's /pilot-request", s.calls[0]!.url === `${MAINNET_HOST}/pilot-request` && s.calls[0]!.method === "POST");
+    ok("  ...with this account's pubkey, the trimmed email, src 'web', and NO code", b1.pubkey === pk && b1.email === "Founder@Example.com" && b1.src === "web" && !("code" in b1));
+    ok("  ...and an owner proof over the mainnet pilot message that Keypair.verify accepts", owner.pubkey === pk && verifies(ask.pilotProofMessage(id, pk, owner.ts, owner.nonce, "mainnet"), owner.proof));
+    ok("  ...never over the testnet one", !verifies(ask.pilotProofMessage(id, pk, owner.ts, owner.nonce, "testnet"), owner.proof));
+    ok("code-required comes back typed, with the server's sentence", !first.ok && first.code === "code-required" && first.message === CODE_FIRST);
+    await ask.requestPilotCode(ask.pilotHost(), PILOT_GOLDEN.email, { fetchImpl: s.fetchImpl });
+    const otp = s.calls[1]!;
+    ok("the code is asked for on the SAME host, with purpose 'pilot'", otp.url === `${MAINNET_HOST}/recovery-otp` && otp.body.purpose === "pilot" && otp.body.email === "Founder@Example.com");
+    const second = await ask.askToJoin({ host: ask.pilotHost(), signer, email: PILOT_GOLDEN.email, code: "123456", src: "web", fetchImpl: s.fetchImpl });
+    ok("the next ask carries the code", s.calls[2]!.body.code === "123456" && s.calls[2]!.url === `${MAINNET_HOST}/pilot-request`);
+    ok("  ...and a fresh proof (the server refuses a message it has seen)", (s.calls[2]!.body.owner as { nonce: string }).nonce !== owner.nonce);
+    ok("filed: state pending, filed true", second.ok && second.state === "pending" && second.filed && !second.already);
+    if (second.ok) {
+      ok("  ...shown as 'Request sent.'", ask.askView(second, false) === "filed");
+      const c = ask.askResultCopy("filed", { short: SHORT, masked: "f***@example.com" });
+      ok("  ...in the contract's words", c.title === "Request sent." && c.line === `We'll email f***@example.com when this account (${SHORT}) is approved.`);
+    }
+  }
+  {
+    const s = recorder((url) =>
+      url.includes("/pilot-status") ? json(200, { pilot: true, state: "pending", approved: false, used: 0, limit: 5, revoked: false }) : json(200, { ok: true }),
+    );
+    const r = await ask.askToJoin({ host: ask.pilotHost(), signer, email: PILOT_GOLDEN.email, src: "web", fetchImpl: s.fetchImpl });
+    ok("an older server's bare {ok:true}: no state, so nothing is claimed yet", r.ok && r.state === null);
+    const settled = await ask.settleAsk({ host: ask.pilotHost(), pubkey: pk, result: r, fetchImpl: s.fetchImpl });
+    ok("  ...the status is re-read for THIS account", s.calls.some((c) => c.url === `${MAINNET_HOST}/pilot-status?pubkey=${pk}`));
+    ok("  ...and the view follows it: pending", settled.ok && settled.state === "pending");
+    const none = recorder((url) => (url.includes("/pilot-status") ? json(200, { pilot: true, state: "none", approved: false, used: 0, limit: 5, revoked: false }) : json(200, { ok: true })));
+    const dropped = await ask.settleAsk({ host: ask.pilotHost(), pubkey: pk, result: { ok: true, state: null, filed: false, already: false }, fetchImpl: none.fetchImpl });
+    ok("an ok the status does not bear out ('none'): 'didn't go through', never 'sent'", !dropped.ok && dropped.message === ask.ASK_DID_NOT_GO_THROUGH);
+    const down = recorder(() => json(503, { error: "pilot store unavailable" }));
+    const unconfirmed = await ask.settleAsk({ host: ask.pilotHost(), pubkey: pk, result: { ok: true, state: null, filed: false, already: true }, fetchImpl: down.fetchImpl });
+    ok("an ok the status cannot confirm: said as such", !unconfirmed.ok && unconfirmed.message === ask.ASK_UNCONFIRMED);
+    const untouched = { ok: true as const, state: "pending" as const, filed: false, already: true };
+    ok("a result that has its state is not re-read", (await ask.settleAsk({ host: ask.pilotHost(), pubkey: pk, result: untouched, fetchImpl: down.fetchImpl })) === untouched && down.calls.length === 1);
+  }
+  {
+    const TAKEN = "That email backs up another Lumenia account. Ask with the email that backs up this one.";
+    const refusals: [string, Response, string][] = [
+      ["email-taken (409) surfaces the server sentence", json(409, { error: TAKEN, code: "email-taken" }), "email-taken"],
+      ["bad-proof (401)", json(401, { error: "We couldn't confirm this account signed the request. Check your device clock and try again.", code: "bad-proof" }), "bad-proof"],
+      ["bad-code (401)", json(401, { error: "That code is wrong or has expired.", code: "bad-code" }), "bad-code"],
+      ["proof-required (400)", json(400, { error: "Reload the page and ask again.", code: "proof-required" }), "proof-required"],
+      ["store-unavailable (503)", json(503, { error: "We couldn't record that just now. Try again in a minute.", code: "store-unavailable" }), "store-unavailable"],
+      ["rate-limited (429)", json(429, { error: "per-ip rate limit exceeded" }), "rate-limited"],
+    ];
+    for (const [what, res, want] of refusals) {
+      const body = (await res.clone().json()) as { error: string };
+      const r = await ask.askToJoin({ host: ask.pilotHost(), signer, email: PILOT_GOLDEN.email, src: "web", fetchImpl: recorder(() => res).fetchImpl });
+      ok(what, !r.ok && r.code === want && r.message === body.error, !r.ok ? `${r.code}: ${r.message}` : "ok");
+    }
+    const offline = await ask.askToJoin({ host: ask.pilotHost(), signer, email: PILOT_GOLDEN.email, src: "web", fetchImpl: recorder(() => "throw").fetchImpl });
+    ok("no connection: a refusal that says so, never 'sent'", !offline.ok && offline.code === "failed");
+    const noSign = { kind: "passkey-smart-account" as const, publicKey: () => pk, sign: async (t: never) => t };
+    const silent = recorder(() => json(200, { ok: true, state: "pending" }));
+    const r = await ask.askToJoin({ host: ask.pilotHost(), signer: noSign, email: PILOT_GOLDEN.email, src: "web", fetchImpl: silent.fetchImpl });
+    ok("an account that cannot sign is refused before anything is sent", !r.ok && silent.calls.length === 0);
+  }
+  {
+    const also = await ask.askToJoin({
+      host: ask.pilotHost(),
+      signer,
+      email: PILOT_GOLDEN.email,
+      src: "web",
+      fetchImpl: recorder(() => json(200, { ok: true, state: "pending", filed: false, already: true, emailAlsoFor: "GBBD47...FLA5" })).fetchImpl,
+    });
+    ok("already pending: 'You've already asked.', with the other wallet this email asked for", also.ok && ask.askView(also, false) === "already" && also.emailAlsoFor === "GBBD47...FLA5");
+    ok("  ...'This email also asked to join for account {other}.'", ask.alsoAskedLine("GBBD47...FLA5") === "This email also asked to join for account GBBD47...FLA5.");
+    const a = ask.askResultCopy("already", { short: SHORT, masked: "f***@example.com" });
+    ok("  ...in the contract's words", a.title === "You've already asked." && a.line === `This account (${SHORT}) is on the list. We'll email f***@example.com when it is approved.`);
+    const more = { ok: true as const, state: "approved" as const, filed: true, already: true };
+    ok("approved, all sends used, mailed now: 'Asked for more sends.'", ask.askView(more, true) === "more-filed" && ask.askResultCopy("more-filed", { short: SHORT, masked: "f***@example.com" }).title === "Asked for more sends.");
+    ok("  ...not mailed now: 'You've already asked for more sends.', same line", ask.askView({ ...more, filed: false }, true) === "more-already" && ask.askResultCopy("more-already", { short: SHORT, masked: "f***@example.com" }).line === `We'll email f***@example.com when this account (${SHORT}) can send again.`);
+    ok("approved with sends left, or declined: the standing says it, no result screen", ask.askView({ ...more, filed: false }, false) === "standing" && ask.askView({ ok: true, state: "rejected", filed: false, already: true }, false) === "standing");
+    const words = [ask.ASK_COPY.heading, ask.ASK_COPY.emailKnown("f***@example.com"), ask.ASK_COPY.emailHint(SHORT), ask.ASK_COPY.codeStep("founder@example.com"), ask.ASK_COPY.extensionNote];
+    ok("the form's words (contract 5.2)", words.join("|") === `Ask to join real money|We'll use the email that backs up this account: f***@example.com.|Use the email that backs up this account (${SHORT}).|We sent a 6-digit code to founder@example.com. Enter it to confirm this email is yours.|Asking for an account in the Lumenia extension? Open the extension and ask from Real money there.`);
+    ok("  ...and its buttons", ask.ASK_COPY.ask === "Ask to join" && ask.ASK_COPY.asking === "Asking" && ask.ASK_COPY.askMore === "Ask for more sends" && ask.ASK_COPY.useDifferentEmail === "Use a different email" && ask.ASK_COPY.codeField === "6-digit code");
+    ok("  ...all ASCII", [...words, ask.ASK_DID_NOT_GO_THROUGH, ask.ASK_UNCONFIRMED].every(ascii));
+  }
+}
+
+function smallRules(): void {
+  console.log("\n[14] the approval link names its account (W8)");
+  const A = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const B = PUB;
+  const C = "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR";
+  ok("for the account in use: switch, as before", approvalLinkPlan(A, A, [A, B]) === "switch");
+  ok("for another account on this device: offer to use it, never switch silently", approvalLinkPlan(B, A, [A, B]) === "offer-use");
+  ok("for an account not on this device: offer to bring it here", approvalLinkPlan(C, A, [A, B]) === "offer-bring");
+  ok("an old link with no for=: switch, as before", approvalLinkPlan(null, A, [A]) === "switch");
+  ok("for= is read from the fragment, and only a well-formed address", approvalFor(`#for=${C}`) === C && approvalFor(`#x=1&for=${B}`) === B && approvalFor("#for=GNOTANADDRESS") === null && approvalFor("") === null);
+  const accountPage = source("app", "(app)", "account", "page.tsx");
+  ok(
+    "/account decides nothing before the fragment is read (the switch runs in the same commit as the read)",
+    /useState<string \| null \| undefined>\(undefined\)/.test(accountPage) && /forPubkey === undefined\s*\?\s*null/.test(accountPage) && /if \(plan !== "switch"\) return;/.test(accountPage),
+  );
+  ok("  ...and 'Use {forShort}' comes back to the same approval link after the switch", /switchAccount\(forPubkey, `\/account\?switch=mainnet#for=\$\{forPubkey\}`\)/.test(accountPage));
+
+  console.log("\n[15] one balance per account (W10, lib/accounts-total.ts)");
+  const accounts = [
+    { address: "GHOME", kind: "user" as const },
+    { address: "GSECOND", kind: "user" as const },
+    { address: "GCLAIM1", kind: "throwaway" as const },
+    { address: "GCLAIM2", kind: "throwaway" as const },
+  ];
+  const total = accountsForTotal("GHOME", accounts);
+  ok("the account in use and the claim accounts are added up", total.includes("GHOME") && total.includes("GCLAIM1") && total.includes("GCLAIM2"));
+  ok("  ...another deliberate account is NOT", !total.includes("GSECOND"));
+  ok("  ...switching makes the other one the total, never both", JSON.stringify(accountsForTotal("GSECOND", accounts)) === JSON.stringify(["GSECOND", "GCLAIM1", "GCLAIM2"]));
+  ok("  ...the active account counts even before the keystore lists it", JSON.stringify(accountsForTotal("GNEW", [])) === JSON.stringify(["GNEW"]));
+
+  console.log("\n[16] the website locks itself (W11, lib/lock.ts idleLockDue)");
+  const MIN = 60_000;
+  ok("the default is 15 minutes, and the choices are 5, 15, 60", DEFAULT_AUTO_LOCK === 15 && AUTO_LOCK_CHOICES.join(",") === "5,15,60");
+  ok("in use: not due", !idleLockDue(0, null, 15, 14 * MIN));
+  ok("15 minutes with no input: due", idleLockDue(0, null, 15, 15 * MIN));
+  ok("hidden for the whole time, with input just before: due when it comes back", idleLockDue(10 * MIN, 10 * MIN, 5, 15 * MIN));
+  ok("hidden for less than the limit, input just before: not due", !idleLockDue(12 * MIN, 12 * MIN, 5, 15 * MIN));
+  ok("a 60-minute choice is honored", !idleLockDue(0, null, 60, 59 * MIN) && idleLockDue(0, null, 60, 60 * MIN));
+  const wallet = source("lib", "wallet.tsx");
+  ok("the wallet wipes the session key when it is due, and a new account starts locked", /idleLockDue\(/.test(wallet) && /const lockNow = useCallback\(\(\) => \{\s*sessionSeed\.current\?\.fill\(0\);/.test(wallet) && /createUserAccount\([\s\S]{0,400}setUnlocked\(false\)/.test(wallet));
+  const menu = source("components", "brand", "AccountMenu.tsx");
+  ok("the account menu offers 'Lock now' and the 5/15/60 choice", menu.includes("Lock now") && /AUTO_LOCK_CHOICES\.map/.test(menu));
+
+  console.log("\n[17] Face ID and the backup password (W12, lib/lock.ts lockPasswordPlan)");
+  ok("the typed password opens this account's own backup: lock with it, even if short", lockPasswordPlan(true, false) === "lock-verified" && lockPasswordPlan(true, true) === "lock-verified");
+  ok("it does not open the backup and is strong: lock, and say the backup still opens with the old one", lockPasswordPlan(false, true) === "lock-new-warn");
+  ok("no password copy to compare with, strong: lock", lockPasswordPlan(null, true) === "lock-new");
+  ok("a new password below the floor: refused, as before", lockPasswordPlan(false, false) === "too-weak" && lockPasswordPlan(null, false) === "too-weak");
+  ok("the warning's words", OLD_BACKUP_PASSWORD_NOTE === "Your email backup still opens with your old password. Use that one, or choose a new one and back up again.");
+}
+
+/** Every .ts/.tsx under apps/web, outside node_modules and .next. */
+function webFiles(dir = WEB_ROOT, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    if (name === "node_modules" || name === ".next" || name === "test-results" || name.startsWith(".")) continue;
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) webFiles(full, out);
+    else if (/\.(ts|tsx)$/.test(name)) out.push(full);
+  }
+  return out;
+}
+
+function pagesAndWords(): void {
+  console.log("\n[18] every standing surface reads the standing, and none says 'still on the list' (W6)");
+  const surfaces: [string, string][] = [
+    ["NetworkSwitcher", source("components", "brand", "NetworkSwitcher.tsx")],
+    ["PilotStatusBadge", source("components", "brand", "PilotStatusBadge.tsx")],
+    ["PilotStatusChip", source("components", "brand", "PilotStatusChip.tsx")],
+    ["/activate", source("app", "(app)", "activate", "page.tsx")],
+    ["/send", source("app", "(app)", "send", "page.tsx")],
+    ["/pilot", source("app", "(app)", "pilot", "page.tsx")],
+  ];
+  for (const [name, src] of surfaces) {
+    ok(`${name} reads pilotStanding and the standing's words`, /\bpilotStanding\b/.test(src) && /\bstandingCopy\(|standingAllowsRealMoney\(/.test(src));
+    ok(`  ...and never says 'still on the list'`, !/still on the list/i.test(code(src)));
+  }
+  const send = code(source("app", "(app)", "send", "page.tsx"));
+  ok("/send: 'pilot limit reached' becomes the no-sends words, with 'Ask for more sends'", /pilot limit reached/.test(send) && /standingCopy\("no-sends"/.test(send) && /refusedByPilot === "no-sends"/.test(send) && send.includes("Ask for more sends"));
+  ok("/send: 'Ask to join' only for a never-asked account", /pilotStanding === "none" \? \(\s*<Link href="\/pilot"[^>]*>\s*Ask to join\s*<\/Link>/.test(send) && !send.includes("Ask to join the pilot"));
+  const activate = code(source("app", "(app)", "activate", "page.tsx"));
+  ok("/activate: the pilot step is done for approved, no-sends and open", /const isApproved = standingAllowsRealMoney\(pilotStanding\)/.test(activate));
+  ok("/activate: 'Bring my money back' goes to /start?step=restore", /href="\/start\?step=restore"[\s\S]{0,200}Bring my money back/.test(activate));
+
+  console.log("\n[19] /pilot: the standing first, then a signed ask (W7)");
+  const pilot = source("app", "(app)", "pilot", "page.tsx");
+  const pilotCode = code(pilot);
+  ok("/pilot asks through lib/pilot-ask.ts, never posting /pilot-request itself", /from "[./]+lib\/pilot-ask"/.test(pilot) && !/fetch\(/.test(pilotCode) && !pilotCode.includes("/pilot-request"));
+  ok("  ...and the form renders only under a standing that asks: none, or no-sends", (pilotCode.match(/<AskForm\b/g) ?? []).length === 2 && /pilotStanding === "no-sends" && \(\s*<>[\s\S]{0,120}<AskForm moreSends\b/.test(pilotCode) && /pilotStanding === "none" && \(\s*<>[\s\S]*?<AskForm moreSends=\{false\}/.test(pilotCode));
+  ok("  ...code-required asks for a pilot code, then asks with it", /r\.code === "code-required"[\s\S]{0,120}requestPilotCode\(host, email\)/.test(pilotCode));
+  ok("  ...a locked account goes to /unlock?next=/pilot", pilotCode.includes('`/unlock?next=${encodeURIComponent("/pilot")}`'));
+  ok("  ...and the extension line is on the page", pilotCode.includes("ASK_COPY.extensionNote"));
+  const dialog = code(source("components", "brand", "JoinPilotDialog.tsx"));
+  ok("JoinPilotDialog no longer posts to /pilot-request", !dialog.includes("/pilot-request"));
+  ok("  ...and sends a person with no account to make one first", dialog.includes("Real money is approved one account at a time. Make your account first, then ask from it.") && dialog.includes("Make my account first") && dialog.includes("We&apos;ll email you when real money opens to everyone."));
+
+  console.log("\n[20] approval is per account (W9)");
+  const card = source("components", "brand", "AccountsCard.tsx");
+  ok("AccountsCard: only an approved account opens another on real money, and the new one asks on its own", card.includes("On real money, only an approved account can open another one, and the new one asks to join real money on its own."));
+  ok("  ...says so above the button when it may", card.includes("The new account asks to join real money on its own."));
+  ok("  ...and no longer says new accounts open once you are on the list", !card.includes("On real money, new accounts open once you are on the pilot list."));
+
+  console.log("\n[21] ways back in say what they do (W13)");
+  const ways = source("components", "brand", "WaysBackIn.tsx");
+  const callers = webFiles().filter(
+    (f) => !f.endsWith(join("lib", "identity.ts")) && !f.endsWith(".selftest.ts") && /\bfetchByIdentity\b/.test(code(readFileSync(f, "utf8"))),
+  );
+  ok("fetchByIdentity still has no caller on the website", callers.length === 0, callers.join(", "));
+  ok("  ...so WaysBackIn promises no restore: no 'finds this account'", !/finds this account/i.test(ways));
+  ok("  ...and says how an account does come back", ways.includes("To bring an account back on a new phone, use its backup email and password, or Face ID."));
+
+  console.log("\n[22] the privacy page says what the code does (W15, contract 5.6)");
+  const privacy = source("app", "(site)", "privacy", "page.tsx");
+  const D1 = "To check the pilot: your account's public key, to the real-money server, when you press Real money or Check again, while you use real money, and while this account's request to join is waiting.";
+  const D2 = "To ask to join real money: your account's public key, the email that backs it up, a signature from your account and, if asked, a 6-digit code, to the real-money server.";
+  const D3 = "On this device: the email each account is backed up with, so it can show it to you and use it when you ask to join.";
+  ok("D1 word for word", privacy.includes(`"${D1}"`));
+  ok("D2 word for word", privacy.includes(`"${D2}"`));
+  ok("D3 word for word", privacy.includes(`"${D3}"`));
+  ok("  ...each one rendered", /<Disclosure text=\{DISCLOSE_PILOT_CHECK\} \/>/.test(privacy) && /<Disclosure text=\{DISCLOSE_PILOT_ASK\} \/>/.test(privacy) && /<Disclosure text=\{DISCLOSE_BACKUP_EMAIL\} \/>/.test(privacy));
+  ok("the backup paragraph no longer hedges with 'normally', and names the older backups", !/normally\s+carries/.test(privacy) && privacy.includes("Backups made before 30 August 2026,") && privacy.includes("and some made since by an older version of this site"));
+  ok("the pilot paragraph: signed, email proven, 90 days, nothing dropped silently", ["signed by your account", "6-digit code", "for 90 days", "No application is dropped silently"].every((w) => privacy.includes(w)));
+  ok("the website section: the email each account was backed up with", privacy.includes("This browser keeps, for each account on it, the email it was backed up with."));
+}
+
 async function main(): Promise<void> {
   console.log("============================================================");
   console.log(" SELF-TEST: who may switch to real money (pilot on, pilot retired)");
@@ -291,6 +653,10 @@ async function main(): Promise<void> {
   await asks();
   backupAndWarning();
   warningWords();
+  standingTable();
+  await theAsk();
+  smallRules();
+  pagesAndWords();
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"} PILOT ACCESS SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

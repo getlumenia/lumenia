@@ -40,6 +40,28 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og.png"] },
 };
 
+/*
+ * The extension's three disclosures (LUMENIA ACCOUNT CONTRACT v1, section 5.6), word for word: the
+ * same sentences sit on the extension's consent screen, its store listings and its README. Kept as
+ * plain strings so test:pilotaccess can hold this page to them exactly.
+ */
+const DISCLOSE_PILOT_CHECK =
+  "To check the pilot: your account's public key, to the real-money server, when you press Real money or Check again, while you use real money, and while this account's request to join is waiting.";
+const DISCLOSE_PILOT_ASK =
+  "To ask to join real money: your account's public key, the email that backs it up, a signature from your account and, if asked, a 6-digit code, to the real-money server.";
+const DISCLOSE_BACKUP_EMAIL =
+  "On this device: the email each account is backed up with, so it can show it to you and use it when you ask to join.";
+
+/** A disclosure as a list item: the part before the first colon in bold, as the other items are. */
+function Disclosure({ text }: { text: string }) {
+  const at = text.indexOf(": ");
+  return (
+    <>
+      <strong>{text.slice(0, at + 1)}</strong> {text.slice(at + 2)}
+    </>
+  );
+}
+
 export default function Privacy() {
   return (
     <div className="pg ed">
@@ -60,7 +82,7 @@ export default function Privacy() {
             and keep.
           </p>
           <p>
-            Last updated: <time dateTime="2026-10-09">9 October 2026</time>.
+            Last updated: <time dateTime="2026-10-10">10 October 2026</time>.
           </p>
 
           <h2 id="link">What a link carries</h2>
@@ -239,10 +261,15 @@ export default function Privacy() {
             </li>
             <li>
               <strong>Your backup, if you make one:</strong> your key, locked with your password, which
-              we cannot open. It is filed under a one-way hash of your email address, and normally
-              carries a one-way hash of your account&apos;s address, so that only your account can
-              replace it. If you add Face ID, a second copy is filed under an id that only your passkey
-              can produce. Your email address itself is used only to send you a 6-digit code, through our
+              we cannot open. It is filed under a one-way hash of your email address, with a one-way hash
+              of your account&apos;s address, so that only your account can replace it. One email backs
+              up one account: backing up another account with an email that already backs one up
+              replaces nothing, and, only after the 6-digit code has shown the inbox is yours, offers to
+              bring that account in instead or to use another email. Backups made before 30 August 2026,
+              and some made since by an older version of this site, may not carry the account hash; one
+              of those is replaced only after you confirm it, by opening it with its own password or by
+              typing REPLACE. If you add Face ID, a second copy is
+              filed under an id that only your passkey can produce. Your email address itself is used only to send you a 6-digit code, through our
               email provider, Resend, and is not kept. The code is kept, hashed, for 10 minutes, and a
               count of codes asked for and tried, under the same hash, for an hour. The backup has no end
               date: it is your way back if you lose your phone. It brings back your account, not the
@@ -253,7 +280,8 @@ export default function Privacy() {
               <strong>Ways back in, if you connect one</strong> (a passkey, an email address, or an
               account such as Google, GitHub or X where we offer it): a copy of the same locked backup,
               filed under a one-way hash of that identity, next to your account address, until you
-              disconnect it. While you connect Google, GitHub or X, we hold the id and the name or email
+              disconnect it. It shows which account that identity is connected to. No screen brings an
+              account back from it: that takes the account&apos;s backup email and password, or Face ID. While you connect Google, GitHub or X, we hold the id and the name or email
               it sends us for up to five minutes. After that, only the hash.
             </li>
             <li>
@@ -264,18 +292,23 @@ export default function Privacy() {
               it for 30 days, and for those 30 days we keep the record of which account held it.
             </li>
             <li>
-              <strong>The real-money pilot:</strong> while the app is open on your screen, it asks the
-              real-money server about once a minute, and again when you come back to the tab, whether
-              your account is approved, with your account address in the request. It does this on
-              practice money too. If you apply, we keep your
-              email address next to your wallet address for 90 days, or less if we take you off the
-              pilot, so we can tell you the answer. We also keep a one-way hash of your email next to that
-              wallet, so one email cannot apply twice, plus your application&apos;s state and how many
-              real-money transfers you have made. Those have no end date. Each application is emailed to
-              us, and if that email cannot be sent, the server writes your wallet address and email
-              address into its log instead, so the application is not lost. Our answer, approve or
-              decline, is emailed to you through Resend; if that email fails, the server logs the wallet
-              address, and your email address too if the mail service is not set up.
+              <strong>The real-money pilot:</strong> when the app opens, and when you come back to the
+              tab (at most once a minute), it asks the real-money server where your account stands, with
+              your account address in the request. While your request to join is waiting, or the last
+              check failed, it also asks about once a minute while the app is on your screen. It does
+              this on practice money too. If you apply, the application is signed by your account, so
+              nobody else can apply for it, and your email is confirmed either by the backup it already
+              protects for that account or by a 6-digit code we send to it. We keep your email address
+              next to your wallet address for 90 days from your latest application, or less if we take
+              you off the pilot, so we can tell you the answer. We keep a one-way hash of your email, with
+              the latest wallet that applied with it, for 90 days, so we can see when one email applies
+              for more than one wallet, and where you applied from (the website or the extension) for 90
+              days. Your application&apos;s state, and how many real-money transfers you have made, have
+              no end date. No application is dropped silently: each one is emailed to us, and if that
+              email cannot be sent, the server writes your wallet address and email address into its log
+              instead, so the application is not lost. Our answer, approve or decline, is emailed to you
+              through Resend; if that email fails, the server logs the wallet address, and your email
+              address too if the mail service is not set up.
             </li>
             <li>
               <strong>The waitlist:</strong> if you ask us to tell you when real money or cash-out opens,
@@ -385,10 +418,11 @@ export default function Privacy() {
               transaction and pays the network fee.
             </li>
             <li>
-              <strong>To check the pilot:</strong>{" "}
-              your account&apos;s public key, in the address of a request to the real-money sponsor: at
-              most once a minute on its own, and again when you press Real money (never more often than
-              every 10 seconds). It answers whether your account is approved for real money.
+              <Disclosure text={DISCLOSE_PILOT_CHECK} /> It answers where your account stands for real
+              money.
+            </li>
+            <li>
+              <Disclosure text={DISCLOSE_PILOT_ASK} />
             </li>
             <li>
               <strong>Counters:</strong>{" "}
@@ -421,6 +455,9 @@ export default function Privacy() {
             <li>
               For an account made in the extension, until you back it up: its backup, locked with your
               password, so it can be stored the moment you give an email.
+            </li>
+            <li>
+              <Disclosure text={DISCLOSE_BACKUP_EMAIL} /> Version 0.1.3 and earlier did not keep it.
             </li>
             <li>
               Your list of links (for each: the amount, the sender name you used if any, its link ID,
@@ -464,6 +501,13 @@ export default function Privacy() {
           </p>
 
           <h2 id="website">Our website</h2>
+          <p>
+            <strong>This browser keeps, for each account on it, the email it was backed up with.</strong>{" "}
+            With it, whether our server confirmed that backup belongs to the account. It is there so every
+            screen can say which email opens which account, and so asking to join real money can use it.
+            It leaves this browser only when you use it, to ask to join real money or to back up again,
+            and it goes when you remove that account from this browser.
+          </p>
           <p>
             <strong>The links you send are listed only in the browser you sent them from.</strong> The
             list (amount, name and link id) sits in that browser&apos;s storage, and each full link, key

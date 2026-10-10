@@ -41,46 +41,15 @@ export async function requestRecoveryOtp(email: string): Promise<void> {
 }
 
 /**
- * Store the ciphertext-only box for `email`, gated by the emailed code.
- *
- * `aliasId` (from recovery.ts::prfToBoxId) stores a SECOND copy under the passkey-derived id, and
- * that copy is what "find my money with Face ID" reads later with no email and no code. It rides
- * behind this same verified code on purpose: the backup flow already holds one, so adding the
- * alias widens no surface.
+ * The local "backed up" marker moved to lib/backup-record.ts, where it now records WHICH email backs
+ * each account up and whether the server confirmed the row is tied to it. The old marker here was a
+ * plain list of addresses, and it was wrong in the dangerous direction too, not only the safe one:
+ * it kept saying "backed up" after the email's row had been replaced by a later backup of another
+ * account (an unbound row takes any code holder's write), so the one-tap removal could be offered
+ * for an account no email could bring back. That list is still read, as a record with no email and
+ * an unknown binding. Re-exported here so existing imports keep working.
  */
-/**
- * A local marker that a recovery box was actually STORED for this account.
- *
- * Four surfaces were using `phase === 2` to mean "backed up": /start's "Locked, and backed up.",
- * /pilot skipping its own backup step, /account's Disconnect showing the soft one-tap confirmation
- * instead of the type-REMOVE wall, and the /start step body promising "a new phone can bring your
- * money back with your email". But `phase === 2` only means "locked with a password on this
- * device" — LockMoneyCard sets it without ever creating a box. So a user could be told four times
- * that they were backed up, clear their browser, and find the only copy of their key was gone.
- *
- * Local-only and deliberately conservative: it can be wrong in the safe direction (a device that
- * restored a backup made elsewhere reads "not backed up" and is merely asked again), never in the
- * dangerous one.
- */
-const BACKED_UP_KEY = "lumenia.backedup";
-
-export function markBackedUp(pubkey: string): void {
-  try {
-    const all = JSON.parse(localStorage.getItem(BACKED_UP_KEY) ?? "[]") as string[];
-    if (!all.includes(pubkey)) localStorage.setItem(BACKED_UP_KEY, JSON.stringify([...all, pubkey]));
-  } catch {
-    /* storage blocked — hasBackup() stays false, which is the safe answer */
-  }
-}
-
-export function hasBackup(pubkey: string | undefined): boolean {
-  if (!pubkey) return false;
-  try {
-    return (JSON.parse(localStorage.getItem(BACKED_UP_KEY) ?? "[]") as string[]).includes(pubkey);
-  } catch {
-    return false;
-  }
-}
+export { hasBackup, markBackedUp } from "./backup-record";
 
 /** What the account signs to authorize writing its own box — the shape the sponsor verifies. */
 export interface OwnerProof {
@@ -116,9 +85,12 @@ function toBase64(bytes: Uint8Array): string {
  * comes from lib/handles.ts so only ONE copy of that contract exists on this side.
  *
  * Returns undefined when the active signer cannot sign a raw message (a v2 passkey smart account
- * has no such operation) — that stores an UNBOUND row rather than failing, because a backup nobody
- * can make is worse than one nobody has bound yet. Every v1 account CAN sign, so the live backup
- * path binds its row; an unbound one means the device could not be unlocked at that moment.
+ * has no such operation), and storeRecoveryBox then stores an UNBOUND row. That was not the rare case
+ * this comment once called it: the website's backup step asked the wallet for its signer, and the
+ * wallet refuses one to an account with no password on real money, so every such backup went out
+ * unsigned and unbound. The website no longer comes through here (lib/recovery-client.ts signs every
+ * backup with the key it is backing up, and refuses to post one it could not sign); this function is
+ * kept as it is for the extension (apps/extension/src/core/index.ts).
  */
 async function ownerProofFor(id: string, signer: Signer): Promise<OwnerProof | undefined> {
   if (!signer.signMessage) return undefined;
@@ -146,6 +118,11 @@ async function ownerProofFor(id: string, signer: Signer): Promise<OwnerProof | u
  * new user has no account to prove yet, and a backup that is hard to make is a backup nobody has —
  * but that row stays replaceable by anyone who can read the mail, and once a row IS bound the
  * sponsor refuses a write that arrives without a matching proof.
+ *
+ * `aliasId` (from recovery.ts::prfToBoxId) stores a SECOND copy under the passkey-derived id, and
+ * that copy is what "find my money with Face ID" reads later with no email and no code. It rides
+ * behind this same verified code on purpose: the backup flow already holds one, so adding the
+ * alias widens no surface.
  */
 export async function storeRecoveryBox(
   email: string,

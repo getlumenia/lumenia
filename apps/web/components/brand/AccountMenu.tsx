@@ -24,21 +24,19 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronRight, Copy, LogOut, Settings, User, Wallet } from "lucide-react";
+import { Check, ChevronRight, Copy, Lock, LogOut, Settings, User, Wallet } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { handleOf } from "../../lib/handles";
 import { ensureCanReceive, type Receivable } from "../../lib/receivable";
-import { hasBackup } from "../../lib/recovery-api";
+import { backupRecord } from "../../lib/backup-record";
+import { accountLine, shortAddress, ACCOUNT_LINE_ACTION } from "../../lib/account-label";
+import { AUTO_LOCK_CHOICES } from "../../lib/lock";
 import { markPublished } from "../../lib/keystore";
 import { DisconnectButton } from "./DisconnectButton";
 import { ThemeToggle } from "../site/ThemeToggle";
 
-function short(address: string): string {
-  return `${address.slice(0, 4)}…${address.slice(-4)}`;
-}
-
 export function AccountMenu() {
-  const { account, accounts, network, getSigner } = useWallet();
+  const { account, accounts, network, getSigner, unlocked, lockNow, autoLockMinutes, setAutoLockMinutes } = useWallet();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
@@ -105,6 +103,8 @@ export function AccountMenu() {
 
   const others = accounts.filter((a) => a.kind === "user" && a.address !== account.address);
   const initial = name ? name[0]!.toUpperCase() : null;
+  // Which account this is, and which email backs it up (contract 5.3), read when the menu renders.
+  const line = accountLine(account.address, backupRecord(account.address));
 
   return (
     <div className="app-nav-you">
@@ -148,8 +148,21 @@ export function AccountMenu() {
               <span className="app-menu-id-name">{name ? `@${name}` : "Your account"}</span>
               {copied ? <Check className="size-4 text-money" /> : <Copy className="size-4 opacity-50" />}
             </span>
-            <span className="app-menu-id-sub">{copied ? "Copied" : short(account.address)}</span>
+            <span className="app-menu-id-sub">{copied ? "Copied" : shortAddress(account.address)}</span>
           </button>
+          {/* WHICH account, and which email opens it: the question a person with more than one
+              account (here and in the extension) could not answer from any screen. */}
+          <p className="app-menu-row-s" style={{ margin: "2px 12px 6px" }}>
+            {line.text}
+            {line.action && (
+              <>
+                {" "}
+                <Link href="/account#backup" onClick={close} className="underline underline-offset-2">
+                  {ACCOUNT_LINE_ACTION[line.action]}
+                </Link>
+              </>
+            )}
+          </p>
           {/* THE ADDRESS IS THE SAME KEY ON EVERY CHAIN; THE ACCOUNT IS NOT. On practice money this
               account exists on the test network and nowhere else, so real dollars sent to it from an
               exchange or another wallet simply do not arrive — the sending wallet answers "the
@@ -208,6 +221,45 @@ export function AccountMenu() {
             <ChevronRight className="size-4 opacity-40" aria-hidden="true" />
           </Link>
 
+          {/* THE LOCK. A password-locked account stays unlocked only for the minutes chosen here
+              without use (lib/wallet.tsx idle lock); "Lock now" ends it at once. An account with no
+              password has nothing to lock, so the row says how to get one instead of offering a
+              control that would do nothing. */}
+          <div className="app-menu-row app-menu-row-static">
+            <span className="app-menu-row-t">
+              Lock after
+              <span className="app-menu-row-s">
+                {account.phase === 2 ? "Minutes without use on this browser" : "Set a password on Account first"}
+              </span>
+            </span>
+            <span className="flex gap-1">
+              {AUTO_LOCK_CHOICES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={autoLockMinutes === m}
+                  onClick={() => setAutoLockMinutes(m)}
+                  className={`rounded-full border px-2 py-0.5 text-xs ${autoLockMinutes === m ? "border-money text-money" : "border-line text-ink-soft"}`}
+                >
+                  {m}
+                </button>
+              ))}
+            </span>
+          </div>
+          {account.phase === 2 && unlocked && (
+            <button
+              type="button"
+              className="app-menu-row app-menu-row-btn"
+              onClick={() => {
+                lockNow();
+                close();
+              }}
+            >
+              <Lock className="size-4" aria-hidden="true" />
+              <span className="app-menu-row-t">Lock now</span>
+            </button>
+          )}
+
           {/* Appearance is a device setting, and this is the device menu — which is also where the
               theme switch belongs now that it is not competing for room in the nav row itself. */}
           <div className="app-menu-row app-menu-row-static">
@@ -224,7 +276,7 @@ export function AccountMenu() {
                 <p className="app-menu-row-s" style={{ marginBottom: 6 }}>
                   This removes your keys from this phone. Your money stays on the public record.
                 </p>
-                <DisconnectButton backedUp={hasBackup(account.address)} />
+                <DisconnectButton />
               </>
             ) : (
               <button type="button" className="app-menu-row app-menu-row-btn" onClick={() => setLeaving(true)}>

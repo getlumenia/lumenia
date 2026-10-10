@@ -38,6 +38,7 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "../../../lib/wallet";
 import { isNeedsBackup, isNeedsPassword } from "../../../lib/signer-error";
 import { loadTotalUsd } from "../../../lib/horizon";
+import { accountsForTotal } from "../../../lib/accounts-total";
 import { getTestMoney } from "../../../lib/receive";
 import {
   createV2GroupLink,
@@ -221,10 +222,13 @@ export default function GroupPage() {
     return () => clearInterval(tick);
   }, []);
 
+  /* The account in use plus the claim accounts on their way into it (lib/accounts-total.ts): another
+     deliberate account's dollars are not this account's to put in. */
+  const totalKey = account ? accountsForTotal(account.address, accounts).join(",") : "";
   useEffect(() => {
-    if (!accounts.length) return;
+    if (!totalKey) return;
     let alive = true;
-    void loadTotalUsd(accounts.map((a) => a.address))
+    void loadTotalUsd(totalKey.split(","))
       .then((t) => alive && setBalance(t.usd))
       .catch(() => {
         /* leave it null: unknown is not zero, and the guard below no-ops on null */
@@ -232,7 +236,7 @@ export default function GroupPage() {
     return () => {
       alive = false;
     };
-  }, [accounts]);
+  }, [totalKey]);
 
   /* No name is filled in for the sender (D3, as on /send): a pot carries a name only when the
      sender types one, and the claim page says "Someone" otherwise. */
@@ -294,7 +298,7 @@ export default function GroupPage() {
        off to another screen. Real money is untouched, nothing can conjure that. */
     let known = balance;
     if (known === null) {
-      known = await loadTotalUsd(accounts.map((a) => a.address))
+      known = await loadTotalUsd(accountsForTotal(account!.address, accounts))
         .then((t) => t.usd)
         .catch(() => null);
       setBalance(known);
@@ -303,7 +307,7 @@ export default function GroupPage() {
       toppedUp.current = true;
       try {
         await getTestMoney(sponsorUrl(), account!.address);
-        const t = await loadTotalUsd(accounts.map((a) => a.address));
+        const t = await loadTotalUsd(accountsForTotal(account!.address, accounts));
         known = t.usd;
         setBalance(known);
       } catch {

@@ -30,7 +30,11 @@ function base(): string {
   return activeNetwork().sponsorUrl.replace(/\/$/, "");
 }
 
-type ProofAction = "claim" | "release" | "links";
+/**
+ * "pilot" signs an ask to join real money (lib/pilot-ask.ts, LUMENIA ACCOUNT CONTRACT v1 section 1).
+ * Adding it changes nothing for the other three: the message is built the same way for every action.
+ */
+export type ProofAction = "claim" | "release" | "links" | "pilot";
 
 /** Must match apps/sponsor/src/lib/handles.ts::handleProofMessage exactly. */
 export function handleProofMessage(

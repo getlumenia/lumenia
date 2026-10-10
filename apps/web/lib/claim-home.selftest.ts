@@ -9,9 +9,18 @@
  *   [c] every failure after the claim leaves the money in the link's account, kept as a throwaway,
  *       and the link's key is never saved as anything else
  *   [d] the keystore rule: a throwaway is never adopted as home
+ *   [e] bringing ANOTHER account here (lib/account-add.ts, W4): stored beside the one in use as a
+ *       deliberate account, the pointer unmoved, both records "user"
+ *   [f] the active account is never demoted: a record with no kind is pinned "user" before anything
+ *       else becomes active, so /home's sweep can never select it and close it
+ *   [g] the per-device limit refuses
+ * [e] to [g] run the REAL keystore (lib/keystore.ts) over a small in-memory IndexedDB.
  *
  * RUN: pnpm --filter @lumenia/web test:claimhome   (offline, no keys, no network)
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Keypair } from "@stellar/stellar-sdk";
 import { settleLinkAccount, type SettleDeps } from "./claim-home";
 import { adoptsHome, type AccountKind } from "./keystore";
@@ -126,6 +135,171 @@ async function main(): Promise<void> {
   ok("a throwaway is never adopted as home", adoptsHome("throwaway") === false);
   ok("a user account is", adoptsHome("user") === true);
   ok("a record written before kinds existed is, as before", adoptsHome(undefined) === true);
+
+  await accountsOnOneDevice();
+}
+
+/* ---------------------------------------------------------------------------
+ * A minimal IndexedDB: one database, object stores keyed by "id", the calls lib/keystore.ts makes
+ * (open with an upgrade, put, get, getAll, delete, clear). A request answers on a later tick and a
+ * transaction completes after its requests, which is the order the keystore relies on.
+ * ------------------------------------------------------------------------- */
+type Handler = ((this: unknown) => void) | null;
+interface FakeRequest {
+  result?: unknown;
+  error: unknown;
+  onsuccess: Handler;
+  onerror: Handler;
+  onupgradeneeded?: Handler;
+  transaction?: unknown;
+}
+function installFakeIndexedDB(): void {
+  const dbs = new Map<string, { version: number; stores: Map<string, Map<string, unknown>> }>();
+  const later = (fn: () => void) => setTimeout(fn, 0);
+  const afterRequests = (fn: () => void) => later(() => later(fn));
+  const request = (run: () => unknown): FakeRequest => {
+    const req: FakeRequest = { error: null, onsuccess: null, onerror: null };
+    try {
+      req.result = run();
+      later(() => req.onsuccess?.call(req));
+    } catch (e) {
+      req.error = e;
+      later(() => req.onerror?.call(req));
+    }
+    return req;
+  };
+  const storeOf = (stores: Map<string, Map<string, unknown>>, name: string) => {
+    const m = stores.get(name);
+    if (!m) throw new Error(`no object store ${name}`);
+    return {
+      put: (rec: { id: string }) => request(() => (m.set(rec.id, rec), rec.id)),
+      get: (id: string) => request(() => m.get(id)),
+      getAll: () => request(() => [...m.values()]),
+      delete: (id: string) => request(() => void m.delete(id)),
+      clear: () => request(() => void m.clear()),
+    };
+  };
+  const transaction = (stores: Map<string, Map<string, unknown>>) => {
+    const tx = { error: null, oncomplete: null as Handler, onerror: null as Handler, objectStore: (n: string) => storeOf(stores, n) };
+    afterRequests(() => tx.oncomplete?.call(tx));
+    return tx;
+  };
+  (globalThis as unknown as { indexedDB: unknown }).indexedDB = {
+    open(name: string, version: number) {
+      const req: FakeRequest = { error: null, onsuccess: null, onerror: null };
+      later(() => {
+        let db = dbs.get(name);
+        const upgrade = !db || db.version < version;
+        if (!db) dbs.set(name, (db = { version, stores: new Map() }));
+        const stores = db.stores;
+        req.result = {
+          objectStoreNames: { contains: (n: string) => stores.has(n) },
+          createObjectStore: (n: string) => void stores.set(n, new Map()),
+          transaction: () => transaction(stores),
+          close: () => undefined,
+        };
+        if (upgrade) {
+          db.version = version;
+          req.transaction = transaction(stores);
+          req.onupgradeneeded?.call(req);
+        }
+        afterRequests(() => req.onsuccess?.call(req));
+      });
+      return req;
+    },
+  };
+}
+
+const WEB_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const source = (...parts: string[]): string => readFileSync(join(WEB_ROOT, ...parts), "utf8");
+async function throwsWith(fn: () => Promise<unknown>): Promise<Error | null> {
+  try {
+    await fn();
+    return null;
+  } catch (e) {
+    return e as Error;
+  }
+}
+
+async function accountsOnOneDevice(): Promise<void> {
+  installFakeIndexedDB();
+  const ks = await import("./keystore");
+  const add = await import("./account-add");
+  const { MAX_USER_ACCOUNTS } = await import("./new-account");
+  const { wrapWithPassword, emptyBox, putCopy } = await import("./recovery");
+  const FAST = { memMiB: 19, time: 2, parallelism: 1 }; // the Argon2id bounds' minimums, as test:recovery
+  const seedOf = (k: Keypair) => Uint8Array.from(k.rawSecretKey());
+  const boxFor = async (k: Keypair, pw: string) => putCopy(emptyBox(), await wrapWithPassword(seedOf(k), pw, FAST));
+  const PW = "another strong one 42";
+
+  console.log("\n[e] bringing another account here, while a published home exists (W4)");
+  {
+    const home = Keypair.random();
+    // A home with NO kind: a v2 claim's account on a fresh device, or any record older than kinds.
+    await ks.savePhase1(home.publicKey(), seedOf(home));
+    await ks.markPublished(home.publicKey());
+    ok("the setup: a kindless, published home is the active account", (await ks.getActive())?.pubkey === home.publicKey() && (await ks.isPublished(home.publicKey())));
+    const other = Keypair.random();
+    let tiedWith: string | null = null;
+    const out = await add.addRestoredAccount(await boxFor(other, PW), PW, async (signer) => {
+      tiedWith = signer.publicKey();
+    }, FAST);
+    const list = await ks.listAccounts();
+    ok("the restored account is stored beside it", out.address === other.publicKey() && !out.alreadyHere && list.length === 2);
+    ok("  ...both records are 'user'", list.every((a) => a.kind === "user"));
+    ok("  ...and the pointer has not moved", (await ks.getActive())?.pubkey === home.publicKey());
+    ok("afterSave ran with the restored account's own signer (to tie its backup row)", tiedWith === other.publicKey());
+    const unlocked = await ks.unlockPhase2(PW, other.publicKey());
+    ok("it is locked with the backup's own password, and opens to the restored key", Keypair.fromRawEd25519Seed(Buffer.from(unlocked.seed)).publicKey() === other.publicKey());
+    await ks.setActive(other.publicKey());
+    const after = await ks.listAccounts();
+    ok("the old home was PINNED 'user', so it stays one once the other is active", after.find((a) => a.pubkey === home.publicKey())?.kind === "user");
+    const swept = after.filter((a) => a.pubkey !== other.publicKey() && a.kind !== "user");
+    ok("  ...and /home's sweep filter (a.address !== home && a.kind !== 'user') never selects it", swept.length === 0);
+    const strangerBox = await boxFor(Keypair.random(), PW);
+    const wrong = await throwsWith(() => add.addRestoredAccount(strangerBox, "not the password", undefined, FAST));
+    ok("a wrong password: the contract's sentence, and nothing stored", wrong?.message === "That password doesn't open this backup." && (await ks.listAccounts()).length === 2);
+    const again = await add.addRestoredAccount(await boxFor(other, PW), PW, undefined, FAST);
+    ok("an account that is already here is left as it is", again.alreadyHere && (await ks.listAccounts()).length === 2);
+  }
+
+  console.log("\n[f] the active account is never demoted (W4, pinActiveAsUser)");
+  {
+    await ks.clearKeystore();
+    const home = Keypair.random();
+    const second = Keypair.random();
+    await ks.savePhase1(home.publicKey(), seedOf(home)); // kindless home
+    await ks.savePhase1(second.publicKey(), seedOf(second), "user");
+    await ks.setActive(second.publicKey());
+    ok("CONTROL: without the pin, a kindless home reads as a throwaway once another account is active", (await ks.listAccounts()).find((a) => a.pubkey === home.publicKey())?.kind === "throwaway");
+    await ks.setActive(home.publicKey());
+    ok("pinActiveAsUser writes 'user' onto the kindless active record", (await add.pinActiveAsUser()) === true);
+    ok("  ...once: a record with a kind is left alone", (await add.pinActiveAsUser()) === false);
+    await ks.setActive(second.publicKey());
+    const list = await ks.listAccounts();
+    ok("now it stays 'user' after the pointer moves", list.find((a) => a.pubkey === home.publicKey())?.kind === "user");
+    ok("  ...so the sweep filter never selects it", list.filter((a) => a.pubkey !== second.publicKey() && a.kind !== "user").length === 0);
+
+    const wallet = source("lib", "wallet.tsx");
+    ok("the wallet pins before a new account becomes active", /await pinActiveAsUser\(\);\s*const \{ address \} = await createUserAccount\(/.test(wallet));
+    ok("  ...before a switch moves the pointer", /await pinActiveAsUser\(\);[\s\S]{0,200}await setActive\(address\);/.test(wallet));
+    ok("  ...before a restore is adopted", /const adoptRestored = useCallback\(async \(pub: string\): Promise<void> => \{[\s\S]{0,400}await pinActiveAsUser\(\)/.test(wallet));
+    ok("  ...and once after the first read of the keystore", /refresh\(\)\.then\(\(\) => pinActiveAsUser\(\)/.test(wallet));
+    const claim = source("app", "v2", "c", "[linkHex]", "V2ClaimButton.tsx");
+    ok("a v2 claim with no home on the device saves its account as 'user' from the start", /savePhase1\(publicKey, seed, \(await getHome\(\)\) \? undefined : "user"\)/.test(claim));
+  }
+
+  console.log("\n[g] the per-device limit");
+  {
+    await ks.clearKeystore();
+    for (let i = 0; i < MAX_USER_ACCOUNTS; i++) {
+      const k = Keypair.random();
+      await ks.savePhase1(k.publicKey(), seedOf(k), "user");
+    }
+    const e = await throwsWith(async () => add.addRestoredAccount(await boxFor(Keypair.random(), PW), PW, undefined, FAST));
+    ok(`a ${MAX_USER_ACCOUNTS + 1}th account is refused`, e?.message === `You already have ${MAX_USER_ACCOUNTS} accounts on this phone.`);
+    ok("  ...and nothing was stored", (await ks.listAccounts()).length === MAX_USER_ACCOUNTS);
+  }
 }
 
 void main().then(

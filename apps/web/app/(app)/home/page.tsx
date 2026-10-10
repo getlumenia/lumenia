@@ -20,6 +20,7 @@ import { Split } from "lucide-react";
 import { useWallet } from "../../../lib/wallet";
 import { activeNetwork } from "../../../lib/network";
 import { loadBalance, loadActivityForAccounts, loadIncomingClaims, loadLinkStatus, loadTotalUsd, type ActivityItem, type IncomingClaim } from "../../../lib/horizon";
+import { accountsForTotal } from "../../../lib/accounts-total";
 import { collectIncoming } from "../../../lib/claim";
 import { forgetPendingSweep, pendingSweep, settlePendingSweep, sweepIntoHome } from "../../../lib/sweep";
 import { unlockPhase1, removeAccount, isPublished } from "../../../lib/keystore";
@@ -98,11 +99,12 @@ export default function HomePage() {
 
   const reload = useCallback(async () => {
     if (!account) return;
-    // ONE total = the SUM across EVERY stored account (home + any not-yet-swept
-    // throwaway), read from Horizon. The user never sees "account 1 / account 2" —
-    // even money stuck in a throwaway a sweep couldn't move still shows in the total,
-    // so nothing is ever hidden or lost (RECOVERY_ARCHITECTURE §3.1).
-    const addresses = accounts.length > 0 ? accounts.map((a) => a.address) : [account.address];
+    // ONE total = the account in use plus every not-yet-swept throwaway, read from Horizon. The
+    // user never sees "account 1 / account 2" for the claim plumbing: even money stuck in a
+    // throwaway a sweep couldn't move still shows in the total, so nothing is ever hidden or lost
+    // (RECOVERY_ARCHITECTURE section 3.1). ANOTHER deliberate account is not in it: this account cannot
+    // sign for its dollars, so they are shown where that account is listed (lib/accounts-total.ts).
+    const addresses = accountsForTotal(account.address, accounts);
     const total = await loadTotalUsd(addresses);
     setUsd(total.usd);
     // Activity follows the SAME account set as the total. Reading only home meant money paid

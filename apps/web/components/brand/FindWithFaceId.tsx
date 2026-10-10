@@ -19,21 +19,38 @@
  *    spend — a downgrade from the Phase 2 the account had on the original device. Persisting at
  *    Phase 1 first is deliberate (a closed tab must never lose the restore), so the lock is
  *    offered immediately and skipping it is an explicit choice, not a default.
+ * 3. The password it asks for. The backup Face ID opened may also hold a password copy, the one the
+ *    email restore opens. The typed password is tried on it first (lib/lock.ts lockPasswordPlan):
+ *    if it opens this account's backup it is the person's own existing password and is accepted
+ *    even below the strength floor; if it does not, the account is locked with the new one and the
+ *    person is told the email backup still opens with the old one, with the backup step right there.
  */
 import { useEffect, useState } from "react";
 import { ScanFace } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { isPlatformAuthenticatorAvailable } from "../../lib/passkey-prf";
 import { passwordStrength } from "../../lib/password-strength";
+import { shortAddress } from "../../lib/account-label";
+import { boxOpensTo } from "../../lib/account-add";
+import { lockPasswordPlan, OLD_BACKUP_PASSWORD_NOTE } from "../../lib/lock";
+import type { PasswordCopy } from "../../lib/recovery";
 import { MoneyCard } from "./MoneyCard";
 import { PrimaryButton } from "./PrimaryButton";
+import { RecoveryFlow } from "./RecoveryFlow";
 
 type Step = "idle" | "finding" | "lock" | "done";
 
 export function FindWithFaceId({
+  onStart,
   onFound,
   onDone,
 }: {
+  /**
+   * Told the moment the find starts. A page that shows this card only while it has NO account must
+   * keep it mounted from here on: the find adds the account before it resolves, and a page that
+   * swapped to its account view at that moment unmounted the lock step it was about to offer.
+   */
+  onStart?: () => void;
   /** Told the moment the money is found, before the lock step is offered. */
   onFound?: () => void;
   /** Told once the money is back AND the lock step is answered (locked, or "Not now"). */
@@ -44,7 +61,14 @@ export function FindWithFaceId({
   const [step, setStep] = useState<Step>("idle");
   /** Did they actually lock it, or skip? The done screen asserts a safety property, so it must know. */
   const [locked, setLocked] = useState(false);
-  const [found, setFound] = useState<{ address: string; alreadyHere: boolean; hasPasswordCopy: boolean } | null>(null);
+  const [found, setFound] = useState<{
+    address: string;
+    alreadyHere: boolean;
+    hasPasswordCopy: boolean;
+    passwordCopy: PasswordCopy | null;
+  } | null>(null);
+  /** Locked with a new password while the email backup still opens with the old one. */
+  const [oldBackupPassword, setOldBackupPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -58,6 +82,7 @@ export function FindWithFaceId({
   async function find() {
     setError("");
     setStep("finding");
+    onStart?.();
     try {
       const r = await findAccountWithFaceId();
       setFound(r);
@@ -71,15 +96,28 @@ export function FindWithFaceId({
 
   async function lock() {
     const problem = passwordStrength(password);
-    if (!problem.ok) return setError(problem.reason ?? "Pick a stronger password.");
     setBusy(true);
     setError("");
     try {
-      await lockWithPassword(password);
+      // Does the typed password open this account's own email backup? Then it is theirs already.
+      let opens: boolean | null = null;
+      if (found?.passwordCopy) {
+        const opened = await boxOpensTo({ formatVersion: 1, copies: [found.passwordCopy] }, password);
+        opens = opened === found.address;
+      }
+      const plan = lockPasswordPlan(opens, problem.ok);
+      if (plan === "too-weak") {
+        setError(problem.reason ?? "Pick a stronger password.");
+        return;
+      }
+      await lockWithPassword(password, { verified: plan === "lock-verified" });
       setPassword("");
       setLocked(true);
+      setOldBackupPassword(plan === "lock-new-warn");
       setStep("done");
-      onDone?.();
+      // With the email backup still on the old password, the backup step is offered first: the
+      // screens around this one move on when onDone fires, and would take the offer with them.
+      if (plan !== "lock-new-warn") onDone?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -100,6 +138,21 @@ export function FindWithFaceId({
             <p className="mt-1 text-sm text-ink-soft">
               Your money is back, and only your password can spend it here.
             </p>
+            {oldBackupPassword && (
+              <div className="mt-3 border-t border-line pt-3">
+                <p className="text-sm text-ink-soft">{OLD_BACKUP_PASSWORD_NOTE}</p>
+                <div className="mt-3">
+                  <RecoveryFlow mode="secure" onDone={() => onDone?.()} />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onDone?.()}
+                  className="mt-2 text-sm text-ink-soft underline-offset-2 hover:underline"
+                >
+                  Not now
+                </button>
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -120,7 +173,7 @@ export function FindWithFaceId({
         <p className="font-semibold text-ink">
           {found.alreadyHere ? "Your money was already here." : "Found it. Your money is back."}
         </p>
-        <p className="mt-1 break-all font-mono text-xs text-ink-soft">{found.address}</p>
+        <p className="mt-1 font-mono text-xs text-ink-soft">This is {shortAddress(found.address)}.</p>
         <p className="mt-3 text-sm text-ink-soft">
           Right now anyone holding this phone could spend it. Choose a password and only you can.
           {found.hasPasswordCopy ? " Use the same one you already had." : ""}
