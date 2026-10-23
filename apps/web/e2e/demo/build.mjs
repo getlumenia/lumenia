@@ -18,7 +18,7 @@
  * was.
  *
  * RUN: node e2e/demo/build.mjs
- * OUT: <repo root>/lumenia-demo.mp4   (gitignored)
+ * OUT: <repo root>/media/demo/lumenia-demo.mp4   (gitignored; media/ holds every recording)
  */
 import { execFile } from "node:child_process";
 import { readdir, stat, access } from "node:fs/promises";
@@ -29,8 +29,8 @@ import { budgetFor, XFADE } from "./timing.mjs";
 const run = promisify(execFile);
 const RAW = path.resolve("e2e/demo/.raw");
 const ROOT = path.resolve("../..");
-const OUT = path.join(ROOT, "lumenia-demo.mp4");
-const VOICE = path.join(ROOT, "lumenia-pitch-voice.opus");
+const OUT = path.join(ROOT, "media", "demo", "lumenia-demo.mp4");
+const VOICE = path.join(ROOT, "media", "voice", "lumenia-pitch-voice.opus");
 const CAPTIONS = path.join(RAW, "captions.ass");
 
 const exists = (f) => access(f).then(() => true).catch(() => false);

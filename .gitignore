@@ -205,3 +205,11 @@ docs/events-snapshot-*.json
 # Event-day seeded claim links: these files carry bearer link fragments (testnet, but
 # publishing them drains the demo pool). Nothing under docs/ is tracked; keep it that way.
 docs/
+
+# Tidy-up 2026-10-23: every recording, voice track, subtitle and transcript lives under media/
+# (the e2e demo builder writes media/demo/lumenia-demo.mp4 and reads media/voice/), the three
+# external hackathon repositories (own .git each) under external/, and finished one-off working
+# files under docs/archive/. None of it belongs in git.
+media/
+external/
+.ds-sync/

@@ -17,16 +17,16 @@
  * RUN: node e2e/demo/captions.mjs   (after transcribing the voice; see TRANSCRIBE below)
  *
  * TRANSCRIBE:
- *   whisper lumenia-pitch-voice.opus --model small.en --language en \
+ *   whisper media/voice/lumenia-pitch-voice.opus --model small.en --language en \
  *     --word_timestamps True --output_format json --output_dir <dir>
  */
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const ROOT = path.resolve("../..");
-const SCRIPT = path.join(ROOT, "lumenia-demo-script.txt");
+const SCRIPT = path.join(ROOT, "media", "voice", "lumenia-demo-script.txt");
 const OUT = path.resolve("e2e/demo/.raw/captions.ass");
-const TRANSCRIPT = process.env.TRANSCRIPT ?? path.join(ROOT, "lumenia-pitch-voice.json");
+const TRANSCRIPT = process.env.TRANSCRIPT ?? path.join(ROOT, "media", "voice", "lumenia-pitch-voice.json");
 
 /** Frame size, so the caption sits where it was designed to sit rather than being scaled. */
 const W = 1440;
