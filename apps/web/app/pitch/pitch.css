@@ -64,7 +64,7 @@
   transition: background-color 0.45s ease;
 }
 .pk[data-notes="open"] {
-  --notes-h: min(30vh, 250px);
+  --notes-h: min(34vh, 280px);
 }
 
 .pk-progress {
@@ -370,7 +370,7 @@
 }
 .pk-dot {
   position: relative;
-  width: 22px;
+  width: 24px;
   height: 28px;
   padding: 0;
   border: 0;
@@ -385,12 +385,12 @@
   width: 7px;
   height: 7px;
   border-radius: 99px;
-  background: var(--line);
+  background: color-mix(in srgb, var(--muted) 75%, var(--paper));
   transform: translate(-50%, -50%);
   transition: width 0.3s ease, background-color 0.3s ease;
 }
 .pk-dot:hover::before {
-  background: var(--muted);
+  background: var(--ink);
 }
 .pk-dot[aria-current="step"]::before {
   width: 20px;
@@ -405,6 +405,7 @@
 .pk-count {
   margin-right: 10px;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 .pk-bar-actions button {
   width: 34px;
@@ -419,14 +420,14 @@
   cursor: pointer;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
-.pk-bar-actions button:hover:not(:disabled) {
+.pk-bar-actions button:hover:not([aria-disabled="true"]) {
   background: var(--accent-soft);
   color: var(--ink);
 }
 .pk-bar-actions button[aria-pressed="true"] {
   color: var(--accent);
 }
-.pk-bar-actions button:disabled {
+.pk-bar-actions button[aria-disabled="true"] {
   opacity: 0.32;
   cursor: default;
 }
@@ -510,6 +511,16 @@
   list-style: disc;
 }
 
+@media (max-width: 700px) {
+  .pk-bar-title,
+  .pk-count {
+    display: none;
+  }
+  .pk-bar {
+    gap: 8px;
+  }
+}
+
 .pk-sr {
   position: absolute;
   width: 1px;
@@ -529,6 +540,26 @@
   }
   .pk-strike {
     color: var(--muted);
+  }
+  /* Apple's PDF engine draws a blurred shadow as a grey rectangle over the slide. */
+  .pk-shot,
+  .pk-card {
+    box-shadow: none;
+  }
+  /* WebKit prints a mask and a blur as solid black shapes, and Firefox drops them with the mascot.
+     The clip keeps hiding what the fade hides on screen: the maker's mark starts at 95% of the height. */
+  .pk .mascot-body {
+    filter: none;
+  }
+  .pk .mascot-halo,
+  .pk .mascot-pool,
+  .pk .mascot-envglow {
+    display: none;
+  }
+  .pk .mascot-frame {
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+    clip-path: inset(0 0 7% 0);
   }
 }
 
@@ -975,8 +1006,8 @@
 }
 /* Dark modules on a light ground: many phone scanners cannot read an inverted code. */
 .pk-qr {
-  width: calc(var(--u) * 232);
-  padding: calc(var(--u) * 16);
+  width: calc(var(--u) * 256);
+  padding: calc(var(--u) * 28);
   border-radius: calc(var(--u) * 16);
   background: #f6f4fd;
   color: #15121c;
@@ -985,6 +1016,10 @@
 .pk-qr svg {
   width: 100%;
   height: auto;
+}
+.pk-ask-side a {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 .pk-qr-label {
   margin-top: calc(var(--u) * 10);
@@ -1008,7 +1043,8 @@
   .pk-progress,
   .pk-zone,
   .pk-bar,
-  .pk-notes {
+  .pk-notes,
+  .pk-sr {
     display: none !important;
   }
   .pk-stage {
@@ -1050,7 +1086,6 @@
   }
   .pk-slide .pk-strike {
     color: var(--muted);
-    white-space: normal;
   }
   .pk-foot {
     margin-top: 28px;
@@ -1083,7 +1118,7 @@
     font-size: var(--fs-display);
   }
   .pk-steps-struck li {
-    font-size: 28px;
+    font-size: clamp(22px, 7vw, 28px);
   }
   .pk-partners-art {
     display: none;
@@ -1188,6 +1223,22 @@
   .pk-partner--head {
     display: none;
   }
+  /* The header row is gone here, so each cell says which column it was. */
+  .pk-partner > [role="cell"]:nth-child(n + 2)::before {
+    display: block;
+    margin-top: 6px;
+    font-size: var(--fs-micro);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .pk-partner > [role="cell"]:nth-child(2)::before {
+    content: "You get";
+  }
+  .pk-partner > [role="cell"]:nth-child(3)::before {
+    content: "Together we build";
+  }
   .pk-ask {
     gap: 36px;
   }
@@ -1196,8 +1247,8 @@
     text-align: left;
   }
   .pk-qr {
-    width: 180px;
-    padding: 14px;
+    width: 200px;
+    padding: 22px;
   }
   .pk-ask-mascot {
     display: none;
@@ -1231,17 +1282,20 @@
     padding: 0;
   }
   .pk-frame {
-    width: 1600px;
+    width: 100%;
     aspect-ratio: auto;
   }
+  /* Sized by the paper, not in pixels: every size inside is in --u, so a browser that ignores the
+     named page (WebKit gives A4) gets whole slides, scaled, instead of slides cut off at the edge. */
   .pk-slide,
   .pk-slide[data-active="false"] {
     page: pitch;
     position: relative;
     inset: auto;
     display: flex;
-    width: 1600px;
-    height: 900px;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
     break-after: page;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;

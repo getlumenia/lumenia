@@ -44,9 +44,10 @@ export function PitchDeck() {
   const [index, setIndex] = useState(0);
   const [notesOpen, setNotesOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // iPhone Safari has no element full screen: the button only appears where it can do something.
+  const [canFullscreen, setCanFullscreen] = useState(false);
   // The keyboard listener is bound once, so it reads the index from here, never from a stale closure.
   const indexRef = useRef(0);
-  const rootRef = useRef<HTMLElement>(null);
   const touchRef = useRef<{ x: number; y: number } | null>(null);
 
   const show = useCallback((next: number) => {
@@ -62,7 +63,14 @@ export function PitchDeck() {
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-    else void rootRef.current?.requestFullscreen?.().catch(() => {});
+    // The whole document, not the deck's root: the browser's own :fullscreen rules pin a fullscreen
+    // element in place, and printing then gives one mangled page however the print is started.
+    else void document.documentElement.requestFullscreen?.().catch(() => {});
+  }, []);
+
+  const savePdf = useCallback(async () => {
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+    window.print();
   }, []);
 
   // Open on the slide the link names, and follow the hash if it changes by hand.
@@ -78,6 +86,15 @@ export function PitchDeck() {
     return () => window.removeEventListener("hashchange", sync);
   }, []);
 
+  /* Everything a later slide needs, fetched now: Switzer 600 is not used on the cover and the light
+     wordmark is the dark tone's only image, so a slide must not depend on the network at the moment it
+     appears, and a PDF saved from a fresh tab must not fall back for that weight. */
+  useEffect(() => {
+    void document.fonts?.load("600 1em Switzer");
+    new Image().src = WORDMARK.dark;
+    setCanFullscreen(Boolean(document.fullscreenEnabled));
+  }, []);
+
   useEffect(() => {
     const onChange = () => setFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", onChange);
@@ -91,7 +108,8 @@ export function PitchDeck() {
       // In the column the arrows and the space bar scroll, as they do on any page.
       if (columnMode.matches) return;
       const target = e.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      // Inside the notes the arrows scroll the notes.
+      if (target?.closest("input, textarea, select, [contenteditable='true'], .pk-notes")) return;
       switch (e.key) {
         case "ArrowRight":
         case "ArrowDown":
@@ -135,10 +153,35 @@ export function PitchDeck() {
     return () => window.removeEventListener("keydown", onKey);
   }, [show, toggleFullscreen]);
 
+  /* Turning a phone keeps the reader's place, both ways: the column reports the slide under the eye,
+     and turning to the column scrolls to the slide the stage was on. */
+  useEffect(() => {
+    const column = window.matchMedia(DOC_QUERY);
+    const slides = Array.from(document.querySelectorAll<HTMLElement>(".pk-slide"));
+    const onScroll = () => {
+      if (!column.matches) return;
+      const line = window.innerHeight / 3;
+      const n = slides.findIndex((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top <= line && r.bottom > line;
+      });
+      if (n >= 0) show(n);
+    };
+    const onTurn = () => {
+      if (column.matches) slides[indexRef.current]?.scrollIntoView();
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    column.addEventListener("change", onTurn);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      column.removeEventListener("change", onTurn);
+    };
+  }, [show]);
+
   const slide = SLIDES[index]!;
 
   return (
-    <main ref={rootRef} className="pk" data-tone={slide.tone} data-notes={notesOpen ? "open" : "closed"}>
+    <main className="pk" data-tone={slide.tone} data-notes={notesOpen ? "open" : "closed"}>
       <div className="pk-progress" aria-hidden="true">
         <span style={{ width: `${((index + 1) / COUNT) * 100}%` }} />
       </div>
@@ -149,8 +192,10 @@ export function PitchDeck() {
         aria-roledescription="carousel"
         aria-label="Lumenia pitch deck"
         onTouchStart={(e) => {
-          const t = e.touches[0];
-          touchRef.current = t ? { x: t.clientX, y: t.clientY } : null;
+          // One finger only, and only at full size: a pinch, or a pan around a zoomed slide, is not a swipe.
+          const t = e.touches.length === 1 ? e.touches[0] : null;
+          const zoomed = (window.visualViewport?.scale ?? 1) > 1.01;
+          touchRef.current = t && !zoomed ? { x: t.clientX, y: t.clientY } : null;
         }}
         onTouchEnd={(e) => {
           const start = touchRef.current;
@@ -185,6 +230,7 @@ export function PitchDeck() {
           className="pk-zone pk-zone--prev"
           tabIndex={-1}
           aria-hidden="true"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => show(index - 1)}
           disabled={index === 0}
         >
@@ -195,6 +241,7 @@ export function PitchDeck() {
           className="pk-zone pk-zone--next"
           tabIndex={-1}
           aria-hidden="true"
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => show(index + 1)}
           disabled={index === COUNT - 1}
         >
@@ -213,7 +260,9 @@ export function PitchDeck() {
         </ul>
       </aside>
 
-      <nav className="pk-bar" aria-label="Slides">
+      {/* A mouse press does not move focus here: the presenter's space bar has to keep advancing the
+          deck after a click, rather than pressing whichever button was clicked last. Tab still works. */}
+      <nav className="pk-bar" aria-label="Slides" onMouseDown={(e) => e.preventDefault()}>
         <div className="pk-bar-brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={WORDMARK[slide.tone]} alt="Lumenia" width={92} height={29} />
@@ -235,25 +284,26 @@ export function PitchDeck() {
           <span className="pk-count" aria-hidden="true">
             {index + 1} / {COUNT}
           </span>
-          <button type="button" onClick={() => show(index - 1)} disabled={index === 0} aria-label="Previous slide" title="Previous (Left arrow)">
+          <button type="button" onClick={() => show(index - 1)} aria-disabled={index === 0} aria-label="Previous slide" title="Previous (Left arrow)">
             <ChevronLeft />
           </button>
-          <button type="button" onClick={() => show(index + 1)} disabled={index === COUNT - 1} aria-label="Next slide" title="Next (Right arrow)">
+          <button type="button" onClick={() => show(index + 1)} aria-disabled={index === COUNT - 1} aria-label="Next slide" title="Next (Right arrow)">
             <ChevronRight />
           </button>
           <button type="button" onClick={() => setNotesOpen((o) => !o)} aria-pressed={notesOpen} aria-label="Speaker notes" title="Speaker notes (N)">
             <StickyNote />
           </button>
-          <button
-            type="button"
-            onClick={toggleFullscreen}
-            aria-pressed={fullscreen}
-            aria-label={fullscreen ? "Leave full screen" : "Full screen"}
-            title="Full screen (F)"
-          >
-            {fullscreen ? <Minimize2 /> : <Maximize2 />}
-          </button>
-          <button type="button" onClick={() => window.print()} aria-label="Save as PDF" title="Save as PDF (one slide per page)">
+          {canFullscreen && (
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              aria-label={fullscreen ? "Leave full screen" : "Full screen"}
+              title="Full screen (F)"
+            >
+              {fullscreen ? <Minimize2 /> : <Maximize2 />}
+            </button>
+          )}
+          <button type="button" onClick={() => void savePdf()} aria-label="Save as PDF" title="Save as PDF (one slide per page)">
             <FileDown />
           </button>
         </div>

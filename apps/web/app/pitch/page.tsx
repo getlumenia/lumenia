@@ -28,6 +28,8 @@ export const viewport: Viewport = {
   themeColor: "#F5F3EF",
   width: "device-width",
   initialScale: 1,
+  // The root layout caps this at 1. A deck has small print and footnotes, so here people may zoom in.
+  maximumScale: 5,
 };
 
 export default function PitchPage() {
