@@ -1,0 +1,1269 @@
+/*
+ * /pitch. The palette is the LOCKED Periwinkle system (brand.md 4.1 light, 4.2 dark) written out
+ * here, not read from the site's theme tokens: a deck must look the same on a projector, a laptop
+ * and a PDF whatever theme the viewer's machine reports. Each slide carries its own tone, and the
+ * window around the stage takes the tone of the slide on screen, so the frame never shows an edge.
+ *
+ * Every size inside a slide is in design pixels of a 1600 x 900 canvas: calc(var(--u) * N). --u is
+ * one sixteen-hundredth of the frame's width (a container-query unit), so a 64 is 64px on a 1600px
+ * frame and scales with it, set as real text rather than a scaled picture. Type sizes go through the
+ * --fs-* roles, which the column mode (phones held upright) redefines in plain pixels.
+ *
+ * Class prefix pk- throughout: this file ships with the route and must not touch anything else.
+ */
+
+/* ---------- palettes ---------- */
+
+.pk,
+.pk [data-tone="light"],
+.pk[data-tone="light"] {
+  --paper: #f5f3ef;
+  --surface: #fbfaf8;
+  --ink: #1e1b22;
+  --muted: #67626e;
+  --line: #e5dfe8;
+  --accent: #6e5fce;
+  --accent-strong: #4e40a8;
+  --accent-soft: #e8e3f7;
+  --on-accent: #f6f4fd;
+  --shadow: rgb(30 27 34 / 0.08);
+  /* The mascot's halo and pool read --money (components/brand/mascot.css). */
+  --money: var(--accent);
+}
+
+.pk [data-tone="dark"],
+.pk[data-tone="dark"] {
+  --paper: #15121c;
+  --surface: #1d1926;
+  --ink: #edeaf3;
+  --muted: #a59db2;
+  --line: #2c2536;
+  --accent: #b7ace8;
+  --accent-strong: #c7bef0;
+  --accent-soft: #2a2338;
+  --on-accent: #1a1622;
+  --shadow: rgb(0 0 0 / 0.35);
+  --money: var(--accent);
+}
+
+/* ---------- the window ---------- */
+
+.pk {
+  --bar-h: 52px;
+  --notes-h: 0px;
+  --gutter: clamp(6px, 1.4vmin, 22px);
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Switzer", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.45s ease;
+}
+.pk[data-notes="open"] {
+  --notes-h: min(30vh, 250px);
+}
+
+.pk-progress {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  z-index: 6;
+}
+.pk-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pk-stage {
+  position: absolute;
+  inset: 0 0 calc(var(--bar-h) + var(--notes-h)) 0;
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  padding: var(--gutter);
+}
+
+.pk-frame {
+  --u: calc(100cqw / 1600);
+  --fs-eyebrow: calc(var(--u) * 16);
+  --fs-display: calc(var(--u) * 100);
+  --fs-h1: calc(var(--u) * 66);
+  --fs-h2: calc(var(--u) * 40);
+  --fs-h3: calc(var(--u) * 27);
+  --fs-lead: calc(var(--u) * 29);
+  --fs-body: calc(var(--u) * 22.5);
+  --fs-small: calc(var(--u) * 18.5);
+  --fs-micro: calc(var(--u) * 14.5);
+  --fs-num: calc(var(--u) * 104);
+  --fs-num-sm: calc(var(--u) * 64);
+  position: relative;
+  container-type: inline-size;
+  width: min(100%, calc((100dvh - var(--bar-h) - var(--notes-h) - 2 * var(--gutter)) * 16 / 9));
+  aspect-ratio: 16 / 9;
+}
+
+.pk-slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--u) * 76) calc(var(--u) * 100) calc(var(--u) * 58);
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+}
+.pk-slide[data-active="false"] {
+  display: none;
+}
+
+/* ---------- entrance: the active slide's marked pieces rise in, in order ---------- */
+
+@keyframes pk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--u) * 22));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes pk-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pk-strike {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes pk-dim {
+  to {
+    color: color-mix(in srgb, var(--muted) 72%, var(--paper));
+  }
+}
+.pk-slide[data-active="true"] .pk-in {
+  animation: pk-rise 0.7s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+  animation-delay: calc(var(--d, 0) * 85ms + 60ms);
+}
+.pk-slide[data-active="true"] .pk-fade {
+  animation: pk-fade 0.9s ease both;
+  animation-delay: calc(var(--d, 0) * 85ms + 60ms);
+}
+
+/* ---------- type roles ---------- */
+
+.pk-eyebrow {
+  font-size: var(--fs-eyebrow);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.pk-eyebrow + .pk-h1 {
+  margin-top: calc(var(--u) * 14);
+}
+.pk-display,
+.pk-h1,
+.pk-h2,
+.pk-num,
+.pk-serif {
+  font-family: "Sentient", Georgia, "Times New Roman", serif;
+  font-weight: 500;
+}
+.pk-display {
+  font-size: var(--fs-display);
+  line-height: 1.02;
+  letter-spacing: -0.028em;
+  text-wrap: balance;
+}
+.pk-h1 {
+  font-size: var(--fs-h1);
+  line-height: 1.06;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+}
+.pk-h2 {
+  font-size: var(--fs-h2);
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+.pk-h3 {
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+}
+.pk-lead {
+  font-size: var(--fs-lead);
+  line-height: 1.38;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.pk-body {
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.pk-small {
+  font-size: var(--fs-small);
+  line-height: 1.45;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+.pk-micro {
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+  color: var(--muted);
+}
+.pk-num {
+  font-size: var(--fs-num);
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.pk-num-sm {
+  font-size: var(--fs-num-sm);
+}
+.pk-ink {
+  color: var(--ink);
+}
+.pk-muted {
+  color: var(--muted);
+}
+/* Accent as text: always bold (brand.md 4.6, the contrast rule). */
+.pk-accent {
+  color: var(--accent);
+  font-weight: 600;
+}
+.pk-serif.pk-accent,
+.pk-h1 .pk-accent,
+.pk-display .pk-accent,
+.pk-h2 .pk-accent {
+  font-weight: 500;
+}
+
+/* The footnote line every slide ends on: where a number came from, and when. */
+.pk-foot {
+  margin-top: auto;
+  padding-top: calc(var(--u) * 18);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--muted);
+}
+.pk-foot a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--muted) 45%, transparent);
+  text-underline-offset: 0.18em;
+}
+
+/* The brand's signature move: the scary step struck through, then faded back. */
+.pk-strike {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+.pk-strike::after {
+  content: "";
+  position: absolute;
+  left: -3%;
+  right: -3%;
+  top: 55%;
+  height: max(2px, calc(var(--u) * 5));
+  border-radius: 99px;
+  background: var(--accent);
+  transform-origin: left center;
+}
+.pk-slide[data-active="true"] .pk-strike::after {
+  animation: pk-strike 0.55s cubic-bezier(0.65, 0, 0.35, 1) both;
+  animation-delay: calc(var(--d, 0) * 140ms + 420ms);
+}
+.pk-slide[data-active="true"] .pk-strike {
+  animation: pk-dim 0.5s ease both;
+  animation-delay: calc(var(--d, 0) * 140ms + 820ms);
+}
+
+/* ---------- small parts ---------- */
+
+.pk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  padding: calc(var(--u) * 8) calc(var(--u) * 16);
+  border-radius: calc(var(--u) * 12);
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  line-height: 1.2;
+}
+.pk-dot-live {
+  width: calc(var(--u) * 10);
+  height: calc(var(--u) * 10);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 calc(var(--u) * 5) color-mix(in srgb, var(--accent) 22%, transparent);
+  flex: none;
+}
+.pk-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--u) * 20);
+  padding: calc(var(--u) * 28);
+  box-shadow: 0 calc(var(--u) * 14) calc(var(--u) * 40) var(--shadow);
+}
+.pk-rule {
+  height: 1px;
+  background: var(--line);
+  border: 0;
+}
+
+/* The mascot (components/brand/Mascot.tsx), sized in design pixels instead of the viewport. */
+.pk .pk-mascot {
+  margin-inline: 0;
+}
+.pk .pk-mascot .mascot-frame {
+  height: calc(var(--u) * var(--mh, 360));
+}
+
+/* ---------- the bar ---------- */
+
+.pk-bar {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: var(--bar-h);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 0 clamp(12px, 2vw, 28px);
+  color: var(--muted);
+  font-size: 13px;
+  z-index: 5;
+}
+.pk-bar-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.pk-bar-brand img {
+  height: 19px;
+  width: auto;
+  flex: none;
+}
+.pk-bar-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pk-dots {
+  display: flex;
+  align-items: center;
+}
+.pk-dot {
+  position: relative;
+  width: 22px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.pk-dot::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: var(--line);
+  transform: translate(-50%, -50%);
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+.pk-dot:hover::before {
+  background: var(--muted);
+}
+.pk-dot[aria-current="step"]::before {
+  width: 20px;
+  background: var(--accent);
+}
+.pk-bar-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.pk-count {
+  margin-right: 10px;
+  letter-spacing: 0.04em;
+}
+.pk-bar-actions button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.pk-bar-actions button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+.pk-bar-actions button[aria-pressed="true"] {
+  color: var(--accent);
+}
+.pk-bar-actions button:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+.pk-bar-actions svg {
+  width: 18px;
+  height: 18px;
+}
+.pk button:focus-visible,
+.pk a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The two edges of the window: a chevron appears when the pointer reaches one. */
+.pk-zone {
+  position: absolute;
+  top: 18%;
+  bottom: 18%;
+  width: clamp(36px, 4.5vw, 76px);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+  z-index: 3;
+}
+.pk-zone--prev {
+  left: 0;
+}
+.pk-zone--next {
+  right: 0;
+}
+.pk-zone:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.pk-zone:disabled {
+  display: none;
+}
+.pk-zone svg {
+  width: 30px;
+  height: 30px;
+}
+@media (hover: none) {
+  .pk-zone {
+    display: none;
+  }
+}
+
+.pk-notes {
+  position: absolute;
+  inset: auto 0 var(--bar-h) 0;
+  height: var(--notes-h);
+  overflow: auto;
+  padding: 14px clamp(16px, 4vw, 56px) 18px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.55;
+  z-index: 4;
+}
+.pk-notes[hidden] {
+  display: none;
+}
+.pk-notes-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.pk-notes ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 1.1em;
+  list-style: disc;
+}
+
+.pk-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pk,
+  .pk *,
+  .pk *::before,
+  .pk *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .pk-strike {
+    color: color-mix(in srgb, var(--muted) 72%, var(--paper));
+  }
+}
+
+/* ====================================================================================
+ * Slide layouts, in the order of the deck.
+ * ==================================================================================== */
+
+/* 1. Cover */
+.pk-cover {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.5fr);
+  align-items: center;
+  gap: calc(var(--u) * 32);
+}
+.pk-cover-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--u) * 28);
+}
+.pk-cover-mark {
+  width: calc(var(--u) * 210);
+  height: auto;
+  display: block;
+}
+.pk-cover .pk-display {
+  font-size: calc(var(--fs-display) * 0.9);
+}
+.pk-cover-lead {
+  max-width: 41ch;
+}
+.pk-cover-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--u) * 12);
+}
+.pk-cover-art {
+  --mh: 430;
+  display: grid;
+  place-items: center;
+}
+
+/* 2. The problem */
+.pk-problem {
+  flex: 1;
+  margin-top: calc(var(--u) * 40);
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1fr) minmax(0, 0.42fr);
+  gap: calc(var(--u) * 48);
+  align-items: center;
+}
+.pk-problem-stat {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 14);
+}
+.pk-problem-stat .pk-h3,
+.pk-problem-steps .pk-h3 {
+  color: var(--muted);
+}
+.pk-problem-stat b {
+  font-weight: 600;
+}
+.pk-problem-steps {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 16);
+}
+.pk-steps-struck {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 12);
+  padding: 0;
+  list-style: none;
+}
+.pk-steps-struck li {
+  font-family: "Sentient", Georgia, serif;
+  font-weight: 500;
+  font-size: calc(var(--u) * 46);
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+}
+.pk-problem-art {
+  --mh: 300;
+  display: grid;
+  place-items: center;
+}
+
+/* 3. Why now: see "6. Why now" below (the rules kept their old place in the file). */
+
+/* 4. How it works */
+.pk-how {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: calc(var(--u) * 40);
+  align-items: stretch;
+}
+.pk-how-main {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 20);
+}
+.pk-flow {
+  margin-top: calc(var(--u) * 6);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 20);
+  padding: 0;
+  list-style: none;
+}
+.pk-flow-step {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 60) minmax(0, 1fr);
+  gap: calc(var(--u) * 18);
+  align-items: center;
+}
+.pk-flow-step .pk-h3 {
+  margin-bottom: calc(var(--u) * 2);
+}
+.pk-icon {
+  display: block;
+  width: calc(var(--u) * 60);
+  height: calc(var(--u) * 60);
+  object-fit: contain;
+}
+.pk-why {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 6);
+  padding: calc(var(--u) * 20) calc(var(--u) * 24);
+  border-radius: calc(var(--u) * 18);
+  background: var(--accent-soft);
+}
+.pk-why .pk-body {
+  color: var(--ink);
+}
+.pk-why b {
+  font-weight: 600;
+}
+.pk-shots {
+  position: relative;
+  min-height: 0;
+}
+.pk-shot {
+  position: absolute;
+  display: block;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--u) * 16);
+  background: var(--surface);
+  box-shadow: 0 calc(var(--u) * 18) calc(var(--u) * 46) var(--shadow);
+}
+/* The finished screen sits just clear of the claim screen's button: it never covers the one thing
+   the claim screen asks the person to press. */
+.pk-shot--chat {
+  top: calc(var(--u) * 14);
+  right: 0;
+  width: 100%;
+}
+.pk-shot--claim {
+  top: calc(var(--u) * 240);
+  left: 0;
+  width: 66%;
+}
+.pk-shot--done {
+  top: calc(var(--u) * 340);
+  right: 0;
+  width: 38%;
+}
+
+/* 4. Under the hood (dark) */
+.pk-engine {
+  margin-top: calc(var(--u) * 46);
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: calc(var(--u) * 52);
+  align-items: start;
+}
+.pk-diagram {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) auto minmax(0, 1.3fr) auto minmax(0, 0.95fr);
+  align-items: stretch;
+  column-gap: calc(var(--u) * 12);
+  row-gap: calc(var(--u) * 16);
+}
+.pk-node {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(var(--u) * 6);
+  min-height: calc(var(--u) * 240);
+  padding: calc(var(--u) * 22) calc(var(--u) * 22);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--u) * 16);
+  background: var(--surface);
+}
+.pk-node .pk-micro {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+}
+.pk-node--escrow {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 0 calc(var(--u) * 6) color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.pk-node--escrow .pk-micro {
+  color: var(--accent);
+}
+.pk-arrow {
+  position: relative;
+  align-self: center;
+  width: calc(var(--u) * 26);
+  height: 2px;
+  background: var(--accent);
+}
+.pk-arrow::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: calc(var(--u) * 10);
+  height: calc(var(--u) * 10);
+  border-top: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+  transform: translateY(-50%) rotate(45deg);
+}
+.pk-relayer {
+  grid-column: 1 / -1;
+  padding: calc(var(--u) * 22) calc(var(--u) * 24);
+  border: 1px dashed color-mix(in srgb, var(--muted) 55%, transparent);
+  border-radius: calc(var(--u) * 14);
+}
+.pk-relayer b,
+.pk-built b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.pk-built {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  list-style: none;
+}
+.pk-built li {
+  padding: calc(var(--u) * 17) 0;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-small);
+  line-height: 1.4;
+  color: var(--muted);
+}
+.pk-built li:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.pk-built b {
+  display: block;
+  font-size: var(--fs-body);
+}
+.pk-composes {
+  margin-top: calc(var(--u) * 44);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+}
+.pk-composes .pk-micro {
+  margin-right: calc(var(--u) * 6);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* 5. Where we are */
+.pk-stats {
+  margin-top: calc(var(--u) * 44);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pk-stat {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 14);
+  padding: 0 calc(var(--u) * 36);
+  border-left: 1px solid var(--line);
+}
+.pk-stat:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+.pk-stat dd {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 12);
+  margin: 0;
+}
+.pk-proof-rows {
+  margin-top: calc(var(--u) * 38);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: calc(var(--u) * 36);
+  padding-top: calc(var(--u) * 26);
+  border-top: 1px solid var(--line);
+}
+.pk-proof-rows .pk-body {
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+.pk-proof-rows b {
+  display: block;
+  margin-bottom: calc(var(--u) * 4);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.pk-next {
+  margin-top: calc(var(--u) * 28);
+  padding: calc(var(--u) * 16) calc(var(--u) * 24);
+  border-radius: calc(var(--u) * 14);
+  background: var(--accent-soft);
+  font-size: var(--fs-body);
+  color: var(--ink);
+}
+.pk-next b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* 6. Why now */
+.pk-market {
+  --fs-num-sm: calc(var(--u) * 84);
+  margin-top: calc(var(--u) * 50);
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+  gap: calc(var(--u) * 36);
+}
+.pk-market-stat {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 12);
+  padding-top: calc(var(--u) * 18);
+  border-top: calc(var(--u) * 3) solid var(--accent);
+}
+.pk-cards {
+  margin-top: calc(var(--u) * 52);
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+  gap: calc(var(--u) * 24);
+}
+.pk-corridor {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 8);
+  padding: calc(var(--u) * 26) calc(var(--u) * 30);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--u) * 18);
+  background: var(--surface);
+}
+.pk-corridor .pk-body {
+  color: var(--muted);
+}
+
+/* 7. Work with us */
+.pk-partners-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: calc(var(--u) * 32);
+  align-items: center;
+}
+.pk-partners-art {
+  --mh: 172;
+}
+.pk-partner-who {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 16);
+}
+.pk-partner-who .pk-icon {
+  flex: none;
+  width: calc(var(--u) * 50);
+  height: calc(var(--u) * 50);
+}
+.pk-partners {
+  margin-top: calc(var(--u) * 26);
+  display: flex;
+  flex-direction: column;
+}
+.pk-partner {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1.18fr) minmax(0, 1.28fr);
+  gap: calc(var(--u) * 32);
+  align-items: center;
+  padding: calc(var(--u) * 19) 0;
+  border-top: 1px solid var(--line);
+}
+.pk-partner:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.pk-partner--head {
+  padding: 0 0 calc(var(--u) * 12);
+  border-top: 0;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* 8. The ask (dark) */
+.pk-ask {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 0.6fr);
+  gap: calc(var(--u) * 60);
+  align-items: center;
+}
+.pk-ask-main {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 22);
+}
+.pk-asks {
+  margin-top: calc(var(--u) * 14);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: calc(var(--u) * 28);
+  padding: 0;
+  list-style: none;
+}
+.pk-asks li {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 8);
+  padding-top: calc(var(--u) * 16);
+  border-top: calc(var(--u) * 3) solid var(--accent);
+}
+.pk-team {
+  margin-top: calc(var(--u) * 14);
+  padding-top: calc(var(--u) * 20);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 6);
+}
+.pk-ask-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 8);
+  text-align: center;
+}
+/* Dark modules on a light ground: many phone scanners cannot read an inverted code. */
+.pk-qr {
+  width: calc(var(--u) * 232);
+  padding: calc(var(--u) * 16);
+  border-radius: calc(var(--u) * 20);
+  background: #f6f4fd;
+  color: #15121c;
+  line-height: 0;
+}
+.pk-qr svg {
+  width: 100%;
+  height: auto;
+}
+.pk-qr-label {
+  margin-top: calc(var(--u) * 10);
+  font-weight: 600;
+}
+.pk-ask-mascot {
+  --mh: 150;
+  margin-top: calc(var(--u) * 8);
+}
+
+/* ====================================================================================
+ * The column: a phone (or any narrow window) held upright reads the deck as a page.
+ * Keep the query in step with DOC_QUERY in PitchDeck.tsx.
+ * ==================================================================================== */
+@media screen and (orientation: portrait) and (max-width: 900px) {
+  .pk {
+    position: static;
+    overflow: visible;
+    min-height: 100dvh;
+  }
+  .pk-progress,
+  .pk-zone,
+  .pk-bar,
+  .pk-notes {
+    display: none !important;
+  }
+  .pk-stage {
+    position: static;
+    display: block;
+    padding: 0;
+  }
+  .pk-frame {
+    --u: clamp(0.42px, 0.118vw, 0.6px);
+    --fs-eyebrow: 12px;
+    --fs-display: clamp(40px, 11.4vw, 58px);
+    --fs-h1: clamp(28px, 7.6vw, 38px);
+    --fs-h2: clamp(22px, 5.8vw, 28px);
+    --fs-h3: 18px;
+    --fs-lead: 18px;
+    --fs-body: 16px;
+    --fs-small: 15px;
+    --fs-micro: 12.5px;
+    --fs-num: clamp(48px, 13vw, 62px);
+    --fs-num-sm: clamp(38px, 10vw, 46px);
+    width: auto;
+    aspect-ratio: auto;
+    container-type: normal;
+  }
+  .pk-slide,
+  .pk-slide[data-active="false"] {
+    position: relative;
+    inset: auto;
+    display: flex;
+    min-height: auto;
+    padding: 56px 22px 40px;
+    overflow: visible;
+  }
+  .pk-slide .pk-in,
+  .pk-slide .pk-fade,
+  .pk-slide .pk-strike,
+  .pk-slide .pk-strike::after {
+    animation: none !important;
+  }
+  .pk-slide .pk-strike {
+    color: color-mix(in srgb, var(--muted) 72%, var(--paper));
+    white-space: normal;
+  }
+  .pk-foot {
+    margin-top: 28px;
+  }
+
+  .pk-cover,
+  .pk-problem,
+  .pk-how,
+  .pk-partners-head,
+  .pk-engine,
+  .pk-stats,
+  .pk-proof-rows,
+  .pk-market,
+  .pk-partner,
+  .pk-ask,
+  .pk-asks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pk-cover {
+    gap: 8px;
+  }
+  .pk-cover-art {
+    order: -1;
+    justify-items: start;
+    --mh: 300;
+  }
+  .pk-cover-mark {
+    width: 150px;
+  }
+  .pk-cover .pk-display {
+    font-size: var(--fs-display);
+  }
+  .pk-steps-struck li {
+    font-size: 28px;
+  }
+  .pk-problem-art,
+  .pk-partners-art {
+    display: none;
+  }
+  .pk-problem {
+    gap: 28px;
+  }
+  .pk-how {
+    gap: 24px;
+  }
+  .pk-how-main {
+    gap: 18px;
+  }
+  .pk-flow-step {
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 14px;
+  }
+  .pk-icon {
+    width: 44px;
+    height: 44px;
+  }
+  .pk-partner-who .pk-icon {
+    width: 36px;
+    height: 36px;
+  }
+  .pk-why,
+  .pk-corridor {
+    gap: 8px;
+    padding: 20px;
+  }
+  .pk-market {
+    --fs-num-sm: clamp(38px, 10vw, 46px);
+  }
+  .pk-cards {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    margin-top: 26px;
+  }
+  .pk-node {
+    min-height: 0;
+  }
+  .pk-shots {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .pk-shot,
+  .pk-shot--chat,
+  .pk-shot--claim,
+  .pk-shot--done {
+    position: static;
+    width: 100%;
+    border-radius: 12px;
+  }
+  .pk-shot--done {
+    width: 70%;
+  }
+  .pk-diagram {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pk-arrow {
+    justify-self: center;
+    width: 2px;
+    height: 22px;
+  }
+  .pk-arrow::after {
+    top: auto;
+    bottom: 0;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%) rotate(135deg);
+  }
+  .pk-stat,
+  .pk-stat:first-child {
+    padding: 18px 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .pk-proof-rows {
+    gap: 18px;
+  }
+  .pk-market {
+    gap: 22px;
+  }
+  .pk-partner {
+    gap: 4px;
+    padding: 16px 0;
+  }
+  .pk-partner--head {
+    display: none;
+  }
+  .pk-ask {
+    gap: 36px;
+  }
+  .pk-ask-side {
+    align-items: flex-start;
+    text-align: left;
+  }
+  .pk-qr {
+    width: 180px;
+    padding: 14px;
+  }
+  .pk-ask-mascot {
+    display: none;
+  }
+}
+
+/* ====================================================================================
+ * Print ("Save as PDF"): every slide on its own 1600 x 900 page, the stage layout exactly.
+ * A named page, so the size never leaks into another route's print.
+ * ==================================================================================== */
+@page pitch {
+  size: 1600px 900px;
+  margin: 0;
+}
+@media print {
+  .pk {
+    position: static;
+    overflow: visible;
+    background: none;
+  }
+  .pk-progress,
+  .pk-zone,
+  .pk-bar,
+  .pk-notes,
+  .pk-sr {
+    display: none !important;
+  }
+  .pk-stage {
+    position: static;
+    display: block;
+    padding: 0;
+  }
+  .pk-frame {
+    width: 1600px;
+    aspect-ratio: auto;
+  }
+  .pk-slide,
+  .pk-slide[data-active="false"] {
+    page: pitch;
+    position: relative;
+    inset: auto;
+    display: flex;
+    width: 1600px;
+    height: 900px;
+    break-after: page;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .pk-slide:last-child {
+    break-after: auto;
+  }
+  .pk,
+  .pk *,
+  .pk *::before,
+  .pk *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .pk-strike {
+    color: color-mix(in srgb, var(--muted) 72%, var(--paper));
+  }
+}
