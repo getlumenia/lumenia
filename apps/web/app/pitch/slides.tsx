@@ -5,12 +5,18 @@
  * Every number here is measured and dated, and its source sits in the slide's footnote. Market
  * figures were read from the primary source on 2 November 2026. The honesty rules hold here as on
  * every surface: a transfer count never appears without its dollar value, the claim time is a
- * target, there is no third-party audit, and the recipient "pays no gas" (the sponsor covers it).
- * The open testnet funnel on /events/summary is deliberately NOT quoted: the nightly live-claim
- * regression runs against production and its claims are counted there, so it is not user traction.
+ * target, nothing is called audited, and the recipient "pays no gas" (the sponsor covers it). Money
+ * never "comes back" by itself: the sender takes it back. The open testnet funnel on /events/summary
+ * is deliberately NOT quoted: the nightly live-claim regression runs against production and its
+ * claims are counted there, so it is not user traction.
  *
- * The screenshots in /public/pitch are real product screens, cropped from evidence/sow2-screenshots
- * (the link's key is blurred in the source). The notes ship in the client bundle: they are public.
+ * The deck goes to readers on other chains, and this page is public. It says what is true today: the
+ * recipient's account is on Stellar, and USDC can arrive through Circle CCTP (proven from Base, on
+ * testnet). It announces nothing beyond that.
+ *
+ * The screens in /public/pitch come from evidence/sow2-screenshots and the demo video in
+ * /public/media: the same $0.50 link from start to finish, on the test network, with the link's key
+ * blurred in the source. The notes ship in the client bundle and open with the N key: they are public.
  */
 import type { CSSProperties, ReactNode } from "react";
 import QRCode from "react-qr-code";
@@ -31,11 +37,12 @@ const d = (n: number) => ({ "--d": n }) as CSSProperties;
 
 const TRY_URL = "https://getlumenia.com/try";
 const ICONS = "/brand-kit-assets";
+const CONTACT = "mericcintosunn@gmail.com";
 
 /** A brand icon. Decorative: the words beside it always say the same thing. */
-function Icon({ name }: { name: string }) {
+function Icon({ src }: { src: string }) {
   // eslint-disable-next-line @next/next/no-img-element
-  return <img className="pk-icon" src={`${ICONS}/icon-${name}.webp`} alt="" aria-hidden="true" />;
+  return <img className="pk-icon" src={src} alt="" aria-hidden="true" width={120} height={120} />;
 }
 
 /** A source in a footnote. */
@@ -53,8 +60,8 @@ export const SLIDES: PitchSlide[] = [
     title: "Send dollars by link",
     tone: "light",
     notes: [
-      "One sentence: Lumenia lets you send US dollars (USDC) as a link, and the person who opens it needs nothing set up.",
-      "It runs on Stellar mainnet as a small capped pilot and is open to everyone on the test network today.",
+      "One sentence: Lumenia lets you send US dollars (USDC) as a link, and the person who opens it installs nothing.",
+      "It is deployed on Stellar mainnet as a small capped pilot, idle since 30 August 2026, and open to everyone on the test network today.",
       "In the next few minutes: the problem, why now, how it works, where we are, and how we can work together.",
     ],
     body: (
@@ -66,17 +73,14 @@ export const SLIDES: PitchSlide[] = [
             <h1 className="pk-display pk-in" style={d(1)}>
               Send dollars by link.
               <br />
-              <span className="pk-accent">They need nothing else.</span>
+              <span className="pk-accent">They install nothing.</span>
             </h1>
             <p className="pk-lead pk-cover-lead pk-in" style={d(2)}>
-              The person you pay opens the link in any browser and the money is theirs. No app, no wallet, no seed
+              The person you send it to opens the link in their browser and claims into a new account. No app, no seed
               phrase, and they pay no gas.
             </p>
             <div className="pk-cover-chips pk-in" style={d(3)}>
-              <span className="pk-chip">
-                <span className="pk-dot-live" aria-hidden="true" />
-                Running on Stellar mainnet as a capped pilot
-              </span>
+              <span className="pk-chip">Open on testnet, capped pilot on mainnet</span>
               <span className="pk-chip">Extension for Chrome and Firefox</span>
             </div>
           </div>
@@ -94,16 +98,16 @@ export const SLIDES: PitchSlide[] = [
     tone: "light",
     notes: [
       "Two roads today, and both lose people. The old road works for anyone with a bank or an agent nearby, and it costs 6.36% on average, 14.99% through a bank.",
-      "The new road is cheap and fast, and it asks a stranger to install an app, keep twelve secret words safe and buy a coin for fees before a dollar arrives.",
-      "We are not claiming a total cost below the old road yet: cash-out is a licensed partner's step and has its own price. The problem we solve first is the second one.",
+      "The usual wallet road is cheap and fast, and many wallets still ask a stranger to install an app, keep twelve secret words safe and buy a coin for fees before a dollar arrives.",
+      "We make no total-cost claim yet: cash-out is a licensed partner's step and has its own price. The problem we solve first is the second road.",
     ],
     body: (
       <>
         <p className="pk-eyebrow pk-in" style={d(0)}>
           The problem
         </p>
-        <h2 className="pk-h1 pk-problem-title pk-in" style={d(1)}>
-          Getting dollars to someone abroad is either expensive or asks too much of them.
+        <h2 className="pk-h1 pk-in" style={d(1)}>
+          Getting dollars to someone abroad either costs too much or asks too much of them.
         </h2>
         <div className="pk-problem">
           <div className="pk-problem-stat pk-card pk-in" style={d(2)}>
@@ -114,7 +118,7 @@ export const SLIDES: PitchSlide[] = [
             </p>
           </div>
           <div className="pk-problem-steps pk-in" style={d(3)}>
-            <p className="pk-h3">The new road</p>
+            <p className="pk-h3">The usual wallet road</p>
             <ol className="pk-steps-struck">
               <li>
                 <span className="pk-strike" style={d(0)}>Install an app</span>
@@ -126,16 +130,14 @@ export const SLIDES: PitchSlide[] = [
                 <span className="pk-strike" style={d(2)}>Buy a coin to pay the fee</span>
               </li>
             </ol>
-            <p className="pk-lead pk-ink">Only then does the first dollar arrive.</p>
-          </div>
-          <div className="pk-problem-art pk-fade" style={d(4)}>
-            <Mascot pose="phone" size="lg" enter="none" className="pk-mascot" />
+            <p className="pk-lead pk-ink">Lumenia removes all three.</p>
           </div>
         </div>
         <p className="pk-foot">
           Source:{" "}
           <Src href="https://remittanceprices.worldbank.org/">World Bank, Remittance Prices Worldwide, Issue 54</Src>{" "}
-          (Q3 2025 data).
+          (Q3 2025 data). Lumenia makes no total-cost claim yet: cash-out is a licensed partner&apos;s step, with its own
+          price.
         </p>
       </>
     ),
@@ -145,9 +147,10 @@ export const SLIDES: PitchSlide[] = [
     title: "Why now",
     tone: "light",
     notes: [
-      "The money is already moving: stablecoin payments grew 45% to $482B in the first nine months of 2026 while supply barely moved. That is usage, not speculation.",
-      "The rails reach everywhere that matters: USDC is natively issued on 38 blockchains, and Circle CCTP moves it between more than 30 of them. Rules exist now too: the GENIUS Act in the US, MiCA in the EU.",
-      "Our first corridor is Europe to Türkiye. Legal position: Lumenia is non-custodial software, and we are getting a written opinion from Turkish counsel before real money opens beyond the pilot.",
+      "The money is already moving: stablecoin payments grew 45% to $482B in the first nine months of 2026 while supply barely moved. That is usage, mostly business payments so far; Allium does not break out remittances.",
+      "USDC is natively issued on 38 blockchains, and it arrives on Stellar from other chains through Circle CCTP. Rules exist now too: the GENIUS Act in the US, MiCA in the EU.",
+      "Our target first corridor is Europe to Türkiye. Official remittances to Türkiye were $761M in 2025, and the route costs about 4% from Germany, so our case there is reach, not price. Its peer-to-peer crypto economy grew fivefold in a year to $3.56B, and its central bank bars paying for goods and services in crypto.",
+      "Our own reading, not yet a legal opinion: Lumenia is non-custodial software. We asked a Turkish law firm on 16 October to quote for a written opinion, and real money stays invite-only until we have it.",
     ],
     body: (
       <>
@@ -169,37 +172,34 @@ export const SLIDES: PitchSlide[] = [
             <p className="pk-body pk-ink">in personal remittances received worldwide in 2025</p>
           </div>
           <div className="pk-market-stat pk-in" style={d(4)}>
-            <p className="pk-num pk-num-sm">$70B</p>
-            <p className="pk-body pk-ink">of USDC in circulation, natively issued on 38 blockchains</p>
-          </div>
-          <div className="pk-market-stat pk-in" style={d(5)}>
-            <p className="pk-num pk-num-sm">30+</p>
-            <p className="pk-body pk-ink">chains joined by Circle CCTP, with Stellar among them since May 2026</p>
+            <p className="pk-num pk-num-sm">30</p>
+            <p className="pk-body pk-ink">chains on Circle CCTP, which added Stellar in May 2026</p>
           </div>
         </div>
         <div className="pk-cards">
-          <div className="pk-corridor pk-in" style={d(6)}>
-            <p className="pk-h3">Our first corridor: Europe to T&uuml;rkiye</p>
+          <div className="pk-corridor pk-in" style={d(5)}>
+            <p className="pk-h3">Our target first corridor: Europe to T&uuml;rkiye</p>
             <p className="pk-body">
-              2.6 million people with Turkish roots live in Germany alone. In T&uuml;rkiye, annual inflation is 29.73%, and
-              the peer-to-peer crypto economy grew fivefold in a year to $3.56B.
+              2.6 million people with Turkish roots live in Germany alone, and annual inflation in T&uuml;rkiye was 29.73%
+              in September 2026. The route costs about 4% from Germany, so our case is reach, not price. Cash-out needs a
+              licensed partner.
             </p>
           </div>
-          <div className="pk-corridor pk-in" style={d(7)}>
-            <p className="pk-h3">The rules now exist</p>
+          <div className="pk-corridor pk-in" style={d(6)}>
+            <p className="pk-h3">The rules are arriving</p>
             <p className="pk-body">
-              The US GENIUS Act (July 2025) and the EU&apos;s MiCA (June 2024) set rules for dollar stablecoins.
+              The US GENIUS Act (July 2025) and the EU&apos;s MiCA (June 2024) set rules for dollar stablecoins. T&uuml;rkiye
+              is the open question: we are seeking a written legal opinion.
             </p>
           </div>
         </div>
         <p className="pk-foot">
           Sources: <Src href="https://www.allium.so/reports/state-of-stablecoins-and-payments-q3-2026">Allium, Q3 2026</Src>;{" "}
           <Src href="https://data.worldbank.org/indicator/BX.TRF.PWKR.CD.DT">World Bank</Src>;{" "}
-          <Src href="https://www.circle.com/usdc">Circle, 29 Oct 2026</Src>;{" "}
           <Src href="https://developers.circle.com/cctp/concepts/supported-chains-and-domains">Circle CCTP docs</Src>;{" "}
           <Src href="https://www.destatis.de/DE/Presse/Pressemitteilungen/2026/10/PD26_377_122.html">Destatis, Oct 2026</Src>;{" "}
-          TurkStat via the <Src href="https://www.tcmb.gov.tr/wps/wcm/connect/EN/TCMB+EN/Main+Menu/Statistics/Inflation+Data">CBRT, Sept 2026</Src>;{" "}
-          <Src href="https://www.chainalysis.com/blog/middle-east-north-africa-crypto-adoption-2026/">Chainalysis, Oct 2026</Src>.
+          TurkStat via the <Src href="https://www.tcmb.gov.tr/wps/wcm/connect/EN/TCMB+EN/Main+Menu/Statistics/Inflation+Data">CBRT</Src>;{" "}
+          <Src href="https://datacatalog.worldbank.org/search/dataset/0037898/remittance-prices-worldwide">World Bank RPW dataset, Q3 2025</Src>.
         </p>
       </>
     ),
@@ -209,10 +209,10 @@ export const SLIDES: PitchSlide[] = [
     title: "How it works",
     tone: "light",
     notes: [
-      "Walk the three steps on the real screens. These are the test network's screens, which is why the badge says practice money.",
-      "The link is private by default: a chat preview shows the Lumenia name and nothing else, no amount and no sender.",
-      "Why a link and not an IBAN or a phone number: those only reach someone who already has an account somewhere. The link carries the money and opens the account at the moment it arrives.",
-      "If asked about others: Beans prompts the recipient to download its app. Morse asks for identity verification and has Türkiye in closed beta. TipLink's link is the wallet, on Solana. Felix shows the demand for remittances over WhatsApp.",
+      "Walk the three steps. The claim screens are the test network's, which is why the badge says practice money.",
+      "The link is private by default: a chat preview says someone sent dollars by link, with no amount and no sender. The amount is still public on the ledger.",
+      "Why a link and not an IBAN or a phone number: those only reach someone who already has an account somewhere. The link unlocks the money and opens the account at the moment it arrives.",
+      "Others ask the recipient to install an app, pass an identity check or already hold a wallet before the money is theirs. Lumenia asks for none of that first.",
     ],
     body: (
       <>
@@ -222,28 +222,28 @@ export const SLIDES: PitchSlide[] = [
               How it works
             </p>
             <h2 className="pk-h1 pk-in" style={d(1)}>
-              Three steps. The link carries the money.
+              Three steps. The link unlocks the money.
             </h2>
             <ol className="pk-flow">
               <li className="pk-flow-step pk-in" style={d(2)}>
-                <Icon name="send" />
+                <Icon src="/pitch/icon-send.webp" />
                 <div>
                   <p className="pk-h3">Send</p>
                   <p className="pk-small">Pick an amount. The dollars wait in an escrow contract on the ledger.</p>
                 </div>
               </li>
               <li className="pk-flow-step pk-in" style={d(3)}>
-                <Icon name="contacts" />
+                <Icon src={`${ICONS}/icon-contacts.webp`} />
                 <div>
                   <p className="pk-h3">Share</p>
-                  <p className="pk-small">Paste it in any chat. The preview shows no amount and no name.</p>
+                  <p className="pk-small">Paste the link in any chat. The preview shows no amount and no name.</p>
                 </div>
               </li>
               <li className="pk-flow-step pk-in" style={d(4)}>
-                <Icon name="check" />
+                <Icon src={`${ICONS}/icon-check.webp`} />
                 <div>
                   <p className="pk-h3">Claim</p>
-                  <p className="pk-small">One tap opens an account and the dollars land. Target: about 30 seconds.</p>
+                  <p className="pk-small">One tap opens an account and the dollars land. Target: about 30 s.</p>
                 </div>
               </li>
             </ol>
@@ -261,12 +261,13 @@ export const SLIDES: PitchSlide[] = [
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img className="pk-shot pk-shot--claim" src="/pitch/claim-before.webp" width={1140} height={845} alt="The claim screen: Someone sent you money, $0.50, verified on the ledger, no app, no wallet, you pay nothing, with a button that says Take $0.50." />
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="pk-shot pk-shot--done" src="/pitch/claim-after.webp" width={992} height={1134} alt="After claiming: It's yours. Network fee $0.00, covered by Lumenia. The account was just created on Stellar." />
+            <img className="pk-shot pk-shot--done" src="/pitch/claim-after.webp" width={900} height={852} alt="After claiming: $0.50. It's yours. Network fee $0.00, covered by Lumenia." />
           </div>
         </div>
         <p className="pk-foot">
-          Real product screens, on the test network. A one-to-one link can be taken back by the sender after 7 days. Claim
-          time is a target, not yet a published measurement.
+          Claim screens are real product screens on the test network; the chat is a test page, not a chat app. A link is
+          like cash: whoever opens it first can claim it, so real-money links carry a password by default. After 7 days the
+          sender can take back an unclaimed link. Claim time is a target, not yet a published measurement.
         </p>
       </>
     ),
@@ -277,9 +278,9 @@ export const SLIDES: PitchSlide[] = [
     tone: "dark",
     notes: [
       "The contract is the escrow. It releases a drop only to the account that the link's key signed for, so the relayer that submits the claim and pays the fee can refuse but never redirect.",
-      "The same contract runs group links (one link, equal shares for the first N people) and the sender's take-back after expiry.",
-      "We compose on what exists: Circle's USDC, Soroban contracts, Stellar's sponsored reserves, Circle CCTP, OpenZeppelin's contract libraries.",
-      "Be plain about the stage: the contract is upgradeable by a 2-of-3 multisig and has no third-party audit yet. It is prepared for one, and the upgrade key is the one owner power its invariants cannot bind.",
+      "The same contract runs group links (one link, a pot of N equal shares) and the sender's take-back after expiry. Nothing returns by itself: the sender has to take it back.",
+      "We compose on what exists: Circle's USDC, Stellar smart contracts, Stellar's account sponsorship, Circle CCTP, OpenZeppelin's contract libraries.",
+      "Be plain about the stage: the contract is upgradeable by a 2-of-3 multisig whose three keys the founder holds today, with no timelock yet, and it has no third-party audit. We are preparing the package for one. The upgrade key is the one owner power the contract's own rules cannot limit.",
     ],
     body: (
       <>
@@ -289,58 +290,49 @@ export const SLIDES: PitchSlide[] = [
         <h2 className="pk-h1 pk-in" style={d(1)}>
           The contract decides who gets paid.
           <br />
-          Our server can only say no.
+          Our relayer can only say no.
         </h2>
-        <div className="pk-engine">
-          <div className="pk-diagram pk-in" style={d(2)}>
-            <div className="pk-node">
-              <p className="pk-micro">From</p>
-              <p className="pk-h3">The sender</p>
-            </div>
-            <span className="pk-arrow" aria-hidden="true" />
-            <div className="pk-node pk-node--escrow">
-              <p className="pk-micro">Held by</p>
-              <p className="pk-h3">An escrow contract on the ledger</p>
-              <p className="pk-small">Pays only the account the link&apos;s key signed for</p>
-            </div>
-            <span className="pk-arrow" aria-hidden="true" />
-            <div className="pk-node">
-              <p className="pk-micro">To</p>
-              <p className="pk-h3">The recipient&apos;s account</p>
-            </div>
-            <div className="pk-relayer">
-              <p className="pk-small">
-                <b>Lumenia&apos;s relayer</b> pays the fee and submits the claim. It can refuse one. It cannot send the
-                money anywhere else. Unclaimed after the deadline, the money goes back to the sender.
-              </p>
-            </div>
+        <div className="pk-diagram pk-in" style={d(2)}>
+          <div className="pk-node">
+            <p className="pk-micro">From</p>
+            <p className="pk-h3">The sender</p>
+            <p className="pk-small">Locks the dollars and gets a link</p>
           </div>
-          <ul className="pk-built pk-in" style={d(3)}>
-            <li>
-              <b>Private links</b> no amount or name in a chat preview
-            </li>
-            <li>
-              <b>Group links</b> one link, equal shares for a whole room
-            </li>
-            <li>
-              <b>Request money</b> ask, and get paid by link
-            </li>
-            <li>
-              <b>Guard rails</b> caps that fail closed, a kill switch, a 15-minute watchdog
-            </li>
-          </ul>
+          <span className="pk-arrow" aria-hidden="true" />
+          <div className="pk-node pk-node--escrow">
+            <p className="pk-micro">Held by</p>
+            <p className="pk-h3">An escrow contract on the ledger</p>
+            <p className="pk-small">Pays only the account the link holder chose</p>
+          </div>
+          <span className="pk-arrow" aria-hidden="true" />
+          <div className="pk-node">
+            <p className="pk-micro">To</p>
+            <p className="pk-h3">The recipient&apos;s account</p>
+            <p className="pk-small">Opened at the claim, with no gas to pay</p>
+          </div>
+          <div className="pk-relayer">
+            <p className="pk-small">
+              <b>Lumenia&apos;s relayer</b> pays the fee and submits the claim. It can refuse one. It cannot send the money
+              anywhere else. After the deadline the sender can take back an unclaimed link; it does not return by itself.
+              Spending caps, a kill switch and a 15-minute watchdog sit on top.
+            </p>
+          </div>
         </div>
-        <div className="pk-composes pk-in" style={d(4)}>
+        <div className="pk-composes pk-in" style={d(3)}>
           <span className="pk-micro">Built on</span>
           <span className="pk-chip">Circle USDC</span>
-          <span className="pk-chip">Soroban contracts</span>
-          <span className="pk-chip">Sponsored reserves</span>
+          <span className="pk-chip">Stellar smart contracts</span>
+          <span className="pk-chip">Stellar account sponsorship</span>
           <span className="pk-chip">Circle CCTP</span>
           <span className="pk-chip">OpenZeppelin for Stellar</span>
         </div>
         <p className="pk-foot">
-          Escrow contract CAC5JYQ2&hellip;WGR4 on Stellar mainnet. Upgrades need 2 of 3 owner keys. Audit-ready, not
-          audited.
+          Escrow contract{" "}
+          <Src href="https://stellar.expert/explorer/public/contract/CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4">
+            CAC5JYQ2&hellip;WGR4
+          </Src>{" "}
+          on Stellar mainnet. Upgrades need 2 of 3 owner keys, all held by the founder today, with no timelock yet: an
+          upgrade takes effect at once and new code could move escrowed funds. Not audited.
         </p>
       </>
     ),
@@ -350,10 +342,10 @@ export const SLIDES: PitchSlide[] = [
     title: "Where we are",
     tone: "light",
     notes: [
-      "Say the size out loud: 109 transfers, about $4.40 in total, in a hand-approved pilot capped at $5 per transfer. It proves the plumbing with real money. It is not demand, and most of it came from one scripted test run.",
-      "If asked: there have been no new mainnet transfers since 30 August 2026. The next cohort is exactly what we are asking partners for.",
-      "The product is open to anyone on the test network: send, share, claim, group links, request money, take-back.",
-      "The escrow is engineered for an audit: 29 contract tests, 99% line coverage, 51 of 52 mutants caught, a 2-of-3 multisig owner. The extension is live in both browser stores.",
+      "Say the size out loud: 109 transfers, about $4.40 in total, in a hand-approved pilot capped at $5 per link. It proves the plumbing with real money. It is not demand: most transfers by count, though only $0.26 by value, came from one scripted test run.",
+      "There have been no new mainnet transfers since 30 August 2026. The next cohort is exactly what we are asking partners for.",
+      "The product is open to anyone on the test network: send, claim, group links, request money, take-back.",
+      "The escrow's test evidence so far: 29 contract tests, 97% of its lines run, 51 of 52 injected bugs caught. The owner is a 2-of-3 multisig, all keys founder-held. The extension is available in both browser stores.",
       "The open question we want partners for: does a person who receives a link go on to send one? We count that, not addresses.",
     ],
     body: (
@@ -362,7 +354,7 @@ export const SLIDES: PitchSlide[] = [
           Where we are
         </p>
         <h2 className="pk-h1 pk-in" style={d(1)}>
-          Working with real money.
+          Proven with real money.
           <br />
           Early, capped, and reported at real size.
         </h2>
@@ -371,21 +363,21 @@ export const SLIDES: PitchSlide[] = [
             <dt className="pk-small">Real USDC transfers on mainnet</dt>
             <dd>
               <span className="pk-num">109</span>
-              <span className="pk-body pk-ink">about $4.40 in total, median $0.002</span>
+              <span className="pk-body pk-ink">about $4.40 in total, median payment $0.002</span>
             </dd>
           </div>
           <div className="pk-stat pk-in" style={d(3)}>
-            <dt className="pk-small">USDC from Base, minted on Stellar</dt>
+            <dt className="pk-small">USDC arriving on Stellar from Base</dt>
             <dd>
-              <span className="pk-num">16&nbsp;s</span>
-              <span className="pk-body pk-ink">through Circle CCTP, on testnet</span>
+              <span className="pk-num">16-26&nbsp;s</span>
+              <span className="pk-body pk-ink">through Circle CCTP Fast Transfer, on testnet</span>
             </dd>
           </div>
           <div className="pk-stat pk-in" style={d(4)}>
-            <dt className="pk-small">Line coverage of the escrow contract</dt>
+            <dt className="pk-small">Escrow contract code run by its 29 tests</dt>
             <dd>
-              <span className="pk-num">99%</span>
-              <span className="pk-body pk-ink">29 tests, 51 of 52 mutants caught</span>
+              <span className="pk-num">97%</span>
+              <span className="pk-body pk-ink">51 of 52 injected bugs caught</span>
             </dd>
           </div>
         </dl>
@@ -404,9 +396,11 @@ export const SLIDES: PitchSlide[] = [
           What we measure next: <b>how many people who receive a link go on to send one.</b>
         </p>
         <p className="pk-foot">
-          Mainnet pilot, July to August 2026: hand-approved wallets, $5 cap per transfer, largest transfer $1.00, most
-          transfers from one scripted test run, so read it as a working proof, not as demand. CCTP: Base Sepolia to Stellar
-          testnet, 19 Sept 2026, 16 to 26 s in test runs. No third-party audit yet.
+          Mainnet pilot, July to August 2026, no transfers since 30 Aug: hand-approved wallets, $5 cap per link, largest
+          transfer $1.00. Count from our own records on 28 Aug; 92 sponsor-paid USDC operations can be re-counted on Horizon.
+          Value from a Horizon recount on 6 Sept. Most transfers by count, only $0.26 by value, came from one scripted test
+          run, and most used the Claimable Balance path, not the escrow: a working proof, not demand. CCTP: Base Sepolia to
+          Stellar testnet, 19 Sept 2026, three test runs (16, 18 and 26 s). No third-party audit yet.
         </p>
       </>
     ),
@@ -416,10 +410,10 @@ export const SLIDES: PitchSlide[] = [
     title: "Work with us",
     tone: "light",
     notes: [
-      "Every claim opens a funded account for someone who had none. The question for a partner is where that person goes next.",
-      "Wallets and exchanges: the escrow can pay a claim to any account the recipient picks, so your app can be the place it lands. The contract already allows it; we build that button with you.",
-      "Cash-out providers: recipients who want local money. Lumenia does not take custody, so the licensed step stays yours.",
-      "Chains, ecosystems, communities: one group link pays a whole room, each person into an account of their own, and USDC can arrive from other chains through Circle CCTP.",
+      "Every claim opens a funded account, and for a new recipient it is their first. The question for a partner is where that person goes next.",
+      "Wallets: the escrow can pay a claim to any Stellar account with a USDC trustline that the recipient picks, so your app can be the place it lands. The contract already allows it; we build that button with you. Exchanges that credit by memo need a second step, because a contract call cannot carry a memo: claim into the new account, then a payment with your memo.",
+      "Cash-out providers: recipients who want local money. Lumenia does not take custody, so the licensed step stays yours, and the recipient chooses it.",
+      "Chains and ecosystems: USDC can arrive through Circle CCTP, proven from Base on testnet, and the recipient lands on Stellar. Communities and events: one group link holds a pot of equal shares, per address rather than per person.",
     ],
     body: (
       <>
@@ -429,7 +423,7 @@ export const SLIDES: PitchSlide[] = [
               Work with us
             </p>
             <h2 className="pk-h1 pk-in" style={d(1)}>
-              Every claim opens a funded account. You decide where it goes next.
+              Every claim opens a funded account. Give that person a next step.
             </h2>
           </div>
           <div className="pk-partners-art pk-fade" style={d(1)}>
@@ -444,41 +438,41 @@ export const SLIDES: PitchSlide[] = [
           </div>
           <div className="pk-partner pk-in" style={d(2)} role="row">
             <span role="cell" className="pk-partner-who">
-              <Icon name="key" />
+              <Icon src={`${ICONS}/icon-key.webp`} />
               <span className="pk-h3">A wallet or an exchange</span>
             </span>
             <span role="cell" className="pk-body">New users who arrive already holding dollars</span>
-            <span role="cell" className="pk-body pk-muted">A claim that pays straight into your app</span>
+            <span role="cell" className="pk-body pk-muted">A claim straight into your wallet. For an exchange, a claim, then a payment with your memo</span>
           </div>
           <div className="pk-partner pk-in" style={d(3)} role="row">
             <span role="cell" className="pk-partner-who">
-              <Icon name="hand" />
+              <Icon src={`${ICONS}/icon-hand.webp`} />
               <span className="pk-h3">A cash-out provider</span>
             </span>
             <span role="cell" className="pk-body">Recipients who want local money, the moment they claim</span>
-            <span role="cell" className="pk-body pk-muted">A licensed exit, offered inside the claim</span>
+            <span role="cell" className="pk-body pk-muted">Licensed cash-out the recipient can choose after claiming, once counsel confirms the model</span>
           </div>
           <div className="pk-partner pk-in" style={d(4)} role="row">
             <span role="cell" className="pk-partner-who">
-              <Icon name="shield" />
+              <Icon src={`${ICONS}/icon-shield.webp`} />
               <span className="pk-h3">A chain or an ecosystem</span>
             </span>
-            <span role="cell" className="pk-body">Onboarding with nothing to install</span>
-            <span role="cell" className="pk-body pk-muted">Campaigns paid by group links, with USDC in through Circle CCTP</span>
+            <span role="cell" className="pk-body">Your USDC holders pay anyone by link. The recipient&apos;s account is on Stellar today</span>
+            <span role="cell" className="pk-body pk-muted">Campaigns funded with USDC through Circle CCTP, proven from Base on testnet</span>
           </div>
           <div className="pk-partner pk-in" style={d(5)} role="row">
             <span role="cell" className="pk-partner-who">
-              <Icon name="contacts" />
+              <Icon src={`${ICONS}/icon-contacts.webp`} />
               <span className="pk-h3">A community or an event</span>
             </span>
-            <span role="cell" className="pk-body">A whole room paid with one link</span>
-            <span role="cell" className="pk-body pk-muted">Equal shares for each person, leftovers back to the organiser</span>
+            <span role="cell" className="pk-body">A small group paid with one link</span>
+            <span role="cell" className="pk-body pk-muted">Equal shares from one pot. The organiser can take back what is left after the link closes</span>
           </div>
         </div>
         <p className="pk-foot">
           Money waits in the escrow contract on the ledger, not in an account of ours, until it is claimed or taken back.
-          Group links run on mainnet inside the pilot caps. USDC in through CCTP is proven on testnet. Integrations are
-          built with each partner.
+          During the pilot a group link on mainnet holds at most $5 across 6 shares (30 shares on testnet), and it counts
+          addresses, not people. Integrations are built with each partner.
         </p>
       </>
     ),
@@ -490,7 +484,7 @@ export const SLIDES: PitchSlide[] = [
     notes: [
       "Close on the three concrete asks, not on a vision.",
       "A pilot cohort is the one that moves the open question: we need real people paying real people.",
-      "Scan the code: the practice version runs in any phone's browser in under a minute, nothing to install.",
+      "Scan the code: a practice link opens in your phone's browser, nothing to install, and we target about 30 seconds. This demo uses our simpler Claimable Balance link, not the escrow on the earlier slides.",
     ],
     body: (
       <>
@@ -505,11 +499,11 @@ export const SLIDES: PitchSlide[] = [
             <ol className="pk-asks">
               <li className="pk-in" style={d(2)}>
                 <p className="pk-h3">A pilot cohort</p>
-                <p className="pk-small">A community, an app or an event with real people to pay.</p>
+                <p className="pk-small">40 to 60 real people to pay, from a community, an app, an event or an ecosystem.</p>
               </li>
               <li className="pk-in" style={d(3)}>
-                <p className="pk-h3">A licensed cash-out partner</p>
-                <p className="pk-small">Starting with T&uuml;rkiye, our first corridor.</p>
+                <p className="pk-h3">A cash-out partner</p>
+                <p className="pk-small">Licensed, starting with T&uuml;rkiye, our target first corridor.</p>
               </li>
               <li className="pk-in" style={d(4)}>
                 <p className="pk-h3">An integration</p>
@@ -520,6 +514,9 @@ export const SLIDES: PitchSlide[] = [
               <p className="pk-h3">Meri&ccedil; Cintosun, founder</p>
               <p className="pk-small">
                 Stellar T&uuml;rkiye ambassador. Built the escrow contract, the relayer, the web app and the extension.
+              </p>
+              <p className="pk-body pk-ink">
+                Which one fits you? Write to <a className="pk-contact" href={`mailto:${CONTACT}`}>{CONTACT}</a>
               </p>
             </div>
           </div>
