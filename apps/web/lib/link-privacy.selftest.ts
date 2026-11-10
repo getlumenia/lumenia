@@ -448,6 +448,45 @@ function sectionA() {
     );
     ok(`  ...and it shows where a typed name goes, the moment one is typed`, /from\.trim\(\) && <p[^>]*>\{copy\.link\.nameNote\}<\/p>/.test(src));
   }
+
+  // What the send screens may put in the console, and which origin they mint a link against. The
+  // uncertain error carries the whole claim URL (DepositUncertainError.link), bearer key included,
+  // so a console line that formats the error object is the link in a bug report; and a link minted
+  // against window.location.origin on a preview deployment or the www host points there.
+  for (const screen of ["send", "group"]) {
+    const src = readFileSync(join(WEB_ROOT, "app", "(app)", screen, "page.tsx"), "utf8");
+    const calls = [...src.matchAll(/console\.(?:log|warn|error|info|debug|trace)\(([\s\S]*?)\);/g)].map((m) => m[1]!);
+    ok(
+      `app/(app)/${screen}: every console call logs errorName(e) and the record id, never the error itself, its message or the link`,
+      calls.length > 0 &&
+        calls.every((args) => {
+          const rest = args.replace(/errorName\(e\)/g, "");
+          return !/\be\b/.test(rest) && !/\.link\b|\.message\b|String\(|JSON\.stringify|\$\{/.test(rest);
+        }),
+      calls.join(" | "),
+    );
+    ok(
+      `app/(app)/${screen}: the deposit's link is minted against NEXT_PUBLIC_SITE_URL, with window.location.origin only as the fallback`,
+      /webOrigin: linkOrigin\(process\.env\.NEXT_PUBLIC_SITE_URL, window\.location\.origin\)/.test(src) && !/webOrigin: window\.location\.origin/.test(src),
+    );
+  }
+  ok(
+    "linkOrigin: the site URL's origin, without its path, query, fragment or trailing slash",
+    lumendrop.linkOrigin("https://getlumenia.com/", "https://preview.vercel.app") === "https://getlumenia.com" &&
+      lumendrop.linkOrigin("https://getlumenia.com/some/path?x=1#y", "https://preview.vercel.app") === "https://getlumenia.com" &&
+      lumendrop.linkOrigin("  https://getlumenia.com  ", "https://preview.vercel.app") === "https://getlumenia.com",
+  );
+  ok(
+    "  ...unset, empty, a bare host or a non-http scheme: the page's origin, its trailing slash dropped",
+    lumendrop.linkOrigin(undefined, "https://preview.vercel.app/") === "https://preview.vercel.app" &&
+      lumendrop.linkOrigin(null, "https://p.test") === "https://p.test" &&
+      lumendrop.linkOrigin("", "https://p.test") === "https://p.test" &&
+      lumendrop.linkOrigin("   ", "https://p.test") === "https://p.test" &&
+      lumendrop.linkOrigin("getlumenia.com", "https://p.test") === "https://p.test" &&
+      lumendrop.linkOrigin("javascript:alert(1)", "https://p.test") === "https://p.test",
+  );
+  ok("  ...and http stays, for a local build", lumendrop.linkOrigin("http://localhost:3000/", "https://p.test") === "http://localhost:3000");
+  ok("errorName: the class of an error, the type of anything else, never its message", lumendrop.errorName(new lumendrop.DepositUncertainError("ab".repeat(32), "https://x/#SECRET", 1)) === "DepositUncertainError" && lumendrop.errorName(new TypeError("https://x/#SECRET")) === "TypeError" && lumendrop.errorName("https://x/#SECRET") === "string");
 }
 
 /* ---------------------------------------- [b] ---------------------------------------- */

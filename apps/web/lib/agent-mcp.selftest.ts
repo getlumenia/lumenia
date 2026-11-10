@@ -10,6 +10,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Keypair } from "@stellar/stellar-sdk";
 import { buildAgentServer, depsFromEnv, type AgentDeps } from "./agent-mcp";
+import { DepositUncertainError } from "./lumendrop";
 import { localSignerFromSeed } from "./signer";
 
 let passed = 0;
@@ -23,6 +24,10 @@ const kp = Keypair.random();
 const calls: { createLink: unknown[]; reclaim: unknown[] } = { createLink: [], reclaim: [] };
 /** When true, the stub answers a take-back the way /v2-reclaim's 202 reaches reclaimV2. */
 let unconfirmedReclaim = false;
+/** When set, the stub fails the way lumendrop fails AFTER the POST: the hook has run, then this is thrown. */
+let afterPrepared: (() => Error) | null = null;
+const LINK_HEX = "ab".repeat(32);
+const DEADLINE = 1_800_000_000_000;
 const deps: AgentDeps = {
   signer: localSignerFromSeed(kp.rawSecretKey()),
   sponsorUrl: "https://sponsor.invalid",
@@ -31,7 +36,11 @@ const deps: AgentDeps = {
   createLink: async (o) => {
     calls.createLink.push(o);
     // The private shape (lib/lumendrop.ts v2LinkUrl): no amount in the link, the name after the key.
-    return { link: `${o.webOrigin}/v2/c/${"ab".repeat(32)}#SECRETFRAGMENT&s=${encodeURIComponent(o.from)}`, linkHex: "ab".repeat(32), hash: "deadbeef" };
+    const link = `${o.webOrigin}/v2/c/${LINK_HEX}#SECRETFRAGMENT&s=${encodeURIComponent(o.from)}`;
+    // As createV2Link does: the hook, with the link, before anything is posted.
+    await o.onPrepared?.({ link, linkHex: LINK_HEX, retrySafeAfter: DEADLINE, innerHash: "cd".repeat(32), expiry: o.expiry ?? 0, group: false, amount: o.amount });
+    if (afterPrepared) throw afterPrepared();
+    return { link, linkHex: LINK_HEX, hash: "deadbeef" };
   },
   listReclaimable: async () => [{ linkHex: "cd".repeat(32), usd: "2.00", expiry: 1_700_000_000 }],
   reclaim: async (o) => {
@@ -77,6 +86,41 @@ async function main() {
     ok("the escrow was asked with the sponsor and origin configured", (calls.createLink[0] as { sponsorUrl: string; webOrigin: string }).sponsorUrl === deps.sponsorUrl && (calls.createLink[0] as { webOrigin: string }).webOrigin === deps.webOrigin);
     const text = (r.content as { type: string; text?: string }[]).find((c) => c.type === "text")?.text ?? "";
     ok("the text names the network so the agent cannot confuse practice and real money", /testnet \(practice money\)/.test(text));
+    ok("the escrow is handed a hook that keeps the link BEFORE the POST", typeof (calls.createLink[0] as { onPrepared?: unknown }).onPrepared === "function");
+    ok("  ...and the structure says confirmed:true", (r.structuredContent as { confirmed?: boolean }).confirmed === true);
+  }
+
+  console.log("\n[create, undecided] the link kept before the POST comes back when the answer decides nothing");
+  {
+    const textOf = (r: Awaited<ReturnType<typeof client.callTool>>) => ((r.content as { type: string; text?: string }[]).find((c) => c.type === "text")?.text ?? "");
+    const link = `https://getlumenia.com/v2/c/${LINK_HEX}#SECRETFRAGMENT`;
+    // The relay's 202, settled by the escrow as "not yet": lumendrop throws the uncertain error.
+    afterPrepared = () => new DepositUncertainError(LINK_HEX, link, DEADLINE);
+    const r = await client.callTool({ name: "create_payment_link", arguments: { amount: "2", note: "Ayse's translation" } });
+    const sc = r.structuredContent as { link?: string; linkHex?: string; confirmed?: boolean; retrySafeAfter?: number | null; amount?: string; expiresAt?: string } | undefined;
+    ok("a deposit the escrow has not shown yet is not an error", r.isError !== true);
+    ok("  ...it carries the link, fragment included, its id and confirmed:false", sc?.link === link && sc?.linkHex === LINK_HEX && sc?.confirmed === false && sc?.amount === "2.00" && typeof sc?.expiresAt === "string");
+    ok("  ...and the deadline after which an empty escrow means nothing moved", sc?.retrySafeAfter === DEADLINE);
+    const text = textOf(r);
+    ok("  ...the text says accepted and not yet confirmed, carries the link, and says not to make another", /not yet confirmed/.test(text) && text.includes(link) && /Do not create another link/.test(text) && /reclaim_link/.test(text));
+    ok("  ...and never 'Link ready'", !/Link ready/.test(text));
+
+    // An escrow read empty at the bare deadline by this machine's clock, after the hook ran: the
+    // link is kept, so it goes back with confirmed:false rather than being lost with the throw.
+    afterPrepared = () => new Error("/v2-deposit -> not submitted: {}");
+    const empty = await client.callTool({ name: "create_payment_link", arguments: { amount: "2" } });
+    const emptySc = empty.structuredContent as { link?: string; confirmed?: boolean; retrySafeAfter?: number | null } | undefined;
+    ok("an escrow read empty at the deadline, after the hook ran, hands back the kept link as confirmed:false", empty.isError !== true && emptySc?.confirmed === false && emptySc?.link?.includes("#SECRETFRAGMENT") === true && emptySc?.retrySafeAfter === DEADLINE);
+    ok("  ...and says so", /not yet confirmed/.test(textOf(empty)));
+
+    // A stated refusal after the hook ran: nothing was submitted, so it is a refusal and no link.
+    afterPrepared = () => new Error('/v2-deposit -> 403: {"error":"this wallet is not on the pilot allowlist yet"}');
+    const refused = await client.callTool({ name: "create_payment_link", arguments: { amount: "2" } });
+    ok("a stated refusal after the hook ran is a refusal carrying the sponsor's words, with no link", refused.isError === true && /pilot allowlist/.test(textOf(refused)) && refused.structuredContent === undefined && !textOf(refused).includes("SECRETFRAGMENT"));
+    afterPrepared = () => new Error('/v2-deposit -> 400: {"error":"amount above the cap"}');
+    const capped = await client.callTool({ name: "create_payment_link", arguments: { amount: "2" } });
+    ok("  ...a 400 too", capped.isError === true && /above the cap/.test(textOf(capped)));
+    afterPrepared = null;
   }
 
   console.log("\n[refuse] bad amounts never reach the escrow");

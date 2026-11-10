@@ -42,7 +42,9 @@ import { accountsForTotal } from "../../../lib/accounts-total";
 import { getTestMoney } from "../../../lib/receive";
 import {
   createV2GroupLink,
+  errorName,
   groupTotal,
+  linkOrigin,
   v2DepositLanded,
   DepositUncertainError,
   MAX_POOL_SLOTS,
@@ -53,11 +55,22 @@ import {
 import { claimPasswordProblem } from "../../../lib/claim-password";
 import { sendEvent } from "../../../lib/events";
 import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
-import { netKey } from "../../../lib/scoped-store";
 import { activeNetwork } from "../../../lib/network";
 import { eventMode } from "../../../lib/event-mode";
 import { copy } from "../../../lib/copy";
-import { rememberLink } from "../../../lib/sent-links";
+import {
+  confirmedSentRecord,
+  forgetSent,
+  markSentConfirmed,
+  openSend,
+  pendingSentRecord,
+  readSentRecords,
+  recallLink,
+  rememberLink,
+  saveSent,
+  sentIdOf,
+  type SentRecord,
+} from "../../../lib/sent-links";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
 import { LinkReadyCard } from "../../../components/brand/LinkReadyCard";
@@ -121,34 +134,11 @@ function closingLabel(unixSec: number): string {
   });
 }
 
-/**
- * The metadata half of a sent link, exactly as /send stores it, plus `slots`.
- *
- * `slots` is what makes this record a POOL to everything that reads it later: `loadReclaimableV2`
- * and `/sent/[id]` probe `get_pool` on the strength of it, and without it a pool is asked about
- * with `get_drop`, answers "nothing here", and reads as settled while the money is still on the
- * link. The link itself is NOT in this record, its #fragment is a bearer key, and this lives in
- * plain localStorage (see lib/sent-links.ts).
- */
-interface SentRecord {
-  balanceId: string;
-  hasLink: boolean;
-  amount: string;
-  from: string;
-  at: string;
-  /** how many equal shares the pot holds; present only on a group link */
-  slots?: number;
-}
-
-function saveSent(id: string, rec: SentRecord) {
-  try {
-    const all = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as Record<string, SentRecord>;
-    all[id] = rec;
-    localStorage.setItem(netKey("lumenia.sent"), JSON.stringify(all));
-  } catch {
-    /* localStorage blocked, the link still works, just no local tracking */
-  }
-}
+/* The metadata half of a pot, exactly as /send stores a link's, plus `slots`, is lib/sent-links.ts
+   SentRecord. `slots` is what makes the record a POOL to everything that reads it later:
+   `loadReclaimableV2` and `/sent/[id]` probe `get_pool` on the strength of it, and without it a pool
+   is asked about with `get_drop`, answers "nothing here", and reads as settled while the money is
+   still on the link. The record is written before the deposit is posted, and confirmed after. */
 
 export default function GroupPage() {
   const { status, account, accounts, getSigner } = useWallet();
@@ -186,11 +176,16 @@ export default function GroupPage() {
   } | null>(null);
   /* A deposit that was submitted and could not be confirmed. Its own state, never `error`: an error
      screen invites the retry, and on a pot the retry escrows the WHOLE amount a second time. It
-     carries everything the ready card needs, because the pot may yet land and the claim URL we are
-     holding is the only copy of it. */
+     carries everything the ready card needs, because the pot may yet land. Its record is on disk as
+     "submitted" (lib/sent-links.ts), written before the POST, so it comes back on the next mount of
+     this screen too; `id` is that record's. */
   const [uncertain, setUncertain] = useState<{
+    id: string;
     linkHex: string;
-    link: string;
+    /** null for a record whose link this device could not recall; it is re-checked all the same. */
+    link: string | null;
+    /** false for a one-to-one link /send made: asked of get_drop, and handed to /sent/[id] once it lands. */
+    group: boolean;
     perShare: string;
     slots: number;
     total: string;
@@ -237,6 +232,19 @@ export default function GroupPage() {
       alive = false;
     };
   }, [totalKey]);
+
+  /* AN UNCONFIRMED POT OUTLIVES THIS SCREEN, exactly as on /send: the record written before the
+     POST (`phase: "submitted"`, lib/sent-links.ts) is read back on mount and before every make, and
+     the screen stays on that pot until the escrow has answered or the person chooses to start a
+     new one anyway. Above the early returns, like every hook here. */
+  const anyway = useRef(false);
+  const restored = useRef(false);
+  useEffect(() => {
+    if (!account || restored.current) return;
+    restored.current = true;
+    void restoreOpenSend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account]);
 
   /* No name is filled in for the sender (D3, as on /send): a pot carries a name only when the
      sender types one, and the claim page says "Someone" otherwise. */
@@ -323,7 +331,14 @@ export default function GroupPage() {
        escrow holds would be minutes apart. */
     const at = closingAt(closing, Date.now());
 
+    /* A second pot is refused while the first is undecided (lib/sent-links.ts openSend): the screen
+       goes back to that one instead, and only "start a new one anyway" lifts it, for this visit. */
+    if (!anyway.current && (await restoreOpenSend())) return;
+
     setBusy(true);
+    /* What the deposit wrote before its POST, for the catch below. An object rather than a let: the
+       hook assigns it inside a closure, and narrowing would otherwise read it as never set. */
+    const kept: { id: string; record: SentRecord | null } = { id: "", record: null };
     try {
       let signer;
       try {
@@ -355,7 +370,7 @@ export default function GroupPage() {
         perShare: share.toFixed(2),
         slots,
         from: senderName,
-        webOrigin: window.location.origin,
+        webOrigin: linkOrigin(process.env.NEXT_PUBLIC_SITE_URL, window.location.origin),
         expiry: at,
         password: wantWord ? word : undefined,
         /* The public `seeded=1` marker only on a pot the team really funded (see `seeded` above).
@@ -363,18 +378,19 @@ export default function GroupPage() {
            person funded must never read as the team's: the sponsor counts the two apart. */
         seeded,
         preview: richPreview ? "rich" : "private",
+        /* BEFORE THE POST: the link, encrypted, and its record as "submitted" (lib/sent-links.ts),
+           `slots` included, which is what makes every later read ask get_pool. The POST is the
+           point of no return, and until this ran the only copy of the claim URL was in this closure. */
+        onPrepared: async (p) => {
+          kept.id = sentIdOf(p.linkHex);
+          await rememberLink(kept.id, p.link);
+          kept.record = pendingSentRecord(p, { from: senderName, locked: wantWord, now: Date.now() });
+          saveSent(kept.id, kept.record);
+        },
       });
 
-      const sentId = result.linkHex.slice(-8);
-      await rememberLink(sentId, result.link);
-      saveSent(sentId, {
-        balanceId: result.linkHex,
-        hasLink: true,
-        amount: result.total,
-        from: senderName,
-        at: new Date().toISOString(),
-        slots: result.slots,
-      });
+      // The sponsor's 200, or the escrow holding the pot: the record is confirmed; the link is already kept.
+      if (kept.record) saveSent(kept.id, confirmedSentRecord(kept.record));
       void sendEvent("send_link_created", account!.address, account!.address);
       setWord(""); // it lives in the link's derivation now; keep it out of memory
       setReady({
@@ -387,16 +403,21 @@ export default function GroupPage() {
         locked: wantWord,
       });
     } catch (e) {
-      console.error("[group]", e);
+      /* Only the failure's class and the record id reach the console (lib/lumendrop.ts errorName):
+         the uncertain error carries the whole claim URL, bearer key included. */
+      console.warn("[group] failed:", errorName(e), kept.id || "-");
       /* The one failure this screen must not guess at. A pot that is sitting in the ledger's queue
          and a pot that never left look identical from here, and a retry escrows the WHOLE amount a
-         second time under a fresh link key. So it gets its own screen, with no button that spends. */
+         second time under a fresh link key. So it gets its own screen, with no button that spends.
+         Its link and its record were written before the POST (onPrepared), so a reload and the Send
+         pill come back to that screen until the escrow has answered. */
       if (e instanceof DepositUncertainError) {
-        void rememberLink(e.linkHex.slice(-8), e.link);
         setNotYet("");
         setUncertain({
+          id: kept.id || sentIdOf(e.linkHex),
           linkHex: e.linkHex,
           link: e.link,
+          group: true,
           perShare: share.toFixed(2),
           slots,
           total,
@@ -406,6 +427,10 @@ export default function GroupPage() {
         });
         return;
       }
+      /* Anything else after the record was written is a refusal before submission (a status and
+         the sponsor's words) or an escrow read empty past the deadline: nothing moved, so the
+         record goes, or /sent would list a pot that holds nothing. */
+      if (kept.record) forgetSent(kept.id);
       const msg = (e as Error).message ?? "";
       /* The refusals worth repeating verbatim are the ones written for the person who hit them -
          the network scope, the share count, the per-share floor. Anything with a status code or an
@@ -423,26 +448,45 @@ export default function GroupPage() {
     }
   }
 
-  /* Submitted, unconfirmed. This screen's whole job is to stop a second pot being escrowed: it says
-     what is actually known, offers a read of the escrow, and offers no path that spends again. */
-  if (uncertain) {
-    async function recheck() {
-      setRechecking(true);
-      setNotYet("");
-      try {
-        const landed = await v2DepositLanded(uncertain!.linkHex, account!.address, { group: true });
-        if (landed === true) {
-          /* The escrow holds the pot: the link is real, and only NOW is the local record written -
-             a record for a pot that never landed would read as a settled link on /sent forever. */
-          const u = uncertain!;
-          saveSent(u.linkHex.slice(-8), {
-            balanceId: u.linkHex,
-            hasLink: true,
-            amount: u.total,
-            from: from.trim(),
-            at: new Date().toISOString(),
-            slots: u.slots,
-          });
+  /**
+   * The open send's screen, from its record (lib/sent-links.ts openSend): the link recalled from
+   * the encrypted store, the escrow asked once straight away. True when there is one. A one-to-one
+   * link /send made, or a pot whose link this device could not recall, is re-checked here all the
+   * same and handed to /sent/[id] once it lands.
+   */
+  async function restoreOpenSend(): Promise<boolean> {
+    const open = openSend(readSentRecords(), Date.now());
+    if (!open) return false;
+    const link = open.rec.hasLink ? await recallLink(open.id) : null;
+    const u = {
+      id: open.id,
+      linkHex: open.rec.balanceId,
+      link,
+      group: typeof open.rec.slots === "number",
+      perShare: open.rec.perShare ?? open.rec.amount,
+      slots: open.rec.slots ?? 1,
+      total: open.rec.amount,
+      expiry: open.rec.expiry ?? 0,
+      locked: Boolean(open.rec.locked),
+      safeAt: open.rec.retrySafeAfter ?? Number.POSITIVE_INFINITY,
+    };
+    setNotYet("");
+    setUncertain(u);
+    void recheck(u);
+    return true;
+  }
+
+  /* The escrow's answer for an unconfirmed pot: it holds it, and the record is confirmed and the
+     link is real; it can no longer land, and that is said, the record dropped and a new one
+     allowed; anything else, and the screen stays exactly here. */
+  async function recheck(u: NonNullable<typeof uncertain>) {
+    setRechecking(true);
+    setNotYet("");
+    try {
+      const landed = await v2DepositLanded(u.linkHex, account!.address, { group: u.group });
+      if (landed === true) {
+        markSentConfirmed(u.id);
+        if (u.group && u.link) {
           setReady({
             link: u.link,
             linkHex: u.linkHex,
@@ -453,21 +497,37 @@ export default function GroupPage() {
             locked: u.locked,
           });
           setUncertain(null);
-        } else if (landed === false && Date.now() >= uncertain!.safeAt) {
-          setUncertain(null);
-          setError("That one didn't go through. Nothing left your account, you can try again.");
         } else {
-          setNotYet(
-            landed === "unknown"
-              ? "We couldn't check just now. Nothing has changed, try again in a moment."
-              : "It hasn't arrived yet, and it can still get there. Check again in a few minutes.",
-          );
+          // A one-to-one link, or a pot this device could not recall: /sent/[id] draws both from the record.
+          router.push(`/sent/${u.id}`);
         }
-      } finally {
-        setRechecking(false);
+      } else if (landed === false && Date.now() >= u.safeAt) {
+        forgetSent(u.id);
+        setUncertain(null);
+        setError("That one didn't go through. Nothing left your account, you can try again.");
+      } else {
+        setNotYet(
+          landed === "unknown"
+            ? "We couldn't check just now. Nothing has changed, try again in a moment."
+            : "It hasn't arrived yet, and it can still get there. Check again in a few minutes.",
+        );
       }
+    } finally {
+      setRechecking(false);
     }
+  }
 
+  /** The person's explicit choice to make a new pot while the open one is undecided; lifted for this visit only. */
+  function startAnyway() {
+    anyway.current = true;
+    setNotYet("");
+    setUncertain(null);
+  }
+
+  /* Submitted, unconfirmed. This screen's whole job is to stop a second pot being escrowed: it says
+     what is actually known, offers a read of the escrow, and the only way past it that can spend
+     again is the person's own "start a new one anyway". */
+  if (uncertain) {
     return (
       <div className="flex flex-col gap-4 py-4">
         <h1 className="text-xl font-bold text-ink">We couldn&apos;t confirm this one</h1>
@@ -481,10 +541,21 @@ export default function GroupPage() {
           </p>
           {notYet && <p className="mt-3 text-sm font-medium text-ink">{notYet}</p>}
           <div className="mt-4">
-            <PrimaryButton loading={rechecking} loadingLabel="Checking…" onClick={recheck}>
+            <PrimaryButton loading={rechecking} loadingLabel="Checking..." onClick={() => void recheck(uncertain)}>
               Check again
             </PrimaryButton>
           </div>
+          <button
+            type="button"
+            onClick={startAnyway}
+            className="mt-4 text-sm text-ink-soft underline-offset-2 hover:underline"
+          >
+            Start a new one anyway
+          </button>
+          <p className="mt-1 text-xs text-ink-soft">
+            Only if you&apos;re sure. If this one did go through, a new one puts the money in twice.
+            If it lands later, it still shows in your activity and you can take the leftover back.
+          </p>
         </MoneyCard>
         <Link href="/activity" className="text-sm text-ink-soft underline-offset-2 hover:underline">
           See my activity

@@ -31,6 +31,15 @@ import { UnconfirmedSubmitError, isUnconfirmedSubmit, signedFacts, throwIfUnconf
 
 const RECLAIM_AFTER_SECONDS = (7 * 24 * 60 * 60).toString(); // money comes back after 7 days
 
+/**
+ * Statuses that decide nothing about a signed payment, the set lib/payout.ts reads a cash-out's
+ * answer with (the 202 is lib/unconfirmed.ts's own). The Worker answers its own refusals as 4xx
+ * and 503 before anything is submitted, so a 5xx on a value route is the platform's answer after
+ * the payment may already be on the network, and a 408 is a timeout the request may have been
+ * served through. 503 is deliberately absent: the kill-switch and the busy answer come first.
+ */
+const UNDECIDED_STATUS = new Set([408, 500, 502, 504, 522, 524]);
+
 export interface SendResult {
   link: string;
   balanceId: string;
@@ -72,8 +81,19 @@ async function postJson(url: string, body: unknown, signed?: SignedFacts): Promi
     if (signed) throw new UnconfirmedSubmitError(new URL(url).pathname, "", signed);
     throw e;
   }
-  const text = await res.text();
-  throwIfUnconfirmed(res.status, text, new URL(url).pathname, signed ?? null);
+  const route = new URL(url).pathname;
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    /* The reply died halfway through: the same undecided outcome as one that never came. */
+    if (signed) throw new UnconfirmedSubmitError(route, "", signed);
+    throw e;
+  }
+  throwIfUnconfirmed(res.status, text, route, signed ?? null);
+  /* A platform 5xx or a 408 on a route carrying a signed payment can arrive AFTER the sponsor
+     submitted it, so it is the ledger's to settle, like the 202, and never "nothing moved". */
+  if (signed && UNDECIDED_STATUS.has(res.status)) throw new UnconfirmedSubmitError(route, "", signed);
   if (!res.ok) throw new Error(`${new URL(url).pathname} → ${res.status}: ${text}`);
   return JSON.parse(text) as Record<string, unknown>;
 }

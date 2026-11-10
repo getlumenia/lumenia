@@ -191,6 +191,39 @@ async function getAccountRecord(pubkey: string): Promise<KeyRecord | null> {
   return r && isAccountRecord(r) ? r : null;
 }
 
+/**
+ * Does this device hold a key for `pubkey`? The claim screen asks before it resumes a claim into
+ * the account its latch names (lib/lumendrop.ts claimV2ToSponsoredAccount): the latch lives in
+ * localStorage and outlives "Leave this device", which clears only this store, and resuming into an
+ * account whose key is gone pays money to nobody. Blocked or unreadable storage answers false, which
+ * is the honest answer: a key this device cannot read is not one it holds.
+ */
+export async function hasAccountKey(pubkey: string): Promise<boolean> {
+  try {
+    return (await getAccountRecord(pubkey)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Can the keystore be opened at all? Asked BEFORE a claim mints a sponsored account: a browser that
+ * blocks IndexedDB (a private window on some browsers, a locked-down webview) can never keep the
+ * key, and finding that out after the account exists costs the sponsor a reserve per tap. An open,
+ * not a write: a quota that refuses the write is caught by savePhase1 itself, and the claim refuses
+ * there too (lib/claim-key.ts).
+ */
+export async function keystoreReady(): Promise<boolean> {
+  try {
+    if (typeof indexedDB === "undefined") return false;
+    const db = await openDb();
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function clearKeystore(): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
@@ -406,14 +439,19 @@ export async function savePhase2(
   const t0 = performance.now();
   const kekBytes = await deriveKek(password, salt, params);
   const deriveMs = performance.now() - t0;
-  const kek = await crypto.subtle.importKey("raw", bs(kekBytes), { name: "AES-GCM" }, false, [
-    "encrypt",
-  ]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv: bs(iv) }, kek, bs(seed)),
-  );
-  kekBytes.fill(0);
+  let ciphertext: Uint8Array;
+  try {
+    const kek = await crypto.subtle.importKey("raw", bs(kekBytes), { name: "AES-GCM" }, false, [
+      "encrypt",
+    ]);
+    ciphertext = new Uint8Array(
+      await crypto.subtle.encrypt({ name: "AES-GCM", iv: bs(iv) }, kek, bs(seed)),
+    );
+  } finally {
+    // On every path, not only after a successful encrypt (lib/recovery.ts does the same).
+    kekBytes.fill(0);
+  }
   // APPEND (id = pubkey): only overwrites the SAME account (e.g. locking home from
   // phase 1 → phase 2), never a different account.
   const previous = await getAccountRecord(pubkey);
@@ -444,8 +482,13 @@ export async function unlockPhase2(
   const t0 = performance.now();
   const kekBytes = await deriveKek(password, r.salt, r.argon);
   const deriveMs = performance.now() - t0;
-  const kek = await crypto.subtle.importKey("raw", bs(kekBytes), { name: "AES-GCM" }, false, ["decrypt"]);
-  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bs(r.iv) }, kek, bs(r.ciphertext));
-  kekBytes.fill(0);
+  let pt: ArrayBuffer;
+  try {
+    const kek = await crypto.subtle.importKey("raw", bs(kekBytes), { name: "AES-GCM" }, false, ["decrypt"]);
+    pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bs(r.iv) }, kek, bs(r.ciphertext));
+  } finally {
+    // A wrong password throws out of decrypt; the KEK is zeroed on that path too.
+    kekBytes.fill(0);
+  }
   return { seed: new Uint8Array(pt), deriveMs };
 }

@@ -30,6 +30,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
+  PriorAttemptUnreadError,
   claimV2ToSponsoredAccount,
   isTerminalClaimOutcome,
   loadDrop,
@@ -48,7 +49,16 @@ import { parseLinkFragment, unlockLink } from "../../../../lib/claim-password";
 import { classifyClaimError, type ClaimErrorInfo } from "../../../../lib/claim-error";
 import { copy } from "../../../../lib/copy";
 import { formatUsd } from "../../../../lib/money";
-import { getHome, savePhase1 } from "../../../../lib/keystore";
+import { getHome, hasAccountKey, keystoreReady, savePhase1 } from "../../../../lib/keystore";
+import { isStorageBlocked, keepClaimKey } from "../../../../lib/claim-key";
+import {
+  androidIntentHref,
+  detectInAppBrowser,
+  doneScreenPlan,
+  escapeOffer,
+  keyHolderNotice,
+  type InAppBrowser,
+} from "../../../../lib/webview";
 import { isSeededLink, sendEvent } from "../../../../lib/events";
 import { resolveNetwork, setActiveNetwork, type NetworkConfig } from "../../../../lib/network";
 
@@ -80,9 +90,22 @@ function settledCopy(
   link: V2LinkKind,
   /** The drop's amount as the escrow reported it, when the screen read it before anyone tapped. */
   amount?: string,
-): { title: string; body: string; home: boolean } {
+  /** already-yours only: whether this device still holds the key of the account the escrow paid. */
+  held = true,
+): { title: string; body: string; home: boolean; restore?: boolean } {
   switch (kind) {
     case "already-yours":
+      if (!held) {
+        /* The escrow's record names an account this device no longer holds a key for ("Leave this
+           device" clears the keystore; the latch outlives it, review P0-8). The money is there, and
+           only a backup of that account brings it back, so this must not say "on this phone". */
+        return {
+          title: "You already took your share",
+          body: "It went into an account that has since been removed from this phone. If you backed that account up, bring it back to see the money.",
+          home: false,
+          restore: true,
+        };
+      }
       /* The ONE settled answer that may say where the money is. The escrow keyed a share to this
          device's own payout address, and no other device has it, so this is not the convenient
          guess, it is the contract's own record of an earlier attempt whose answer was lost. */
@@ -201,7 +224,7 @@ export default function V2ClaimButton({
   const [hash, setHash] = useState("");
   const [noKey, setNoKey] = useState(false);
   /** The escrow's settled answer about this drop, and which escrow gave it. Null until one does. */
-  const [settled, setSettled] = useState<{ kind: SettledKind; link: V2LinkKind; amount?: string } | null>(null);
+  const [settled, setSettled] = useState<{ kind: SettledKind; link: V2LinkKind; amount?: string; held?: boolean } | null>(null);
   /**
    * Whether this link is a POT, decided before anything is spent: the `g` hint from the query, the
    * copy of it that rides in the fragment (chat apps trim queries and keep fragments), or this
@@ -240,6 +263,26 @@ export default function V2ClaimButton({
      claims used to run, each minting its own sponsored account and trustline, and whichever
      finished last painted over the other's result. */
   const inFlight = useRef(false);
+  /** The fragment as it arrived, kept only to rebuild the link for the open-in-Chrome offer (lib/webview.ts). */
+  const fragmentRef = useRef("");
+  /** An app's built-in browser, read off the user agent on mount (lib/webview.ts). Null in a real browser. */
+  const [inApp, setInApp] = useState<InAppBrowser | null>(null);
+  /** The keystore cannot keep a key here (lib/claim-key.ts). Nothing was relayed. */
+  const [storageBlocked, setStorageBlocked] = useState(false);
+  /** An earlier attempt from this phone, into an account it no longer holds, could not be checked. */
+  const [priorUnread, setPriorUnread] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState(false);
+
+  /**
+   * Drop the bearer material the refs hold: once the claim has settled or landed, once a refusal has
+   * no retry, and when the screen goes away (W4). Not on a retryable failure: "Try again" presents
+   * the same key, and a locked link's retry re-enters the password against the half-key here.
+   */
+  function dropKey() {
+    secretRef.current = "";
+    seedRef.current?.fill(0);
+    seedRef.current = null;
+  }
 
   useEffect(() => {
     let resolved: NetworkConfig | null = null;
@@ -274,7 +317,14 @@ export default function V2ClaimButton({
       setGroup(isGroup.current);
     }
     setMounted(true);
+    /* Which browser this is, for the notice and the offers below. A heuristic, held by its test. */
+    setInApp(
+      detectInAppBrowser(navigator.userAgent, {
+        standalone: (navigator as Navigator & { standalone?: boolean }).standalone === true,
+      }),
+    );
     if (frag) {
+      fragmentRef.current = frag;
       const parsed = parseLinkFragment(carried.fragment);
       if (parsed?.kind === "password") {
         seedRef.current = parsed.seed;
@@ -307,7 +357,8 @@ export default function V2ClaimButton({
     /* What this phone already asked for: a pot only. A read-only look at Horizon and the escrow, and
        it does not run on a one-to-one link, which keeps that claim exactly as it was. */
     if (isGroup.current && resolved) {
-      void readClaimProgress(linkHex, { net: resolved, group: true })
+      /* `hasKeyFor`: a latch whose payout key this device no longer holds is not a resume (P0-8). */
+      void readClaimProgress(linkHex, { net: resolved, group: true, hasKeyFor: hasAccountKey })
         .then(({ decision }) => setResume(decision))
         .catch(() => {
           /* We could not look. Saying nothing is the honest outcome: the claim itself presents the
@@ -317,6 +368,12 @@ export default function V2ClaimButton({
     gone.current = false;
     return () => {
       gone.current = true;
+      /* W4: the refs hold bearer material, dropped when the screen is really gone. Deferred one
+         tick, because development's StrictMode runs this cleanup and then the effect again at once,
+         with the fragment already stripped: the re-run sets `gone` back to false first. */
+      setTimeout(() => {
+        if (gone.current) dropKey();
+      }, 0);
     };
     // Deliberately mount-only: it reads the URL fragment, which is stripped on the first pass, so a
     // re-run would find nothing and fire nothing. `linkHex` comes from the route and cannot change
@@ -411,11 +468,30 @@ export default function V2ClaimButton({
     return false;
   }
 
+  /**
+   * The keystore cannot keep a key here: say so, and offer no button. A tap could only fail the
+   * same way, and before the open-check below each one minted a sponsored account first.
+   */
+  function refuseStorage() {
+    setStorageBlocked(true);
+    setFailure({ kind: "refused", detail: "this browser blocks saving", retryable: false });
+    setState("error");
+    void sendEvent("claim_failed", linkHex, claimedAccount.current ?? undefined, { net: beacon.current.net, seeded: beacon.current.seeded });
+  }
+
   async function claimWith(secret: string) {
     setState("claiming");
     setFailure(null);
+    setStorageBlocked(false);
+    setPriorUnread(false);
     try {
       if (!net) throw new Error("Still loading. Please tap again.");
+      /* BEFORE anything is minted: a browser that cannot open the keystore can never keep the key,
+         and finding that out after the sponsored account existed cost the sponsor a reserve per tap. */
+      if (!(await keystoreReady())) {
+        refuseStorage();
+        return;
+      }
       const outcome = await claimV2ToSponsoredAccount({
         linkSecret: secret,
         sponsorUrl: net.isMainnet ? net.sponsorUrl : SPONSOR_URL,
@@ -424,24 +500,19 @@ export default function V2ClaimButton({
            answers is what decides the tag this claim signs, a wrong guess here would sign bytes a
            pool rejects, after a sponsored account had already been paid for. */
         group: isGroup.current,
-        /* Save the key the MOMENT the account exists, before the money is sent to it. If the claim
-           then fails or the connection drops, the worst case is an empty account on this phone —
-           not money sitting somewhere whose only key we threw away. */
+        /* A latch is only a resume while this device still holds the key it names (P0-8). */
+        hasKeyFor: hasAccountKey,
+        /* Save the key the MOMENT the account exists, before the money is sent to it, and REFUSE the
+           claim if it cannot be saved: keepClaimKey rethrows, the relay never runs, and the worst
+           case is an empty sponsored account on the ledger, never money behind a key nobody holds.
+           (It used to swallow the failure and relay anyway, review P0-7.) The "user" kind for a
+           device with no home is decided in the same place, lib/claim-key.ts. */
         onAccountReady: async (publicKey, seed) => {
           claimedAccount.current = publicKey;
-          try {
-            /* With no home on this device the claim's account becomes it, and is the person's own
-               account from here on: kept as "user", it can never later read as a sweepable throwaway
-               (a kindless record is "user" only while it is the active one, lib/keystore.ts kindOf).
-               With a home it stays kindless, the throwaway /home gathers in, as before. */
-            await savePhase1(publicKey, seed, (await getHome()) ? undefined : "user");
-          } catch {
-            /* storage blocked (private mode, a locked-down webview). Not fatal, and NOT a reason to
-               tell someone their claim failed — the money still moves and the receipt still shows
-               the address. */
-          } finally {
-            seed.fill(0);
-          }
+          await keepClaimKey(publicKey, seed, {
+            save: savePhase1,
+            hasHome: async () => (await getHome()) !== null,
+          });
         },
       });
 
@@ -457,12 +528,19 @@ export default function V2ClaimButton({
            minted for it. No `claim_failed` beacon: this is a settled drop, not a claim that failed,
            and counting a second look at money already taken as a failure would understate the very
            funnel this route was instrumented to measure. */
-        setSettled({ kind: outcome.kind, link: outcome.link });
+        dropKey();
+        setSettled({
+          kind: outcome.kind,
+          link: outcome.link,
+          held: outcome.kind === "already-yours" ? outcome.held !== false : undefined,
+        });
         setLedger(afterSettled());
         setState("settled");
         return;
       }
-      outcome.seed.fill(0); // the callback already stored it; don't keep a second copy around
+      /* The key was handed to onAccountReady alone (the outcome carries no copy), and the link's
+         own key has done its job. */
+      dropKey();
 
       /* The money is on MAINNET but this device's flag still says practice, so /home would read the
          testnet ledger and greet a recipient who just received real dollars with "$0.00". The link
@@ -490,6 +568,19 @@ export default function V2ClaimButton({
       if (isGroup.current) void refreshPool(net);
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
     } catch (e) {
+      /* The key could not be kept: nothing was relayed (keepClaimKey threw before the relay). */
+      if (isStorageBlocked(e)) {
+        refuseStorage();
+        return;
+      }
+      /* An earlier attempt from this phone, into an account it no longer holds, could not be read
+         on the ledger: neither resuming nor a fresh claim is safe on a guess, so no button. */
+      if (e instanceof PriorAttemptUnreadError) {
+        setPriorUnread(true);
+        setFailure({ kind: "uncertain", detail: "an earlier attempt from this phone could not be checked", retryable: false });
+        setState("error");
+        return;
+      }
       const info = classifyClaimError(e);
       // The classifier redacts bearer material; the raw error must never reach a console on this
       // route, because the link secret is one string substitution away from anything built here.
@@ -498,6 +589,7 @@ export default function V2ClaimButton({
         /* The escrow answered "claimable" and the relayer then found it gone — another device won
            the race between the two. Same settled answer, so it gets the settled screen rather than
            a failure the recipient is invited to retry. */
+        dropKey();
         setSettled({ kind: "already-claimed", link: isGroup.current ? "group" : "single" });
         setLedger(afterSettled());
         setState("settled");
@@ -505,7 +597,25 @@ export default function V2ClaimButton({
       }
       setFailure(info);
       setState("error");
+      // No button follows a refusal with no retry, so nothing here needs the key any more.
+      if (!info.retryable) dropKey();
       void sendEvent("claim_failed", linkHex, claimedAccount.current ?? undefined, { net: beacon.current.net, seeded: beacon.current.seeded });
+    }
+  }
+
+  /** The same page, with its key, for the open-in-Chrome offer. Only ever built after mount. */
+  function fullLink(): string {
+    return `${window.location.origin}${window.location.pathname}${window.location.search}#${fragmentRef.current}`;
+  }
+
+  /** iOS has no reliable way out of an app's browser, so the address is copied for Safari by hand. */
+  async function copyAddress() {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/start`);
+      setCopiedAddress(true);
+    } catch {
+      /* no clipboard in this webview: the address is printed under the button to type */
+      setCopiedAddress(false);
     }
   }
 
@@ -644,6 +754,13 @@ export default function V2ClaimButton({
   }
 
   if (state === "done") {
+    /* In an app's built-in browser the key just went into THAT app's storage, not Safari's or
+       Chrome's (lib/webview.ts). So the screen says where it is, puts the backup first, and only then
+       "See my money"; the open-in-browser step is the way to the money afterwards, because the key
+       does not travel with the address. In a real browser the screen is exactly what it was. */
+    const plan = doneScreenPlan(inApp);
+    const notice = keyHolderNotice(plan);
+    const site = typeof window === "undefined" ? "" : window.location.origin;
     return withHeader(
       <div className="flex w-full flex-col items-center gap-4">
         <p className="text-lg font-semibold text-money">It&apos;s yours 🎉</p>
@@ -665,20 +782,64 @@ export default function V2ClaimButton({
         </a>
         {/* What is left for the people still in the queue, read from the escrow after the claim. */}
         {sharesLeft}
-        <Link
-          href="/home"
-          prefetch={false}
-          className="flex h-12 w-full items-center justify-center rounded-full bg-money text-sm font-semibold text-primary-foreground"
-        >
-          See my money
-        </Link>
+        {plan.inApp ? (
+          <>
+            <p className="text-sm font-medium text-ink" data-key-holder={plan.holder}>
+              {notice}
+            </p>
+            <Link
+              href="/account#backup"
+              prefetch={false}
+              className="flex h-12 w-full items-center justify-center rounded-full bg-money text-sm font-semibold text-primary-foreground"
+            >
+              Back up my money
+            </Link>
+            <p className="text-sm text-ink-soft">
+              Then open Lumenia in {plan.browser} and bring your money back with your email.
+            </p>
+            {plan.escape === "intent" ? (
+              <a
+                href={androidIntentHref(`${site}/start`)}
+                className="text-sm font-semibold text-money underline-offset-2 hover:underline"
+              >
+                Open Lumenia in Chrome
+              </a>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void copyAddress()}
+                  className="text-sm font-semibold text-money underline-offset-2 hover:underline"
+                >
+                  {copiedAddress ? `Copied. Paste it in ${plan.browser}.` : `Copy the address for ${plan.browser}`}
+                </button>
+                <p className="text-xs text-ink-soft">{`${site.replace(/^https?:\/\//, "")}/start`}</p>
+              </>
+            )}
+            <Link
+              href="/home"
+              prefetch={false}
+              className="flex h-12 w-full items-center justify-center rounded-full border border-line text-sm font-semibold text-ink"
+            >
+              See my money
+            </Link>
+          </>
+        ) : (
+          <Link
+            href="/home"
+            prefetch={false}
+            className="flex h-12 w-full items-center justify-center rounded-full bg-money text-sm font-semibold text-primary-foreground"
+          >
+            See my money
+          </Link>
+        )}
       </div>
     );
   }
 
-  if (state === "settled" && settled) {
-    const said = settledCopy(settled.kind, sender, settled.link, settled.amount);
-    return withHeader(
+  /** A settled answer, rendered. Also the words for a latch that names an account this phone no longer holds. */
+  const settledScreen = (said: ReturnType<typeof settledCopy>) =>
+    withHeader(
       <div className="flex w-full flex-col items-center gap-4">
         <div className="flex flex-col items-center gap-1 text-center">
           <p className="text-lg font-semibold text-money">{said.title}</p>
@@ -694,7 +855,37 @@ export default function V2ClaimButton({
             Check my account
           </Link>
         )}
-      </div>
+        {said.restore && (
+          <Link
+            href="/start"
+            prefetch={false}
+            className="flex h-12 w-full items-center justify-center rounded-full bg-money text-sm font-semibold text-primary-foreground"
+          >
+            Bring my account back
+          </Link>
+        )}
+      </div>,
+    );
+
+  if (state === "settled" && settled) {
+    return settledScreen(settledCopy(settled.kind, sender, settled.link, settled.amount, settled.held));
+  }
+
+  /* A latch whose payout key is gone from this phone (P0-8): the money that landed is in an account
+     only a backup brings back, and that is said without "on this phone". When the ledger could not
+     be read, nothing is offered: resuming into a keyless account loses the money, and a fresh claim
+     on a pool whose earlier attempt did land would be a second share. */
+  if (state === "idle" && resume?.say === "unheld" && resume.landed === true) {
+    return settledScreen(settledCopy("already-yours", sender, "group", undefined, false));
+  }
+  if (state === "idle" && resume?.say === "unheld" && resume.landed === null) {
+    return withHeader(
+      <div className="flex w-full flex-col items-center gap-3 text-center">
+        <p className="text-ink-soft">
+          We couldn&apos;t check what an earlier attempt from this phone did just now. Your money is
+          untouched. Open the link again in a moment.
+        </p>
+      </div>,
     );
   }
 
@@ -772,9 +963,22 @@ export default function V2ClaimButton({
         ? "You opened this before and we never saw the answer. Taking it again asks for the same account, so it can't pay you twice."
         : resume?.say === "unsure"
           ? "We couldn't check what happened here just now. Taking it again asks for the same account, so it can't pay you twice."
-          : null;
+          : resume?.say === "unheld"
+            ? "This phone asked for this money before, into an account that has since been removed from it. Nothing arrived there, so taking it now uses a new account."
+            : null;
+
+  /* The pre-claim way out of an app's built-in browser, on Android only (lib/webview.ts): the same
+     link, key and all, handed to Chrome, where the key will be kept. Never a blocker: the button
+     below still works here. iOS has no reliable way out, and completes the claim where it is. */
+  const escape = state === "idle" && !noKey && !unreachableNetwork && mounted ? escapeOffer(inApp) : null;
 
   const failureBody = (() => {
+    if (storageBlocked) {
+      return `This browser can't save the key to your money, so we stopped before moving it. Your money is untouched. Open this link from the original message in ${inApp ? (inApp.os === "ios" ? "Safari" : "Chrome") : "your usual browser"}, not inside an app and not in a private window, and tap again.`;
+    }
+    if (priorUnread) {
+      return "We couldn't check what an earlier attempt from this phone did just now. Your money is untouched. Open the link again in a moment.";
+    }
     switch (failure?.kind) {
       case "busy":
         return copy.claim.errBusyBody;
@@ -901,6 +1105,14 @@ export default function V2ClaimButton({
             <p className="text-xs text-ink-soft opacity-70">{copy.claim.errDetail(failure.detail)}</p>
           )}
         </div>
+      )}
+      {escape && (
+        <p className="text-sm text-ink-soft" data-escape="android-intent">
+          {escape}{" "}
+          <a href={androidIntentHref(fullLink())} className="font-semibold text-money underline-offset-2 hover:underline">
+            Open in Chrome
+          </a>
+        </p>
       )}
     </div>
   );

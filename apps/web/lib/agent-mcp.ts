@@ -31,7 +31,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { Keypair, StrKey } from "@stellar/stellar-sdk";
-import { createV2Link, loadReclaimableV2, reclaimV2, type ReclaimableV2, type V2Link } from "./lumendrop";
+import { createV2Link, DepositUncertainError, loadReclaimableV2, reclaimV2, type PreparedDeposit, type ReclaimableV2, type V2Link } from "./lumendrop";
 import { activeNetwork } from "./network";
 import { loadBalance } from "./horizon";
 import { localSignerFromSeed, type Signer } from "./signer";
@@ -42,7 +42,16 @@ export interface AgentDeps {
   sponsorUrl: string;
   webOrigin: string;
   networkLabel: string;
-  createLink: (o: { signer: Signer; amount: string; from: string; webOrigin: string; sponsorUrl: string; expiry?: number }) => Promise<V2Link>;
+  createLink: (o: {
+    signer: Signer;
+    amount: string;
+    from: string;
+    webOrigin: string;
+    sponsorUrl: string;
+    expiry?: number;
+    /** awaited after signing and before the POST, with the link; see lib/lumendrop.ts createV2Link */
+    onPrepared?: (p: PreparedDeposit) => void | Promise<void>;
+  }) => Promise<V2Link>;
   listReclaimable: (sender: string) => Promise<ReclaimableV2[]>;
   /** `confirmed: false` is the relay's 202: the take-back was accepted and not yet seen landing. */
   reclaim: (o: { signer: Signer; linkHex: string; sponsorUrl: string }) => Promise<{ hash: string; confirmed?: boolean }>;
@@ -99,7 +108,7 @@ export function buildAgentServer(deps: AgentDeps): McpServer {
       inputSchema: {
         amount: z.string().describe('Dollars to send, e.g. "2.00"'),
         note: z.string().max(40).optional().describe("Who the link is from, shown to the recipient (default: the agent's name)"),
-        expiryHours: z.number().int().min(1).max(30 * 24).optional().describe("Hours until the sender may take unclaimed money back (default 168 = 7 days)"),
+        expiryHours: z.number().int().min(1).max(7 * 24).optional().describe("Hours until the sender may take unclaimed money back (default and maximum 168 = 7 days, the escrow's expiry horizon)"),
       },
     },
     async ({ amount, note, expiryHours }) => {
@@ -110,19 +119,62 @@ export function buildAgentServer(deps: AgentDeps): McpServer {
       const hours = expiryHours ?? DEFAULT_EXPIRY_HOURS;
       const expiry = Math.floor(Date.now() / 1000) + hours * 3600;
       const from = (note?.trim() || "An agent").slice(0, 40);
-      const link = await deps.createLink({ signer: deps.signer, amount: amt.toFixed(2), from, webOrigin: deps.webOrigin, sponsorUrl: deps.sponsorUrl, expiry });
       const expiresAt = new Date(expiry * 1000).toISOString();
+      /* The link is kept HERE, before the POST (onPrepared), in this call's own memory: the sponsor
+         can submit the deposit and the reply be lost, and until now that lost the link, its id and
+         the agent's money with it. Never logged (see the header); it is returned to the agent. */
+      const kept: { prepared: { link: string; linkHex: string; retrySafeAfter: number } | null } = { prepared: null };
+      let link: V2Link;
+      try {
+        link = await deps.createLink({
+          signer: deps.signer,
+          amount: amt.toFixed(2),
+          from,
+          webOrigin: deps.webOrigin,
+          sponsorUrl: deps.sponsorUrl,
+          expiry,
+          onPrepared: (p) => {
+            kept.prepared = { link: p.link, linkHex: p.linkHex, retrySafeAfter: p.retrySafeAfter };
+          },
+        });
+      } catch (e) {
+        const p = kept.prepared;
+        /* Nothing kept: the failure came before anything was signed, so nothing moved. A stated
+           refusal after it (a status and the sponsor's words) never reached the ledger either. */
+        if (!p || refusedBySponsor(e)) return refuse(e instanceof Error ? e.message : String(e));
+        /* Anything else after the POST is undecided: the relay's 202 settled as "not yet", an escrow
+           that could not be read, or one read empty at the bare deadline by this machine's clock.
+           The link goes back with confirmed:false. A second create_payment_link for the same payment
+           is what escrows the money twice, so the text says not to. */
+        const u = e instanceof DepositUncertainError ? { link: e.link, linkHex: e.linkHex, retrySafeAfter: e.retrySafeAfter } : p;
+        const retrySafeAfter = Number.isFinite(u.retrySafeAfter) ? u.retrySafeAfter : null;
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Link accepted, not yet confirmed, on ${deps.networkLabel}: ${u.link}\n` +
+                `Amount ${amt.toFixed(2)} USDC from ${address}. The deposit was handed to the network and the escrow has not shown it yet. ` +
+                `Do not create another link for the same payment: send this one, and if nobody claims it call reclaim_link with linkHex ${u.linkHex} after ${expiresAt}. ` +
+                (retrySafeAfter !== null
+                  ? `Only after ${new Date(retrySafeAfter).toISOString()} does an empty escrow mean nothing moved.`
+                  : "The deposit carried no deadline, so an empty escrow is never proof that nothing moved."),
+            },
+          ],
+          structuredContent: { link: u.link, linkHex: u.linkHex, amount: amt.toFixed(2), from, sender: address, confirmed: false, retrySafeAfter, expiresAt, network: deps.networkLabel },
+        };
+      }
       return {
         content: [
           {
             type: "text",
             text:
               `Link ready on ${deps.networkLabel}: ${link.link}\n` +
-              `Amount ${amt.toFixed(2)} USDC from ${address}. Deposit tx ${link.hash || "(unconfirmed, see the escrow)"}. ` +
+              `Amount ${amt.toFixed(2)} USDC from ${address}. Deposit tx ${link.hash || "(confirmed by the escrow; the answer named no transaction)"}. ` +
               `Whoever opens the link can claim; if nobody does, call reclaim_link with linkHex ${link.linkHex} after ${expiresAt}.`,
           },
         ],
-        structuredContent: { link: link.link, linkHex: link.linkHex, amount: amt.toFixed(2), from, sender: address, depositHash: link.hash, expiresAt, network: deps.networkLabel },
+        structuredContent: { link: link.link, linkHex: link.linkHex, amount: amt.toFixed(2), from, sender: address, depositHash: link.hash, confirmed: true, expiresAt, network: deps.networkLabel },
       };
     },
   );
@@ -191,6 +243,11 @@ export function buildAgentServer(deps: AgentDeps): McpServer {
 
 function refuse(reason: string) {
   return { content: [{ type: "text" as const, text: `Refused: ${reason}` }], isError: true };
+}
+
+/** A refusal with a status and the sponsor's words ("/v2-deposit -> 403: ..."), answered before anything was submitted. */
+function refusedBySponsor(e: unknown): boolean {
+  return e instanceof Error && /^\/v2-deposit \S+ \d{3}: /.test(e.message);
 }
 
 async function main() {

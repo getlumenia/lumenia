@@ -24,9 +24,16 @@
  * only way the website finds a link to take back. Removing the account leaves the list where it is,
  * so the way back to an unclaimed link is this account, on this browser. When there are links, the
  * sheet says so before anything is removed.
+ *
+ * WHAT ELSE GOES: the claim screen's attempted latches (lib/lumendrop.ts forgetAttemptedClaims). A
+ * latch names the account a claim was asked into; with the keystore gone that account's key is gone
+ * too, and the one thing a stale attempted latch could still do is resume a claim into it (review
+ * P0-8). The latches that record money LANDING stay, so a reopened link says where it went rather
+ * than paying a second share.
  */
 import { useState } from "react";
 import { clearKeystore } from "../../lib/keystore";
+import { forgetAttemptedClaims } from "../../lib/lumendrop";
 import { useWallet } from "../../lib/wallet";
 import { backupRecords, forgetAllBackupRecords, markBackedUp } from "../../lib/backup-record";
 import { checkMine } from "../../lib/recovery-client";
@@ -107,6 +114,9 @@ export function DisconnectButton() {
     setBusy(true);
     try {
       await clearKeystore();
+      // The keys are gone, so a claim this browser asked for and never saw answered must not be
+      // resumed into the account it named (see the header).
+      forgetAttemptedClaims();
       // The email each account was backed up with goes with the accounts (see /privacy).
       forgetAllBackupRecords();
     } finally {

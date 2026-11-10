@@ -23,6 +23,7 @@ import {
   Asset,
   BASE_FEE,
   Keypair,
+  MuxedAccount,
   Networks,
   Operation,
   TransactionBuilder,
@@ -53,7 +54,10 @@ const channel = Keypair.random().publicKey();
 interface Shape {
   /** Who sources the transaction — the sponsor, a leased channel, or (hostile) us. */
   txSource?: string;
+  /** The same, as a MUXED source: the G key given here is wrapped as an M address (W1). */
+  muxedTxSource?: string;
   beginSource?: string;
+  createSource?: string;
   sponsoredId?: string;
   destination?: string;
   startingBalance?: string;
@@ -65,24 +69,36 @@ interface Shape {
   dropOp?: boolean;
 }
 
+/** The muxed form of a G key: the same account, printed as an M address. */
+const mux = (g: string): string => new MuxedAccount(new Account(g, "1"), "7").accountId();
+
+/** The envelope source: a plain account, or a muxed one when the shape asks for it. */
+function txSourceOf(shape: Shape): Account | MuxedAccount {
+  if (shape.muxedTxSource) return new MuxedAccount(new Account(shape.muxedTxSource, "1"), "7");
+  return new Account(shape.txSource ?? channel, "1");
+}
+
 /**
  * Build the onboarding sandwich exactly the way apps/sponsor/src/lib/create-account.ts does, then
  * put it through XDR — which is where the amounts stop being the strings we typed.
  */
 function sandwich(shape: Shape = {}): Transaction {
-  const source = new Account(shape.txSource ?? channel, "1");
+  const source = txSourceOf(shape);
   const builder = new TransactionBuilder(source, {
     fee: BASE_FEE,
     networkPassphrase: Networks.TESTNET,
   })
     .addOperation(
-      Operation.beginSponsoringFutureReserves({ sponsoredId: shape.sponsoredId ?? me, source: sponsor }),
+      Operation.beginSponsoringFutureReserves({
+        sponsoredId: shape.sponsoredId ?? me,
+        source: shape.beginSource ?? sponsor,
+      }),
     )
     .addOperation(
       Operation.createAccount({
         destination: shape.destination ?? me,
         startingBalance: shape.startingBalance ?? "0",
-        source: sponsor,
+        source: shape.createSource ?? sponsor,
       }),
     );
   if (!shape.dropOp) {
@@ -152,7 +168,7 @@ console.log("\n[6] the 3-op trustline, for an account that already exists");
 
 /** The same sandwich minus createAccount, round-tripped through XDR like everything else here. */
 function trustlineOnly(shape: Shape = {}): Transaction {
-  const source = new Account(shape.txSource ?? channel, "1");
+  const source = txSourceOf(shape);
   const b = new TransactionBuilder(source, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
     .addOperation(
       Operation.beginSponsoringFutureReserves({
@@ -265,6 +281,49 @@ ok("refuses a sponsor reporting another issuer", (() => {
     return true;
   }
 })());
+
+/* W1 (review 2026-11-08). The parser prints a muxed envelope source as an M address, and the guard
+   compared it with our G key as strings: M(our key) passed, and our own account would have paid the
+   envelope fee (uint32, about 429 XLM at most) and burned a sequence number. The same guard took any
+   limit above zero, and a dust limit makes every later payment into the account fail op_line_full. */
+console.log("\n[8] a muxed source is still us");
+ok("the fixture: our key wrapped as a muxed account parses back as an M address", mux(me).startsWith("M"));
+ok("refuses a tx whose MUXED source is us", !accepts(sandwich({ muxedTxSource: me })));
+ok("  ...on the three-op shape too", !acceptsTrustline(trustlineOnly({ muxedTxSource: me })));
+ok("refuses beginSponsoring whose muxed source is us", !accepts(sandwich({ beginSource: mux(me) })));
+ok("  ...on the three-op shape too", !acceptsTrustline(trustlineOnly({ beginSource: mux(me) })));
+ok("refuses createAccount whose muxed source is us", !accepts(sandwich({ createSource: mux(me) })));
+ok(
+  "a muxed source that is somebody else is their business, as a plain one is",
+  accepts(sandwich({ muxedTxSource: channel })) && acceptsTrustline(trustlineOnly({ muxedTxSource: channel })),
+);
+ok(
+  "the ops we authorize must name us exactly: a muxed changeTrust source is refused",
+  !accepts(sandwich({ trustSource: mux(me) })) && !acceptsTrustline(trustlineOnly({ trustSource: mux(me) })),
+);
+ok(
+  "  ...and a muxed endSponsoring source",
+  !accepts(sandwich({ endSource: mux(me) })) && !acceptsTrustline(trustlineOnly({ endSource: mux(me) })),
+);
+
+console.log("\n[9] the limit must be the one we asked for");
+const MAX_LIMIT = "922337203685.4775807";
+ok(
+  "accepts the maximum written out (what the sponsor's builder sets by leaving the limit off)",
+  accepts(sandwich({ trustLimit: MAX_LIMIT })) && acceptsTrustline(trustlineOnly({ trustLimit: MAX_LIMIT })),
+);
+ok(
+  "refuses a dust limit of one stroop",
+  !accepts(sandwich({ trustLimit: "0.0000001" })) && !acceptsTrustline(trustlineOnly({ trustLimit: "0.0000001" })),
+);
+ok(
+  "refuses a limit of one dollar",
+  !accepts(sandwich({ trustLimit: "1" })) && !acceptsTrustline(trustlineOnly({ trustLimit: "1" })),
+);
+ok(
+  "refuses a limit just under the maximum",
+  !accepts(sandwich({ trustLimit: "922337203685" })) && !acceptsTrustline(trustlineOnly({ trustLimit: "922337203685" })),
+);
 
 console.log(`\n${failed === 0 ? "✅" : "❌"} TX-GUARD SELF-TEST ${passed}/${passed + failed}`);
 if (failed > 0) process.exit(1);

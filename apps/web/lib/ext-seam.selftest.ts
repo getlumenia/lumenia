@@ -36,6 +36,7 @@
 import {
   Account,
   Address,
+  Horizon,
   Keypair,
   Networks,
   SorobanDataBuilder,
@@ -1119,6 +1120,165 @@ async function main() {
       Reflect.deleteProperty(globalThis, "localStorage");
     }
     ok("  ...and with no localStorage at all (a service worker) it is an empty list, never a throw", (await lumendrop.loadReclaimableV2(kp.publicKey(), { net: EXT_NET })).length === 0);
+
+    /* ---------------------------------------- [e3] ---------------------------------------- */
+    console.log("\n[e3] an answer that decides nothing is settled by the escrow, never read as 'nothing moved'");
+    /* The Worker answers its own refusals as 4xx and 503 before anything is submitted, so a 5xx on
+       /v2-deposit is the platform's (an error page, a resource-limit kill) and can arrive AFTER the
+       deposit was submitted; so can a 408, a reply whose body cannot be read, and a 2xx that names no
+       transaction. Each used to throw a plain error: the screen said "your money hasn't moved, try
+       again", the retry minted a second drop, and the first link was never kept. */
+    const page = (status: number) => new Response(`<html><body>${status}</body></html>`, { status, headers: { "content-type": "text/html" } });
+    const torn = (status: number) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error("connection reset"));
+          },
+        }),
+        { status },
+      );
+    const isUncertain = (r: { value: unknown } | { error: unknown }): boolean => "error" in r && r.error instanceof lumendrop.DepositUncertainError;
+    const isPlain = (r: { value: unknown } | { error: unknown }, re: RegExp): boolean => "error" in r && r.error instanceof Error && !(r.error instanceof lumendrop.DepositUncertainError) && re.test(r.error.message);
+    const askedDrop = () => rpcCalls.some((c) => c.fn === "get_drop" && c.url === rpcUrl(EXT_NET));
+    const askedPool = () => rpcCalls.some((c) => c.fn === "get_pool" && c.url === rpcUrl(EXT_NET)) && !rpcCalls.some((c) => c.fn === "get_drop");
+    const askedNothing = () => !rpcCalls.some((c) => c.fn === "get_drop" || c.fn === "get_pool");
+    const onExt = { ...common, net: EXT_NET, sponsorUrl: EXT_NET.sponsorUrl };
+
+    for (const status of [500, 502, 504, 522, 524, 408]) {
+      reset();
+      reply = () => page(status);
+      const r = await outcome(lumendrop.createV2Link(onExt));
+      ok(`a ${status} error page before the deadline is the uncertain error, after asking get_drop on the named network`, isUncertain(r) && askedDrop() && sent.length === 1);
+    }
+    reset();
+    reply = () => page(502);
+    viewAnswer = "held";
+    const landed502 = await lumendrop.createV2Link(onExt);
+    ok("a 502 whose escrow read shows the drop is a success with no hash (the page named none)", landed502.hash === "" && landed502.link.includes(`/v2/c/${landed502.linkHex}`) && askedDrop());
+    reset();
+    reply = () => page(502);
+    const late502 = await outcome(
+      lumendrop.createV2Link({
+        ...onExt,
+        onPrepared: () => {
+          Date.now = () => realNow() + 10 * 60_000;
+        },
+      }),
+    );
+    Date.now = realNow;
+    ok("a 502 past the deadline with an empty escrow is the plain 'not submitted' error, safe to retry", isPlain(late502, /^\/v2-deposit \S+ not submitted: /) && askedDrop());
+    reset();
+    reply = () => page(502);
+    viewAnswer = "unreadable";
+    ok("a 502 whose escrow cannot be read is the uncertain error, never a plain failure", isUncertain(await outcome(lumendrop.createV2Link(onExt))));
+
+    reset();
+    reply = () => new Response("", { status: 200 });
+    const empty200 = await outcome(lumendrop.createV2Link(onExt));
+    ok("a 200 with no body names no transaction: the escrow is asked, and empty before the deadline it is the uncertain error", isUncertain(empty200) && askedDrop());
+    reset();
+    reply = () => new Response("<html>ok</html>", { status: 200, headers: { "content-type": "text/html" } });
+    viewAnswer = "held";
+    const page200 = await lumendrop.createV2Link(onExt);
+    ok("a 200 that is not JSON (a proxy's page) is a success only because the escrow holds the drop, with no hash, and never a thrown SyntaxError", page200.hash === "" && askedDrop());
+    reset();
+    reply = () => json(200, { hash: "not-a-transaction-hash" });
+    const odd200 = await outcome(lumendrop.createV2Link(onExt));
+    ok("a 200 whose hash is not a transaction hash is settled by the escrow too", isUncertain(odd200) && askedDrop());
+    reset();
+    reply = () => torn(200);
+    const torn200 = await outcome(lumendrop.createV2Link(onExt));
+    ok("a reply whose body cannot be read is the uncertain error, not a thrown TypeError", isUncertain(torn200) && askedDrop());
+    reset();
+    reply = () => torn(200);
+    viewAnswer = "held";
+    ok("  ...and a success when the escrow holds the drop", (await lumendrop.createV2Link(onExt)).hash === "");
+
+    for (const [status, body] of [
+      [400, { error: "amount above the cap" }],
+      [403, { error: "this wallet is not on the pilot allowlist yet" }],
+      [429, { error: "too many requests" }],
+      [503, { error: "the relay is busy, try again shortly" }],
+    ] as [number, unknown][]) {
+      reset();
+      reply = () => json(status, body);
+      const r = await outcome(lumendrop.createV2Link(onExt));
+      ok(`a ${status} is still a plain refusal carrying the sponsor's words, and the escrow is not asked`, isPlain(r, new RegExp(`^/v2-deposit \\S+ ${status}: `)) && askedNothing());
+    }
+    reset();
+    reply = () => json(200, { hash: HASH });
+    const plain200 = await lumendrop.createV2Link(onExt);
+    ok("a 200 naming the transaction is still a success without an escrow read", plain200.hash === HASH && askedNothing());
+
+    // --- the group twin, asked of get_pool ---------------------------------------------------------
+    const onExtGroup = { ...onExt, perShare: "2.50", slots: 3 };
+    reset();
+    reply = () => page(504);
+    ok("group: a 504 before the deadline is the uncertain error, asked of get_pool", isUncertain(await outcome(lumendrop.createV2GroupLink(onExtGroup))) && askedPool());
+    reset();
+    reply = () => new Response("", { status: 200 });
+    viewAnswer = "held";
+    const groupEmpty200 = await lumendrop.createV2GroupLink(onExtGroup);
+    ok("group: a body-less 200 is confirmed by get_pool, with no hash", groupEmpty200.hash === "" && groupEmpty200.total === "7.5000000" && askedPool());
+    reset();
+    reply = () => torn(200);
+    ok("group: a reply whose body cannot be read is the uncertain error", isUncertain(await outcome(lumendrop.createV2GroupLink(onExtGroup))) && askedPool());
+    reset();
+    reply = () => json(503, { error: "the relay is busy, try again shortly" });
+    ok("group: a 503 is a plain refusal, and the escrow is not asked", isPlain(await outcome(lumendrop.createV2GroupLink(onExtGroup)), /^\/v2-deposit \S+ 503: /) && askedNothing());
+
+    // --- the v1 sponsored payment (lib/send.ts payToAddress): the same statuses are undecided ---------
+    const sendLib = await import("./send");
+    const unconfirmedLib = await import("./unconfirmed");
+    const realLoadAccount = Horizon.Server.prototype.loadAccount;
+    Horizon.Server.prototype.loadAccount = (async function (this: Horizon.Server, id: string) {
+      return new Account(id, "100") as unknown as Horizon.AccountResponse;
+    }) as typeof Horizon.Server.prototype.loadAccount;
+    const sponsorKp = Keypair.random();
+    const health = { sponsorPublicKey: sponsorKp.publicKey(), usdcIssuer: network.USDC_ISSUER.testnet, usdcCode: "USDC" };
+    // /health is the first request a payment makes; the answer under test is the second one's.
+    const answerSendLink = (make: () => Response) => {
+      reply = () => (sent[sent.length - 1]!.url.endsWith("/health") ? json(200, health) : make());
+    };
+    const pay = () => outcome(sendLib.payToAddress({ sponsorUrl: SPONSOR, signer: sender, amount: "1.00", to: Keypair.random().publicKey() }));
+    const isSendUnconfirmed = (r: { value: unknown } | { error: unknown }): r is { error: InstanceType<typeof sendLib.SendUnconfirmedError> } =>
+      "error" in r && r.error instanceof sendLib.SendUnconfirmedError && unconfirmedLib.isUnconfirmedSubmit(r.error);
+    try {
+      for (const status of [500, 502, 504, 522, 524, 408]) {
+        reset();
+        answerSendLink(() => page(status));
+        const r = await pay();
+        ok(
+          `payToAddress: a ${status} is the unconfirmed error, carrying the balance id the payment creates and what this device signed`,
+          isSendUnconfirmed(r) && /^[0-9a-f]{72}$/.test(r.error.balanceId) && r.error.signed !== null && r.error.route === "/send-link" && r.error.hash === "",
+        );
+      }
+      ok("  ...posted exactly once, after /health", sent.length === 2 && sent[0]!.url === `${SPONSOR}/health` && sent[1]!.url === `${SPONSOR}/send-link`);
+      reset();
+      answerSendLink(() => torn(200));
+      ok("payToAddress: a reply whose body cannot be read is the unconfirmed error too", isSendUnconfirmed(await pay()));
+      reset();
+      answerSendLink(() => json(202, { error: "submit unconfirmed", hash: HASH }));
+      const r202 = await pay();
+      ok("payToAddress: the 202 is unchanged, with the sponsor's hash", isSendUnconfirmed(r202) && r202.error.hash === HASH);
+      for (const [status, body] of [
+        [400, { error: "refused" }],
+        [403, { error: "this wallet is not on the pilot allowlist yet" }],
+        [503, { error: "sponsor halted" }],
+      ] as [number, unknown][]) {
+        reset();
+        answerSendLink(() => json(status, body));
+        const r = await pay();
+        ok(`payToAddress: a ${status} is a plain refusal with the sponsor's words`, "error" in r && !isSendUnconfirmed(r) && r.error instanceof Error && new RegExp(`^/send-link \\S+ ${status}: `).test(r.error.message));
+      }
+      reset();
+      answerSendLink(() => json(200, { hash: HASH, balanceId: "00".repeat(36) }));
+      const r200 = await pay();
+      ok("payToAddress: a 200 returns the hash and the balance id", "value" in r200 && r200.value.hash === HASH && r200.value.balanceId === "00".repeat(36));
+    } finally {
+      Horizon.Server.prototype.loadAccount = realLoadAccount;
+    }
   } finally {
     rpc.Server.prototype.getAccount = realGetAccount;
     rpc.Server.prototype.simulateTransaction = realSimulate;

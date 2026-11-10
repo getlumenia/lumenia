@@ -45,7 +45,21 @@ import {
   splitGroupHint,
   v2LinkUrl,
   type ClaimLatch,
+  type PreparedDeposit,
 } from "./lumendrop";
+import {
+  UNCONFIRMED_SEND_WINDOW_MS,
+  confirmedSentRecord,
+  forgetSent,
+  markSentConfirmed,
+  openSend,
+  pendingSentRecord,
+  readSentRecords,
+  saveSent,
+  sentIdOf,
+  type SentRecord,
+  shownStatus,
+} from "./sent-links";
 
 let passed = 0;
 let failed = 0;
@@ -196,7 +210,7 @@ async function main() {
 
   // --- a settled answer is a settled answer ----------------------------------------------------------
   console.log("\n[6] which outcomes end the story");
-  ok("a paid claim is not a retry question", isTerminalClaimOutcome({ kind: "claimed", hash: "h", publicKey: "G", seed: new Uint8Array(0), link: "group" }) === false);
+  ok("a paid claim is not a retry question", isTerminalClaimOutcome({ kind: "claimed", hash: "h", publicKey: "G", link: "group" }) === false);
   const settled = (["already-yours", "already-claimed", "no-such-drop", "expired"] as const).map((kind) =>
     isTerminalClaimOutcome(kind === "already-yours" ? { kind, publicKey: "G", link: "group" } : { kind, link: "group" }),
   );
@@ -245,9 +259,115 @@ async function main() {
   );
 
   await unconfirmedClaims();
+  sentRecords();
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} GROUP-LINK SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);
+}
+
+/* ------------------------- the record a deposit writes before its POST -------------------------
+ * /send and /group write a link's `lumenia.sent` record TWICE (lib/sent-links.ts): as "submitted"
+ * in the deposit's onPrepared hook, before the POST, and as "confirmed" once the sponsor's 200 or
+ * the escrow says the money is there. A pot that landed after the sender left used to have no
+ * record at all (the old code wrote one only inside a manual re-check that said landed), so it was
+ * listed nowhere and never offered back; and the "don't send it again" refusal lived in React
+ * state, so a reload came back to a blank form. These pin the record's two shapes and the refusal. */
+function sentRecords(): void {
+  console.log("\n[9] the sent record: written before the POST, confirmed after, and a second send refused meanwhile");
+  const t = now * 1000;
+  const linkHex = "ab".repeat(32);
+  const single: PreparedDeposit = {
+    link: `https://getlumenia.com/v2/c/${linkHex}#SECRETKEY`,
+    linkHex,
+    retrySafeAfter: t + 120_000,
+    innerHash: "cd".repeat(32),
+    expiry: now + 7 * 24 * HOUR,
+    group: false,
+    amount: "2.50",
+  };
+  const pending = pendingSentRecord(single, { from: "Ayse", locked: true, now: t });
+  ok(
+    "a one-to-one deposit's pending record: the drop id, the amount, submitted, with its deadline, expiry, name and lock",
+    pending.balanceId === linkHex &&
+      pending.hasLink === true &&
+      pending.amount === "2.50" &&
+      pending.phase === "submitted" &&
+      pending.retrySafeAfter === single.retrySafeAfter &&
+      pending.expiry === single.expiry &&
+      pending.from === "Ayse" &&
+      pending.locked === true &&
+      pending.slots === undefined &&
+      pending.perShare === undefined &&
+      pending.at === new Date(t).toISOString(),
+  );
+  ok("  ...and never the link itself", !JSON.stringify(pending).includes("SECRETKEY") && !JSON.stringify(pending).includes("/v2/c/"));
+  const pot: PreparedDeposit = { ...single, group: true, slots: 3, amount: "2.50", total: groupTotal("2.50", 3) };
+  const pendingPot = pendingSentRecord(pot, { from: "", locked: false, now: t });
+  ok(
+    "a pot's pending record carries the slots (what makes every reader ask get_pool), the WHOLE pot as its amount, and one share aside",
+    pendingPot.slots === 3 && pendingPot.amount === "7.5000000" && pendingPot.perShare === "2.50" && pendingPot.phase === "submitted" && pendingPot.locked === false,
+  );
+  const unbounded = pendingSentRecord({ ...single, retrySafeAfter: Number.POSITIVE_INFINITY }, { from: "", locked: false, now: t });
+  ok("a deposit with no upper time bound stores no deadline, rather than one JSON would turn into null", !("retrySafeAfter" in unbounded) && unbounded.phase === "submitted");
+
+  const confirmed = confirmedSentRecord(pending);
+  ok(
+    "confirmed: the phase flips, the deadline goes, everything else stays (the date it was first written included)",
+    confirmed.phase === "confirmed" && !("retrySafeAfter" in confirmed) && confirmed.balanceId === linkHex && confirmed.at === pending.at && confirmed.locked === true && confirmed.expiry === pending.expiry,
+  );
+  ok("  ...and the pending record is untouched by it", pending.phase === "submitted" && pending.retrySafeAfter === single.retrySafeAfter);
+  ok("the record id is the last eight characters of the drop id", sentIdOf(linkHex) === "abababab" && sentIdOf("00".repeat(36)) === "00000000");
+
+  // --- the refusal: a submitted record younger than the window is the open send -------------------
+  const legacy: SentRecord = { balanceId: "ef".repeat(32), hasLink: true, amount: "1.00", from: "", at: new Date(t).toISOString() };
+  ok("an empty store has no open send", openSend({}, t) === null);
+  ok("a submitted record is the open send", openSend({ a1: pending }, t + 60_000)?.id === "a1");
+  ok("  ...a confirmed one is not", openSend({ a1: confirmed }, t + 60_000) === null);
+  ok("  ...nor a record written before phases existed, which is a confirmed link", openSend({ a1: legacy }, t) === null);
+  ok(
+    "  ...nor a submitted one older than the window, so a send that could never be settled stops blocking after six hours",
+    openSend({ a1: pending }, t + UNCONFIRMED_SEND_WINDOW_MS) === null && openSend({ a1: pending }, t + UNCONFIRMED_SEND_WINDOW_MS - 1)?.id === "a1" && UNCONFIRMED_SEND_WINDOW_MS === 6 * 3600_000,
+  );
+  ok("  ...a submitted pot blocks a one-to-one send as much as the other way round", openSend({ p1: pendingPot }, t + 1)?.rec.slots === 3);
+  const older = { ...pending, at: new Date(t - 60_000).toISOString() };
+  ok("two open sends: the newest is the one shown", openSend({ old: older, fresh: pending }, t + 1000)?.id === "fresh" && openSend({ fresh: pending, old: older }, t + 1000)?.id === "fresh");
+  ok("a record with an unreadable date never blocks", openSend({ a1: { ...pending, at: "garbage" } }, t) === null);
+  ok("a hole in the store never throws", openSend({ a1: null as unknown as SentRecord, a2: pending }, t)?.id === "a2");
+  // /sent/[id]: what a submitted record shows, given the ledger reader's answer
+  ok("a submitted record and an escrow that holds the drop: pending, and the deposit is known to have landed", shownStatus(pending, "pending").status === "pending" && shownStatus(pending, "pending").landed === true);
+  ok("a submitted record and an empty escrow: not confirmed yet, never settled", shownStatus(pending, "settled").status === "unconfirmed" && shownStatus(pending, "settled").landed === false);
+  ok("a submitted record and a read that failed: unknown, nothing confirmed", shownStatus(pending, "unknown").status === "unknown" && shownStatus(pending, "unknown").landed === false);
+  ok("a confirmed record keeps the reader's answer: settled stays settled, pending stays pending", shownStatus(confirmed, "settled").status === "settled" && shownStatus(confirmed, "pending").status === "pending" && shownStatus(confirmed, "pending").landed === false);
+  ok("a record written before phases existed is a confirmed one here too", shownStatus(legacy, "settled").status === "settled");
+
+  // --- the storage round trip, under a fake localStorage (none of this runs in a browser here) ----
+  const store = new Map<string, string>();
+  const G = globalThis as unknown as { localStorage?: unknown };
+  G.localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+  };
+  try {
+    ok("an empty store reads as no records", Object.keys(readSentRecords()).length === 0);
+    saveSent("a1", pending);
+    ok("saved as submitted, it is read back as the open send, from the network-scoped key", openSend(readSentRecords(), t)?.id === "a1" && [...store.keys()].every((k) => k.startsWith("lumenia.sent.")));
+    ok("  ...and the stored text never holds the link", ![...store.values()].some((v) => v.includes("SECRETKEY")));
+    markSentConfirmed("a1");
+    ok("marked confirmed in place: no open send, the record still there with its first date", openSend(readSentRecords(), t) === null && readSentRecords().a1?.phase === "confirmed" && readSentRecords().a1?.at === pending.at);
+    saveSent("b2", pendingPot);
+    forgetSent("b2");
+    ok("forgotten: gone, the others untouched", readSentRecords().b2 === undefined && readSentRecords().a1?.phase === "confirmed");
+    markSentConfirmed("zz");
+    forgetSent("zz");
+    ok("confirming or forgetting an id that is not there changes nothing", Object.keys(readSentRecords()).join() === "a1");
+    store.set([...store.keys()][0]!, "[1,2]");
+    ok("a store holding something else reads as no records", Object.keys(readSentRecords()).length === 0);
+    store.set([...store.keys()][0]!, "{not json");
+    ok("  ...and so does one that is not JSON", Object.keys(readSentRecords()).length === 0);
+  } finally {
+    delete G.localStorage;
+  }
 }
 
 /* ------------------------- a claim the relayer stopped watching -------------------------

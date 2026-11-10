@@ -29,18 +29,29 @@ import { connectExternalWallet, disconnectExternalWallet, externalWalletSigner, 
 import type { Signer } from "../../../lib/signer";
 import { payToAddress, SendUnconfirmedError } from "../../../lib/send";
 import { submitHashes, type SignedFacts } from "../../../lib/unconfirmed";
-import { createV2Link, DepositUncertainError, v2DepositLanded } from "../../../lib/lumendrop";
+import { createV2Link, DepositUncertainError, errorName, linkOrigin, v2DepositLanded } from "../../../lib/lumendrop";
 import { claimPasswordProblem } from "../../../lib/claim-password";
 import { isValidAddress } from "../../../lib/request";
 import { sendEvent } from "../../../lib/events";
 import { formatUsd, sanitizeAmountInput } from "../../../lib/money";
-import { netKey } from "../../../lib/scoped-store";
 import { activeNetwork } from "../../../lib/network";
 import { accountsForTotal } from "../../../lib/accounts-total";
 import { shortAddress } from "../../../lib/account-label";
 import { standingCopy } from "../../../lib/pilot-access";
 import { copy } from "../../../lib/copy";
-import { rememberLink } from "../../../lib/sent-links";
+import {
+  confirmedSentRecord,
+  forgetSent,
+  markSentConfirmed,
+  openSend,
+  pendingSentRecord,
+  readSentRecords,
+  recallLink,
+  rememberLink,
+  saveSent,
+  sentIdOf,
+  type SentRecord,
+} from "../../../lib/sent-links";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { AmountDisplay } from "../../../components/brand/AmountDisplay";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
@@ -110,24 +121,8 @@ interface PayUncertain {
 /** The ledger-time margin lib/horizon.ts loadSubmitOutcome waits past a time bound, as a device-clock hint. */
 const PAY_SETTLE_MARGIN_MS = 60_000;
 
-/**
- * The metadata half of a sent link. The LINK ITSELF is deliberately absent: its #fragment is a
- * bearer key, and this record lives in plain localStorage. The link goes to `sent-links.ts`,
- * encrypted under a non-extractable device key, and `hasLink` is the flag this record keeps so
- * the UI knows a re-copy is possible without holding the secret to prove it.
- */
-interface SentRecord {
-  balanceId: string;
-  /** true when a bearer link was stored (encrypted); false for a pay-to-address send. */
-  hasLink: boolean;
-  amount: string;
-  from: string;
-  at: string;
-  /** who was paid, when this send answered a request straight to their account. */
-  toName?: string;
-  /** their account address (direct pays only) — lets /contacts offer "pay again". */
-  toAddress?: string;
-}
+/* The metadata half of a send, never the link itself, is lib/sent-links.ts SentRecord: a link's
+   record is written there before its deposit is posted, and confirmed after. */
 
 interface RequestCtx {
   nonce: string;
@@ -140,16 +135,6 @@ interface RequestCtx {
 type Ready =
   | { kind: "link"; link: string; balanceId: string; locked: boolean; seeded: boolean }
   | { kind: "direct"; balanceId: string; toName: string };
-
-function saveSent(id: string, rec: SentRecord) {
-  try {
-    const all = JSON.parse(localStorage.getItem(netKey("lumenia.sent")) ?? "{}") as Record<string, SentRecord>;
-    all[id] = rec;
-    localStorage.setItem(netKey("lumenia.sent"), JSON.stringify(all));
-  } catch {
-    /* localStorage blocked — the link still works, just no local tracking */
-  }
-}
 
 /** First name, capped — the submit button is nowrap and must survive 40-char names. */
 function shortName(name: string): string {
@@ -188,12 +173,18 @@ export default function SendPage() {
      `uncertain` below: an error screen invites a retry, and a retry here is a second payment. */
   const [payUncertain, setPayUncertain] = useState<PayUncertain | null>(null);
   /* A deposit we submitted but could not confirm. Distinct from `error` on purpose: an error screen
-     invites a retry, and retrying this is the failure mode. */
+     invites a retry, and retrying this is the failure mode. Its record is on disk as "submitted"
+     (lib/sent-links.ts), written before the POST, so it comes back on the next mount of this screen
+     too; `id` is that record's. */
   const [uncertain, setUncertain] = useState<{
+    id: string;
     linkHex: string;
-    link: string;
+    /** null for a record whose link this device could not recall; it is re-checked all the same. */
+    link: string | null;
+    /** a pot /group made: asked of get_pool, and handed to /sent/[id] rather than drawn here. */
+    group: boolean;
     amount: string;
-    /** before this, an empty escrow is not yet evidence — see RETRY_SAFE_AFTER_MS. */
+    /** before this, an empty escrow is not yet evidence; see RETRY_SAFE_AFTER_MS. */
     safeAt: number;
     /** carried so a drop that turns up later is still described as the one that was made. */
     locked: boolean;
@@ -373,6 +364,24 @@ export default function SendPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, account]);
 
+  /**
+   * AN UNCONFIRMED SEND OUTLIVES THIS SCREEN. The "don't send it again yet" screen used to live in
+   * React state only, so "See my activity", the Send pill in the action bar and a reload all came
+   * back to a blank form with a second deposit of the same money one tap away. The record the
+   * deposit writes before its POST (`phase: "submitted"`, lib/sent-links.ts) is read back here on
+   * mount and again before every send (sendOnce), and the screen stays on that send until the
+   * escrow has answered or the person chooses to start a new one anyway: the extension's rule
+   * (apps/extension/src/background/send.ts). Above the early returns, like every hook here.
+   */
+  const anyway = useRef(false);
+  const restored = useRef(false);
+  useEffect(() => {
+    if (!account || restored.current) return;
+    restored.current = true;
+    void restoreOpenSend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account]);
+
   if (status === "loading") return <p className="py-10 text-center text-ink-soft">Loading…</p>;
   if (!account) {
     // No redirect here — see above. Either an account is being opened, or the effect is about to
@@ -498,8 +507,16 @@ export default function SendPage() {
       const problem = claimPasswordProblem(password);
       if (problem) return setError(problem);
     }
+    /* The second send is refused while the first is undecided (lib/sent-links.ts openSend): the
+       screen goes back to that send instead, and only the person's own "start a new one anyway"
+       lifts it, for this visit. Read from storage, so a send another tab posted counts too. */
+    if (!anyway.current && (await restoreOpenSend())) return;
 
     setBusy(true);
+    /* What the deposit wrote before its POST, for the catch below: a failure after this ran is
+       judged differently from one before it. An object rather than a let, because the hook assigns
+       it inside a closure and narrowing would otherwise read it as never set. */
+    const kept: { id: string; record: SentRecord | null } = { id: "", record: null };
     try {
       let signer: Signer;
       if (external) {
@@ -571,21 +588,22 @@ export default function SendPage() {
         signer,
         amount: amt.toFixed(2),
         from: senderName,
-        webOrigin: window.location.origin,
+        webOrigin: linkOrigin(process.env.NEXT_PUBLIC_SITE_URL, window.location.origin),
         password: lockWith || undefined,
         seeded,
         preview: richPreview ? "rich" : "private",
+        /* BEFORE THE POST: the link, encrypted, and its record as "submitted" (lib/sent-links.ts).
+           The POST is the point of no return: the sponsor can submit the deposit and the reply be
+           lost with the tab, and until this ran the only copy of the claim URL was in this closure. */
+        onPrepared: async (p) => {
+          kept.id = sentIdOf(p.linkHex);
+          await rememberLink(kept.id, p.link);
+          kept.record = pendingSentRecord(p, { from: senderName, locked: Boolean(lockWith), now: Date.now() });
+          saveSent(kept.id, kept.record);
+        },
       });
-      const sentId = result.linkHex.slice(-8);
-      // The link is kept encrypted, separately from this record — see lib/sent-links.ts.
-      await rememberLink(sentId, result.link);
-      saveSent(sentId, {
-        balanceId: result.linkHex, // the v2 drop id (the link key); reused by "my links"
-        hasLink: true,
-        amount: amt.toFixed(2),
-        from: senderName,
-        at: new Date().toISOString(),
-      });
+      // The sponsor's 200, or the escrow holding it: the record is confirmed; the link is already kept.
+      if (kept.record) saveSent(kept.id, confirmedSentRecord(kept.record));
       // The sponsor has always allowed this one; nothing ever fired it. Paired with send_started it
       // is the only way to see the send flow's own drop-off — how many people who begin a send end
       // up with a link they can share.
@@ -604,7 +622,9 @@ export default function SendPage() {
       // used", "this wallet is not on the pilot allowlist yet" — and burying those under "try
       // again" invited exactly the retry that can never work. A wall the user could act on read
       // as a glitch.
-      console.error("[send]", e);
+      /* Only the failure's class and the record id reach the console (lib/lumendrop.ts errorName):
+         the uncertain error carries the whole claim URL, bearer key included. */
+      console.warn("[send] failed:", errorName(e), kept.id || "-");
 
       /* The one error we must never guess at. Everywhere else "your money hasn't moved, try again"
        * is true and kind; here it can be a lie that costs real money, because the deposit may be
@@ -614,19 +634,24 @@ export default function SendPage() {
        * retry button. The user can re-check, and the money surfaces on its own once the ledger
        * catches up. */
       if (e instanceof DepositUncertainError) {
-        // Persist the link now, not on success: if this deposit lands later, the only copy of the
-        // claim URL is the one we are holding here, and a reload would otherwise lose it.
-        void rememberLink(e.linkHex.slice(-8), e.link);
+        // Its link and its record were written before the POST (onPrepared), so a reload, the Send
+        // pill and "See my activity" all come back to this screen until the escrow has answered.
         setNotYet(""); // a verdict on the previous attempt, not this one
         setUncertain({
+          id: kept.id || sentIdOf(e.linkHex),
           linkHex: e.linkHex,
           link: e.link,
+          group: false,
           amount: amt.toFixed(2),
           safeAt: retrySafeAt(e),
           locked: Boolean(lockWith),
         });
-        return; // deliberately skips setError — this is not an error screen
+        return; // deliberately skips setError: this is not an error screen
       }
+      /* Anything else after the record was written is a refusal before submission (a status and
+         the sponsor's words) or an escrow read empty past the deadline: nothing moved, so the
+         record goes, or /sent would list a link that holds nothing. */
+      if (kept.record) forgetSent(kept.id);
 
       /* The direct payment's own undecided outcome (lib/send.ts). It used to crash on the 202's
          missing balance id and fall into "Your money hasn't moved. Try again.", and paying again
@@ -670,44 +695,81 @@ export default function SendPage() {
     }
   }
 
-  /* Submitted, unconfirmed. The screen's whole job is to stop a second send: it states what is
-     actually known, offers a re-check against the escrow, and gives no path that spends money
-     again. If the drop turns up, this becomes the ordinary link screen. */
-  if (uncertain) {
-    async function recheck() {
-      setRechecking(true);
-      setNotYet("");
-      try {
-        const landed = await v2DepositLanded(uncertain!.linkHex, account!.address);
-        if (landed === true) {
-          setReady({
-            kind: "link",
-            link: uncertain!.link,
-            balanceId: uncertain!.linkHex,
-            locked: uncertain!.locked,
-            seeded,
-          });
-          setUncertain(null);
-        } else if (landed === false && Date.now() >= uncertain!.safeAt) {
-          // Nothing there, and nothing can reach it any more — sending again is safe, so let them.
-          setUncertain(null);
-          setError("That one didn't go through. Nothing left your account — you can try again.");
-        } else {
-          /* "unknown", or an empty escrow the money could still land in ⇒ stay exactly here.
-             Claiming either verdict would be inventing an answer; saying nothing at all left the
-             tap indistinguishable from a screen that had stopped working, which is why the wait
-             gets named instead. */
-          setNotYet(
-            landed === "unknown"
-              ? "We couldn't check just now. Nothing has changed — try again in a moment."
-              : `It hasn't arrived yet, and it can still get there. ${waitHint(uncertain!.safeAt)}`,
-          );
-        }
-      } finally {
-        setRechecking(false);
-      }
-    }
+  /**
+   * The open send's screen, from its record (lib/sent-links.ts openSend): the link is recalled from
+   * the encrypted store and the escrow is asked once straight away. True when there is one. A
+   * record another screen wrote (a pot from /group), or a link this device could not recall, is
+   * re-checked here all the same and handed to /sent/[id] once it lands.
+   */
+  async function restoreOpenSend(): Promise<boolean> {
+    const open = openSend(readSentRecords(), Date.now());
+    if (!open) return false;
+    const link = open.rec.hasLink ? await recallLink(open.id) : null;
+    const u = {
+      id: open.id,
+      linkHex: open.rec.balanceId,
+      link,
+      group: typeof open.rec.slots === "number",
+      amount: open.rec.amount,
+      safeAt: open.rec.retrySafeAfter ?? Number.POSITIVE_INFINITY,
+      locked: Boolean(open.rec.locked),
+    };
+    setNotYet("");
+    setUncertain(u);
+    void recheck(u);
+    return true;
+  }
 
+  /* The escrow's answer for an unconfirmed deposit: landed, and this becomes the ordinary link
+     screen with the record confirmed; can no longer land, and it says so, drops the record and lets
+     them send again; anything else, and it stays exactly here. */
+  async function recheck(u: NonNullable<typeof uncertain>) {
+    setRechecking(true);
+    setNotYet("");
+    try {
+      const landed = await v2DepositLanded(u.linkHex, account!.address, { group: u.group });
+      if (landed === true) {
+        markSentConfirmed(u.id);
+        if (!u.group && u.link) {
+          setReady({ kind: "link", link: u.link, balanceId: u.linkHex, locked: u.locked, seeded });
+          setUncertain(null);
+        } else {
+          // A pot, or a link this device could not recall: /sent/[id] draws both from the record.
+          router.push(`/sent/${u.id}`);
+        }
+      } else if (landed === false && Date.now() >= u.safeAt) {
+        // Nothing there, and nothing can reach it any more: sending again is safe, so let them.
+        forgetSent(u.id);
+        setUncertain(null);
+        setError("That one didn't go through. Nothing left your account, so you can try again.");
+      } else {
+        /* "unknown", or an empty escrow the money could still land in: stay exactly here. Claiming
+           either verdict would be inventing an answer; saying nothing at all left the tap
+           indistinguishable from a screen that had stopped working, which is why the wait gets
+           named instead. */
+        setNotYet(
+          landed === "unknown"
+            ? "We couldn't check just now. Nothing has changed, try again in a moment."
+            : `It hasn't arrived yet, and it can still get there. ${waitHint(u.safeAt)}`,
+        );
+      }
+    } finally {
+      setRechecking(false);
+    }
+  }
+
+  /** The person's explicit choice to start a new send while the open one is undecided; lifted for this visit only. */
+  function startAnyway() {
+    anyway.current = true;
+    setNotYet("");
+    setUncertain(null);
+  }
+
+  /* Submitted, unconfirmed. The screen's whole job is to stop a second send: it states what is
+     actually known, offers a re-check against the escrow, and the only way past it that can spend
+     money again is the person's own "start a new one anyway". If the drop turns up, this becomes
+     the ordinary link screen. */
+  if (uncertain) {
     return (
       <div className="flex flex-col gap-4 py-4">
         <h1 className="text-xl font-bold text-ink">We couldn&apos;t confirm this one</h1>
@@ -717,7 +779,7 @@ export default function SendPage() {
             confirmation back in time. It may well have gone through.
           </p>
           <p className="mt-2 text-sm font-semibold text-ink">
-            Don&apos;t send it again yet — you could send twice.
+            Don&apos;t send it again yet. You could send twice.
           </p>
           <p className="mt-2 text-sm text-ink-soft">
             Check again in a moment. If it went through, your link appears here. If it didn&apos;t,
@@ -725,10 +787,21 @@ export default function SendPage() {
           </p>
           {notYet && <p className="mt-3 text-sm font-medium text-ink">{notYet}</p>}
           <div className="mt-4">
-            <PrimaryButton loading={rechecking} loadingLabel="Checking…" onClick={recheck}>
+            <PrimaryButton loading={rechecking} loadingLabel="Checking..." onClick={() => void recheck(uncertain)}>
               Check again
             </PrimaryButton>
           </div>
+          <button
+            type="button"
+            onClick={startAnyway}
+            className="mt-4 text-sm text-ink-soft underline-offset-2 hover:underline"
+          >
+            Start a new one anyway
+          </button>
+          <p className="mt-1 text-xs text-ink-soft">
+            Only if you&apos;re sure. If this one did go through, a new one sends the money twice. If
+            it lands later, it still shows in your activity and you can take it back.
+          </p>
         </MoneyCard>
         <Link href="/activity" className="text-sm text-ink-soft underline-offset-2 hover:underline">
           See my activity

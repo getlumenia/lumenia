@@ -315,6 +315,71 @@ export function v2LinkUrl(p: V2LinkParts): string {
 }
 
 /**
+ * The origin a claim link is minted against: the deployment's public site URL when the build has
+ * one, otherwise the origin the page is running on.
+ *
+ * Minted against `window.location.origin` alone, a link made on a preview deployment or on the www
+ * host pointed there: behind bot protection, on a deployment that can disappear, with a keystore of
+ * its own per origin. The caller reads the env value (Next inlines `process.env.NEXT_PUBLIC_SITE_URL`
+ * at build time only where it is written out in full), and it has to be an http(s) URL: anything
+ * else leaves the fallback, and a path, a query or a trailing slash on it is dropped.
+ */
+export function linkOrigin(siteUrl: string | null | undefined, fallback: string): string {
+  if (typeof siteUrl === "string" && siteUrl.trim() !== "") {
+    try {
+      const u = new URL(siteUrl.trim());
+      if (u.protocol === "https:" || u.protocol === "http:") return u.origin;
+    } catch {
+      /* not a URL: the page's own origin below */
+    }
+  }
+  return fallback.replace(/\/$/, "");
+}
+
+/**
+ * Sponsor answers to /v2-deposit that decide nothing, the set lib/payout.ts reads a cash-out's
+ * answer with. The Worker maps its own relay exceptions to 202 (submitted, undecided), 400
+ * (refused) and 503 (busy or halted, before anything is submitted), so a 5xx on this route is the
+ * platform's: a Cloudflare error page or a resource-limit kill after sendTransaction may already
+ * have run; 408 is a timeout the request may have been served through. Each is settled by asking
+ * the escrow, exactly as a dropped connection is. Thrown as plain errors they read as "your money
+ * hasn't moved, try again", the retry minted a second drop, and the first link was never kept. 503
+ * is deliberately absent: the kill-switch and the busy answer come before anything is submitted.
+ */
+const UNDECIDED_DEPOSIT_STATUS = new Set([202, 408, 500, 502, 504, 522, 524]);
+
+const TX_HASH = /^[0-9a-f]{64}$/i;
+
+/** The answer's body, or null when it could not be read: a reply that died halfway says nothing about what the sponsor had submitted. */
+async function answerText(res: Response): Promise<string | null> {
+  try {
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+/** The sponsor's transaction hash from an answer's body; "" when the body names none. */
+function depositHashOf(text: string | null): string {
+  if (text === null) return "";
+  try {
+    const hash = (JSON.parse(text) as { hash?: unknown } | null)?.hash;
+    return typeof hash === "string" && TX_HASH.test(hash) ? hash.toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Whether an answer has to be settled by reading the escrow: an undecided status, a body that could
+ * not be read, or a 2xx that names no transaction (an empty body, a proxy's page). The sponsor's 200
+ * always names the transaction, so a 2xx without one is not the sponsor's word.
+ */
+function depositUndecided(status: number, ok: boolean, text: string | null): boolean {
+  return text === null || UNDECIDED_DEPOSIT_STATUS.has(status) || (ok && depositHashOf(text) === "");
+}
+
+/**
  * Deposit `amount` USDC behind a fresh link — GASLESS. The SENDER signs the invoke (authorizes the
  * USDC transfer into the escrow) but pays no gas: the sponsor FEE-BUMPS it via /v2-deposit, so even
  * a 0-XLM sender can create a link (proven: the gasless-deposit spike, 5/5).
@@ -465,31 +530,33 @@ export async function createV2Link(opts: {
   }
   /* Three outcomes, and conflating them is what lost money.
    *
-   * 200 — the sponsor watched it land. Done.
+   * 200 with a transaction hash: the sponsor watched it land. Done.
    *
-   * 202 — accepted by the ledger, not yet observed. NOT a failure. Ask the escrow directly; it is
-   *       the only authority on whether this drop exists. If it does, the send succeeded and the
-   *       user gets their link. An empty escrow only means "nothing moved" once the signed tx can
-   *       no longer be included — until then it may still be in the queue, and a retry mints a
-   *       SECOND drop under a fresh link key. If we cannot read the escrow either, we say so — and
-   *       the caller must not offer a plain "try again".
+   * UNDECIDED (depositUndecided): the 202, "accepted by the ledger, not yet observed"; a platform
+   *       5xx or a 408, which can arrive after the sponsor submitted; a body that could not be read;
+   *       a 2xx that names no transaction. NOT failures. Ask the escrow directly; it is the only
+   *       authority on whether this drop exists. If it does, the send succeeded and the user gets
+   *       their link. An empty escrow only means "nothing moved" once the signed tx can no longer
+   *       be included; until then it may still be in the queue, and a retry mints a SECOND drop
+   *       under a fresh link key. If we cannot read the escrow either, we say so, and the caller
+   *       must not offer a plain "try again".
    *
-   * A rejected request (4xx/5xx) never reached the ledger, so those still throw normally: the
-   * pilot gate, the caps and the anti-drain validator all answer before anything is submitted.
+   * A refusal (a 4xx, or the sponsor's 503) never reached the ledger, so those still throw plainly
+   * with the sponsor's words: the pilot gate, the caps, the rate limiter and the anti-drain
+   * validator all answer before anything is submitted.
    */
-  const text = await res.text();
-  if (res.status === 202) {
+  const text = await answerText(res);
+  if (depositUndecided(res.status, res.ok, text)) {
     const landed = await v2DepositLanded(linkHex, sender, { net });
     if (landed === "unknown" || (landed === false && Date.now() < retrySafeAfter))
       throw new DepositUncertainError(linkHex, url, retrySafeAfter);
-    if (landed === false) throw new Error(`/v2-deposit → not submitted: ${text}`);
+    if (landed === false) throw new Error(`/v2-deposit → not submitted: ${text ?? `${res.status} with no readable body`}`);
     // landed === true → it did happen; fall through and hand back the link.
   } else if (!res.ok) {
     throw new Error(`/v2-deposit → ${res.status}: ${text}`);
   }
-  const { hash } = (text ? JSON.parse(text) : { hash: "" }) as { hash: string };
 
-  return { link: url, linkHex, hash };
+  return { link: url, linkHex, hash: depositHashOf(text) };
 }
 
 /**
@@ -616,17 +683,17 @@ export async function createV2GroupLink(opts: {
       throw new DepositUncertainError(linkHex, url, retrySafeAfter);
     throw new Error("couldn't reach the sponsor");
   }
-  const text = await res.text();
-  if (res.status === 202) {
+  // The same three outcomes as createV2Link, the undecided ones asked of get_pool.
+  const text = await answerText(res);
+  if (depositUndecided(res.status, res.ok, text)) {
     const landed = await v2DepositLanded(linkHex, sender, { group: true, net });
     if (landed === "unknown" || (landed === false && Date.now() < retrySafeAfter))
       throw new DepositUncertainError(linkHex, url, retrySafeAfter);
-    if (landed === false) throw new Error(`/v2-deposit → not submitted: ${text}`);
+    if (landed === false) throw new Error(`/v2-deposit → not submitted: ${text ?? `${res.status} with no readable body`}`);
   } else if (!res.ok) {
     throw new Error(`/v2-deposit → ${res.status}: ${text}`);
   }
-  const { hash } = (text ? JSON.parse(text) : { hash: "" }) as { hash: string };
-  return { ...made, hash };
+  return { ...made, hash: depositHashOf(text) };
 }
 
 /**
@@ -822,22 +889,20 @@ export type V2ClaimOutcome =
       kind: "claimed";
       hash: string;
       publicKey: string;
-      /**
-       * The payout's secret, for the caller to persist. EMPTY on a RESUMED claim: that key was
-       * already handed to `onAccountReady` and saved on the first attempt, and this path never mints
-       * a second one. Callers zero it and rely on the callback, which is the only place a seed is
-       * handed out.
-       */
-      seed: Uint8Array;
+      /* No seed here. The payout's key is handed to `onAccountReady` once, before the money moves,
+         and that is the only copy that leaves this module: a second copy on the outcome was zeroed
+         by every caller on arrival and kept the Keypair's own buffer alive for nothing (W4). */
       link: V2LinkKind;
     }
   /**
    * The escrow says THIS device's payout address already holds a share of this pool - the first
    * attempt landed and its answer was lost on the way back. The money is theirs and it is on this
    * phone; this is the one settled answer that may say where the money is, because the contract
-   * keyed it to an address only this device has.
+   * keyed it to an address only this device has. `held` is false when this device no longer holds
+   * that account's key (the latch outlived a "Leave this device", review P0-8): the money is still
+   * there, and the screen must then not say "on this phone". Absent means held.
    */
-  | { kind: "already-yours"; publicKey: string; link: V2LinkKind }
+  | { kind: "already-yours"; publicKey: string; link: V2LinkKind; held?: boolean }
   | { kind: "already-claimed"; link: V2LinkKind }
   | { kind: "no-such-drop"; link: V2LinkKind }
   /** Group drops only: `claim_share` is refused from the expiry on, a one-to-one `claim` is not. */
@@ -1019,11 +1084,73 @@ function writeClaimLatch(linkHex: string, latch: ClaimLatch): void {
   }
 }
 
+const LATCH_PREFIX = "lumenia.v2claim.";
+
+/**
+ * Drop every ATTEMPTED latch on this device. "Leave this device" calls it next to the keystore wipe
+ * (components/brand/DisconnectButton.tsx): an attempted latch names a payout this device will no
+ * longer hold the key for, and the one thing it could still do is resume a claim into it (review
+ * P0-8). `taken` latches stay: they record that money LANDED in a named account, which a backup can
+ * bring back, and a reopened link then says so (`held: false`) rather than paying a second share.
+ * A record that cannot be read is dropped too: nothing can resume from it. Returns how many went;
+ * blocked storage drops nothing and answers 0.
+ */
+export function forgetAttemptedClaims(): number {
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(LATCH_PREFIX)) continue;
+      try {
+        const l = JSON.parse(localStorage.getItem(key) ?? "null") as ClaimLatch | null;
+        if (l?.state !== "taken") doomed.push(key);
+      } catch {
+        doomed.push(key);
+      }
+    }
+    for (const key of doomed) localStorage.removeItem(key);
+    return doomed.length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Thrown by claimV2ToSponsoredAccount when this device's latch names an account it no longer holds
+ * the key for AND the ledger could not say whether that earlier attempt landed. Neither resuming
+ * (money into a keyless account) nor a fresh payout (a second share if it did land) is safe on a
+ * guess, so the claim stops before anything is minted. The screen names it by class.
+ */
+export class PriorAttemptUnreadError extends Error {
+  constructor() {
+    super("An earlier attempt from this phone could not be checked on the ledger. Open the link again in a moment.");
+    this.name = "PriorAttemptUnreadError";
+  }
+}
+
+/**
+ * Zero a Keypair's secret material in place (W4). `rawSecretKey()` returns the Keypair's own seed
+ * buffer in this SDK, so filling it wipes the seed; the expanded signing key sits in a private
+ * field, reached best-effort. Nothing here throws: a shape this does not know is simply left.
+ */
+function wipeKeypair(k: Keypair): void {
+  try {
+    k.rawSecretKey().fill(0);
+  } catch {
+    /* no secret seed on this keypair */
+  }
+  try {
+    (k as unknown as { _secretKey?: Uint8Array | null })._secretKey?.fill(0);
+  } catch {
+    /* private field not where this expects it: the seed above is still wiped */
+  }
+}
+
 /**
  * The walletless recipient path for the v2 UI: create a fresh account with a sponsored USDC
  * trustline (reusing the sponsor's /create-account — 0 XLM to the recipient), then claim the v2
- * drop straight into it via the relayer. On success the outcome carries the new account + seed to
- * persist locally.
+ * drop straight into it via the relayer. On success the outcome carries the new account; its key
+ * was handed to `onAccountReady` before the money moved, and nowhere else.
  *
  * (A classic account needs a USDC trustline to hold the SAC balance — hence the sponsored
  * create-account; the trustline reserve is the sponsor's. The zero-reserve win fully lands once
@@ -1039,21 +1166,35 @@ export async function claimV2ToSponsoredAccount(opts: {
    * view is asked first and nothing else - the escrow's own answer decides what gets signed.
    */
   group?: boolean;
-  /** Called once the payout account exists on-ledger, BEFORE the claim is relayed. */
+  /**
+   * Called once the payout account exists on-ledger, BEFORE the claim is relayed. A throw here STOPS
+   * the claim: nothing is relayed into an account whose key the caller could not keep (review P0-7).
+   */
   onAccountReady?: (publicKey: string, seed: Uint8Array) => Promise<void> | void;
+  /**
+   * Whether this device still holds the key for an account (lib/keystore.ts hasAccountKey). The
+   * latch below is a RESUME only while it does; a caller that passes nothing trusts its latch.
+   */
+  hasKeyFor?: (publicKey: string) => Promise<boolean>;
 }): Promise<V2ClaimOutcome> {
   const net = opts.net ?? defaultNet();
   const base = (opts.sponsorUrl || net.sponsorUrl).replace(/\/$/, "");
   const server = new rpc.Server(net.rpcUrl);
   const linkHex = Buffer.from(Keypair.fromSecret(opts.linkSecret).rawPublicKey()).toString("hex");
 
+  /* THE LATCH IS A RESUME ONLY WHILE THIS DEVICE STILL HOLDS THE KEY IT NAMES (review P0-8). The
+     latch lives in localStorage and the key in IndexedDB, and "Leave this device" clears the second:
+     a claim resumed into an account whose key is gone pays money to nobody, and every later tap
+     would do it again. */
+  const latch = readClaimLatch(linkHex);
+  const held = latch !== null && (opts.hasKeyFor ? await opts.hasKeyFor(latch.payout) : true);
+
   /* A confirmed claim, before any request leaves this phone. `taken` is only ever written after a
      hash came back, so this is a fact about this device, not a guess about the money.
      Group links only: a single link that was already claimed keeps the answer it has always given,
      which names the take-back it cannot rule out (see settledCopy on the claim screen). */
-  const latch = readClaimLatch(linkHex);
   if (latch?.state === "taken" && latch.link === "group") {
-    return { kind: "already-yours", publicKey: latch.payout, link: latch.link };
+    return { kind: "already-yours", publicKey: latch.payout, link: latch.link, held };
   }
 
   /* Everything below this line spends a sponsor reserve and leaves an account on this device. A
@@ -1067,35 +1208,61 @@ export async function claimV2ToSponsoredAccount(opts: {
      one" - which is the truth, and is this person's own share. The account already exists, so the
      sponsored create is skipped and no second reserve is spent. */
   let payout: Keypair | null = null;
-  let payoutPublic = latch?.payout ?? "";
+  let payoutPublic = "";
+  if (latch && held) {
+    payoutPublic = latch.payout;
+  } else if (latch && kind === "group") {
+    /* The key is gone, so resuming is out. Whether a FRESH payout may be minted depends on what the
+       earlier attempt did, which only the ledger knows: money in the old account means that attempt
+       landed, and a fresh claim on a pool would be a second share (the contract dedupes by payout
+       address, which a fresh one defeats). Unreadable is not "empty", and neither path is safe on a
+       guess, so that stops here. Empty means the earlier attempt did not land (or its share was
+       moved on and the device then wiped, which only the person who did both can bring about), and
+       a fresh payout replaces the latch below. A one-to-one link needs none of this: the escrow just
+       said "claimable", so the earlier attempt never landed. */
+    const usd = await loadPayoutUsd(latch.payout, net);
+    if (usd === null) throw new PriorAttemptUnreadError();
+    if (usdcStroops(usd) > 0n) {
+      writeClaimLatch(linkHex, { ...latch, state: "taken" });
+      return { kind: "already-yours", publicKey: latch.payout, link: latch.link, held: false };
+    }
+  }
   if (!payoutPublic) {
     payout = Keypair.random();
     payoutPublic = payout.publicKey();
-    const horizon = new Horizon.Server(net.horizonUrl);
+    try {
+      const horizon = new Horizon.Server(net.horizonUrl);
 
-    // 1. sponsor creates the account + USDC trustline (recipient holds 0 XLM); recipient co-signs.
-    const created = (await (
-      await fetch(`${base}/create-account`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ recipientPublicKey: payoutPublic }),
-      })
-    ).json()) as { xdr?: string; error?: string };
-    if (!created.xdr) throw new Error(created.error ?? "create-account failed");
-    const sandwich = TransactionBuilder.fromXDR(created.xdr, net.passphrase) as Transaction;
-    assertSponsoredOnboarding(sandwich, payoutPublic, net.id);
-    sandwich.sign(payout);
-    // A lost Horizon reply is answered by the ledger, not by waiting (lib/submit.ts).
-    await submitOrConfirm(horizon, sandwich, net);
+      // 1. sponsor creates the account + USDC trustline (recipient holds 0 XLM); recipient co-signs.
+      const created = (await (
+        await fetch(`${base}/create-account`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ recipientPublicKey: payoutPublic }),
+        })
+      ).json()) as { xdr?: string; error?: string };
+      if (!created.xdr) throw new Error(created.error ?? "create-account failed");
+      const sandwich = TransactionBuilder.fromXDR(created.xdr, net.passphrase) as Transaction;
+      assertSponsoredOnboarding(sandwich, payoutPublic, net.id);
+      sandwich.sign(payout);
+      // A lost Horizon reply is answered by the ledger, not by waiting (lib/submit.ts).
+      await submitOrConfirm(horizon, sandwich, net);
 
-    /* The account exists on-ledger now, so the caller gets the key BEFORE the money is sent to it.
-     *
-     * The old order persisted only after a successful claim, which meant a dropped connection during
-     * the claim - a phone on a Turkish mobile network, the exact user this product is for - left the
-     * money sitting in an account whose only key had just gone out of scope. The claim relayer polls
-     * for up to a minute, so that window is real, not theoretical. Saving first costs nothing if the
-     * claim then fails: an empty sponsored account is harmless. */
-    await opts.onAccountReady?.(payoutPublic, new Uint8Array(payout.rawSecretKey()));
+      /* The account exists on-ledger now, so the caller gets the key BEFORE the money is sent to it.
+       *
+       * The old order persisted only after a successful claim, which meant a dropped connection during
+       * the claim - a phone on a Turkish mobile network, the exact user this product is for - left the
+       * money sitting in an account whose only key had just gone out of scope. The claim relayer polls
+       * for up to a minute, so that window is real, not theoretical. Saving first costs nothing if the
+       * claim then fails: an empty sponsored account is harmless. And a caller that CANNOT keep the
+       * key throws here, which ends the claim before the relay: the latch below is never written and
+       * nothing is sent to an account nobody holds (review P0-7). */
+      await opts.onAccountReady?.(payoutPublic, new Uint8Array(payout.rawSecretKey()));
+    } finally {
+      /* The key's one job here, co-signing its own creation, is done, and the callback holds the
+         only copy that matters: wiped now, on every path, rather than left to the collector (W4). */
+      wipeKeypair(payout);
+    }
   }
 
   // The guard goes down BEFORE the relay, because the response is the thing that gets lost.
@@ -1141,14 +1308,7 @@ export async function claimV2ToSponsoredAccount(opts: {
     throw e;
   }
   writeClaimLatch(linkHex, { state: "taken", payout: payoutPublic, link: kind, at: Date.now() });
-  return {
-    kind: "claimed",
-    hash,
-    publicKey: payoutPublic,
-    // Empty on a resume: that key was handed to onAccountReady and saved on the first attempt.
-    seed: payout ? new Uint8Array(payout.rawSecretKey()) : new Uint8Array(0),
-    link: kind,
-  };
+  return { kind: "claimed", hash, publicKey: payoutPublic, link: kind };
 }
 
 /* -------------------------- v2 reclaim (C2 recovery) -------------------------- */
@@ -1329,7 +1489,15 @@ export type ResumeDecision =
   /** we looked, the account is empty, and the link cannot pay any more */
   | { say: "missed" }
   /** we could not look. Offer the claim, promise nothing */
-  | { say: "unsure" };
+  | { say: "unsure" }
+  /**
+   * The latch names an account this device no longer holds the key for (review P0-8). `landed`
+   * true: the money is in that account, and only a backup of it brings it back, so no claim is
+   * offered and "on this phone" is never said. False: nothing landed there and the link can still
+   * pay, so a FRESH claim is offered, with the honest note. Null: we could not look, and nothing is
+   * offered, because resuming would pay a keyless account and a fresh claim might pay twice.
+   */
+  | { say: "unheld"; landed: boolean | null };
 
 export function resumeDecision(input: {
   latch: ClaimLatch | null;
@@ -1337,8 +1505,17 @@ export function resumeDecision(input: {
   payoutUsd: string | null;
   /** whether the link can still pay, or null when we could not read it */
   claimable: boolean | null;
+  /** whether this device still holds the latched payout's key; omitted means it does */
+  held?: boolean;
 }): ResumeDecision {
   if (!input.latch) return { say: "nothing" };
+  if (input.held === false) {
+    if (input.latch.state === "taken") return { say: "unheld", landed: true };
+    if (input.payoutUsd === null) return { say: "unheld", landed: null };
+    if (usdcStroops(input.payoutUsd) > 0n) return { say: "unheld", landed: true };
+    if (input.claimable === null) return { say: "unheld", landed: null };
+    return input.claimable ? { say: "unheld", landed: false } : { say: "missed" };
+  }
   if (input.payoutUsd === null) return { say: "unsure" };
   if (usdcStroops(input.payoutUsd) > 0n) return { say: "taken", usd: input.payoutUsd };
   if (input.claimable === null) return { say: "unsure" };
@@ -1347,15 +1524,17 @@ export function resumeDecision(input: {
 
 /**
  * Resolve this device's latch against the ledger: what is in the payout account, and whether the
- * link can still pay. Reads only - nothing is created and no sponsor request is made.
+ * link can still pay. Reads only - nothing is created and no sponsor request is made. `hasKeyFor`
+ * is the caller's keystore (lib/keystore.ts hasAccountKey); without it the latch is taken as held.
  */
 export async function readClaimProgress(
   linkHex: string,
-  opts?: { net?: NetworkConfig; group?: boolean },
+  opts?: { net?: NetworkConfig; group?: boolean; hasKeyFor?: (publicKey: string) => Promise<boolean> },
 ): Promise<{ decision: ResumeDecision; latch: ClaimLatch | null }> {
   const latch = readClaimLatch(linkHex);
   if (!latch) return { decision: { say: "nothing" }, latch: null };
   const net = opts?.net ?? defaultNet();
+  const held = opts?.hasKeyFor ? await opts.hasKeyFor(latch.payout) : true;
   const payoutUsd = await loadPayoutUsd(latch.payout, net);
   /* Only asked when the account came back empty - if the money is there, nothing about the link can
      change what this device may say, and the extra simulation would just slow the screen down. */
@@ -1369,8 +1548,9 @@ export async function readClaimProgress(
       claimable = null;
     }
   }
-  const decision = resumeDecision({ latch, payoutUsd, claimable });
-  if (decision.say === "taken" && latch.state !== "taken") {
+  const decision = resumeDecision({ latch, payoutUsd, claimable, held });
+  const landed = decision.say === "taken" || (decision.say === "unheld" && decision.landed === true);
+  if (landed && latch.state !== "taken") {
     writeClaimLatch(linkHex, { ...latch, state: "taken" });
   }
   return { decision, latch };
@@ -1506,6 +1686,16 @@ export class DepositUncertainError extends Error {
     super("deposit submitted but not confirmed");
     this.name = "DepositUncertainError";
   }
+}
+
+/**
+ * What a send screen may put in the console about a failed deposit: the error's class, nothing
+ * else. DepositUncertainError carries the whole claim URL, bearer key included, and a logged error
+ * object is one copy away from a bug report or a support screenshot; the claim route logs the same
+ * way (V2ClaimButton.tsx, through classifyClaimError).
+ */
+export function errorName(e: unknown): string {
+  return e instanceof Error ? e.name : typeof e;
 }
 
 /**
