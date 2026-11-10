@@ -107,12 +107,26 @@ PROPTEST_CASES=16 cargo mutants -f src/lib.rs                    # mutation test
 
 The fast checks run in CI on every push; Scout, the OpenZeppelin `soroban-scanner` and mutation
 testing run on a weekly workflow. Free tooling is **not** an audit and we do not describe it as
-one.
+one. Ignored advisories are listed with a dated reason in `.cargo/audit.toml` and `deny.toml`;
+today that is RUSTSEC-2026-0387 (crypto-bigint, reachable on the host side only, not in the wasm).
 
 ## Build
 
 ```bash
-stellar contract build          # → target/wasm32v1-none/release/lumen_drop.wasm
+stellar contract build --locked # → target/wasm32v1-none/release/lumen_drop.wasm
 stellar contract deploy --wasm target/wasm32v1-none/release/lumen_drop.wasm \
   --source <key> --network testnet -- --token <USDC-SAC> --owner <owner-address>
 ```
+
+Toolchain: stellar-cli 30.0.1 (`brew install stellar-cli`; CI downloads the same release binary,
+sha256-pinned in `.github/workflows/ci.yml`, and runs this build on every push) with rustc 1.96.0
+and the `wasm32v1-none` target. The CLI writes its own version into the wasm's `contractmetav0`
+section (`cliver`, shown by `stellar contract info meta --wasm ...`), so the same source and rustc
+give a different sha256 under a different CLI: on 2026-11-10 one checkout built `4b5780eb...cb68b`
+with 27.1.0 (the testnet pin in `apps/sponsor/wrangler.toml`) and `956cb6ee...a72a` with 30.0.1,
+the two files differing in nothing but that string. To source-verify a deployed hash, build with the
+CLI and rustc that deployment recorded (`EVIDENCE.md`). The mainnet bytecode was reproduced this
+way on 2026-11-10: the on-chain meta reads `cliver: 25.2.0#` (a 25.2.0 build that stamped no
+commit), and the escrow built from this source with stellar-cli 25.2.0 and rustc 1.96.0, with that
+stamp normalized by `ops/wasm-normalize-cliver.py`, is byte-identical to the mainnet pin
+`38941538...ec6a` (21,323 bytes).

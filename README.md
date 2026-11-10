@@ -220,7 +220,7 @@ There is no timelock yet, so an owner upgrade is instant; a timelock is the next
 | Circle CCTP V2 | CctpForwarder testnet [`CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ`](https://stellar.expert/explorer/testnet/contract/CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ), Stellar domain 27; Base Sepolia domain 6 | The sponsor relays `mint_and_forward`; the recipient is a trustlined Lumenia account; 6 decimals on the wire, 7 on Stellar |
 | Horizon and Soroban RPC | Reads and submits, testnet and mainnet | Every product surface renders live chain data; empty states are honest empties |
 | WebAuthn PRF and Argon2id | Recovery and fast unlock | One 32-byte seed sealed into a ciphertext box the server cannot open; the password is the floor, Face ID the shortcut (WhatsApp's in-app browser cannot create passkeys) |
-| Stellar CLI | `stellar contract build` (`wasm32v1-none`), deploy, `stellar contract extend` for instance and code TTL | Rent is real: both networks were extended by hand and the watchdog pages before expiry |
+| Stellar CLI 30.0.1 | `stellar contract build --locked` (`wasm32v1-none`; CI runs the same release binary, sha256-pinned in `ci.yml`), deploy, `stellar contract extend` for instance and code TTL | Rent is real: both networks were extended by hand and the watchdog pages before expiry |
 
 ## Design decisions and challenges
 
@@ -298,7 +298,7 @@ AMOUNT=2 FINALITY=1000 pnpm --filter @lumenia/sponsor spike7   # CCTP V2 inbound
 ## Setup
 
 ```bash
-# Node 20+, pnpm 9.12.0 (pinned in package.json); Rust and the stellar CLI only for the contract
+# Node 20+, pnpm 9.12.0 (pinned in package.json); Rust stable and stellar-cli 30.0.1 only for the contract
 pnpm install
 
 # Web app (Next.js) on http://localhost:3000; testnet works with no env file
@@ -322,7 +322,7 @@ Sponsor env: the caps and switches are plain vars in `apps/sponsor/wrangler.toml
 
 - Next.js 16.3.8 with React 19.2.8, a PWA hosted on Vercel (git push to `main` deploys)
 - `@stellar/stellar-sdk` 16.3.0 in both apps: classic operations, Soroban invokes and simulation; the same copy the Wallets Kit resolves to; `packages/shared` still pins 16.1.0
-- `soroban-sdk` 26.1 with OpenZeppelin stellar-contracts 0.7.2 (`stellar-access`, `stellar-contract-utils`, `stellar-macros`) for LumenDrop, built with `stellar contract build` to `wasm32v1-none`
+- `soroban-sdk` 26.1 with OpenZeppelin stellar-contracts 0.7.2 (`stellar-access`, `stellar-contract-utils`, `stellar-macros`) for LumenDrop, built with `stellar contract build` (stellar-cli 30.0.1, the release CI pins by sha256) to `wasm32v1-none`
 - Cloudflare Workers with `nodejs_compat` for the sponsor: one codebase, two deployments from the same `wrangler.toml` (`lumenia-sponsor` on testnet, `lumenia-sponsor-mainnet` on mainnet)
 - Upstash Redis over REST for counters, caps, rate limits and the ciphertext-only recovery store
 - Horizon and Soroban RPC for every read and submit; Stellar Wallets Kit 2.5.0 behind a flag; viem 2.56.8 for the Base Sepolia side of the CCTP script; the MCP SDK 1.30.0 for the agent-as-sender server

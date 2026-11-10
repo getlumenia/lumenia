@@ -184,26 +184,32 @@ settings. The deployed spike was extended by hand on 2026-10-09 (`evidence/spike
 ## Build
 
 ```bash
-stellar contract build           # -> target/wasm32v1-none/release/lumen_drop_commit.wasm
+stellar contract build --locked  # -> target/wasm32v1-none/release/lumen_drop_commit.wasm
 ```
 
 `stellar contract build` sets `SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1` itself; a
 plain `cargo check --target wasm32v1-none` fails without it. Built here with stellar-cli 27.1.0
-and rustc 1.96.0.
+and rustc 1.96.0; CI builds it with stellar-cli 30.0.1 (the release binary pinned by sha256 in
+`.github/workflows/ci.yml`) on every push.
 
 The build is reproducible from this source: `shasum -a 256
 target/wasm32v1-none/release/lumen_drop_commit.wasm` gives
 `0a7dbe551dacffc8894f8a20d7afaf72bd77e263c25b627d5d35e45a2d7e5ee4` (15,549 bytes), the code of the
 testnet deployment `CAGWIGEGGTPZK7SPERJRW3EYSEHGSZKQEKEH6SU4ECU6EI7BKTAILCXA`. Checked on
 2026-10-09 in two checkouts, before and after the comment change in `src/lib.rs` that day
-(comments are not part of the wasm).
+(comments are not part of the wasm), and again on 2026-11-10 with 27.1.0. The same source under
+stellar-cli 30.0.1 gives `3067cab7...b8d9`: the two files differ only in the CLI version the build
+stamps into the wasm meta (`cliver`), so the hash above is reproduced with 27.1.0, not with a newer
+CLI.
 
 A testnet deploy, if the spike needs one (testnet only, never `--network mainnet`). Any SAC
 works as the token; a test asset issued by the deploying key lets that key mint its own deposits.
 The deployment above was made with the JavaScript SDK (`apps/sponsor/src/spike11-commitment.ts`,
-`Operation.uploadContractWasm` + `createCustomContract`); the CLI recipe below was never run, and
-stellar-cli 27.1.0 warns that it supports protocol 27 while both networks are on 29, so it stays
-UNVERIFIED (`stellar contract extend` from the same CLI did work on protocol 29).
+`Operation.uploadContractWasm` + `createCustomContract`); the CLI recipe below was never run, so it
+stays UNVERIFIED. The protocol warning that stellar-cli 27.1.0 printed (it supported protocol 27
+while the networks were on 29) is gone with 30.0.1, which speaks protocol 30; on 2026-11-10 testnet
+was on protocol 30 and mainnet on 29, and the read-only `stellar contract info meta --id` from 30.0.1
+worked against both. `stellar contract extend` was last run from 27.1.0, on protocol 29.
 
 ```bash
 stellar contract deploy --wasm target/wasm32v1-none/release/lumen_drop_commit.wasm \

@@ -29,6 +29,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # The stellar CLI the two contract jobs build the wasm with: one release binary, sha256-pinned,
+  # so the wasm build is the same on every runner and a CLI bump is a two-line change here. The
+  # CLI stamps its own version into the wasm's contractmetav0 section (`cliver`), which is why the
+  # sha256 of a build moves with the CLI version even when the code bytes do not. Linux x86_64
+  # tarball of https://github.com/stellar/stellar-cli/releases/tag/v30.0.1 (2026-11-03).
+  STELLAR_CLI_VERSION: "30.0.1"
+  STELLAR_CLI_SHA256: "48c70074020e09af0a3ebbd2bf62d53c9aec47935e49a112d3cd90fb4e37658f"
+
 jobs:
   quality:
     name: Typecheck + offline test suites
@@ -151,7 +160,7 @@ jobs:
         run: pnpm --filter @lumenia/web build
 
   contract:
-    name: Contract — clippy strict + tests + audit + deny + coverage
+    name: Contract — clippy strict + tests + wasm build + audit + deny + coverage
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -161,6 +170,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: wasm32v1-none
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: contracts/lumen-drop
@@ -173,6 +183,18 @@ jobs:
           -W clippy::panic
       - name: Unit + invariant property tests
         run: cargo test
+      - name: Install stellar-cli (the release binary pinned in env, sha256-checked)
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -sSfL -o stellar-cli.tar.gz "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${STELLAR_CLI_SHA256}  stellar-cli.tar.gz" | sha256sum -c -
+          mkdir -p stellar-cli && tar -xzf stellar-cli.tar.gz -C stellar-cli stellar
+          echo "${RUNNER_TEMP}/stellar-cli" >> "$GITHUB_PATH"
+          ./stellar-cli/stellar --version
+      - name: Wasm build (stellar contract build --locked, wasm32v1-none)
+        run: |
+          stellar contract build --locked
+          sha256sum target/wasm32v1-none/release/lumen_drop.wasm
       - name: Install cargo-audit + cargo-deny + cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:
@@ -197,6 +219,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: wasm32v1-none
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: contracts/lumen-drop-commit
@@ -209,6 +232,18 @@ jobs:
           -W clippy::panic
       - name: Tests (reveal, wrong reveals, solvency property)
         run: cargo test
+      - name: Install stellar-cli (the release binary pinned in env, sha256-checked)
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -sSfL -o stellar-cli.tar.gz "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${STELLAR_CLI_SHA256}  stellar-cli.tar.gz" | sha256sum -c -
+          mkdir -p stellar-cli && tar -xzf stellar-cli.tar.gz -C stellar-cli stellar
+          echo "${RUNNER_TEMP}/stellar-cli" >> "$GITHUB_PATH"
+          ./stellar-cli/stellar --version
+      - name: Wasm build (stellar contract build --locked, wasm32v1-none)
+        run: |
+          stellar contract build --locked
+          sha256sum target/wasm32v1-none/release/lumen_drop_commit.wasm
 
   # The browser extension (SOW 2, D1). Everything here is offline: the self-tests fake the Soroban
   # RPC, the sponsor and the recovery server, and need no keys. The zips are kept so a reviewer can

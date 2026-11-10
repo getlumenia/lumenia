@@ -90,9 +90,13 @@ ACCOUNT_RATE_CAP = "15"
 #
 # 2026-09-06: this is the hash of the escrow deployed with the Circle-testnet-USDC repoint, built
 # with stellar-cli 27.1.0. It differs from the mainnet pin below even though the source is the same
-# apart from comments, because the build is not byte-reproducible across toolchain versions. Worth
-# knowing before anyone tries to source-verify the mainnet bytecode: it will need the toolchain that
-# produced it, not simply the same commit.
+# apart from comments, because the CLI stamps its own version into the wasm meta (`cliver`): on
+# 2026-11-10 the same checkout and rustc 1.96.0 rebuilt exactly this hash with 27.1.0 and gave
+# 956cb6ee... with 30.0.1, the two files differing in nothing but that string. Source-verifying a
+# deployed hash therefore needs the CLI and rustc recorded for that deployment (the mainnet wasm
+# reads `cliver: 25.2.0#`: a 25.2.0 build that stamped no commit, which neither the release binary
+# nor a cargo install of 25.2.0 does today; ops/wasm-normalize-cliver.py strips the stamp, and the
+# mainnet pin below then reproduced from this source on 2026-11-10), not simply the same commit.
 LUMENDROP_WASM_HASH = "4b5780ebf4848913c4f1557df1468391e3c26f4106ef0ff23ec1e3caf79cb68b"
 # Event beacon: hashed account ids (`aid`, 16 hex) whose events are dropped before any counter is
 # touched, so the team's own demo accounts never read as strangers. Comma-separated; compute one
