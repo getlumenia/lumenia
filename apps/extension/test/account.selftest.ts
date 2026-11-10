@@ -33,7 +33,10 @@
  *   [j] an interrupted create (a key record with no backup marker) reads as needing its backup:
  *       Forget asks first, real money waits, and the next unlock rebuilds the backup copy;
  *   [k] Change backup email: the new email holds a backup tied to the account, and the old one is
- *       released with one signed request.
+ *       released with one signed request;
+ *   [l] Forget this account is scoped to the account held: an account switched away from keeps its
+ *       link records and kept links through it (they show and open again when it is brought back),
+ *       the open-links refusal names the held account's links only, and the last Forget leaves nothing.
  *
  * Offline: the sponsor and IndexedDB are in memory; Argon2id runs for real (a few seconds).
  * RUN: pnpm --filter @lumenia/extension test:account
@@ -680,6 +683,67 @@ run("ACCOUNT", "an account made here: create, back up, practice dollars, forget"
     );
     ok("  ...the old email no longer opens it (its row is gone), and the record names the new email", !H.rows.has(idOf("first@example.com")) && same(await account.accountView(), { pubkey: E.pubkey, email: "second@example.com", bound: true }));
     ok("  ...and the new copy is no longer waiting", !(await account.backupView()).again && (await fake.session.get(K.rebackup)) === undefined);
+
+    /* ---------------------------------------- [l] ---------------------------------------- */
+    section("l", "Forget this account keeps a switched-out account's links");
+    await wipe();
+    H.rows.clear();
+    H.tickets.clear();
+    await consent();
+    H.rows.set(idOf("b@example.com"), { box: B.box, ownerHash: sha256hex(B.pub) });
+    H.rows.set(idOf("c@example.com"), { box: C.box, ownerHash: sha256hex(C.pub) });
+    const sealed = await import("../src/lib/sealed");
+    const keptIds = () => [...(idb.dbs.get("lumenia-ext-links")?.get("links")?.keys() ?? [])].sort();
+    const onDisk = async (n: number) => (await fake.local.get(linksMod.linkKey("testnet", hexId(n)))) !== undefined;
+    const switchTo = async (email: string, password: string) => {
+      await askR({ type: "restore.requestCode", email, switching: true });
+      await askR({ type: "restore.submitCode", code: CODE });
+      return askR({ type: "restore.submitPassword", password });
+    };
+    const bringBack = async (email: string, password: string) => {
+      await consent(); // Forget removed the settings, and the first-run agreement with them
+      await account.restoreRequestCode(email);
+      await account.restoreSubmitCode(CODE);
+      return account.restoreSubmitPassword(password);
+    };
+    // B comes in with one link that is still open, its full link kept under B's own key.
+    await bringBack("b@example.com", PW_B);
+    const LINK_B = `https://getlumenia.com/v2/c/${hexId(3)}#${"ab".repeat(16)}`;
+    await putLink(linkOf(3, B.pub));
+    await sealed.sealLink(hexId(3), LINK_B, await account.linksKeyForSession());
+    ok("B is here with one open link, its full link kept", (await core.getActive())?.pubkey === B.pub && same(await recs(), [hexId(3)]) && same(keptIds(), [hexId(3)]));
+    const toC2 = await switchTo("c@example.com", "charlie delta echo");
+    ok("Use another account: C is brought in in B's place, B's link hidden and still on disk", toC2.ok && (await core.getActive())?.pubkey === C.pub && same(await recs(), []) && (await onDisk(3)));
+    const fgC = await askR({ type: "forget", confirm: "FORGET" });
+    ok("Forget C, which has no open link of its own: done, without the open-links question", fgC.ok, JSON.stringify(fgC));
+    ok(
+      "  ...C's key record, the mirror, the settings and the session are gone",
+      (await core.getActive()) === null && (await fake.local.get(K.account)) === undefined && (await fake.local.get(K.settings)) === undefined && Object.keys(await fake.session.getAll()).length === 0,
+    );
+    ok("  ...B's link record and kept link stay, and nothing else does", same(Object.keys(await fake.local.getAll()), [linksMod.linkKey("testnet", hexId(3))]) && same(keptIds(), [hexId(3)]));
+    const backB2 = await bringBack("b@example.com", PW_B);
+    ok("B brought back after C was forgotten: its link shows again", backB2.pubkey === B.pub && same(await recs(), [hexId(3)]));
+    const revealed = await askR({ type: "links.reveal", linkHex: hexId(3) });
+    ok("  ...and its full link opens with B's key: the take-back path survived", revealed.ok && (revealed.data as { link?: string } | undefined)?.link === LINK_B, JSON.stringify(revealed));
+    // B leaves for C again; this time C has an open link of its own.
+    await switchTo("c@example.com", "charlie delta echo");
+    const LINK_C = `https://getlumenia.com/v2/c/${hexId(4)}#${"cd".repeat(16)}`;
+    await putLink(linkOf(4, C.pub, { amount: "2.50" }));
+    await sealed.sealLink(hexId(4), LINK_C, await account.linksKeyForSession());
+    const fgRefused = await askR({ type: "forget", confirm: "FORGET" });
+    ok("Forget C with one open link of its own: refused (open-links), the account stays", fgRefused.code === "open-links" && (await core.getActive())?.pubkey === C.pub);
+    ok("  ...the warning names C's one link and its amount, not B's hidden one", /^You have a link that is still open \(\$2\.50\)\. /.test(fgRefused.message ?? ""), fgRefused.message);
+    ok("  ...and nothing was removed", (await onDisk(3)) && (await onDisk(4)) && same(keptIds(), [hexId(3), hexId(4)]));
+    const fgAnyway = await askR({ type: "forget", confirm: "FORGET", leaveOpenLinks: true });
+    ok("Forget anyway: C's record and kept link go, B's stay", fgAnyway.ok && !(await onDisk(4)) && (await onDisk(3)) && same(keptIds(), [hexId(3)]));
+    await bringBack("b@example.com", PW_B);
+    const fgB = await askR({ type: "forget", confirm: "FORGET" });
+    ok("B back, then Forget B: refused for ITS open link, named with its amount", fgB.code === "open-links" && /^You have a link that is still open \(\$1\.00\)\. /.test(fgB.message ?? ""), fgB.message);
+    const fgLast = await askR({ type: "forget", confirm: "FORGET", leaveOpenLinks: true });
+    ok(
+      "  ...forget anyway, the last account with links here: nothing is left, and the kept-links database is gone",
+      fgLast.ok && Object.keys(await fake.local.getAll()).length === 0 && !idb.dbs.has("lumenia-ext-links") && (await core.getActive()) === null,
+    );
   } finally {
     globalThis.fetch = realFetchE;
   }

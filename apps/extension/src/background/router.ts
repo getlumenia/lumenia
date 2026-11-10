@@ -241,7 +241,9 @@ async function handle(req: Request): Promise<ResponseMap[Request["type"]]> {
     case "forget": {
       // Never in the middle of a send or a take-back: their records would be written after the wipe.
       if (sending || reclaiming.size > 0) throw fail("busy");
-      // This browser holds the only list of these links and the only way to take them back.
+      // This browser holds the only list of these links and the only way to take them back. The
+      // held account's links only: those are what forget() removes. The links of an account that
+      // left through "Use another account" stay on disk (account.ts forget), so they are not at stake.
       const open = openLinks(await allRecords());
       if (open.length > 0 && !req.leaveOpenLinks) throw new ExtError("open-links", openLinksMessage(open));
       // An account made here and never backed up has no other copy anywhere: forgetting it deletes

@@ -193,8 +193,9 @@ async function settleRestoredBackup(r: RestoreState, signer: Signer): Promise<bo
 
 /**
  * Restore, step 3: open the backup with its password and keep the account here. In switching mode
- * the account held is replaced (its link records and kept links stay, scoped to it, and show again
- * when it is brought back); the same account opened again changes nothing.
+ * the account held is replaced (its link records and kept links stay, scoped to it, through any
+ * later "Forget this account" of the account that replaced it, and show again when it is brought
+ * back); the same account opened again changes nothing.
  */
 export async function restoreSubmitPassword(password: string): Promise<{ pubkey: string; email: string; bound: boolean | null; same: boolean }> {
   await requireConsent();
@@ -239,9 +240,29 @@ export async function restoreSubmitPassword(password: string): Promise<{ pubkey:
 }
 
 /**
+ * The link records of `pubkey` among everything in storage.local: their keys, and the ids of the kept
+ * links they name (src/lib/sealed.ts). With `pubkey` null (no account can be named), none are.
+ */
+function linksOf(all: Record<string, unknown>, pubkey: string | null): { keys: string[]; ids: string[] } {
+  const keys: string[] = [];
+  const ids: string[] = [];
+  if (pubkey === null) return { keys, ids };
+  for (const [k, v] of Object.entries(all)) {
+    if (!isLinkKey(k)) continue;
+    const r = asRecord(v);
+    if (r && r.sender === pubkey) {
+      keys.push(k);
+      ids.push(r.linkHex);
+    }
+  }
+  return { keys, ids };
+}
+
+/**
  * The account held here leaves this browser for another one. Its key record goes. Its link records
  * and kept links stay in storage, scoped to it (records.ts), so they show again when it is brought
- * back, unless `dropLinks`: an account that was never backed up can never be brought back, and its
+ * back (and they survive a later "Forget this account" of the account that replaced it: forget),
+ * unless `dropLinks`: an account that was never backed up can never be brought back, and its
  * kept links only its key opens go with it. Settings and consent stay; real money goes back to
  * practice money, because the incoming account's standing is its own.
  */
@@ -250,17 +271,7 @@ async function leaveHeldAccount(pubkey: string, opts: { dropLinks: boolean }): P
   await lock();
   await clearKeystore();
   if (opts.dropLinks) {
-    const all = await local().getAll();
-    const keys: string[] = [];
-    const ids: string[] = [];
-    for (const [k, v] of Object.entries(all)) {
-      if (!isLinkKey(k)) continue;
-      const r = asRecord(v);
-      if (r && r.sender === pubkey) {
-        keys.push(k);
-        ids.push(r.linkHex);
-      }
-    }
+    const { keys, ids } = linksOf(await local().getAll(), pubkey);
     if (keys.length > 0) await local().remove(keys);
     await forgetSealedIds(ids);
     await dropBackupRecord(pubkey);
@@ -697,15 +708,40 @@ export async function linksKeyForSession(): Promise<CryptoKey> {
 }
 
 /**
- * Forget everything this extension holds for the account: the key record, the kept links, the link
- * list, the settings and the session. The money is untouched: it sits in the account on the ledger
- * and in the escrow, and the backup on getlumenia.com can restore the account again.
+ * "Forget this account": everything this extension holds goes, except what another account was
+ * promised. The key record, the held account's link records and kept links, every backup record,
+ * the waiting backup copy, the settings and the session are removed. The money is untouched: it
+ * sits in the account on the ledger and in the escrow, and the backup on getlumenia.com can restore
+ * the account again.
+ *
+ * The link records and kept links of an account that LEFT through "Use another account" stay: that
+ * switch promises its links show again when it is brought back, and those records are the only way
+ * its escrowed money can be taken back. They stay exactly as they were while this account was held:
+ * hidden (records.ts lists the held account's only) and unreadable without that account's key
+ * (sealed.ts). Forgetting THAT account, once it is back, is what removes them. So the open-links
+ * gate (router.ts) and the popup's warning count the held account's links, which is exactly what
+ * this removes, no more and no less. Once no record of any account is left, the kept-links database
+ * goes whole (a kept link no record names can never be read back): the last Forget leaves nothing.
  */
 export async function forget(): Promise<null> {
+  // The account held, before its key record goes: the keystore's word, else the mirror (a keystore
+  // already lost must still let this account's records go, never another's).
+  const mirror = await local().get<{ pubkey?: unknown }>(K.account);
+  const held = (await currentAccount())?.pubkey ?? (typeof mirror?.pubkey === "string" ? mirror.pubkey : null);
   await lock();
   await clearKeystore();
-  await forgetSealed();
-  await local().clear();
+  const all = await local().getAll();
+  const mine = linksOf(all, held);
+  // What stays: a well-formed record of another account. Everything else goes, as it always did.
+  const stays = (k: string): boolean => {
+    if (!isLinkKey(k)) return false;
+    const r = asRecord(all[k]);
+    return r !== null && r.sender !== held;
+  };
+  const gone = Object.keys(all).filter((k) => !stays(k));
+  if (gone.length > 0) await local().remove(gone);
+  if (gone.length === Object.keys(all).length) await forgetSealed();
+  else await forgetSealedIds(mine.ids);
   await session().clear();
   try {
     await ext.alarms.clearAll();

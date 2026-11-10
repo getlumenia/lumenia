@@ -148,7 +148,11 @@ the build reads the version from `package.json`, so the zips come out under that
 | Settings | `storage.local` | Network, auto-lock, whether the real-money note was accepted, consent time. No default "from" name: 0.1.2 and earlier kept the last one, and this version removes it when it starts |
 | The email each account is backed up with | `storage.local` (`backups`) | On this device: the email each account is backed up with, so it can show it to you and use it when you ask to join. Next to it, when it was recorded and whether Lumenia's server confirmed that backup is tied to the account |
 
-"Forget this account" in Settings removes all of it. If the account was made here and never backed
+"Forget this account" in Settings removes all of it for the account held, and the settings with it.
+The list of links and the kept links of an account you switched away from ("Use another account")
+stay, hidden and unreadable without that account's key, so they show again when you bring it back;
+forgetting that account, once it is back, is what removes them, and the last account forgotten
+leaves nothing behind. If the account was made here and never backed
 up, it first says that forgetting it deletes the account and any money in it for good, and offers
 the backup instead. If links you made here are still open (being made, waiting, reclaimable or
 unconfirmed), it says how many and how much, because this browser holds the only list of them and

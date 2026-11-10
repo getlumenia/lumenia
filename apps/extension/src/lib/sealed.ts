@@ -116,7 +116,11 @@ export async function forgetSealedIds(ids: string[]): Promise<void> {
   }
 }
 
-/** Drop every kept link ("Forget this account"). */
+/**
+ * Drop every kept link: "Forget this account" once no record of any account is left (a kept link no
+ * record names can never be read back). While another account's records remain, that account's
+ * kept links stay with them, and only the held account's are dropped (forgetSealedIds).
+ */
 export async function forgetSealed(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const req = indexedDB.deleteDatabase(DB_NAME);

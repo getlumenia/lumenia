@@ -50,6 +50,11 @@ export function Settings({ locked = false }: { locked?: boolean }) {
   const [forgetting, setForgetting] = useState(false);
   /** the worker's open-links refusal, when it knew of links this screen had not loaded */
   const [workerOpen, setWorkerOpen] = useState<string | null>(null);
+  /**
+   * The held account's open links, from the same records the worker gates on (links.list is scoped
+   * to the account held): exactly what Forget removes. The links of an account switched away from
+   * stay in this browser and show again when it is brought back, so they are not counted here.
+   */
   const open = openLinks(records);
   const openNote = workerOpen ?? (open.length > 0 ? openLinksMessage(open) : null);
   /**

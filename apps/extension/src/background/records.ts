@@ -3,6 +3,9 @@
  * this extension holds right now. A record for any other account is neither listed nor written: a
  * late write after "Forget this account" (a settle pass that was already reading) cannot leave a
  * ghost under the next account, and a write that would do so throws, so a send stops before posting.
+ * An account that left through "Use another account" keeps its records here, hidden, through any
+ * later "Forget this account" of another account (account.ts forget), until it is brought back and
+ * forgotten itself.
  */
 import { asRecord, isLinkKey, linkKey, sortRecords } from "../lib/links";
 import { ExtError } from "../lib/errors";
@@ -11,7 +14,8 @@ import type { LinkRecord } from "../lib/types";
 
 /**
  * The account this extension holds, from its storage.local mirror: written when the account is
- * restored (account.ts) and removed with everything else by "Forget this account".
+ * restored (account.ts) and removed by "Forget this account", which keeps only the other accounts'
+ * records.
  */
 async function heldAccount(): Promise<string | null> {
   const a = await local().get<{ pubkey?: unknown }>(K.account);
