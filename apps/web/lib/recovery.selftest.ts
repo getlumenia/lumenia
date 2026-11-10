@@ -84,7 +84,12 @@ async function main() {
     ok("round-trip re-opens the exact seed", eq(back, seed));
     ok("recovered seed → the SAME account address", addr(back) === account);
     await rejects("wrong password", () => unwrapWithPassword(copy, "wrong password"));
-    const tampered = { ...copy, ct: copy.ct.slice(0, -4) + (copy.ct.endsWith("A") ? "B" : "A") + copy.ct.slice(-3) };
+    // Flip the character at -4 to a value it does not have (the old form chose the replacement
+    // from the LAST character, so about one run in 64 changed nothing and the box opened);
+    // 48 bytes encode to 64 base64 characters with no padding, so every character carries
+    // ciphertext or tag bits.
+    const at = copy.ct.length - 4;
+    const tampered = { ...copy, ct: copy.ct.slice(0, at) + (copy.ct[at] === "A" ? "B" : "A") + copy.ct.slice(at + 1) };
     await rejects("tampered ciphertext", () => unwrapWithPassword(tampered, "correct horse battery"));
   }
 
