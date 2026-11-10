@@ -1,8 +1,8 @@
 [package]
 name = "lumen-drop"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "Lumenia v2 Soroban escrow — late-bound payout link drops + group drops (USDC via SAC)"
+description = "Lumenia v2 Soroban escrow - late-bound payout link drops + group drops (USDC via SAC)"
 license = "MIT"
 
 [lib]

@@ -1,5 +1,5 @@
 #![no_std]
-//! # Lumenia LumenDrop — v2 Soroban escrow (late-bound payout + in-contract anti-drain)
+//! # Lumenia LumenDrop - v2 Soroban escrow (late-bound payout + in-contract anti-drain)
 //!
 //! The v2 primitive that fuses the best of the Monad sibling (Damla) with Lumenia's own
 //! strengths (see docs/V2_SOROBAN_ESCROW.md):
@@ -8,24 +8,27 @@
 //!     (the secret private key lives only in the URL `#fragment`). The recipient picks the
 //!     `payout` address AT CLAIM TIME; the link key signs it; the contract releases the USDC
 //!     to exactly that address. There is NO pre-created recipient account, NO reserve to lock,
-//!     and NO throwaway-account fragmentation — so the whole v1 sweep/consolidation machinery
+//!     and NO throwaway-account fragmentation - so the whole v1 sweep/consolidation machinery
 //!     simply never exists here.
 //!   * **In-contract anti-drain (no trusted relayer).** ANYONE (a gas-paying relayer) may submit the
 //!     claim tx, but the funds can ONLY reach the payout the link key signed. The relayer can
-//!     never steal or redirect a single stroop — enforced in auditable bytecode, not by an
+//!     never steal or redirect a single stroop - enforced in auditable bytecode, not by an
 //!     off-chain validator. The signature is bound to this contract + network (anti-replay).
 //!   * **USDC, not a volatile native token.** The escrow holds a single pinned SAC token
 //!     (USDC's Stellar Asset Contract), set at deploy time.
 //!   * **Group drops.** One link, `slots` equal shares, first N distinct payouts each claim one
-//!     — walletless + gasless, for tips/giveaways/splits. Leftover reclaimable after expiry.
+//!     - walletless + gasless, for tips/giveaways/splits. Leftover reclaimable after expiry.
+//!   * **Timelocked upgrades.** New bytecode must be proposed on chain and can only be installed
+//!     seven days later, with the same hash; anyone watching the ledger sees it coming. Pause
+//!     stays instant, and no exit is ever gated by governance (see the governance block below).
 //!
 //! Non-custodial: the contract is the escrow; it only ever moves the exact stored amount to the
 //! link-signed payout, or refunds the original sender after expiry. Checks-effects-interactions
 //! throughout; Soroban's synchronous model rules out classic reentrancy.
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contractmeta, contracttype, token,
-    xdr::ToXdr, Address, Bytes, BytesN, Env,
+    contract, contracterror, contractevent, contractimpl, contractmeta, contracttype,
+    panic_with_error, token, xdr::ToXdr, Address, Bytes, BytesN, Env,
 };
 use stellar_access::ownable::{self as ownable, Ownable};
 use stellar_contract_utils::pausable::{self as pausable, Pausable};
@@ -33,7 +36,7 @@ use stellar_contract_utils::upgradeable::{self as upgradeable, Upgradeable};
 use stellar_macros::{only_owner, when_not_paused};
 
 // SEP-46 contract metadata; `binver` per SEP-49 so explorers can show the deployed version.
-contractmeta!(key = "binver", val = "0.2.0");
+contractmeta!(key = "binver", val = "0.3.0");
 
 /// Persistent-storage TTL bumps (~1 day threshold, ~30 days extend at 5s ledgers). A new entry
 /// starts at the network's minimum persistent TTL (testnet 120,960 ledgers, about 7 days; mainnet
@@ -42,11 +45,26 @@ contractmeta!(key = "binver", val = "0.2.0");
 const TTL_THRESHOLD: u32 = 17_280;
 const TTL_EXTEND: u32 = 518_400;
 
-/// Upper bound on how far in the future a drop's `expiry` may sit (seconds). On mainnet the
-/// minimum persistent TTL outlives it; on testnet an untouched drop can be archived first, and
-/// since protocol 23 a later claim or take-back restores it automatically in the same
-/// transaction, so archival delays nothing and loses nothing.
-const MAX_EXPIRY_HORIZON: u64 = 30 * 24 * 60 * 60;
+/// The upgrade delay, in seconds: new bytecode can be installed no sooner than this long after it
+/// was proposed (`propose_upgrade` -> `upgrade`). Hard-coded on purpose - an owner-settable delay
+/// is one more thing a stolen owner quorum could shorten - and compared against
+/// `env.ledger().timestamp()`, the same clock drop expiry uses.
+const UPGRADE_DELAY: u64 = 7 * 24 * 60 * 60;
+
+/// Tolerance, in seconds, for a sender whose device clock runs ahead of ledger close time: the
+/// apps compute `expiry` as "now + 7 days" on the device, so the horizon must sit a little above
+/// the delay or a slightly fast clock would turn every default link into `BadExpiry`.
+const EXPIRY_CLOCK_GRACE: u64 = 60 * 60;
+
+/// Upper bound on how far in the future a drop's `expiry` may sit (seconds). It is the upgrade
+/// delay plus the clock grace so that every drop alive when an upgrade is proposed has expired
+/// (become reclaimable) by the time that upgrade can execute, to within the grace: no drop can
+/// outlive, without notice, the rules it was created under. A drop created AFTER a proposal has
+/// notice (the `upgrade_proposed` event and `pending_upgrade()`), so it is not capped further.
+/// Was 30 days before 0.3.0. On mainnet the minimum persistent TTL outlives it; on testnet an
+/// untouched drop can be archived first, and since protocol 23 a later claim or take-back
+/// restores it automatically in the same transaction, so archival delays nothing and loses nothing.
+const MAX_EXPIRY_HORIZON: u64 = UPGRADE_DELAY + EXPIRY_CLOCK_GRACE;
 
 /// Domain-separation tags folded into the signed message so a signature for one drop kind
 /// can never be replayed against the other.
@@ -69,6 +87,15 @@ pub enum Error {
     Overflow = 10,
     NotInitialized = 11,
     BadExpiry = 12,
+    /// `propose_upgrade` while a proposal is pending: cancel it first, so a hash can never be
+    /// swapped silently under a running delay.
+    UpgradePending = 13,
+    /// `upgrade` or `cancel_upgrade` with nothing proposed.
+    NoPendingUpgrade = 14,
+    /// `upgrade` before the proposal's `not_before`.
+    UpgradeTooEarly = 15,
+    /// `upgrade` with a hash other than the proposed one.
+    UpgradeHashMismatch = 16,
 }
 
 #[contracttype]
@@ -91,10 +118,20 @@ pub struct Pool {
     pub expiry: u64,
 }
 
+/// A proposed upgrade waiting out its delay. `not_before == proposed_at + UPGRADE_DELAY`, fixed
+/// at proposal time and never moved; `upgrade` must present exactly `wasm_hash`.
+#[contracttype]
+#[derive(Clone)]
+pub struct PendingUpgrade {
+    pub wasm_hash: BytesN<32>,
+    pub not_before: u64,
+    pub proposed_at: u64,
+}
+
 /// VERSIONED storage envelopes (OZ "plan-ahead" migration pattern, SEP-0049). Escrow records
 /// outlive contract upgrades, and a bare struct layout cannot be changed later without the host
 /// trapping on deserialization of pre-upgrade entries. Wrapping every stored record in a
-/// single-variant enum from day one lets a future upgrade ADD a `V2(...)` variant and read both —
+/// single-variant enum from day one lets a future upgrade ADD a `V2(...)` variant and read both -
 /// this cannot be retrofitted safely once real deposits exist.
 #[contracttype]
 #[derive(Clone)]
@@ -108,9 +145,18 @@ pub enum PoolEntry {
     V1(Pool),
 }
 
+/// Same rule for governance state: the pending-upgrade slot is enum-versioned too.
+#[contracttype]
+#[derive(Clone)]
+pub enum UpgradeEntry {
+    V1(PendingUpgrade),
+}
+
 /* ------------------------------------- events -------------------------------------------
  * One event per state change (audit trail / repudiation resistance). Topic layout keeps the
- * pre-#[contractevent] shape: [fixed name, link], so the link stays the indexable key.
+ * pre-#[contractevent] shape: [fixed name, link], so the link stays the indexable key. The
+ * governance events follow the same shape with the wasm hash as the key. The topic names are
+ * a contract with the sponsor's watchdog, which decodes them by name: do not rename them.
  * --------------------------------------------------------------------------------------- */
 
 #[contractevent(topics = ["deposit"])]
@@ -170,6 +216,31 @@ pub struct RepoolEvent {
     pub amount: i128,
 }
 
+/// A new wasm was proposed; it can be installed from `not_before` on, and not before.
+#[contractevent(topics = ["upgrade_proposed"])]
+#[derive(Clone)]
+pub struct UpgradeProposedEvent {
+    #[topic]
+    pub wasm_hash: BytesN<32>,
+    pub not_before: u64,
+}
+
+/// The pending proposal was withdrawn; nothing can be installed until a new one is made.
+#[contractevent(topics = ["upgrade_cancelled"])]
+#[derive(Clone)]
+pub struct UpgradeCancelledEvent {
+    #[topic]
+    pub wasm_hash: BytesN<32>,
+}
+
+/// The proposed wasm was installed (takes effect when the invocation completes).
+#[contractevent(topics = ["upgraded"])]
+#[derive(Clone)]
+pub struct UpgradedEvent {
+    #[topic]
+    pub wasm_hash: BytesN<32>,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -179,8 +250,11 @@ pub enum DataKey {
     Drop(BytesN<32>),
     /// A group pool, keyed by the link's Ed25519 public key.
     Pool(BytesN<32>),
-    /// Per-payout claim flag for a group pool (link, payout) → claimed.
+    /// Per-payout claim flag for a group pool (link, payout) -> claimed.
     PoolClaimed(BytesN<32>, Address),
+    /// The one pending upgrade proposal (instance storage: governance state lives with the
+    /// instance, whose TTL the ops already extend). Absent when nothing is proposed.
+    PendingUpgrade,
 }
 
 #[contract]
@@ -189,8 +263,9 @@ pub struct LumenDrop;
 #[contractimpl]
 impl LumenDrop {
     /// Deploy-time init: pin the ONE USDC SAC token this escrow escrows, and set the owner
-    /// (the upgrade/pause authority — a timelock/multisig on mainnet; renounced to immutable
-    /// after audit). The owner has NO path that moves escrowed funds (invariant 13).
+    /// (the upgrade/pause authority - intended to be a multisig account; renounced to immutable
+    /// after a professional audit). The owner has NO path that moves escrowed funds (invariant
+    /// 13), and cannot install bytecode without the seven-day notice (invariant 15).
     pub fn __constructor(env: Env, token: Address, owner: Address) {
         env.storage().instance().set(&DataKey::Token, &token);
         ownable::set_owner(&env, &owner);
@@ -202,7 +277,7 @@ impl LumenDrop {
     /// Sender locks `amount` USDC for whoever holds the link secret for `link` (its Ed25519
     /// public key). `expiry` is a unix timestamp; after it, an unclaimed drop is reclaimable.
     ///
-    /// Pause gates ONLY the two escrow-creating entrypoints (`deposit` + `create_drop`) —
+    /// Pause gates ONLY the two escrow-creating entrypoints (`deposit` + `create_drop`) -
     /// `claim`/`claim_share`/`reclaim`/`reclaim_pool` are NEVER pausable, so every escrowed
     /// dollar can always exit to its rightful owner in any state (invariant 14).
     #[when_not_paused]
@@ -239,7 +314,7 @@ impl LumenDrop {
 
     /// Claim a one-to-one drop to the chosen `payout`. Submittable by ANYONE (a relayer paying
     /// the fee): the funds go ONLY to `payout`, and only if the link key signed exactly this
-    /// (contract, network, link, payout). No `require_auth` — the Ed25519 signature IS the
+    /// (contract, network, link, payout). No `require_auth` - the Ed25519 signature IS the
     /// authorization, which is what makes it walletless + gasless.
     pub fn claim(env: Env, link: BytesN<32>, payout: Address, sig: BytesN<64>) -> Result<(), Error> {
         let key = DataKey::Drop(link.clone());
@@ -249,7 +324,7 @@ impl LumenDrop {
             return Err(Error::AlreadyClaimed);
         }
         // In-contract anti-drain: the link key must have signed THIS payout. ed25519_verify
-        // panics (traps the tx) if the signature is wrong — the relayer cannot redirect funds.
+        // panics (traps the tx) if the signature is wrong - the relayer cannot redirect funds.
         let msg = Self::message(&env, TAG_SINGLE, &link, &payout);
         env.crypto().ed25519_verify(&link, &msg, &sig);
 
@@ -299,7 +374,7 @@ impl LumenDrop {
 
     /// Fund a pool of `slots` equal shares behind `link`. `amount` USDC is pulled from `from`;
     /// each of the first `slots` distinct payouts claims `amount / slots`. Pause-gated like
-    /// `deposit` (new escrow only — exits are never pausable, invariant 14).
+    /// `deposit` (new escrow only - exits are never pausable, invariant 14).
     #[when_not_paused]
     pub fn create_drop(
         env: Env,
@@ -354,7 +429,7 @@ impl LumenDrop {
             env.storage().persistent().get(&key).ok_or(Error::NothingHere)?;
         // Claims are only valid BEFORE expiry; after it, ONLY reclaim_pool may move funds.
         // Without this gate, a sender could reclaim the pool AND then claim its shares out of
-        // the contract's shared token balance — draining OTHER drops' escrow (double-spend).
+        // the contract's shared token balance - draining OTHER drops' escrow (double-spend).
         if env.ledger().timestamp() >= p.expiry {
             return Err(Error::Expired);
         }
@@ -362,7 +437,7 @@ impl LumenDrop {
         // conditions coincide (they move together in claim_share and reclaim_pool closes both at
         // once), so this arm is DELIBERATELY REDUNDANT defense-in-depth: if a future edit ever
         // lets the counter and the balance diverge, the pool still cannot over-draw its own
-        // escrow. Mutation testing flags the `||` as equivalent for exactly this reason — that is
+        // escrow. Mutation testing flags the `||` as equivalent for exactly this reason - that is
         // the intent, not a missing test.
         if p.claimed >= p.slots || p.remaining < p.amount_per {
             return Err(Error::DropEmpty);
@@ -423,10 +498,64 @@ impl LumenDrop {
             .map(|PoolEntry::V1(p)| p)
     }
 
+    /* ---------------------- governance: the two-step upgrade timelock ---------------------- */
+
+    /// Step one of an upgrade: the owner announces the exact wasm hash it intends to install.
+    /// The proposal becomes executable at `now + UPGRADE_DELAY` (seven days) and never earlier;
+    /// `upgrade` must then present the same hash. Refused while another proposal is pending
+    /// (`UpgradePending`): a hash cannot be swapped under a running delay, the owner must
+    /// `cancel_upgrade` first, which is itself an on-chain event. `operator` is kept for shape
+    /// parity with `upgrade`; what gates the call is the stored owner's authorization.
+    #[only_owner]
+    pub fn propose_upgrade(
+        env: Env,
+        new_wasm_hash: BytesN<32>,
+        _operator: Address,
+    ) -> Result<(), Error> {
+        if env.storage().instance().has(&DataKey::PendingUpgrade) {
+            return Err(Error::UpgradePending);
+        }
+        let now = env.ledger().timestamp();
+        let not_before = now.checked_add(UPGRADE_DELAY).ok_or(Error::Overflow)?;
+        env.storage().instance().set(
+            &DataKey::PendingUpgrade,
+            &UpgradeEntry::V1(PendingUpgrade {
+                wasm_hash: new_wasm_hash.clone(),
+                not_before,
+                proposed_at: now,
+            }),
+        );
+        UpgradeProposedEvent { wasm_hash: new_wasm_hash, not_before }.publish(&env);
+        Ok(())
+    }
+
+    /// Withdraw the pending proposal. After this, `upgrade` fails until a new proposal has
+    /// waited out a fresh seven days. Refused when nothing is pending (`NoPendingUpgrade`).
+    #[only_owner]
+    pub fn cancel_upgrade(env: Env, _operator: Address) -> Result<(), Error> {
+        let UpgradeEntry::V1(p) = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingUpgrade)
+            .ok_or(Error::NoPendingUpgrade)?;
+        env.storage().instance().remove(&DataKey::PendingUpgrade);
+        UpgradeCancelledEvent { wasm_hash: p.wasm_hash }.publish(&env);
+        Ok(())
+    }
+
+    /// The pending proposal, if any: what hash is coming and from when. Read it before trusting
+    /// a drop that will still be live at `not_before`.
+    pub fn pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        env.storage()
+            .instance()
+            .get(&DataKey::PendingUpgrade)
+            .map(|UpgradeEntry::V1(p)| p)
+    }
+
     /* --------------------------------- helpers --------------------------------- */
 
     /// The EXACT bytes the link key must sign for a claim. Exposed as a view so the client can
-    /// build the identical message (or simulate this) — signature parity is critical. Layout:
+    /// build the identical message (or simulate this) - signature parity is critical. Layout:
     ///   tag(1) ++ network_id(32) ++ contract_address_xdr ++ link_pubkey(32) ++ payout_xdr
     /// Binding contract + network blocks cross-contract / cross-network replay.
     pub fn claim_message(env: Env, kind: u32, link: BytesN<32>, payout: Address) -> Bytes {
@@ -444,8 +573,9 @@ impl LumenDrop {
         m
     }
 
-    /// `expiry` must sit in `(now, now + MAX_EXPIRY_HORIZON]` — a past expiry would make a drop
-    /// reclaim-only on arrival, and an unbounded one would outlive the storage-TTL guarantee.
+    /// `expiry` must sit in `(now, now + MAX_EXPIRY_HORIZON]` - a past expiry would make a drop
+    /// reclaim-only on arrival, and one beyond the upgrade delay could still be live when an
+    /// upgrade proposed after it executes (see `MAX_EXPIRY_HORIZON`).
     fn check_expiry(env: &Env, expiry: u64) -> Result<(), Error> {
         let now = env.ledger().timestamp();
         if expiry <= now || expiry > now.saturating_add(MAX_EXPIRY_HORIZON) {
@@ -463,18 +593,26 @@ impl LumenDrop {
 }
 
 /* ------------------------- governance: the upgrade/pause safety net -------------------------
- * Posture: upgradeable-with-safety-net NOW → renounce-to-immutable AFTER the professional audit
+ * Posture: upgradeable-with-safety-net NOW -> renounce-to-immutable AFTER the professional audit
  * (SEP-49 + the OZ-endorsed sequence). Hard properties:
- *   invariant 13 — the owner has NO entrypoint that can move escrowed funds: the ONLY
+ *   invariant 13 - the owner has NO entrypoint that can move escrowed funds: the ONLY
  *     `token.transfer` sites are `claim`/`claim_share` (link-signature-gated) and
- *     `reclaim`/`reclaim_pool` (sender-auth-gated). The owner surface is upgrade/pause/renounce.
+ *     `reclaim`/`reclaim_pool` (sender-auth-gated). The owner surface is propose/cancel/upgrade,
+ *     pause/unpause and the ownership functions.
  *     SCOPE, stated plainly: that holds for THIS bytecode. `upgrade` installs different bytecode,
- *     so it is the one owner power this invariant cannot bind — an owner-key compromise on mainnet
- *     is an arbitrary upgrade. Hence timelock + multisig now, renounce-to-immutable after audit.
- *   invariant 14 — pause gates ONLY `deposit`/`create_drop`; every exit stays callable, so no
+ *     so it is the one owner power this invariant cannot bind - an owner-key compromise is, after
+ *     the delay, an arbitrary upgrade. Hence the timelock in the bytecode plus a multisig owner
+ *     now, renounce-to-immutable after audit.
+ *   invariant 14 - pause gates ONLY `deposit`/`create_drop`; every exit stays callable, so no
  *     reachable state can trap escrowed funds.
- * Owner on mainnet = a timelock + multisig (delay ≥ the drop lifetime so in-flight drops can
- *   always be claimed/reclaimed under the code they were created on before new code activates).
+ *   invariants 15-17 - an upgrade needs a prior `propose_upgrade` of the SAME hash at least
+ *     UPGRADE_DELAY old; `cancel_upgrade` clears it and `propose_upgrade` refuses while one is
+ *     pending; neither pause nor any exit ever waits on the timelock. Drop expiry is bounded by
+ *     the delay (plus a clock grace), so a drop alive at a proposal has expired by the time the
+ *     proposal can execute: an upgrade cannot change the rules under a drop without notice.
+ * The delay is enforced HERE, in the bytecode, not by the owner's tooling: the owner is intended
+ *   to be a multisig account, and a stolen quorum still has to announce new code seven days
+ *   ahead, where the sponsor's watchdog (and anyone else) can see it and pause new escrow.
  * Renounce = a final upgrade to a wasm with the upgrade entrypoint REMOVED (bytecode-level
  *   immutability), not a dead admin address. `Ownable::renounce_ownership` additionally lets the
  *   owner permanently lock all #[only_owner] surfaces ahead of that.
@@ -482,12 +620,36 @@ impl LumenDrop {
 
 #[contractimpl]
 impl Upgradeable for LumenDrop {
-    /// Swap the contract's wasm (storage is preserved; `DropEntry`/`PoolEntry` versioned enums
-    /// guarantee old records stay readable). Owner-gated; on mainnet the owner is a
-    /// timelock+multisig, and this entrypoint is deleted entirely in the post-audit
-    /// immutability upgrade.
+    /// Step two of an upgrade: install the PROPOSED wasm, no sooner than its `not_before`.
+    /// Keeps the OpenZeppelin `Upgradeable` trait and its `(new_wasm_hash, operator)` shape so
+    /// the standard `UpgradeableClient`, the ops scripts and the runbook stay valid; the trait
+    /// fixes a unit return, so the refusals are raised with `panic_with_error!`, which reaches
+    /// callers as the same contract error codes a `Result` would (`NoPendingUpgrade`,
+    /// `UpgradeHashMismatch`, `UpgradeTooEarly`). Checks, then effects (slot cleared, schema
+    /// version bumped, `upgraded` emitted), then the swap, which the host applies when the
+    /// invocation completes. Storage is preserved; `DropEntry`/`PoolEntry` versioned enums
+    /// guarantee old records stay readable. Owner-gated; this entrypoint is deleted entirely in
+    /// the post-audit immutability upgrade.
     #[only_owner]
     fn upgrade(e: &Env, new_wasm_hash: BytesN<32>, _operator: Address) {
+        let UpgradeEntry::V1(p) = match e.storage().instance().get(&DataKey::PendingUpgrade) {
+            Some(entry) => entry,
+            None => panic_with_error!(e, Error::NoPendingUpgrade),
+        };
+        if p.wasm_hash != new_wasm_hash {
+            panic_with_error!(e, Error::UpgradeHashMismatch);
+        }
+        if e.ledger().timestamp() < p.not_before {
+            panic_with_error!(e, Error::UpgradeTooEarly);
+        }
+        e.storage().instance().remove(&DataKey::PendingUpgrade);
+        // The schema marker counts executed upgrades (1 at construction, +1 per install); a
+        // future wasm that changes a record layout still ships its own migration guard.
+        let Some(next) = upgradeable::get_schema_version(e).checked_add(1) else {
+            panic_with_error!(e, Error::Overflow)
+        };
+        upgradeable::set_schema_version(e, next);
+        UpgradedEvent { wasm_hash: new_wasm_hash.clone() }.publish(e);
         upgradeable::upgrade(e, &new_wasm_hash);
     }
 }
@@ -498,7 +660,8 @@ impl Pausable for LumenDrop {
         pausable::paused(e)
     }
 
-    /// Emergency brake: stops NEW escrow only (deposit/create_drop). Exits never pause.
+    /// Emergency brake: stops NEW escrow only (deposit/create_drop). Exits never pause. Instant
+    /// by design - the brake is never behind the upgrade delay.
     #[only_owner]
     fn pause(e: &Env, _caller: Address) {
         pausable::pause(e);
