@@ -16,6 +16,13 @@ ignore = [
     # Unmaintained-crate ADVISORIES (not vulnerabilities) on transitive deps of soroban-sdk's
     # toolchain; nothing to remediate on our side — re-check on every SDK bump.
     { id = "RUSTSEC-2024-0436", reason = "`paste` unmaintained; transitive via soroban-sdk" },
+    # A vulnerability advisory on a HOST-ONLY dependency: crypto-bigint 0.5.5 (RUSTSEC-2026-0387,
+    # 2026-10-23, timing variability in constant-time operations) reaches this crate through
+    # soroban-env-host's k256/p256 (elliptic-curve 0.13), i.e. the test and simulation host, and
+    # `cargo tree --target wasm32v1-none -i crypto-bigint` is empty: it is not in the bytecode that
+    # runs on the ledger. No soroban-env-host release up to 30.0.0 moves to the fixed 0.7 line, so
+    # there is nothing to bump. Ignored 2026-11-10; re-check on every SDK bump.
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint timing; host-side transitive of soroban-env-host (k256/p256), absent from the wasm32v1-none graph; no env-host release reaches the 0.7 fix" },
 ]
 
 [licenses]

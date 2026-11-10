@@ -1,0 +1,15 @@
+# cargo-audit configuration, read by `cargo audit` when run from this directory (CI runs it with no
+# flags). Keep this ignore list identical to the one in deny.toml, and re-check every entry on every
+# SDK bump: an entry here is a dated decision, not a permanent exemption.
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0387: crypto-bigint 0.5.5 timing variability (2026-10-23). Host-only: it reaches
+    # this crate through soroban-env-host's k256/p256 (elliptic-curve 0.13), the test and simulation
+    # host, and `cargo tree --target wasm32v1-none -i crypto-bigint` is empty, so it is not in the
+    # bytecode on the ledger. No soroban-env-host release up to 30.0.0 moves to the fixed 0.7 line.
+    # Ignored 2026-11-10.
+    "RUSTSEC-2026-0387",
+    # RUSTSEC-2024-0436: `paste` unmaintained (a warning, not a vulnerability), transitive via
+    # soroban-sdk; the same entry deny.toml carries.
+    "RUSTSEC-2024-0436",
+]
