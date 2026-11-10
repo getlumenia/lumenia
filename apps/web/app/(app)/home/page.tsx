@@ -32,6 +32,7 @@ import { RecoveryFlow } from "../../../components/brand/RecoveryFlow";
 import { indicativeRate, getLiveRate } from "../../../lib/rate";
 import { formatUsd } from "../../../lib/money";
 import { BalanceHeader } from "../../../components/brand/BalanceHeader";
+import { balanceHeadline } from "../../../lib/balance-headline";
 import { Mascot } from "../../../components/brand/Mascot";
 import { ActivityRow } from "../../../components/brand/ActivityRow";
 import { LockMoneyCard } from "../../../components/brand/LockMoneyCard";
@@ -80,6 +81,11 @@ export default function HomePage() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [waiting, setWaiting] = useState<IncomingClaim[]>([]);
   const [loadingData, setLoadingData] = useState(false);
+  /* A read that failed is not a balance of zero (lib/balance-headline.ts): the headline says it
+     could not read, and the activity list is told the same rather than render an honest-looking
+     "No activity yet". A figure read earlier on this visit stays up as the last one that landed. */
+  const [balanceFailed, setBalanceFailed] = useState(false);
+  const [activityFailed, setActivityFailed] = useState(false);
   const [consolidating, setConsolidating] = useState(false);
   const [collectingId, setCollectingId] = useState<string | null>(null);
   const [collectError, setCollectError] = useState("");
@@ -105,21 +111,41 @@ export default function HomePage() {
     // (RECOVERY_ARCHITECTURE section 3.1). ANOTHER deliberate account is not in it: this account cannot
     // sign for its dollars, so they are shown where that account is listed (lib/accounts-total.ts).
     const addresses = accountsForTotal(account.address, accounts);
-    const total = await loadTotalUsd(addresses);
+    // This never throws: every caller (the mount effect, a collect, a sweep) carries on with the
+    // page, and what a failed read means is said on the page, by the headline and the list.
+    let total: Awaited<ReturnType<typeof loadTotalUsd>>;
+    try {
+      total = await loadTotalUsd(addresses);
+    } catch {
+      setBalanceFailed(true);
+      setActivityFailed(true); // never re-read below, so it must not pose as an empty list
+      return;
+    }
+    setBalanceFailed(false);
     setUsd(total.usd);
     // Activity follows the SAME account set as the total. Reading only home meant money paid
     // straight to a not-yet-swept per-link account raised the balance and showed no movement at
-    // all — the balance said $20 and the list said nothing had happened. Each account's issuer
+    // all: the balance said $20 and the list said nothing had happened. Each account's issuer
     // comes from its own trustline, so a look-alike token can never pose as money.
-    setActivity(
-      await loadActivityForAccounts(
-        total.perAccount.map((p) => ({ address: p.address, issuer: p.issuer, isHome: p.address === account.address })),
-      ),
-    );
-    // The home trustline's own issuer pins the exact asset — a look-alike token can't
-    // pose as money waiting. No trustline yet → nothing to collect into.
+    try {
+      setActivity(
+        await loadActivityForAccounts(
+          total.perAccount.map((p) => ({ address: p.address, issuer: p.issuer, isHome: p.address === account.address })),
+        ),
+      );
+      setActivityFailed(false);
+    } catch {
+      setActivityFailed(true);
+    }
+    // The home trustline's own issuer pins the exact asset: a look-alike token can't pose as
+    // money waiting. No trustline yet means nothing to collect into. A read that fails leaves the
+    // list as it was; the card renders only for money that was actually read.
     const home = total.perAccount.find((p) => p.address === account.address);
-    setWaiting(home?.issuer ? await loadIncomingClaims(account.address, home.issuer) : []);
+    try {
+      setWaiting(home?.issuer ? await loadIncomingClaims(account.address, home.issuer) : []);
+    } catch {
+      /* the previous list stands until a read lands */
+    }
   }, [account, accounts]);
 
   useEffect(() => {
@@ -328,11 +354,20 @@ export default function HomePage() {
     }
   }
 
-  const tryValue = Number.parseFloat(usd ?? "0") * rate;
+  /** The read, again, at the person's request: from the headline or from the activity list. */
+  function retryRead() {
+    setLoadingData(true);
+    void reload().finally(() => setLoadingData(false));
+  }
 
   return (
     <div className="flex flex-col gap-5">
-      <BalanceHeader usd={usd ?? "0"} tryValue={tryValue} phase={account.phase} />
+      <BalanceHeader
+        headline={balanceHeadline({ usd, failed: balanceFailed, reading: loadingData })}
+        rate={rate}
+        phase={account.phase}
+        onRetry={retryRead}
+      />
 
       {/* Silent consolidation — an honest one-liner while incoming money from other
           links is being merged into this one balance. Never an error surface; if a
@@ -441,6 +476,14 @@ export default function HomePage() {
         </div>
         {loadingData && activity.length === 0 ? (
           <p className="py-6 text-center text-sm text-ink-soft">Loading…</p>
+        ) : activityFailed && activity.length === 0 ? (
+          /* A list that could not be read is not an empty list. */
+          <p className="py-6 text-center text-sm text-ink-soft">
+            We couldn&apos;t read your activity just now.{" "}
+            <button type="button" onClick={retryRead} className="font-semibold text-money underline-offset-2 hover:underline">
+              Try again
+            </button>
+          </p>
         ) : activity.length === 0 ? (
           /* An empty state is one of the messenger's beats: the first link is the thing to do. */
           <div className="flex flex-col items-center gap-2 py-4 text-center">

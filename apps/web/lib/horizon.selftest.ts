@@ -28,6 +28,8 @@ import {
 import { LEGACY_TESTNET_USDC_ISSUER, USDC_ISSUER, testnetConfig } from "./network";
 import { Account, Keypair, Networks, Operation, TransactionBuilder } from "@stellar/stellar-sdk";
 import { EVERY_MS, GIVE_UP_MS, submitOrConfirm } from "./submit";
+import { balanceHeadline } from "./balance-headline";
+import { markTakenBackIn, settledWords, type TakeBackRecord } from "./taken-back";
 
 let passed = 0;
 let failed = 0;
@@ -329,6 +331,57 @@ async function submitOrConfirmCases() {
   }
 }
 
+/* What /home may say about the balance read: three states, and a figure only when the ledger gave
+ * one (lib/balance-headline.ts). The screen used to print $0.00 for "not read yet" and for "the
+ * read failed", above "No activity yet". */
+function headlineCases(): void {
+  console.log("\n[headline] what /home may say about the balance read: loading | unreadable | amount");
+  const say = (usd: string | null, failed: boolean, reading: boolean) => balanceHeadline({ usd, failed, reading });
+  ok("nothing read yet, read in flight: loading, not $0.00", say(null, false, true).kind === "loading");
+  ok("nothing read yet, nothing in flight either: still loading, never a figure", say(null, false, false).kind === "loading");
+  ok("the first read failed: unreadable, not $0.00", say(null, true, false).kind === "unreadable");
+  ok("a retry after a failure reads as loading again", say(null, true, true).kind === "loading");
+  const zero = say("0.0000000", false, false);
+  ok("the ledger said zero: $0.00 is the amount, because it was read", zero.kind === "amount" && zero.usd === "0.0000000" && !zero.stale);
+  const kept = say("20.0000000", true, false);
+  ok("a figure read earlier survives a failed re-read, marked stale", kept.kind === "amount" && kept.usd === "20.0000000" && kept.stale);
+  const retrying = say("20.0000000", true, true);
+  ok("  ...and is not called stale while the re-read is still running", retrying.kind === "amount" && !retrying.stale);
+  const blind = [say(null, false, true), say(null, false, false), say(null, true, false), say(null, true, true)];
+  ok("no state renders a figure the ledger did not give", blind.every((h) => h.kind !== "amount"));
+}
+
+/* What /sent may say once the held money is gone (lib/taken-back.ts). The escrow keeps one
+ * `claimed` flag for claimed and taken back alike, so the words come from this device's own
+ * take-back mark, and without one they hedge. "Received" is said by nobody. */
+function settledCases(): void {
+  console.log("\n[settled] what /sent may say once the held money is gone");
+  const link = settledWords({});
+  ok("a link with no take-back mark: Settled, never Received", link.pill.label === "Settled" && link.pill.status === "received");
+  ok("  ...and the sentence names both ways it can have gone", /claimed it/.test(link.body) && /took it back/.test(link.body));
+  const back = settledWords({ tookBackUsd: "5.0000000" });
+  ok("a link this device took back: You took back $5.00, and the link is closed", back.body === "You took back $5.00. The link is closed.");
+  ok("  ...under a pill that is not the green received one", back.pill.status === "returned" && back.pill.label === "Taken back");
+  const direct = settledWords({ toName: "Ayse" });
+  ok("a payment to a person, no mark: hedged, naming them", direct.pill.label === "Settled" && direct.body.includes("Ayse") && /took it back/.test(direct.body));
+  const directBack = settledWords({ toName: "Ayse", tookBackUsd: "2.5000000" });
+  ok("a payment to a person this device took back: You took back $2.50, and no talk of a link", directBack.body.startsWith("You took back $2.50") && !/link/i.test(directBack.body));
+  ok("no settled sentence or pill ever says received", [link, back, direct, directBack].every((w) => !/received/i.test(w.body) && !/received/i.test(w.pill.label)));
+
+  const all: Record<string, TakeBackRecord & { slots?: number }> = {
+    a1: { balanceId: "L1" },
+    b2: { balanceId: "L2", tookBackUsd: "1.0000000" },
+    c3: { balanceId: "L1", slots: 3 },
+    d4: {},
+  };
+  ok(
+    "the mark lands on every record for the link and on no other",
+    markTakenBackIn(all, "L1", "5.0000000") && all.a1?.tookBackUsd === "5.0000000" && all.c3?.tookBackUsd === "5.0000000" && all.b2?.tookBackUsd === "1.0000000",
+  );
+  ok("a link this device has no record of marks nothing, so nothing is written", !markTakenBackIn(all, "L9", "5.0000000"));
+  ok("a record with no balance id is skipped, not matched", all.d4?.tookBackUsd === undefined);
+}
+
 async function main() {
   console.log("\n[claimable] the read itself: amount | gone (404 only) | unknown (everything else)");
   const NET = testnetConfig();
@@ -392,6 +445,8 @@ async function main() {
 
   await submitOutcomes();
   await submitOrConfirmCases();
+  headlineCases();
+  settledCases();
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} HORIZON SELF-TEST ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

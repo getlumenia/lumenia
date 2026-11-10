@@ -130,6 +130,38 @@ export function memoTextBytes(memo: string): number {
   return new TextEncoder().encode(memo).length;
 }
 
+/**
+ * The memo the payment will carry, decided before anything is read, signed or handed over.
+ *
+ * One rule above all: a tag the person typed is NEVER quietly left off. The screen used to pass a
+ * tag with a kind of "none" (the kind a saved muxed destination and an older draft carry) and
+ * `sendOut` skipped the memo in silence: the review showed the tag, the payment left without it,
+ * and the money landed in the exchange's shared pot with nothing to say whose it was. Now a tag
+ * with no usable kind is a refusal, as is a tag on a muxed address, which carries its own and
+ * cannot take a second. No tag at all is allowed; whether one was required is the screen's check.
+ *
+ * Returns the Memo to attach, or null for "no memo". Throws a plain sentence otherwise, and
+ * nothing has been signed or sent when it does.
+ */
+export function payoutMemo(opts: { destination: string; memo?: string; memoKind?: MemoKind }): Memo | null {
+  const memo = opts.memo ?? "";
+  if (memo === "") return null;
+  if (StrKey.isValidMed25519PublicKey(opts.destination)) {
+    throw new Error("This address carries its own reference tag, so a second one cannot be added. Nothing left your account.");
+  }
+  if (opts.memoKind === "id") {
+    if (!/^\d+$/.test(memo)) throw new Error("A numbers-only tag can only contain digits. Nothing left your account.");
+    return Memo.id(memo);
+  }
+  if (opts.memoKind === "text") {
+    if (memoTextBytes(memo) > MEMO_TEXT_MAX_BYTES) {
+      throw new Error(`That tag is too long. ${MEMO_TEXT_MAX_BYTES} characters at most. Nothing left your account.`);
+    }
+    return Memo.text(memo);
+  }
+  throw new Error("This reference tag has no kind, letters or numbers, so it was not sent. Nothing left your account.");
+}
+
 export interface DestinationCheck {
   /** Does the account exist on the ledger? A payment to a missing account fails. */
   exists: boolean;
@@ -177,7 +209,11 @@ export interface PayoutInput {
   amount: string;
   /** the destination address — G… or muxed M… */
   destination: string;
-  /** the memo the destination asked for; omit for a muxed address (it carries its own) */
+  /**
+   * The memo the destination asked for; omit for a muxed address, which carries its own and is
+   * refused a second one. A memo that is set needs a kind of "text" or "id": with "none" or no
+   * kind it is refused, never dropped (payoutMemo).
+   */
   memo?: string;
   memoKind?: MemoKind;
   /**
@@ -286,6 +322,8 @@ export async function payoutRecord(hash: string): Promise<PayoutRecord> {
  * mismatch between the signed bytes and the request is rejected rather than submitted.
  */
 export async function sendOut(opts: PayoutInput): Promise<PayoutResult> {
+  // First, before any read or signature: a tag that cannot be sent as given stops everything here.
+  const memo = payoutMemo(opts);
   const net = activeNetwork();
   const { horizonUrl: HORIZON_URL, passphrase: NETWORK } = net;
   const base = opts.sponsorUrl.replace(/\/$/, "");
@@ -312,9 +350,7 @@ export async function sendOut(opts: PayoutInput): Promise<PayoutResult> {
     )
     .setTimeout(180);
 
-  if (opts.memo && opts.memoKind && opts.memoKind !== "none") {
-    builder.addMemo(opts.memoKind === "id" ? Memo.id(opts.memo) : Memo.text(opts.memo));
-  }
+  if (memo) builder.addMemo(memo);
 
   const inner = builder.build();
   await opts.signer.sign(inner);

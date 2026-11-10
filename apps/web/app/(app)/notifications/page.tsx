@@ -19,6 +19,7 @@ import { isNeedsBackup, isNeedsPassword } from "../../../lib/signer-error";
 import { isUnconfirmedSubmit } from "../../../lib/unconfirmed";
 import { formatUsd } from "../../../lib/money";
 import { netKey } from "../../../lib/scoped-store";
+import { markTakenBack } from "../../../lib/taken-back";
 import { copy } from "../../../lib/copy";
 import { MoneyCard } from "../../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../../components/brand/PrimaryButton";
@@ -57,34 +58,6 @@ function poolLinks(): Set<string> {
     );
   } catch {
     return new Set();
-  }
-}
-
-/**
- * Remember, on this phone, that the leftover came back here.
- *
- * A closed pool reads with every slot marked claimed whether the shares went to people or the
- * leftover went home, `reclaim_pool` sets remaining to zero and claimed to slots together, so the
- * ledger cannot tell /sent which of the two happened. The device that did it can.
- */
-function markTakenBack(linkHex: string, usd: string): void {
-  try {
-    const key = netKey("lumenia.sent");
-    const all = JSON.parse(localStorage.getItem(key) ?? "{}") as Record<
-      string,
-      { balanceId?: string; tookBackUsd?: string }
-    >;
-    let touched = false;
-    for (const rec of Object.values(all)) {
-      if (rec.balanceId === linkHex) {
-        rec.tookBackUsd = usd;
-        touched = true;
-      }
-    }
-    if (touched) localStorage.setItem(key, JSON.stringify(all));
-  } catch {
-    /* storage blocked, the take-back still happened on chain, and /sent falls back to the
-       honest words a closed pool licenses on its own */
   }
 }
 
@@ -194,12 +167,19 @@ export default function NotificationsPage() {
           /* Accepted, not yet seen landing (the sponsor's 202). Nothing is marked as back; the
              reload below shows the truth once the ledger has it, and asking again is safe. */
           setError(copy.errors.takeBackUnconfirmed);
-        } else if (pool) {
+        } else {
+          /* Marked for a one-to-one link as well as a pool (lib/taken-back.ts): the escrow keeps
+             one `claimed` flag for claimed and taken back alike, so without this mark /sent read a
+             take-back as "Received". The banner below stays a pool's: a one-to-one take-back is
+             its own row gone and its own balance up. */
           markTakenBack(n.balanceId, n.usd);
-          setTookBack(n.usd);
+          if (pool) setTookBack(n.usd);
         }
       } else {
         await collectIncoming({ sponsorUrl: sponsorUrl(), signer, balanceId: n.balanceId });
+        // A classic take-back (a payment to an address, reclaimed after 7 days) leaves the same
+        // mark; its record on /sent is otherwise just as blind to who ended up with the money.
+        if (n.kind === "reclaimable") markTakenBack(n.balanceId, n.usd);
       }
       await reload();
     } catch (e) {

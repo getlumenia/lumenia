@@ -10,9 +10,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { loadLinkStatus } from "../../../../lib/horizon";
-import { recallLink } from "../../../../lib/sent-links";
+import { markSentConfirmed, recallLink, shownStatus, type SentPhase } from "../../../../lib/sent-links";
 import { formatUsd } from "../../../../lib/money";
 import { copy as uiCopy } from "../../../../lib/copy";
+import { settledWords } from "../../../../lib/taken-back";
 import { netKey } from "../../../../lib/scoped-store";
 import { loadPool, loadV2DropStatus, type PoolState } from "../../../../lib/lumendrop";
 import { useWallet } from "../../../../lib/wallet";
@@ -34,8 +35,14 @@ interface SentRecord {
    * record at all, so without it the link reads as settled the instant it is created.
    */
   slots?: number;
-  /** Set by /notifications when the sender took the leftover back on THIS device. */
+  /**
+   * Set by /notifications when the sender took the money back on THIS device (lib/taken-back.ts):
+   * a group link's leftover, or the whole of a one-to-one send. The ledger alone cannot tell a
+   * take-back from a claim, so this mark is what licenses "You took back" below.
+   */
   tookBackUsd?: string;
+  /** "submitted": handed to the sponsor and not yet seen in the escrow; "confirmed" or absent: it is there (lib/sent-links.ts). */
+  phase?: SentPhase;
 }
 
 /**
@@ -71,7 +78,7 @@ export default function SentPage() {
   // "unknown" is a read that FAILED; "no-account" is a read that was never possible on this
   // device. Same non-claim about the money, different truth to tell — and neither may ever fall
   // through to the settled branch below.
-  const [linkStatus, setLinkStatus] = useState<"pending" | "settled" | "loading" | "unknown" | "no-account">("loading");
+  const [linkStatus, setLinkStatus] = useState<"pending" | "settled" | "loading" | "unknown" | "no-account" | "unconfirmed">("loading");
   const [copied, setCopied] = useState(false);
   // The link is decrypted on demand from the device-key store, not read out of localStorage.
   const [link, setLink] = useState<string | null>(null);
@@ -106,7 +113,15 @@ export default function SentPage() {
     const read = isV2 && account
       ? loadV2DropStatus(r.balanceId, account.address, { group })
       : loadLinkStatus(r.balanceId);
-    void read.then(setLinkStatus).catch(() => setLinkStatus("unknown"));
+    // A record the sponsor never confirmed reads an empty escrow as "not confirmed yet", never as
+    // settled; a drop that is there proves the deposit landed, so the record is confirmed here too.
+    void read
+      .then((answer) => {
+        const shown = shownStatus(r, answer);
+        if (shown.landed) markSentConfirmed(id);
+        setLinkStatus(shown.status);
+      })
+      .catch(() => setLinkStatus("unknown"));
     // The counts come from the escrow itself, never from the local record: how many shares went is
     // the one thing this device cannot know on its own.
     if (isV2 && account && group) {
@@ -257,6 +272,9 @@ export default function SentPage() {
     );
   }
 
+  /* The words for a send whose money is no longer held, chosen from the local record alone. */
+  const settled = settledWords(rec);
+
   return (
     <div className="flex flex-col gap-4 py-4">
       <header className="text-center">
@@ -269,6 +287,8 @@ export default function SentPage() {
           <StatusPill status="waiting" label="Checking…" />
         ) : linkStatus === "pending" ? (
           <StatusPill status="waiting" />
+        ) : linkStatus === "unconfirmed" ? (
+          <StatusPill status="waiting" label="Not confirmed yet" />
         ) : linkStatus === "unknown" || linkStatus === "no-account" ? (
           // A read that did not complete is not evidence of anything. Both readers return
           // "unknown" so an outage can never be mistaken for settlement; this branch is what
@@ -278,22 +298,25 @@ export default function SentPage() {
             label={linkStatus === "no-account" ? "Can't check on this device" : "Couldn't check just now"}
           />
         ) : (
-          // The ledger read only says the held money is GONE — for a direct pay
-          // that is "collected by them" OR "taken back by you after 7 days", and
-          // we cannot tell which, so the pill must not claim "Received".
-          <StatusPill status="received" label={rec.toName ? "Settled" : "Received"} />
+          // The ledger read only says the held money is GONE: "claimed by them" or "taken back by
+          // you", for a link and for a direct pay alike (the escrow keeps one claimed flag for
+          // both), and it cannot tell which. So the pill never claims "Received"; only this
+          // device's own take-back mark licenses a definite word (lib/taken-back.ts).
+          <StatusPill status={settled.pill.status} label={settled.pill.label} />
         )}
       </div>
 
       {/* Neither unreadable state loses the copy button: a link we could not read may well still be
           live, and the sender is the only person who can share it again. */}
-      {(linkStatus === "pending" || linkStatus === "unknown" || linkStatus === "no-account") && (
+      {(linkStatus === "pending" || linkStatus === "unknown" || linkStatus === "no-account" || linkStatus === "unconfirmed") && (
         <MoneyCard className="p-5">
           {/* Nothing comes back by itself (lib/copy.ts `link`): a link stays claimable until the
               sender takes it back, and a payment to an account until its owner collects it or the
               sender takes it back. */}
           <p className="text-sm text-ink-soft">
-            {linkStatus === "no-account"
+            {linkStatus === "unconfirmed"
+              ? "We handed this to the network, but we haven't seen it in the escrow yet. Open Send: it checks again and says whether to send it again. Until then, don't send this money twice."
+              : linkStatus === "no-account"
               ? `We can't check this one on this device: that check runs from your account, and there isn't one on this phone right now. It doesn't change the money. ${rec.toName ? uiCopy.link.directTakeBack : uiCopy.link.takeBack} Bring your account back onto this phone and this page can tell you where it stands.`
               : linkStatus === "unknown"
                 ? `We couldn't check on this one just now. That's about the connection, not your money, and nothing about it has changed. ${rec.toName ? uiCopy.link.directTakeBack : uiCopy.link.takeBack} Open this again in a moment.`
@@ -313,13 +336,7 @@ export default function SentPage() {
         </MoneyCard>
       )}
 
-      {linkStatus === "settled" && (
-        <p className="text-center text-ink-soft">
-          {rec.toName
-            ? `This is settled. ${rec.toName} collected it, or you took it back after 7 days. Nothing more to do.`
-            : "This money has been received. Nothing more to do."}
-        </p>
-      )}
+      {linkStatus === "settled" && <p className="text-center text-ink-soft">{settled.body}</p>}
     </div>
   );
 }

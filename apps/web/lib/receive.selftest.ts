@@ -12,8 +12,9 @@
  * RUN: pnpm --filter @lumenia/web test:receive   (offline, no keys)
  */
 import { buildReceiveUri, getTestMoney, moneyOrigin, NETWORK_LABEL, shortAddress } from "./receive";
-import { parsePaymentUri } from "./payout";
+import { parsePaymentUri, payoutMemo } from "./payout";
 import { USDC_ISSUER } from "./network";
+import { Account, MuxedAccount, type Memo } from "@stellar/stellar-sdk";
 
 let passed = 0;
 let failed = 0;
@@ -60,6 +61,35 @@ console.log("\n[display] the short form is never the thing you copy");
   const short = shortAddress(ADDRESS);
   ok("shortened for display", short.length < ADDRESS.length && short.includes("…"));
   ok("a non-address passes through untouched", shortAddress("not-an-address") === "not-an-address");
+}
+
+console.log("\n[memo] the reference tag a cash-out carries, decided before anything is signed (lib/payout.ts)");
+{
+  const MUXED = new MuxedAccount(new Account(ADDRESS, "0"), "104882913").accountId();
+  const carried = (m: Memo | null) => (m ? `${m.type}:${String(m.value)}` : "no memo");
+  const refusal = (input: Parameters<typeof payoutMemo>[0]): string | null => {
+    try {
+      payoutMemo(input);
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+  const plain = /^[A-Z][^{}<>]{6,200}[.!?]$/;
+  ok("a typed tag, letters and numbers: a text memo", carried(payoutMemo({ destination: ADDRESS, memo: "104882913", memoKind: "text" })) === "text:104882913");
+  ok("a typed tag, numbers only: an id memo", carried(payoutMemo({ destination: ADDRESS, memo: "104882913", memoKind: "id" })) === "id:104882913");
+  const none = refusal({ destination: ADDRESS, memo: "104882913", memoKind: "none" });
+  ok("a typed tag with kind none is REFUSED, never dropped (the saved-muxed-destination bug)", none !== null);
+  ok("  ...with a plain sentence that says nothing left", none !== null && plain.test(none) && /Nothing left/.test(none), none ?? "");
+  ok("a typed tag with no kind at all is refused the same way", refusal({ destination: ADDRESS, memo: "104882913" }) !== null);
+  ok("no tag on a plain address: no memo (whether one was required is the screen's check)", payoutMemo({ destination: ADDRESS, memoKind: "text" }) === null);
+  ok("an empty tag with kind none is no memo, not a refusal", payoutMemo({ destination: ADDRESS, memo: "", memoKind: "none" }) === null);
+  ok("a muxed address with no tag: no memo, the address carries its own", payoutMemo({ destination: MUXED, memoKind: "none" }) === null);
+  const second = refusal({ destination: MUXED, memo: "104882913", memoKind: "text" });
+  ok("a muxed address WITH a typed tag is refused: never a second tag, never a silent drop", second !== null && plain.test(second), second ?? "");
+  ok("a numbers-only tag that is not a number is refused, not sent as text", refusal({ destination: ADDRESS, memo: "abc", memoKind: "id" }) !== null);
+  ok("a text tag over 28 bytes is refused", refusal({ destination: ADDRESS, memo: "x".repeat(29), memoKind: "text" }) !== null);
+  ok("a text tag of exactly 28 bytes is sent", carried(payoutMemo({ destination: ADDRESS, memo: "x".repeat(28), memoKind: "text" })) === `text:${"x".repeat(28)}`);
 }
 
 /* The faucet's answers, scripted: a 202 is only "added" once the ledger shows the payment. */

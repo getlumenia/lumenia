@@ -91,6 +91,18 @@ interface PendingPayout {
 /** What the ledger said about a held payment, for the screen that asked. */
 type PendingCheck = "not-yet" | "unreachable";
 
+/**
+ * The kind a TYPED tag is sent as. "none" is what a saved muxed destination and an older draft
+ * carry, and it is not a choice a person can make here: a tag typed under it was shown on the
+ * review screen and then left out of the payment (lib/payout.ts now refuses that instead of
+ * dropping it). Restoring either record therefore lands on the picker's default, letters and
+ * numbers, unless the record says numbers only.
+ */
+type TypedMemoKind = Exclude<MemoKind, "none">;
+function typedKind(kind: MemoKind | undefined): TypedMemoKind {
+  return kind === "id" ? "id" : "text";
+}
+
 type Step = "form" | "review" | "done";
 
 export default function SendOutPage() {
@@ -102,7 +114,9 @@ export default function SendOutPage() {
   const [legacy, setLegacy] = useState<string | null>(null);
   const [raw, setRaw] = useState("");
   const [memo, setMemo] = useState("");
-  const [memoKind, setMemoKind] = useState<MemoKind>("text");
+  const [memoKind, setMemoKind] = useState<TypedMemoKind>("text");
+  /** The saved destination the form was filled from, so its tag kind is let go of when the address changes. */
+  const filledFrom = useRef<string | null>(null);
   const [amount, setAmount] = useState("");
   const [step, setStep] = useState<Step>("form");
   const [checking, setChecking] = useState(false);
@@ -154,7 +168,7 @@ export default function SendOutPage() {
         const d = JSON.parse(draft) as { raw?: string; memo?: string; memoKind?: MemoKind; amount?: string };
         if (d.raw) setRaw(d.raw);
         if (d.memo) setMemo(d.memo);
-        if (d.memoKind) setMemoKind(d.memoKind);
+        if (d.memoKind) setMemoKind(typedKind(d.memoKind));
         if (d.amount) setAmount(d.amount);
       }
       const last = localStorage.getItem(SAVED_KEY());
@@ -168,7 +182,9 @@ export default function SendOutPage() {
     if (!saved) return;
     setRaw(saved.address);
     setMemo(saved.memo);
-    setMemoKind(saved.memoKind);
+    // A saved muxed address carries kind "none" and no tag; the picker starts on its default.
+    setMemoKind(typedKind(saved.memoKind));
+    filledFrom.current = saved.address;
     setError("");
   }
 
@@ -194,7 +210,7 @@ export default function SendOutPage() {
   const destination = parseDestination(uri?.destination ?? raw);
   const tagFromLink = Boolean(uri?.memo);
   const effectiveMemo = tagFromLink ? uri!.memo! : memo.trim();
-  const effectiveMemoKind: MemoKind = tagFromLink ? (uri!.memoKind ?? "text") : memoKind;
+  const effectiveMemoKind: TypedMemoKind = tagFromLink ? typedKind(uri!.memoKind) : memoKind;
 
   /**
    * FINISH THE SEND THE PASSWORD WAS FOR.
@@ -843,7 +859,17 @@ export default function SendOutPage() {
         Deposit address, or the deposit link
         <textarea
           value={raw}
-          onChange={(e) => setRaw(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setRaw(next);
+            /* The tag kind that came with a saved destination belongs to that address. Once the
+               address is changed it goes back to the default, instead of riding along onto an
+               address it was never chosen for. */
+            if (filledFrom.current !== null && next.trim() !== filledFrom.current) {
+              filledFrom.current = null;
+              setMemoKind("text");
+            }
+          }}
           rows={3}
           spellCheck={false}
           placeholder="Paste it here"
@@ -860,6 +886,12 @@ export default function SendOutPage() {
       {destination?.muxed && (
         <p className="-mt-3 text-sm text-money">
           This address carries its own reference tag. Nothing else to fill in, and nothing to get wrong.
+        </p>
+      )}
+      {/* Said, not silently done: a tag typed before a muxed address was pasted is not sent with it. */}
+      {destination?.muxed && memo.trim() !== "" && (
+        <p className="-mt-3 text-sm text-ink-soft">
+          The tag you typed is not sent with this one. This address already carries its own.
         </p>
       )}
       {tagFromLink && (
