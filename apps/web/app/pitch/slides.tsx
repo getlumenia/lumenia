@@ -21,6 +21,16 @@
 import type { CSSProperties, ReactNode } from "react";
 import QRCode from "react-qr-code";
 import { Mascot } from "../../components/brand/Mascot";
+import {
+  EXTENSION_VERSION,
+  GROUP_SHARES_MAINNET,
+  GROUP_SHARES_TESTNET,
+  MAINNET_ESCROW_CONTRACT,
+  PILOT,
+  TAKE_BACK_DAYS,
+  TRY_URL,
+  shortId,
+} from "../../lib/public-numbers";
 
 export type PitchTone = "light" | "dark";
 
@@ -35,7 +45,6 @@ export interface PitchSlide {
 /** Entrance order of a piece on its slide (pitch.css, .pk-in). */
 const d = (n: number) => ({ "--d": n }) as CSSProperties;
 
-const TRY_URL = "https://getlumenia.com/try";
 const ICONS = "/brand-kit-assets";
 const CONTACT = "mericcintosunn@gmail.com";
 
@@ -61,7 +70,7 @@ export const SLIDES: PitchSlide[] = [
     tone: "light",
     notes: [
       "One sentence: Lumenia lets you send US dollars (USDC) as a link, and the person who opens it installs nothing.",
-      "It is deployed on Stellar mainnet as a small capped pilot, idle since 30 August 2026, and open to everyone on the test network today.",
+      `It is deployed on Stellar mainnet as a small capped pilot, idle since ${PILOT.lastTransfer}, and open to everyone on the test network today.`,
       "In the next few minutes: the problem, why now, how it works, where we are, and how we can work together.",
     ],
     body: (
@@ -150,7 +159,7 @@ export const SLIDES: PitchSlide[] = [
       "The money is already moving: stablecoin payments grew 45% to $482B in the first nine months of 2026 while supply barely moved. That is usage, mostly business payments so far; Allium does not break out remittances.",
       "USDC is natively issued on 38 blockchains, and it arrives on Stellar from other chains through Circle CCTP. Rules exist now too: the GENIUS Act in the US, MiCA in the EU.",
       "Our target first corridor is Europe to Türkiye. Official remittances to Türkiye were $761M in 2025, and the route costs about 4% from Germany, so our case there is reach, not price. Its peer-to-peer crypto economy grew fivefold in a year to $3.56B, and its central bank bars paying for goods and services in crypto.",
-      "Our own reading, not yet a legal opinion: Lumenia is non-custodial software. We asked a Turkish law firm on 16 October to quote for a written opinion, and real money stays invite-only until we have it.",
+      "Our own reading, not yet a legal opinion: Lumenia is non-custodial software, with the asterisk on the engine slide: an upgrade key without a timelock, and Circle's power as the issuer to freeze USDC. A brief for Turkish counsel is written and, as of this deck, not yet sent; real money stays invite-only until we have a written opinion.",
     ],
     body: (
       <>
@@ -189,7 +198,7 @@ export const SLIDES: PitchSlide[] = [
             <p className="pk-h3">The rules are arriving</p>
             <p className="pk-body">
               The US GENIUS Act (July 2025) and the EU&apos;s MiCA (June 2024) set rules for dollar stablecoins. T&uuml;rkiye
-              is the open question: we are seeking a written legal opinion.
+              is the open question: a written legal opinion comes before anything beyond the invite-only pilot.
             </p>
           </div>
         </div>
@@ -210,7 +219,7 @@ export const SLIDES: PitchSlide[] = [
     tone: "light",
     notes: [
       "Walk the three steps. The claim screens are the test network's, which is why the badge says practice money.",
-      "The link is private by default: a chat preview says someone sent dollars by link, with no amount and no sender. The amount is still public on the ledger.",
+      "The link is private by default: a chat preview says someone sent dollars by link, with no amount and no sender. A sender can choose a rich preview instead, which shows their name and the amount. The amount is public on the ledger either way.",
       "Why a link and not an IBAN or a phone number: those only reach someone who already has an account somewhere. The link unlocks the money and opens the account at the moment it arrives.",
       "Others ask the recipient to install an app, pass an identity check or already hold a wallet before the money is theirs. Lumenia asks for none of that first.",
     ],
@@ -236,7 +245,7 @@ export const SLIDES: PitchSlide[] = [
                 <Icon src={`${ICONS}/icon-contacts.webp`} />
                 <div>
                   <p className="pk-h3">Share</p>
-                  <p className="pk-small">Paste the link in any chat. The preview shows no amount and no name.</p>
+                  <p className="pk-small">Paste the link in any chat. By default the preview shows no amount and no name.</p>
                 </div>
               </li>
               <li className="pk-flow-step pk-in" style={d(4)}>
@@ -257,7 +266,7 @@ export const SLIDES: PitchSlide[] = [
           </div>
           <div className="pk-shots pk-fade" style={d(3)}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="pk-shot pk-shot--chat" src="/pitch/link-in-chat.webp" width={1560} height={430} alt="A payment link pasted into a chat box. The link shows no amount and no name." />
+            <img className="pk-shot pk-shot--chat" src="/pitch/link-in-chat.webp" width={1560} height={430} alt="A payment link pasted into a chat box. By default the link shows no amount and no name." />
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img className="pk-shot pk-shot--claim" src="/pitch/claim-before.webp" width={1140} height={845} alt="The claim screen: Someone sent you money, $0.50, verified on the ledger, no app, no wallet, you pay nothing, with a button that says Take $0.50." />
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -266,8 +275,8 @@ export const SLIDES: PitchSlide[] = [
         </div>
         <p className="pk-foot">
           Claim screens are real product screens on the test network; the chat is a test page, not a chat app. A link is
-          like cash: whoever opens it first can claim it, so real-money links carry a password by default. After 7 days the
-          sender can take back an unclaimed link. Claim time is a target, not yet a published measurement.
+          like cash: whoever opens it first can claim it, so real-money links carry a password by default. After {TAKE_BACK_DAYS}{" "}
+          days the sender can take back an unclaimed link. Claim time is a target, not yet a published measurement.
         </p>
       </>
     ),
@@ -281,6 +290,7 @@ export const SLIDES: PitchSlide[] = [
       "The same contract runs group links (one link, a pot of N equal shares) and the sender's take-back after expiry. Nothing returns by itself: the sender has to take it back.",
       "We compose on what exists: Circle's USDC, Stellar smart contracts, Stellar's account sponsorship, Circle CCTP, OpenZeppelin's contract libraries.",
       "Be plain about the stage: the contract is upgradeable by a 2-of-3 multisig whose three keys the founder holds today, with no timelock yet, and it has no third-party audit. We are preparing the package for one. The upgrade key is the one owner power the contract's own rules cannot limit.",
+      "The other asterisk is the dollar itself: Circle, as the regulated issuer, can freeze USDC for compliance. It cannot seize it, because clawback is off on USDC.",
     ],
     body: (
       <>
@@ -328,11 +338,10 @@ export const SLIDES: PitchSlide[] = [
         </div>
         <p className="pk-foot">
           Escrow contract{" "}
-          <Src href="https://stellar.expert/explorer/public/contract/CAC5JYQ2XEEVJ54EXC7KCG6MTARO5CSUQ2WNKSOM6FALCCU5UTEIWGR4">
-            CAC5JYQ2&hellip;WGR4
-          </Src>{" "}
+          <Src href={`https://stellar.expert/explorer/public/contract/${MAINNET_ESCROW_CONTRACT}`}>{shortId(MAINNET_ESCROW_CONTRACT)}</Src>{" "}
           on Stellar mainnet. Upgrades need 2 of 3 owner keys, all held by the founder today, with no timelock yet: an
-          upgrade takes effect at once and new code could move escrowed funds. Not audited.
+          upgrade takes effect at once and new code could move escrowed funds. Not audited. Circle, as the regulated
+          issuer, can freeze USDC for compliance; it cannot seize it, because clawback is off on USDC.
         </p>
       </>
     ),
@@ -342,8 +351,8 @@ export const SLIDES: PitchSlide[] = [
     title: "Where we are",
     tone: "light",
     notes: [
-      "Say the size out loud: 109 transfers, about $4.40 in total, in a hand-approved pilot capped at $5 per link. It proves the plumbing with real money. It is not demand: most transfers by count, though only $0.26 by value, came from one scripted test run.",
-      "There have been no new mainnet transfers since 30 August 2026. The next cohort is exactly what we are asking partners for.",
+      `Say the size out loud: ${PILOT.transfers} transfers, ${PILOT.totalUsd} in total, in a hand-approved pilot capped at ${PILOT.capPerLinkUsd} per link. It proves the plumbing with real money. It is not demand: most transfers by count, though only ${PILOT.scriptedRunValueUsd} by value, were direct payments from one scripted test run, and only ${PILOT.escrowOperations} of the ${PILOT.usdcOperations} USDC operations touched the escrow.`,
+      `No sponsor-paid mainnet transfer since ${PILOT.lastTransfer}. The ledger does show inbound activity after that: a top-up, dust, and a few unsolicited sub-cent claimable balances sent to the sponsor from outside accounts in early September (four of them on 7 and 8 September). None of it is a pilot transfer. The next cohort is exactly what we are asking partners for.`,
       "The product is open to anyone on the test network: send, claim, group links, request money, take-back.",
       "The escrow's test evidence so far: 29 contract tests, 97% of its lines run, 51 of 52 injected bugs caught. The owner is a 2-of-3 multisig, all keys founder-held. The extension is available in both browser stores.",
       "The open question we want partners for: does a person who receives a link go on to send one? We count that, not addresses.",
@@ -362,8 +371,8 @@ export const SLIDES: PitchSlide[] = [
           <div className="pk-stat pk-in" style={d(2)}>
             <dt className="pk-small">Real USDC transfers on mainnet</dt>
             <dd>
-              <span className="pk-num">109</span>
-              <span className="pk-body pk-ink">about $4.40 in total, median payment $0.002</span>
+              <span className="pk-num">{PILOT.transfers}</span>
+              <span className="pk-body pk-ink">{PILOT.totalUsd} in total, median payment {PILOT.medianUsd}</span>
             </dd>
           </div>
           <div className="pk-stat pk-in" style={d(3)}>
@@ -383,7 +392,7 @@ export const SLIDES: PitchSlide[] = [
         </dl>
         <div className="pk-proof-rows pk-in" style={d(5)}>
           <p className="pk-body">
-            <b>In two browser stores</b> The extension (0.1.4) is on the Chrome Web Store and Firefox Add-ons.
+            <b>In two browser stores</b> The extension ({EXTENSION_VERSION}) is on the Chrome Web Store and Firefox Add-ons.
           </p>
           <p className="pk-body">
             <b>Open on testnet</b> Anyone can run the whole loop: send, claim, group links, request money, take-back.
@@ -396,11 +405,14 @@ export const SLIDES: PitchSlide[] = [
           What we measure next: <b>how many people who receive a link go on to send one.</b>
         </p>
         <p className="pk-foot">
-          Mainnet pilot, July to August 2026, no transfers since 30 Aug: hand-approved wallets, $5 cap per link, largest
-          transfer $1.00. Count from our own records on 28 Aug; 92 sponsor-paid USDC operations can be re-counted on Horizon.
-          Value from a Horizon recount on 6 Sept. Most transfers by count, only $0.26 by value, came from one scripted test
-          run, and most used the Claimable Balance path, not the escrow: a working proof, not demand. CCTP: Base Sepolia to
-          Stellar testnet, 19 Sept 2026, three test runs (16, 18 and 26 s). No third-party audit yet.
+          Mainnet pilot, July to August 2026: hand-approved wallets, {PILOT.capPerLinkUsd} cap per link, largest transfer{" "}
+          {PILOT.maxUsd}. No sponsor-paid transfer since {PILOT.lastTransfer}; what the ledger shows after that is inbound
+          only (a top-up, dust and a few unsolicited sub-cent claimable balances from outside accounts). Count from our own
+          records on {PILOT.transfersCountedOn}; {PILOT.usdcOperations} sponsor-paid USDC operations can be re-counted on
+          Horizon, and the value comes from a Horizon recount on {PILOT.valueRecountedOn}. Most transfers by count, only{" "}
+          {PILOT.scriptedRunValueUsd} by value, were direct payments from one scripted test run; {PILOT.escrowOperations} of
+          the {PILOT.usdcOperations} operations touched the escrow contract. A working proof, not demand. CCTP: Base Sepolia
+          to Stellar testnet, 19 Sept 2026, three test runs (16, 18 and 26 s). No third-party audit yet.
         </p>
       </>
     ),
@@ -412,7 +424,7 @@ export const SLIDES: PitchSlide[] = [
     notes: [
       "Every claim opens a funded account, and for a new recipient it is their first. The question for a partner is where that person goes next.",
       "Wallets: the escrow can pay a claim to any Stellar account with a USDC trustline that the recipient picks, so your app can be the place it lands. The contract already allows it; we build that button with you. Exchanges that credit by memo need a second step, because a contract call cannot carry a memo: claim into the new account, then a payment with your memo.",
-      "Cash-out providers: recipients who want local money. Lumenia does not take custody, so the licensed step stays yours, and the recipient chooses it.",
+      "Cash-out providers: recipients who want local money. Lumenia does not take custody (with the engine slide's asterisk: the upgrade key, and Circle's power as the issuer to freeze USDC), so the licensed step stays yours, and the recipient chooses it.",
       "Chains and ecosystems: USDC can arrive through Circle CCTP, proven from Base on testnet, and the recipient lands on Stellar. Communities and events: one group link holds a pot of equal shares, per address rather than per person.",
     ],
     body: (
@@ -457,7 +469,7 @@ export const SLIDES: PitchSlide[] = [
               <Icon src={`${ICONS}/icon-shield.webp`} />
               <span className="pk-h3">A chain or an ecosystem</span>
             </span>
-            <span role="cell" className="pk-body">Your USDC holders pay anyone by link. The recipient&apos;s account is on Stellar today</span>
+            <span role="cell" className="pk-body">Your USDC holders pay anyone by link. The recipient&apos;s account is on Stellar</span>
             <span role="cell" className="pk-body pk-muted">Campaigns funded with USDC through Circle CCTP, proven from Base on testnet</span>
           </div>
           <div className="pk-partner pk-in" style={d(5)} role="row">
@@ -471,8 +483,8 @@ export const SLIDES: PitchSlide[] = [
         </div>
         <p className="pk-foot">
           Money waits in the escrow contract on the ledger, not in an account of ours, until it is claimed or taken back.
-          During the pilot a group link on mainnet holds at most $5 across 6 shares (30 shares on testnet), and it counts
-          addresses, not people. Integrations are built with each partner.
+          During the pilot a group link on mainnet holds at most {PILOT.capPerLinkUsd} across {GROUP_SHARES_MAINNET} shares ({GROUP_SHARES_TESTNET}{" "}
+          shares on testnet), and it counts addresses, not people. Integrations are built with each partner.
         </p>
       </>
     ),

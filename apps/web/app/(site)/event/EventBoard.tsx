@@ -28,6 +28,7 @@ import { useCallback, useEffect, useState } from "react";
 import QRCode from "react-qr-code";
 import { readDemoLinkReply } from "../../../lib/demo-link";
 import { explorerTxOn, mainnetConfig, testnetConfig, type NetworkConfig } from "../../../lib/network";
+import { PILOT } from "../../../lib/public-numbers";
 import { walletsKitEnabled } from "../../../lib/wallets-kit";
 
 interface Summary {
@@ -193,9 +194,9 @@ export function EventBoard() {
         <p className="stat-note">
           <strong>A zero here is a scope, not an absence.</strong> These counters started on 19 Sept
           2026, so a zero means nobody has claimed a real-money link since then. The hand-approved
-          pilot that ran before them moved 109 transfers, about $4.4 in total, median $0.002 and
-          largest $1.00, re-counted from the public record on 6 Sept 2026. No single transfer may
-          exceed $5: the numbers are meant to be checkable, not impressive.
+          pilot that ran before them moved {PILOT.transfers} transfers, {PILOT.totalUsd} in total, median{" "}
+          {PILOT.medianUsd} and largest {PILOT.maxUsd}, re-counted from the public record on {PILOT.valueRecountedOn}.
+          No single transfer may exceed {PILOT.capPerLinkUsd}: the numbers are meant to be checkable, not impressive.
         </p>
 
         <div className="ev-head">

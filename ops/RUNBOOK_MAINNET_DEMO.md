@@ -6,19 +6,23 @@
 >
 > **Nothing in this repo spends money by itself.** Every step below is yours to run.
 
-## Why this does not need KMS or a multisig
+## Keys: what this runbook assumed, and what is true now
 
-Both protect value that does not exist here. A multisig guards against someone stealing the owner
-key and upgrading the contract to take user funds — the only funds present are your own ~$10, and
-at this size a single key is actually *better*, because you can pause in thirty seconds without
-coordinating co-signers. KMS guards the sponsor's XLM float, which will hold about 8 XLM.
+This section used to argue that a single owner key was *better* at this size, because one key can
+pause in thirty seconds without co-signers. That argument is retired. Since 2026-09-18 the mainnet
+owner `GBHB3NAY...BUK2` is a 2-of-3 multisig (three weight-1 signers, thresholds 2/2/2; see
+`docs/OWNER_MULTISIG_RUNBOOK.md` and `docs/MAINNET_EVIDENCE.md`), so every owner action on the
+contract, `pause` included, takes two signatures: build it unsigned, sign twice, send. The exact
+commands are under "If something looks wrong" below. There is no timelock yet. The sponsor still
+signs with a hot key in the Worker; the KMS path is code-complete and not provisioned
+(`ops/kms/cutover.sh`).
 
 The risk that *is* real once a sponsor is on a public URL is strangers spending its float. That is
 covered by what already ships: the anti-drain validator, rate limits, the canary caps below, and
 the kill-switch. Keep the float small and the caps low, and the worst case stays a rounding error.
 
-**When this stops being true:** the moment other people's money is in the contract. Then the
-decision packet's KMS + timelock + multisig items come back, and so does the audit.
+**Still open:** the timelock on `upgrade` and the KMS cutover (the decision packet's items), and
+the audit. They come before other people's money sits in the contract at any real size.
 
 ## Cost
 
@@ -212,10 +216,48 @@ through to a real exchange, works on mainnet on the live site, gated by the allo
 ```bash
 # halt every value-moving endpoint immediately (no deploy needed)
 curl -H "authorization: Bearer $KV_REST_API_TOKEN" "$KV_REST_API_URL/set/sponsor:halt/1"
-
-# stop new escrow at the contract (claims and reclaims keep working)
-stellar contract invoke --id <contract> --source mainnet-deployer --network mainnet \
-  -- pause --caller <sponsor address>
 ```
+
+**Stop new escrow at the contract** (claims, reclaims and exits keep working). `pause` is
+`#[only_owner]`, and the mainnet owner is a 2-of-3 multisig, so no single key can authorize it,
+least of all the sponsor's: the old one-liner here (`--source mainnet-deployer`,
+`--caller <sponsor address>`) cannot pass the owner's `require_auth`. The owner is the
+transaction's source account, so that `require_auth` is met by the envelope's signatures at the
+owner's medium threshold (2 of 3), with no separate auth-entry signature. Flags as in stellar-cli
+30.0.1, each read from its `--help`:
+
+```bash
+OWNER=GBHB3NAY2ADZ3XAGJNO6UN6GWT2D3PC4DXEQ2SVBGPIX6N6RS4PRBUK2
+
+# 1. Build, unsigned. --build-only simulates against the RPC and writes the base64 envelope to
+#    stdout; nothing is sent. `pause` ignores its `caller` argument; pass the owner.
+stellar contract invoke --contract-id <contract> --source-account "$OWNER" --network mainnet \
+  --build-only -- pause --caller "$OWNER" > pause.xdr
+
+# 2. The hash both signers are approving. Read it back on each signing device.
+stellar tx hash pause.xdr
+
+# 3. Two of the three owner keys, one after the other; each call appends one signature.
+#    --sign-with-key takes an identity in the CLI keystore or a secret key (the paper key can be
+#    added for the occasion with `stellar keys add paper-c --secret-key` and removed afterwards with
+#    `stellar keys rm paper-c`); --sign-with-lab hands the envelope to lab.stellar.org for a key
+#    held in a wallet; --sign-with-ledger is there for a Ledger device.
+stellar tx sign --network mainnet --sign-with-key <key A> pause.xdr > pause.1.xdr
+stellar tx sign --network mainnet --sign-with-key <key B> pause.1.xdr > pause.2.xdr
+
+# 4. Send.
+stellar tx send --network mainnet pause.2.xdr
+```
+
+Do the four steps in one sitting: the envelope carries the owner's sequence number from step 1,
+and if the owner account sends anything else in between, rebuild. `unpause` is the same four
+steps with `unpause` in place of `pause`.
+
+**Not rehearsed.** As of 2026-11-10 this two-signature pause has not been run on either network.
+Rehearse it on testnet first, against a contract whose owner is a 2-of-3 account: check the
+testnet owner's signers on Horizon (`GET /accounts/<owner>`) before relying on it, because the
+2026-09-06 dry run in `docs/OWNER_MULTISIG_RUNBOOK.md` used a fresh account, not the testnet
+contract's owner. SOW 3's success metric asks for exactly these testnet `pause` and `unpause`
+hashes, signed by two of three keys.
 
 Full incident sequence: [RUNBOOK_SPONSOR_KEY.md](RUNBOOK_SPONSOR_KEY.md) §4.

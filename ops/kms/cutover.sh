@@ -17,6 +17,13 @@
 # apps/sponsor/.cutover/ (gitignored) for the ops note.
 set -euo pipefail
 
+# macOS ships bash 3.2, and under `set -u` a bash older than 4.4 treats the expansion of an EMPTY
+# array ("${ENVARGS[@]}", the testnet case) as an unbound variable and aborts. Unguarded, the
+# testnet path dies at step 6, after the SetOptions of step 4 has already landed (the failure mode
+# was reproduced on this machine by the 2026-11-02 review; the cutover itself has never run). Every
+# expansion of ENVARGS below therefore uses the guarded form ${ENVARGS[@]+"${ENVARGS[@]}"}: nothing
+# for an empty array, the elements otherwise, on every bash. Keep it that way when adding a line.
+
 NET="${1:-}"
 MODE="${2:-}"
 case "$NET" in
@@ -48,8 +55,8 @@ if [ "$MODE" = "--finish" ]; then
   echo "Only do this after one real transaction signed through KMS has landed on $NET."
   read -r -p "Remove SPONSOR_SECRET from the $NET Worker now? Type yes: " ok
   [ "$ok" = "yes" ] || exit 1
-  npx wrangler secret delete SPONSOR_SECRET "${ENVARGS[@]}"
-  npx wrangler secret list "${ENVARGS[@]}"
+  npx wrangler secret delete SPONSOR_SECRET ${ENVARGS[@]+"${ENVARGS[@]}"}
+  npx wrangler secret list ${ENVARGS[@]+"${ENVARGS[@]}"}
   note "SPONSOR_SECRET removed from the $NET Worker (secret list printed above: keep a screenshot)"
   note "rollback window: the old key stays a signer at weight 1 until $(date -u -v+7d +%Y-%m-%d 2>/dev/null || date -u -d '+7 days' +%Y-%m-%d)"
   exit 0
@@ -66,7 +73,7 @@ echo "account $ACCOUNT, signer kind $KIND, account source $SOURCE"
 if [ "$SOURCE" != "SPONSOR_ACCOUNT_ID" ]; then
   echo "The Worker does not name its account yet (SPONSOR_ACCOUNT_ID). KMS mode refuses to start without it." >&2
   echo "Add SPONSOR_ACCOUNT_ID = \"$ACCOUNT\" and KMS_REGION = \"eu-central-1\" to this network's block of" >&2
-  echo "apps/sponsor/wrangler.toml, deploy (npx wrangler deploy ${ENVARGS[*]}), then run this again." >&2
+  echo "apps/sponsor/wrangler.toml, deploy (npx wrangler deploy${ENVARGS[*]+ ${ENVARGS[*]}}), then run this again." >&2
   exit 1
 fi
 if [ "$NET" = "mainnet" ]; then
@@ -134,9 +141,9 @@ else
 fi
 
 say "6/8 The credentials and, last, the key id (each secret put deploys the Worker at once)"
-printf '%s' "$AWS_ACCESS_KEY_ID" | npx wrangler secret put AWS_ACCESS_KEY_ID "${ENVARGS[@]}"
-printf '%s' "$AWS_SECRET_ACCESS_KEY" | npx wrangler secret put AWS_SECRET_ACCESS_KEY "${ENVARGS[@]}"
-printf '%s' "$KMS_KEY_ID" | npx wrangler secret put KMS_KEY_ID "${ENVARGS[@]}"
+printf '%s' "$AWS_ACCESS_KEY_ID" | npx wrangler secret put AWS_ACCESS_KEY_ID ${ENVARGS[@]+"${ENVARGS[@]}"}
+printf '%s' "$AWS_SECRET_ACCESS_KEY" | npx wrangler secret put AWS_SECRET_ACCESS_KEY ${ENVARGS[@]+"${ENVARGS[@]}"}
+printf '%s' "$KMS_KEY_ID" | npx wrangler secret put KMS_KEY_ID ${ENVARGS[@]+"${ENVARGS[@]}"}
 unset KMS_KEY_ID AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 
 say "7/8 /health from outside"

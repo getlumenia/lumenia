@@ -1032,7 +1032,9 @@
 
 /* ====================================================================================
  * The column: a phone (or any narrow window) held upright reads the deck as a page.
- * Keep the query in step with DOC_QUERY in PitchDeck.tsx.
+ * The query below is the same string as DOC_QUERY in PitchDeck.tsx, written twice on purpose: a
+ * stylesheet cannot read a TypeScript constant and an @media rule cannot take a variable. Change
+ * both together, or the keyboard and the swipe will disagree with the layout.
  * ==================================================================================== */
 @media screen and (orientation: portrait) and (max-width: 900px) {
   .pk {
@@ -1312,5 +1314,27 @@
   }
   .pk-strike {
     color: var(--muted);
+  }
+  /* The same resets as the reduced-motion block above, repeated here because print does not
+     inherit that block: a normal print would still draw them. Apple's PDF engine draws a blurred
+     shadow as a grey rectangle over the slide. */
+  .pk-shot,
+  .pk-card {
+    box-shadow: none;
+  }
+  /* WebKit prints a mask and a blur as solid black shapes, and Firefox drops them with the mascot.
+     The clip keeps hiding what the fade hides on screen: the maker's mark starts at 95% of the height. */
+  .pk .mascot-body {
+    filter: none;
+  }
+  .pk .mascot-halo,
+  .pk .mascot-pool,
+  .pk .mascot-envglow {
+    display: none;
+  }
+  .pk .mascot-frame {
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+    clip-path: inset(0 0 7% 0);
   }
 }

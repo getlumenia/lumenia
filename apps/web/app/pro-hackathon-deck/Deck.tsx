@@ -10,6 +10,7 @@
  * have a home on /event, which the deck points at instead.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PILOT } from "../../lib/public-numbers";
 
 type Slide = { id: string; label: string; body: React.ReactNode };
 
@@ -244,9 +245,11 @@ const SLIDES: Slide[] = [
           </div>
           <div className="dk-tr" role="row">
             <span role="cell">Mainnet, hand-approved pilot</span>
-            <span role="cell">69 accounts opened, 109 real transfers, about $4.4 moved in total</span>
+            <span role="cell">
+              {PILOT.accountsOpened} accounts opened, {PILOT.transfers} real transfers, {PILOT.totalUsd} moved in total
+            </span>
             <span role="cell" className="dk-dim">
-              A plumbing proof with real money, not demand. Median $0.002, maximum $1.00.
+              A plumbing proof with real money, not demand. Median {PILOT.medianUsd}, maximum {PILOT.maxUsd}.
             </span>
           </div>
           <div className="dk-tr" role="row">

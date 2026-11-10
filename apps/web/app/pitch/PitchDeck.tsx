@@ -24,7 +24,12 @@ import { SLIDES } from "./slides";
 
 const COUNT = SLIDES.length;
 
-/** Keep in step with the document-mode media query in pitch.css. */
+/**
+ * The column (document) mode's media query. It is written twice on purpose: once here, for
+ * matchMedia, and once as the `@media screen and (...)` rule under "The column" in pitch.css, because
+ * a stylesheet cannot read a TypeScript constant and an @media rule cannot take a variable. Change
+ * both together, or the keyboard and the swipe will disagree with the layout.
+ */
 const DOC_QUERY = "(orientation: portrait) and (max-width: 900px)";
 
 const WORDMARK = {
