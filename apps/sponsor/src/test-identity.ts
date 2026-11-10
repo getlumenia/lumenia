@@ -117,6 +117,20 @@ async function main(): Promise<void> {
   ok("rejects 21 characters", validateHandleShape("a".repeat(21)).ok !== true);
   ok("refuses a reserved word", validateHandleShape("support").ok !== true);
   ok("refuses a reserved word in disguise", validateHandleShape("supp0rt").ok !== true, "skeleton folds 0→o");
+  /* Review 2026-10-11 #27: RESERVED was matched as a whole name only, and the skeleton folds 1 and l to
+     i, so these four passed. They are the brand with a trailing underscore, the brand with a digit, an
+     official word with a digit, and a short official word with a digit. */
+  ok("refuses the brand with a trailing underscore (lumenia_)", validateHandleShape("lumenia_").ok !== true);
+  ok("refuses the brand with a digit (lumen1a)", validateHandleShape("lumen1a").ok !== true);
+  ok("refuses an official word with a digit (officia1)", validateHandleShape("officia1").ok !== true);
+  ok("refuses a short official word with a digit (he1p)", validateHandleShape("he1p").ok !== true);
+  ok("refuses an official word as a prefix (support_1)", validateHandleShape("support_1").ok !== true);
+  ok("refuses an official word as a prefix with the brand after it (admin_lumenia)", validateHandleShape("admin_lumenia").ok !== true);
+  ok("refuses the brand anywhere in a name (meric_lumenia)", validateHandleShape("meric_lumenia").ok !== true);
+  ok("refuses a lookalike official prefix (0fficial_team)", validateHandleShape("0fficial_team").ok !== true);
+  for (const legit of ["meric", "deniz", "young", "apple", "payton", "meredith", "homer", "startup", "sendy", "mehmet", "ayse_k"]) {
+    ok(`still allows @${legit}`, validateHandleShape(legit).ok === true);
+  }
 
   console.log("\n[2] confusable folding — the impersonation guard");
   ok("digits fold to letters", skeleton("mer1c") === skeleton("meric"));

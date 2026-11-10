@@ -1,22 +1,32 @@
 /**
- * MAINNET DEMO — generate a small number of real-money claim links as evidence.
+ * MAINNET DEMO: generate a small number of real-money claim links as evidence.
  *
  * Deliberately NOT a product launch: a handful of links, tiny amounts, tight caps. Run it in two
  * steps so no key of yours is ever pasted into a script:
  *
- *   1. `… mainnet-demo keys`   — generates a throwaway SPONSOR key and a throwaway SENDER key,
- *                                prints the addresses to fund, and prints nothing else you need
- *                                to keep secret except the two secrets it shows once.
- *   2. `… mainnet-demo links`  — with those secrets in the env, creates N drops and prints the
- *                                claim links plus their transaction hashes.
+ *   1. `... mainnet-demo keys`   generates a throwaway SENDER key, writes it to a 0600 file git
+ *                                 ignores (apps/sponsor/mainnet-demo-out/keys-<stamp>.json) BEFORE
+ *                                 printing anything, and prints the address to fund.
+ *   2. `... mainnet-demo links`  with that secret in the env, creates N drops through the LIVE
+ *                                 sponsor (the Worker pays the fees with its own key; nothing here
+ *                                 replaces it) and prints the claim links plus their transaction
+ *                                 hashes. Every link's secret is written to the same folder's
+ *                                 links-<stamp>.json BEFORE its deposit is posted: a 524, a throw
+ *                                 or a Ctrl-C after the money moved used to strand real USDC behind
+ *                                 a key that existed only in this process's memory (review
+ *                                 2026-10-20, N3).
  *
- * Your Freighter wallet only ever SENDS to the printed addresses. Its secret never appears here.
+ * Your Freighter wallet only ever SENDS to the printed address. Its secret never appears here.
  *
  * RUN:
  *   pnpm --filter @lumenia/sponsor mainnet-demo keys
- *   SPONSOR_SECRET=S… SENDER_SECRET=S… LUMENDROP_CONTRACT=C… \
+ *   SENDER_SECRET=S... LUMENDROP_CONTRACT=C... \
  *     pnpm --filter @lumenia/sponsor mainnet-demo links [count] [usdcPerDrop]
  */
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   rpc,
   Horizon,
@@ -41,21 +51,53 @@ const SPONSOR_URL = (process.env.SPONSOR_URL ?? "https://lumenia-sponsor-mainnet
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* Where the throwaway key and every link's secret are written: a folder .gitignore covers at any
+ * depth (`**` + "/mainnet-demo-out/"), beside apps/sponsor/adversarial-out/ which the adversarial
+ * run uses the same way (adversarial-run.ts, saveKeys / assertGitignored). */
+const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
+const OUT = resolve(SCRIPT_DIR, "..", "mainnet-demo-out");
+const STAMP = new Date().toISOString().replace(/[:.]/g, "-");
+
+/** Refuse a file git would track: the seeds hold REAL money, and this repository is public. */
+function assertGitignored(path: string): void {
+  try {
+    // From this file's folder, so the check consults this repository whatever folder the command
+    // was typed in; a path outside it fails the check too.
+    execFileSync("git", ["check-ignore", "-q", path], { cwd: SCRIPT_DIR, stdio: "ignore" });
+  } catch {
+    throw new Error(`refusing to write secrets to ${path}: git does not ignore it (add **/mainnet-demo-out/ to .gitignore)`);
+  }
+}
+
+/** Write a record the operator must keep: owner-readable only (0600), after checking git ignores it. */
+function saveSecretFile(path: string, record: unknown): void {
+  mkdirSync(OUT, { recursive: true });
+  assertGitignored(path);
+  writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+}
+
 function keys() {
-  const sponsor = Keypair.random();
   const sender = Keypair.random();
-  console.log("\n=== MAINNET DEMO KEYS — save these now, they are shown once ===\n");
-  console.log("SPONSOR  (pays fees + recipient reserves; needs XLM only)");
-  console.log(`  address: ${sponsor.publicKey()}`);
-  console.log(`  secret : ${sponsor.secret()}`);
-  console.log("\nSENDER   (the money in the demo drops; needs a little XLM + the USDC)");
+  const path = resolve(OUT, `keys-${STAMP}.json`);
+  // Written BEFORE it is printed: a terminal that scrolled away or a window that closed must not
+  // have been the only copy of a key that will hold real USDC.
+  saveSecretFile(path, {
+    network: "mainnet",
+    purpose: "demo sender: holds the USDC the demo drops escrow",
+    publicKey: sender.publicKey(),
+    secret: sender.secret(),
+    createdAt: new Date().toISOString(),
+  });
+  console.log("\n=== MAINNET DEMO KEY ===\n");
+  console.log(`  written to ${path} (mode 0600, git-ignored)\n`);
+  console.log("SENDER   (the money in the demo drops; needs a little XLM + the USDC)");
   console.log(`  address: ${sender.publicKey()}`);
   console.log(`  secret : ${sender.secret()}`);
   console.log("\nFund from Freighter:");
-  console.log(`  → ${sponsor.publicKey()}   about 8 XLM`);
-  console.log(`  → ${sender.publicKey()}    about 3 XLM, then swap→send the USDC you want to demo`);
-  console.log("\nThen: wrangler secret put SPONSOR_SECRET --env mainnet   (paste the sponsor secret)");
-  console.log("Neither address needs a USDC trustline before funding — the sender's is opened below.\n");
+  console.log(`  -> ${sender.publicKey()}    about 3 XLM, then swap and send the USDC you want to demo`);
+  console.log("\nThe LIVE sponsor Worker pays the fees with its own key. Do NOT replace its SPONSOR_SECRET for a demo:");
+  console.log("the pilot's money, caps, kill-switch and watchdog all hang off that key.");
+  console.log("The sender needs no USDC trustline before funding; `links` opens it when it is missing.\n");
 }
 
 function need(n: string): string {
@@ -109,6 +151,23 @@ async function links(count: number, perDrop: string) {
   const out: Array<{ link: string; hash: string }> = [];
   let lastSeq: string | null = null;
 
+  /* The record of every link, secret included, written BEFORE each deposit is posted (0600,
+   * git-ignored). Saved once here, before any money moves, so a folder that cannot be written or
+   * is not ignored stops the run while the USDC is still the sender's. */
+  const recordPath = resolve(OUT, `links-${STAMP}.json`);
+  const record = {
+    network: "mainnet",
+    contract,
+    sender: sender.publicKey(),
+    sponsor: SPONSOR_URL,
+    startedAt: new Date().toISOString(),
+    links: [] as Array<Record<string, unknown>>,
+  };
+  const save = () => saveSecretFile(recordPath, record);
+  save();
+  console.log(`  record  : ${recordPath}`);
+  console.log("            (every link's secret is written there BEFORE its deposit is posted; keep the file)\n");
+
   /** Horizon-sourced account, waited until its sequence moved past the previous drop's. */
   async function freshAccount(pub: string) {
     for (let attempt = 0; attempt < 30; attempt++) {
@@ -122,10 +181,22 @@ async function links(count: number, perDrop: string) {
   }
 
   for (let i = 0; i < count; i++) {
+   /** This drop's line in the record; set before the deposit is posted, updated with its outcome. */
+   let entry: Record<string, unknown> | null = null;
    try {
     const link = Keypair.random();
     const linkHex = Buffer.from(link.rawPublicKey()).toString("hex");
     const expiry = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 3600);
+
+    // The private link shape, built by hand because the sponsor does not import web code; the
+    // contract is apps/web/lib/lumendrop.ts v2LinkUrl. No amount anywhere (the claim page reads it
+    // from the escrow), the sender's name after the key, and `n=public`, which is what tells the
+    // claim page this link lives on mainnet.
+    const url = `${WEB}/v2/c/${linkHex}?n=public#${link.secret()}&s=Lumenia`;
+    // On disk BEFORE the money moves: from here a crash strands nothing.
+    entry = { index: i + 1, linkHex, secret: link.secret(), url, usdc: perDrop, status: "funding", at: new Date().toISOString() };
+    record.links.push(entry);
+    save();
 
     // The RPC's account view lags a just-submitted transaction, so building the next deposit
     // from it yields a stale sequence and txBadSeq. Horizon is authoritative and current — take
@@ -155,23 +226,27 @@ async function links(count: number, perDrop: string) {
       body: JSON.stringify({ xdr: prepared.toXDR(), senderPublicKey: sender.publicKey() }),
     });
     const text = await res.text();
-    if (!res.ok) throw new Error(`/v2-deposit → ${res.status}: ${text}`);
+    if (!res.ok) throw new Error(`/v2-deposit -> ${res.status}: ${text}`);
     const { hash } = JSON.parse(text) as { hash: string };
 
-    // The private link shape, built by hand because the sponsor does not import web code; the
-    // contract is apps/web/lib/lumendrop.ts v2LinkUrl. No amount anywhere (the claim page reads it
-    // from the escrow), the sender's name after the key, and `n=public`, which is what tells the
-    // claim page this link lives on mainnet.
-    const url = `${WEB}/v2/c/${linkHex}?n=public#${link.secret()}&s=Lumenia`;
+    /* 202 is "accepted, undecided" (the sponsor's poll window closed before the ledger showed it):
+     * the deposit may still land, so the record says so rather than "funded", and the link is kept. */
+    entry.status = res.status === 202 ? "accepted-undecided" : "funded";
+    entry.hash = hash;
+    save();
     out.push({ link: url, hash });
-    // Print the link IMMEDIATELY. The secret exists only in this process, so batching the
-    // output means a later failure strands the escrow behind a key nobody has.
-    console.log(`  [${i + 1}/${count}] ${perDrop} USDC — tx ${hash.slice(0, 12)}…`);
+    // Print the link IMMEDIATELY too: the record is the durable copy, the terminal the convenient one.
+    console.log(`  [${i + 1}/${count}] ${perDrop} USDC, tx ${hash.slice(0, 12)}...${res.status === 202 ? " (accepted, not yet seen landing)" : ""}`);
     console.log(`        ${url}`);
     lastSeq = source.sequenceNumber();
    } catch (e) {
-    // One failed drop must not abort the run — the already-created links are real money and
-    // their secrets live only here.
+    // One failed drop must not abort the run: the already-created links are real money. Their
+    // secrets are on disk, and this one's outcome is recorded beside them (a refusal before the
+    // post moved nothing; a thrown post may still have landed, and the link is kept for that).
+    if (entry) {
+      entry.status = `failed: ${(e as Error).message.split("\n", 1)[0]}`;
+      save();
+    }
     console.log(`  [${i + 1}/${count}] FAILED: ${(e as Error).message}`);
    }
   }
@@ -180,7 +255,8 @@ async function links(count: number, perDrop: string) {
   for (const o of out) console.log(o.link);
   console.log("\n--- TRANSACTIONS ---");
   for (const o of out) console.log(`https://stellar.expert/explorer/public/tx/${o.hash}`);
-  console.log(`\ncontract: https://stellar.expert/explorer/public/contract/${contract}\n`);
+  console.log(`\ncontract: https://stellar.expert/explorer/public/contract/${contract}`);
+  console.log(`record  : ${recordPath} (keep it: it holds every link's secret and outcome)\n`);
 }
 
 async function main() {

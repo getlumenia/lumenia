@@ -58,6 +58,7 @@ import { payoutHandler } from "./lib/payout.js";
 import { sendLinkHandler } from "./lib/send.js";
 import type { SponsorSigner } from "./lib/signer.js";
 import { setLedgerRecheckMsForTests } from "./lib/stellar.js";
+import { STORE_TIMEOUT_MS } from "./lib/store-fetch.js";
 import { sweepHandler } from "./lib/sweep.js";
 
 let pass = 0,
@@ -81,7 +82,7 @@ const FAKE_KV_URL = "https://fake-kv.test";
  * the real store uses. Every pipeline is recorded, so a test can assert which commands went
  * together in ONE round trip.
  */
-function installFakeKv(opts: { fail?: boolean } = {}) {
+function installFakeKv(opts: { fail?: boolean; hang?: boolean } = {}) {
   const store = new Map<string, bigint | string>();
   const calls: string[] = [];
   const pipelines: string[][][] = [];
@@ -131,10 +132,16 @@ function installFakeKv(opts: { fail?: boolean } = {}) {
     /** Runs after a pipeline was applied; throwing here is an answer lost on the way back. */
     afterPipeline?: (cmds: string[][]) => void;
   } = {};
-  const fakeFetch = (async (url: string | URL, init?: { body?: string }) => {
+  const fakeFetch = (async (url: string | URL, init?: { body?: string; signal?: AbortSignal }) => {
     const u = String(url);
     calls.push(u);
     if (opts.fail) return { ok: false, status: 500, json: async () => [] } as unknown as Response;
+    // A store that accepts the request and never answers: settles only when the caller's deadline aborts it.
+    if (opts.hang) {
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")));
+      });
+    }
     const path = u.slice(FAKE_KV_URL.length);
     if (path.startsWith("/get/")) {
       return { ok: true, status: 200, json: async () => run(["GET", decodeURIComponent(path.slice(5))]) } as unknown as Response;
@@ -243,6 +250,34 @@ async function main() {
     "fail-closed with NO store configured also rejects",
     !(await checkCaps(usdc(1), { ...CAPS, failClosed: true })).ok,
   );
+
+  console.log("[5b] a store that accepts the request and never answers: the same split, decided within the store deadline");
+  installFakeKv({ hang: true });
+  {
+    // Node's AbortSignal.timeout timer does not hold the event loop open (a Worker request does).
+    const keepAlive = setTimeout(() => {}, 10_000);
+    const t0 = Date.now();
+    const [open, closed, fees] = await Promise.all([
+      checkCaps(usdc(1), CAPS),
+      checkCaps(usdc(1), { ...CAPS, failClosed: true }),
+      readSponsorFeeDay(feeBudgetFromEnv("testnet"), NOW),
+    ]);
+    const took = Date.now() - t0;
+    clearTimeout(keepAlive);
+    check("fail-open: a stalled store yields like a failed one, the per-drop cap still applies", open.ok);
+    check(
+      "fail-closed: a stalled store refuses like a failed one, and the reason says the store did not answer in time",
+      !closed.ok && /unavailable \(fail-closed\)/.test(closed.reason ?? "") && new RegExp(`did not answer within ${STORE_TIMEOUT_MS} ms`).test(closed.reason ?? ""),
+      closed.reason,
+    );
+    check("the fee-day reading says unreadable rather than zero", fees.spentStroops === null && fees.used === null);
+    check(
+      `all three were decided at the deadline (${STORE_TIMEOUT_MS} ms), not before and not at the platform's timeout`,
+      took >= STORE_TIMEOUT_MS - 100 && took < STORE_TIMEOUT_MS + 1_500,
+      `${took} ms`,
+    );
+  }
+  clearKv();
 
   console.log("[6] configuration — env overrides and testnet defaults");
   delete process.env.MAX_DROP_USDC;
@@ -398,6 +433,22 @@ async function main() {
   const unconfigured = await checkOnboardingBudget(FAIL_CLOSED, IP_A);
   check("fail-closed with NO store configured also serves", unconfigured.ok);
   await unconfigured.release?.();
+
+  console.log("[10b] onboarding budget: a store that never answers degrades the same way, within the store deadline");
+  installFakeKv({ hang: true });
+  {
+    const keepAlive = setTimeout(() => {}, 10_000);
+    const t0 = Date.now();
+    const [openHung, closedHung] = await Promise.all([checkOnboardingBudget(BUDGET, IP_A), checkOnboardingBudget(FAIL_CLOSED, IP_A)]);
+    const took = Date.now() - t0;
+    clearTimeout(keepAlive);
+    check("fail-open: a stalled store does not stop onboarding", openHung.ok);
+    check("fail-closed: a stalled store still serves the claim, against the per-isolate counter", closedHung.ok && typeof closedHung.release === "function");
+    check(`both decided at the store deadline (${STORE_TIMEOUT_MS} ms)`, took >= STORE_TIMEOUT_MS - 100 && took < STORE_TIMEOUT_MS + 1_500, `${took} ms`);
+    await openHung.release?.();
+    await closedHung.release?.();
+  }
+  clearKv();
   check("fail-open with no store still allows", (await checkOnboardingBudget(BUDGET, IP_A)).ok);
 
   // Serving is not an amnesty: the degraded counter carries the SAME two budgets, so a caller that

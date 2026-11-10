@@ -33,6 +33,7 @@
  */
 import { Keypair } from "@stellar/stellar-sdk";
 import { kvConfigFromEnv } from "./rate-limit.js";
+import { storeFetch } from "./store-fetch.js";
 
 /**
  * The most store round trips one `lease()` may spend. Every round trip is a subrequest, and a
@@ -103,8 +104,10 @@ interface KvConfig {
 }
 
 function redisLeaseStore(kv: KvConfig): LeaseStore {
+  // Bounded by the store deadline (lib/store-fetch.ts): a stalled store throws like a failed one,
+  // and `lease` falls back to the sponsor-sourced path within the deadline.
   const pipeline = async (cmd: unknown[]): Promise<unknown> => {
-    const res = await fetch(`${kv.url}/pipeline`, {
+    const res = await storeFetch(`${kv.url}/pipeline`, {
       method: "POST",
       headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
       body: JSON.stringify([cmd]),

@@ -11,6 +11,7 @@
  * the endpoint behaves exactly as before (store/log only).
  */
 import { kvConfigFromEnv } from "./rate-limit.js";
+import { postResend, reserveMail } from "./mail-budget.js";
 
 /** Where in the product the report came from — an allowlist, not a free string. */
 const CATEGORIES = new Set<string>(["claim", "send", "request", "money", "site", "other"]);
@@ -90,33 +91,43 @@ function renderEmail(category: string, message: string, contact: string, at: str
 }
 
 /**
- * Email the report to the owner (Resend REST — no SDK, keeps the esbuild bundle
+ * Email the report to the owner (Resend REST, no SDK, keeps the esbuild bundle
  * lean). Uses Resend's shared onboarding sender until a domain is verified, which
- * can only deliver to the Resend account owner's own address — fine here, the
- * inbox IS the owner. Never throws.
+ * can only deliver to the Resend account owner's own address: fine here, the
+ * inbox IS the owner.
+ *
+ * Bounded by the day's mail budget (lib/mail-budget.ts: this route's share, the owner's inbox,
+ * the day's total), and best-effort as before: the KV list below is the store of record and the
+ * mail a notification, so a spent budget or a refusal from Resend is one log line, the report is
+ * still stored and the route still answers 200. Never throws. With no mailer configured (local
+ * runs, the suites) nothing here runs and the store or the log keeps the report as before.
  */
 async function notifyByEmail(category: string, message: string, contact: string, at: string): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.FEEDBACK_NOTIFY_TO;
   if (!key || !to) return;
+  const slot = await reserveMail("feedback", to);
+  if (!slot.ok) {
+    console.log(`[feedback:notify] not mailed: the day's ${slot.bound} mail budget is spent (the report is stored)`);
+    return;
+  }
   try {
     const { html, text } = renderEmail(category, message, contact, at);
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({
+    await postResend(
+      key,
+      {
         from: process.env.RESEND_FROM ?? "Lumenia Feedback <onboarding@resend.dev>",
         to: [to],
-        subject: `[Lumenia] Problem report — ${category}`,
+        subject: `[Lumenia] Problem report - ${category}`,
         html,
         text,
         // "Reply" in the owner's inbox answers the reporter directly.
         ...(contact && EMAIL_RE.test(contact) ? { reply_to: contact } : {}),
-      }),
-    });
-    if (!res.ok) console.log(`[feedback:notify] resend returned ${res.status}`);
+      },
+      "feedback:notify", // a refusal is logged there, with its status
+    );
   } catch {
-    /* mail must never break the endpoint */
+    /* the report is stored below either way */
   }
 }
 

@@ -15,6 +15,7 @@
  */
 import { kvConfigFromEnv } from "./rate-limit.js";
 import { PublicRefusal } from "./caps.js";
+import { postResend, takeMailSlot } from "./mail-budget.js";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const ID_RE = /^[0-9a-f]{64}$/;
@@ -167,22 +168,20 @@ async function sendCodeEmail(email: string, code: string, purpose: OtpPurpose): 
 <tr><td style="padding:6px 28px 24px;font-size:13px;color:#67626E;">${lines.expiry}</td></tr>
 <tr><td style="border-top:1px solid #E5DFE8;padding:14px 28px;font-size:11.5px;color:#67626E;">${footer}</td></tr>
 </table></td></tr></table></body></html>`;
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
-        to: [email],
-        subject: `Your Lumenia code: ${code}`,
-        html,
-        text: `${lines.first} ${code}\n\n${lines.expiry}\n`,
-      }),
-    });
-    if (!res.ok) console.log(`[recovery:otp] resend returned ${res.status}`);
-  } catch {
-    /* mail must never break the endpoint */
-  }
+  /* A refusal from Resend THROWS (MailNotSent, lib/mail-budget.ts) and the route answers 503. It used
+   * to be swallowed here with a log line and the route answered 200: a person whose code never left
+   * sat waiting for it, and the hour's verify budget ticked for a code they could not have. */
+  await postResend(
+    key,
+    {
+      from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
+      to: [email],
+      subject: `Your Lumenia code: ${code}`,
+      html,
+      text: `${lines.first} ${code}\n\n${lines.expiry}\n`,
+    },
+    "recovery:otp",
+  );
 }
 
 /* PER-ID request cap (DEFERRED.md F3). The IP limiter alone does not stop the griefing shape that
@@ -242,6 +241,10 @@ export async function requestOtp(rawEmail: unknown, purpose: OtpPurpose = "recov
     console.log(`[recovery:otp] per-id cap hit for ${id.slice(0, 8)}...: no email sent`);
     throw new OtpBudgetExceeded();
   }
+  /* The day's mail budget (lib/mail-budget.ts): this route's share, this inbox's share and the day's
+   * total, on top of the hourly per-id cap above. Spent, it throws MailBudgetExceeded (429, no mail,
+   * no code stored); the slot is taken BEFORE the code exists so a refusal leaves nothing behind. */
+  await takeMailSlot("recovery-otp", email);
   const code = sixDigit();
   const rec: OtpRecord = { codeHash: await sha256Hex(`${id}:${code}`), exp: Date.now() + TTL_SEC * 1000, tries: 0 };
   const kv = kvConfigFromEnv();

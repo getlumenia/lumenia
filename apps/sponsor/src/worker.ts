@@ -113,7 +113,10 @@ import {
   federationLookup,
   verifyHandleProof,
   handleAvailability,
+  normalizeHandle,
+  validateHandleShape,
 } from "./lib/handles.js";
+import { isMailBudgetExceeded, isMailNotSent, MAIL_BUDGET_BODY, MAIL_UNAVAILABLE_BODY } from "./lib/mail-budget.js";
 import { StrKey } from "@stellar/stellar-sdk";
 
 type Env = Record<string, unknown>;
@@ -356,6 +359,52 @@ export function resetHealthCache(): void {
 }
 
 /**
+ * The name lookups' cache (GET /handle, /handle-of, /federation): one store read per key per
+ * LOOKUP_CACHE_MS on this isolate, the read IN FLIGHT shared as /health's is, so a flood of the same
+ * name costs one read. Before this (review 2026-10-11 #22) each of those GETs reached the shared
+ * store unmetered, and on mainnet a store outage a flood can cause fails the pilot allowlist and the
+ * caps CLOSED. A name write (/handle-claim, /handle-release) drops the whole cache on its isolate;
+ * another isolate answers from its own for at most the window. Bounded: at LOOKUP_CACHE_MAX keys it
+ * starts over, so a flood of DIFFERENT names cannot grow it (each of those still pays its read,
+ * which is what the limiter in front of these routes is for).
+ */
+const LOOKUP_CACHE_MS = 10_000;
+const LOOKUP_CACHE_MAX = 2_000;
+const lookupCache = new Map<string, { at: number; value: Promise<unknown> }>();
+const lookupStats = { hits: 0, misses: 0 };
+
+function lookupCached<T>(key: string, read: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const hit = lookupCache.get(key);
+  if (hit && now - hit.at >= 0 && now - hit.at < LOOKUP_CACHE_MS) {
+    lookupStats.hits++;
+    return hit.value as Promise<T>;
+  }
+  lookupStats.misses++;
+  if (lookupCache.size >= LOOKUP_CACHE_MAX) lookupCache.clear();
+  const value = read();
+  const entry = { at: now, value };
+  lookupCache.set(key, entry);
+  // A read that fails is not kept: the next request tries again.
+  value.catch(() => {
+    if (lookupCache.get(key) === entry) lookupCache.delete(key);
+  });
+  return value;
+}
+
+/** Tests only: the lookup cache's hit and miss counts since the last reset. */
+export function lookupCacheStatsForTests(): { hits: number; misses: number } {
+  return { ...lookupStats };
+}
+
+/** Forget every cached lookup: after a name write on this isolate, and in tests. */
+export function resetLookupCache(): void {
+  lookupCache.clear();
+  lookupStats.hits = 0;
+  lookupStats.misses = 0;
+}
+
+/**
  * Which deployed version is answering, from Cloudflare's version metadata binding (wrangler.toml,
  * `[version_metadata]`, on both Workers): the version id, its tag and when it was created. It ties
  * /health to a version an operator can match against `wrangler deployments list` with nothing to
@@ -476,6 +525,10 @@ const handlers = {
       if (method === "POST" && url === "/create-account") {
         const body = (await readJson(request)) as { recipientPublicKey?: string };
         if (!body.recipientPublicKey) return json(400, { error: "recipientPublicKey is required" });
+        /* Shape before any key (review 2026-11-08, S7): this string becomes a limiter bucket and the
+           onboarding budget's per-key marker, and the body cap is 16 KiB. The same rule holds on
+           every route below that keys a bucket or a pilot slot on a body field. */
+        if (!StrKey.isValidEd25519PublicKey(body.recipientPublicKey)) return json(400, { error: "recipientPublicKey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), body.recipientPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
         /* The per-account limiter above cannot fire here: `recipientPublicKey` is a key the caller
@@ -511,6 +564,7 @@ const handlers = {
         if (!body.xdr || !body.recipientPublicKey || !body.balanceId) {
           return json(400, { error: "xdr, recipientPublicKey and balanceId are required" });
         }
+        if (!StrKey.isValidEd25519PublicKey(body.recipientPublicKey)) return json(400, { error: "recipientPublicKey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), body.recipientPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
         return json(200, await feebumpHandler(server, config, signer, {
@@ -523,6 +577,7 @@ const handlers = {
       if (method === "POST" && url === "/send-link") {
         const body = (await readJson(request)) as { xdr?: string; senderPublicKey?: string };
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
+        if (!StrKey.isValidEd25519PublicKey(body.senderPublicKey)) return json(400, { error: "senderPublicKey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
         const out = await withPilotSlot(body.senderPublicKey, () =>
@@ -539,6 +594,7 @@ const handlers = {
         if (!body.xdr || !body.senderPublicKey || !body.destination || !body.amount) {
           return json(400, { error: "xdr, senderPublicKey, destination and amount are required" });
         }
+        if (!StrKey.isValidEd25519PublicKey(body.senderPublicKey)) return json(400, { error: "senderPublicKey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
         return json(200, await payoutHandler(server, config, signer, {
@@ -555,6 +611,9 @@ const handlers = {
         };
         if (!body.xdr || !body.throwawayPublicKey || !body.homePublicKey || !body.amount) {
           return json(400, { error: "xdr, throwawayPublicKey, homePublicKey and amount are required (balanceId optional)" });
+        }
+        if (!StrKey.isValidEd25519PublicKey(body.throwawayPublicKey) || !StrKey.isValidEd25519PublicKey(body.homePublicKey)) {
+          return json(400, { error: "throwawayPublicKey and homePublicKey must be G... accounts" });
         }
         const rl = await enforceRateLimit(clientIp(request), body.throwawayPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
@@ -596,6 +655,10 @@ const handlers = {
         if (!body.method || !body.linkHex || !body.payout || !body.sigHex) {
           return json(400, { error: "method, linkHex, payout and sigHex are required" });
         }
+        // The payout is the bucket key, and the escrow pays an account or a contract: G or C, nothing else.
+        if (!StrKey.isValidEd25519PublicKey(body.payout) && !StrKey.isValidContract(body.payout)) {
+          return json(400, { error: "payout must be a G... account or a C... contract" });
+        }
         const rl = await enforceRateLimit(clientIp(request), body.payout);
         if (rl.limited) return json(429, { error: rl.reason });
         const out = await relayClaimHandler(config, signer, {
@@ -613,6 +676,7 @@ const handlers = {
       if (method === "POST" && url === "/v2-deposit") {
         const body = (await readJson(request)) as { xdr?: string; senderPublicKey?: string };
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
+        if (!StrKey.isValidEd25519PublicKey(body.senderPublicKey)) return json(400, { error: "senderPublicKey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
         const out = await withPilotSlot(body.senderPublicKey, () =>
@@ -634,6 +698,7 @@ const handlers = {
       if (method === "POST" && url === "/v2-reclaim") {
         const body = (await readJson(request)) as { xdr?: string; senderPublicKey?: string };
         if (!body.xdr || !body.senderPublicKey) return json(400, { error: "xdr and senderPublicKey are required" });
+        if (!StrKey.isValidEd25519PublicKey(body.senderPublicKey)) return json(400, { error: "senderPublicKey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), body.senderPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
         const out = await relayReclaimHandler(config, signer, { xdr: body.xdr, senderPublicKey: body.senderPublicKey });
@@ -649,6 +714,7 @@ const handlers = {
         if (!faucet) return json(503, { error: "faucet not configured" });
         const body = (await readJson(request)) as { recipientPublicKey?: string };
         if (!body.recipientPublicKey) return json(400, { error: "recipientPublicKey is required" });
+        if (!StrKey.isValidEd25519PublicKey(body.recipientPublicKey)) return json(400, { error: "recipientPublicKey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), body.recipientPublicKey);
         if (rl.limited) return json(429, { error: rl.reason });
         return json(200, await faucetHandler(server, config, faucet, { recipientPublicKey: body.recipientPublicKey }));
@@ -1036,7 +1102,9 @@ const handlers = {
        */
       if (method === "POST" && url === "/recovery-alias-fetch") {
         const body = (await readJson(request)) as { id?: unknown };
-        const rl = await enforceRateLimit(clientIp(request), typeof body.id === "string" ? body.id : undefined, { ipPrefix: "recpk:" });
+        // The alias id is 64 hex characters (a PRF-derived digest); anything else is refused before it keys a bucket.
+        if (typeof body.id !== "string" || !/^[0-9a-f]{64}$/.test(body.id)) return json(400, { error: "id must be 64 hex characters" });
+        const rl = await enforceRateLimit(clientIp(request), body.id, { ipPrefix: "recpk:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const box = await getAliasBox(body.id);
         if (!box) return json(404, { error: "not found" });
@@ -1094,66 +1162,92 @@ const handlers = {
        * ---------------------------------------------------------------------------- */
 
       if (method === "GET" && url === "/handle") {
-        const name = new URL(request.url).searchParams.get("name");
-        const found = await lookupHandle(name);
-        if (!found) {
+        /* Metered and cached (`lookupCached`): their own bucket (`lookup:`), so a name typed letter
+         * by letter never spends the sender's value window, and one store read per name per window
+         * on this isolate. The shape is judged before the store, as the registry itself does. */
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "lookup:" });
+        if (rl.limited) return json(429, { error: rl.reason });
+        const name = normalizeHandle(new URL(request.url).searchParams.get("name"));
+        const shape = validateHandleShape(name);
+        if (shape.ok !== true) return json(404, { available: false, error: shape.reason });
+        const answer = await lookupCached(`handle:${name}`, async (): Promise<{ status: number; body: unknown }> => {
+          const found = await lookupHandle(name);
+          if (found) return { status: 200, body: { name: found.name, address: found.pubkey, network: found.network } };
           // Not resolving is not the same as free: a name can be cooling down after a release, or
           // be a lookalike of one that exists. handleAvailability knows about both.
           const availability = await handleAvailability(name);
-          return json(404, {
-            available: availability.available,
-            ...(availability.reason ? { error: availability.reason } : {}),
-          });
-        }
-        return json(200, { name: found.name, address: found.pubkey, network: found.network });
+          return {
+            status: 404,
+            body: { available: availability.available, ...(availability.reason ? { error: availability.reason } : {}) },
+          };
+        });
+        return json(answer.status, answer.body);
       }
 
       if (method === "GET" && url === "/handle-of") {
-        const pubkey = new URL(request.url).searchParams.get("pubkey");
-        const name = await handleOf(pubkey);
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "lookup:" });
+        if (rl.limited) return json(429, { error: rl.reason });
+        const pubkey = new URL(request.url).searchParams.get("pubkey") ?? "";
+        if (!StrKey.isValidEd25519PublicKey(pubkey)) return json(400, { error: "a valid pubkey is required" });
+        const name = await lookupCached(`of:${pubkey}`, () => handleOf(pubkey));
         return name ? json(200, { name }) : json(404, { error: "not found" });
       }
 
       if (method === "POST" && url === "/handle-claim") {
         const b = (await readJson(request)) as { name?: unknown; pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
-        const rl = await enforceRateLimit(clientIp(request), typeof b.pubkey === "string" ? b.pubkey : undefined, { ipPrefix: "handle:" });
+        if (typeof b.pubkey !== "string" || !StrKey.isValidEd25519PublicKey(b.pubkey)) return json(400, { error: "pubkey must be a G... account" });
+        const rl = await enforceRateLimit(clientIp(request), b.pubkey, { ipPrefix: "handle:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const result = await claimHandle({
           action: "claim",
           name: String(b.name ?? ""),
-          pubkey: String(b.pubkey ?? ""),
+          pubkey: b.pubkey,
           ts: Number(b.ts),
           nonce: String(b.nonce ?? ""),
           network: config.network,
           proof: String(b.proof ?? ""),
         });
+        if (result.ok) resetLookupCache(); // the lookups on this isolate see the new name at once
         return result.ok ? json(200, result) : json(409, { error: result.reason });
       }
 
       if (method === "POST" && url === "/handle-release") {
         const b = (await readJson(request)) as { name?: unknown; pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
-        const rl = await enforceRateLimit(clientIp(request), typeof b.pubkey === "string" ? b.pubkey : undefined, { ipPrefix: "handle:" });
+        if (typeof b.pubkey !== "string" || !StrKey.isValidEd25519PublicKey(b.pubkey)) return json(400, { error: "pubkey must be a G... account" });
+        const rl = await enforceRateLimit(clientIp(request), b.pubkey, { ipPrefix: "handle:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const result = await releaseHandle({
           action: "release",
           name: String(b.name ?? ""),
-          pubkey: String(b.pubkey ?? ""),
+          pubkey: b.pubkey,
           ts: Number(b.ts),
           nonce: String(b.nonce ?? ""),
           network: config.network,
           proof: String(b.proof ?? ""),
         });
+        if (result.ok) resetLookupCache();
         return result.ok ? json(200, result) : json(409, { error: result.reason });
       }
 
       /** SEP-0002. Answers `name` and `id`; says so plainly for the two types it does not serve. */
       if (method === "GET" && url === "/federation") {
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "lookup:" });
+        if (rl.limited) return json(429, { error: rl.reason });
         const params = new URL(request.url).searchParams;
-        const answer = await federationLookup(
-          params.get("q") ?? "",
-          params.get("type") ?? "",
-          config.network,
-        );
+        const q = params.get("q") ?? "";
+        const type = params.get("type") ?? "";
+        // Shape before the store, and before anything becomes a cache key: a well-formed name or a G... account.
+        if (type === "name") {
+          const [local, domain] = q.split("*");
+          if (!local || !domain || domain.length > 253 || validateHandleShape(normalizeHandle(local)).ok !== true) {
+            return json(404, { detail: "invalid federation address" });
+          }
+        } else if (type === "id") {
+          if (!StrKey.isValidEd25519PublicKey(q)) return json(404, { detail: "not found" });
+        } else {
+          return json(404, { detail: "unsupported federation type" });
+        }
+        const answer = await lookupCached(`fed:${config.network}:${type}:${q.toLowerCase()}`, () => federationLookup(q, type, config.network));
         return "ok" in answer ? json(404, { detail: answer.reason }) : json(200, answer);
       }
 
@@ -1195,8 +1289,21 @@ const handlers = {
        */
       if (method === "GET" && url.startsWith("/oauth/") && url.endsWith("/callback")) {
         const provider = url.slice("/oauth/".length, -"/callback".length);
+        /* Metered with the other identity-link routes, and both query fields are judged for shape
+         * before anything is read: `state` is the store key the exchange hangs on (32 hex characters,
+         * lib/identity-links.ts randomHex(16)), and a browser can be sent here with anything in it. */
+        if (!OAUTH_PROVIDERS.includes(provider as OAuthProvider)) {
+          return html(400, `<h2>That didn't connect</h2><p>unknown provider</p><p><a href="/">Back</a></p>`);
+        }
+        const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "idlink:" });
+        if (rl.limited) return html(429, "<h2>Too many attempts</h2><p>Wait a minute and try again.</p>");
         const params = new URL(request.url).searchParams;
-        const done = await finishOAuth(provider, params.get("code"), params.get("state"));
+        const code = params.get("code") ?? "";
+        const state = params.get("state") ?? "";
+        if (!/^[0-9a-f]{32}$/.test(state) || code.length === 0 || code.length > 2048) {
+          return html(400, `<h2>That didn't connect</h2><p>that connection did not complete</p><p><a href="/">Back</a></p>`);
+        }
+        const done = await finishOAuth(provider, code, state);
         if (!done.ok) {
           return html(400, `<h2>That didn't connect</h2><p>${done.reason}</p><p><a href="/">Back</a></p>`);
         }
@@ -1280,6 +1387,7 @@ const handlers = {
         };
         const pubkey = String(b.pubkey ?? "");
         const provider = String(b.provider ?? "");
+        if (!StrKey.isValidEd25519PublicKey(pubkey)) return json(400, { error: "pubkey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), pubkey, { ipPrefix: "idlink:" });
         if (rl.limited) return json(429, { error: rl.reason });
         if (!PROVIDERS.includes(provider as Provider)) return json(400, { error: "unknown provider" });
@@ -1303,6 +1411,7 @@ const handlers = {
       if (method === "POST" && url === "/identity-links") {
         const b = (await readJson(request)) as { pubkey?: unknown; ts?: unknown; nonce?: unknown; proof?: unknown };
         const pubkey = String(b.pubkey ?? "");
+        if (!StrKey.isValidEd25519PublicKey(pubkey)) return json(400, { error: "pubkey must be a G... account" });
         const rl = await enforceRateLimit(clientIp(request), pubkey, { ipPrefix: "idlink:" });
         if (rl.limited) return json(429, { error: rl.reason });
         const okProof = await verifyHandleProof({
@@ -1321,6 +1430,10 @@ const handlers = {
       return json(404, { error: "not found" });
     } catch (e) {
       if (e instanceof BodyTooLarge) return json(413, { error: "request body too large" });
+      /* The mail routes (lib/mail-budget.ts): a spent day budget is a 429 with no mail sent, a
+       * refusal from Resend a 503; both on every network, both saying only that. */
+      if (isMailBudgetExceeded(e)) return json(429, MAIL_BUDGET_BODY);
+      if (isMailNotSent(e)) return json(503, MAIL_UNAVAILABLE_BODY);
       // The reason text is genuinely useful while building against testnet — anti-drain says
       // exactly which rule rejected a transaction. On mainnet the same channel hands an attacker a
       // precise oracle (config state, Horizon internals, the sponsor's own address, which policy

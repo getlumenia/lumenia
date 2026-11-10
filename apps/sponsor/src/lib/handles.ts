@@ -49,18 +49,43 @@ const KEY_OF_LEGACY = (network: NetworkId, pubkey: string) => `lumenia:handle-of
 const KEY_PROOF = "lumenia:handle-proof:";
 
 /**
- * Names nobody may hold. Two groups: words that would let a stranger look official
- * (`support`, `admin`, `lumenia`) and words the product itself may want as a route.
+ * Names nobody may hold. Three groups, matched three ways, always on the confusable SKELETON (so
+ * `supp0rt`, `he1p` and `officia1` are the words they look like), never on the raw string alone:
+ *
+ *   OFFICIAL: the words that make a stranger look like the product, the company or its support
+ *   desk. Refused as a whole name AND as a prefix: `support_1`, `admin_lumenia` and `teamx` are
+ *   refused with `support`, because `@support_1` on a payment screen reads as the desk. The cost is
+ *   a few real names that happen to start with one of them (`stafford`, `helper`), accepted
+ *   knowingly on a payment surface.
+ *
+ *   BRAND: the product's own name and its lookalikes, refused wherever they appear in a name
+ *   (`meric_lumenia`, `lumenia_`, `lumen1a`).
+ *
+ *   ROUTES: words the product may want as a route, or that mislead as a whole name. Refused as a
+ *   whole name only, never as a prefix: `@apple`, `@meredith` and `@payton` are people, `@app`,
+ *   `@me` and `@pay` are not.
+ *
+ * Until these were split, `RESERVED` was matched as a whole name only, and `skeleton()` folds `1`
+ * and `l` to `i`, so `lumen1a`, `lumenia_`, `officia1` and `he1p` all passed the shape check (review
+ * 2026-10-11, #27). The skeleton sets below are computed once from the word lists.
  */
-const RESERVED = new Set([
+const OFFICIAL = new Set([
   "admin", "administrator", "root", "system", "official", "team", "staff", "support",
-  "help", "helpdesk", "security", "abuse", "billing", "payments", "payment", "pay",
-  "lumenia", "lumenio", "lumenla", "getlumenia", "stellar", "sdf", "circle", "usdc",
-  "wallet", "money", "bank", "api", "www", "mail", "email", "app", "account", "accounts",
+  "help", "helpdesk", "security", "abuse", "billing", "payments", "payment",
+  "stellar", "sdf", "circle", "usdc",
+]);
+const BRAND = new Set(["lumenia", "lumenio", "lumenla", "getlumenia"]);
+const ROUTES = new Set([
+  "pay", "wallet", "money", "bank", "api", "www", "mail", "email", "app", "account", "accounts",
   "settings", "login", "signin", "signup", "register", "claim", "send", "request", "split",
   "contacts", "activity", "home", "start", "about", "terms", "privacy", "legal", "status",
   "null", "undefined", "anonymous", "me", "you", "everyone",
 ]);
+const RESERVED = new Set([...OFFICIAL, ...BRAND, ...ROUTES]);
+/* `skeleton` is a function declaration (hoisted), so these can be computed here, before its text. */
+const RESERVED_SKELETONS = new Set([...RESERVED].map((w) => skeleton(w)));
+const OFFICIAL_SKELETONS = [...OFFICIAL].map((w) => skeleton(w));
+const BRAND_SKELETONS = [...BRAND].map((w) => skeleton(w));
 
 /**
  * Fold a name to the skeleton an impersonator would collide with. Digit→letter substitutions plus
@@ -106,7 +131,13 @@ export function validateHandleShape(name: string): { ok: true } | HandleRejectio
         "A name is 3–20 characters, starts with a letter, and uses only letters, numbers and _",
     };
   }
-  if (RESERVED.has(name) || RESERVED.has(skeleton(name))) {
+  const sk = skeleton(name);
+  if (
+    RESERVED.has(name) ||
+    RESERVED_SKELETONS.has(sk) ||
+    OFFICIAL_SKELETONS.some((w) => sk.startsWith(w)) ||
+    BRAND_SKELETONS.some((w) => sk.includes(w))
+  ) {
     return { ok: false, reason: "That name is reserved." };
   }
   return { ok: true };

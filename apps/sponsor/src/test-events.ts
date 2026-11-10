@@ -15,6 +15,7 @@
  * RUN: pnpm --filter @lumenia/sponsor test:events
  */
 import { handleEvent, recordEvent, eventsSummary, DURATION_BUCKETS } from "./lib/events.js";
+import { STORE_TIMEOUT_MS } from "./lib/store-fetch.js";
 
 let pass = 0,
   fail = 0;
@@ -363,6 +364,30 @@ try {
 }
 check("recording does not throw without a store", !threw);
 check("the summary reports absence rather than a fake zero", (await eventsSummary()) === null);
+
+console.log("\n[9] a store that accepts the request and never answers: a number not written, settled at the store deadline");
+process.env.KV_REST_API_URL = "https://fake-kv.test";
+process.env.KV_REST_API_TOKEN = "t";
+// Settles only when the caller's deadline aborts it (lib/store-fetch.ts), never on its own.
+globalThis.fetch = (async (_url: string | URL, init?: { signal?: AbortSignal }) =>
+  new Promise<Response>((_, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")));
+  })) as typeof fetch;
+{
+  // Node's AbortSignal.timeout timer does not hold the event loop open (a Worker request does).
+  const keepAlive = setTimeout(() => {}, 10_000);
+  const t0 = Date.now();
+  let hungThrew = false;
+  try {
+    await recordEvent({ event: "claim_opened", cid: "aaaa2222" });
+  } catch {
+    hungThrew = true;
+  }
+  const took = Date.now() - t0;
+  clearTimeout(keepAlive);
+  check("recording does not throw when the store stalls", !hungThrew);
+  check(`and it is over at the store deadline (${STORE_TIMEOUT_MS} ms), not at the platform's timeout`, took >= STORE_TIMEOUT_MS - 100 && took < STORE_TIMEOUT_MS + 1_500, `${took} ms`);
+}
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} EVENT BEACON ${pass}/${pass + fail}`);
 if (fail > 0) process.exit(1);

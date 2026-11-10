@@ -19,6 +19,7 @@
  * value op permanently burns one of the wallet's slots.
  */
 import { kvConfigFromEnv } from "./rate-limit.js";
+import { storeFetch } from "./store-fetch.js";
 
 /** True only when the mainnet Worker is running in pilot mode. */
 export function pilotEnabled(): boolean {
@@ -159,9 +160,13 @@ interface Kv {
   token: string;
 }
 
-/** Run one Upstash pipeline; throws on any command error (so callers fail closed). */
+/**
+ * Run one Upstash pipeline; throws on any command error (so callers fail closed). Bounded by the
+ * store deadline (lib/store-fetch.ts): a store that stalls throws too, and the gate refuses within
+ * the deadline instead of holding a value request open.
+ */
 async function pipe(kv: Kv, commands: (string | number)[][]): Promise<unknown[]> {
-  const res = await fetch(`${kv.url}/pipeline`, {
+  const res = await storeFetch(`${kv.url}/pipeline`, {
     method: "POST",
     headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
     body: JSON.stringify(commands.map((c) => c.map(String))),

@@ -249,6 +249,66 @@ function refuseInflatedBid(feeBump: { fee: string }, inner: Transaction, route: 
   }
 }
 
+/** The parsed shape of an invokeHostFunction op: what the SDK's Operation.fromXDRObject gives back. */
+type ParsedInvoke = { type: string; source?: string; func?: xdr.HostFunction; auth?: xdr.SorobanAuthorizationEntry[] };
+
+/** Is this authorization entry one the transaction's own source account signs for, by signing the envelope? */
+function isSourceAccountAuth(entry: xdr.SorobanAuthorizationEntry): boolean {
+  return entry.credentials().switch().name === "sorobanCredentialsSourceAccount";
+}
+
+/**
+ * The authorization a sender-signed inner MUST carry, checked against what the simulation says the
+ * invoke needs, before anything is paid.
+ *
+ * A simulation that succeeds used to be the whole guard, and it is not one: `simulateTransaction`
+ * runs an invoke that carries NO auth entries in RECORDING mode, where every `require_auth` passes
+ * and the entries it would have needed are merely written into the answer. So a stranger S could
+ * build `reclaim(link)` for somebody else's expired drop with no auth at all: the simulation passed,
+ * the relay fee-bumped the inner unchanged, and on the ledger `d.sender.require_auth()` failed with
+ * the transaction INCLUDED, so the sponsor paid its fee. Repeated thirty times a minute that spent
+ * the day's fee budget, after which every exit route refused until UTC midnight. The attacker
+ * needed nothing but a funded account, and the sponsor opens those for free.
+ *
+ * Three rules close it, and the honest client (apps/web/lib/lumendrop.ts, which assembles its
+ * reclaim and deposit from its own recording-mode simulation with the sender as source) satisfies
+ * all three without change:
+ *   1. every entry, carried or needed, uses SOURCE-ACCOUNT credentials: the sender's signature on
+ *      the envelope is the authorization, and the sponsor's fee bump adds none. An ADDRESS
+ *      credential is somebody else's signature, which the inner does not have (the simulation
+ *      records one for the drop's real sender when the inner's source is not that sender, so this
+ *      is also what pins the recorded sender to the inner source);
+ *   2. an inner that carries no entries while the contract needs some would fail on the ledger
+ *      exactly as the attack did, so it is refused here instead;
+ *   3. when both sides carry entries they must be the same entries: the fee bump submits the inner
+ *      as signed, so what it carries is what the ledger will check.
+ * The op's own source, when set, must be the transaction's: source-account credentials name the
+ * OPERATION's source, and an op sourced by another account would need that account's signature.
+ */
+function refuseUnauthorizedInner(route: string, inner: Transaction, op: ParsedInvoke, sim: rpc.Api.SimulateTransactionSuccessResponse): void {
+  if (op.source !== undefined && op.source !== inner.source) {
+    throw new Error(`${route}: the invoke is sourced by another account than the transaction`);
+  }
+  const carried = op.auth ?? [];
+  const needed = sim.result?.auth ?? [];
+  if (!carried.every(isSourceAccountAuth)) {
+    throw new Error(`${route}: the inner carries an authorization that is not the source account's own`);
+  }
+  if (!needed.every(isSourceAccountAuth)) {
+    throw new Error(`${route}: the invoke needs an authorization from an account other than the source`);
+  }
+  if (carried.length === 0 && needed.length > 0) {
+    throw new Error(`${route}: the inner carries no authorization but the invoke needs ${needed.length}`);
+  }
+  if (carried.length > 0 && needed.length > 0) {
+    const a = carried.map((e) => e.toXDR("base64")).sort();
+    const b = needed.map((e) => e.toXDR("base64")).sort();
+    if (a.length !== b.length || a.some((x, i) => x !== b[i])) {
+      throw new Error(`${route}: the inner's authorization differs from what the invoke needs`);
+    }
+  }
+}
+
 /**
  * Is a throw from `sendTransaction` a refusal that reached nothing, or an answer that never came?
  * The SDK (16.x, lib/rpc/jsonrpc.js) throws the JSON-RPC `error` object itself when the server
@@ -554,6 +614,15 @@ export async function relayClaimHandler(
     const sim = await server.simulateTransaction(tx);
     // The first line only: the rest is the event log, which carries the payout address in full.
     if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-claim simulation failed: ${simErrorHead(sim.error)}`);
+    /* `claim` and `claim_share` take no `require_auth` (the link key's Ed25519 signature IS the
+     * authorization, checked inside the contract), so a simulation that records any authorization
+     * entry is asking the SPONSOR, the transaction's source, to authorize something on its own
+     * behalf. The sponsor never authorizes a user's value move (lib/anti-drain.ts holds the same
+     * line for classic ops), and assembling such an entry in would make it the signer of it. Refused
+     * before anything is leased, charged or signed; the honest claim records nothing here. */
+    if ((sim.result?.auth ?? []).length > 0) {
+      throw new Error("v2-claim: the claim asks for an authorization the sponsor would have to give");
+    }
     const prepared = rpc.assembleTransaction(tx, sim).build();
 
     // The sponsor pays this fee, and until now nothing bounded it: the amount came straight out of
@@ -646,7 +715,7 @@ export async function relayDepositHandler(
 
   if (inner.source !== input.senderPublicKey) throw new Error(`unexpected inner source ${shortKey(inner.source)}`);
   if (inner.operations.length !== 1) throw new Error("deposit tx must have exactly 1 op");
-  const op = inner.operations[0] as { type: string; func?: xdr.HostFunction };
+  const op = inner.operations[0] as ParsedInvoke;
   if (op.type !== "invokeHostFunction" || !op.func) throw new Error("not a contract invoke");
   if (op.func.switch().name !== "hostFunctionTypeInvokeContract") throw new Error("not a contract call");
   const ic = op.func.invokeContract();
@@ -732,6 +801,9 @@ export async function relayDepositHandler(
    * `minResourceFee` as a string of stroops. Both as the SDK parses them (rpc.Api.*). */
   const sim = await server.simulateTransaction(inner);
   if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-deposit would fail: ${simErrorHead(sim.error)}`);
+  // The sender's own authorization, and nothing else, exactly as the invoke needs it (see the helper):
+  // an inner with no auth entries simulates in recording mode and fails on the ledger at the sponsor's expense.
+  refuseUnauthorizedInner("v2-deposit", inner, op, sim);
   /* And the fee is what the invoke needs, not what the caller wrote. The inner fee is signed by
    * the sender and cannot be lowered here, so an inflated one is refused instead. A simulation
    * that names no numeric resource fee is refused too: `x > NaN` is false, so the bound would
@@ -834,7 +906,7 @@ export async function relayReclaimHandler(
 
   if (inner.source !== input.senderPublicKey) throw new Error(`unexpected inner source ${shortKey(inner.source)}`);
   if (inner.operations.length !== 1) throw new Error("reclaim tx must have exactly 1 op");
-  const op = inner.operations[0] as { type: string; func?: xdr.HostFunction };
+  const op = inner.operations[0] as ParsedInvoke;
   if (op.type !== "invokeHostFunction" || !op.func) throw new Error("not a contract invoke");
   if (op.func.switch().name !== "hostFunctionTypeInvokeContract") throw new Error("not a contract call");
   const ic = op.func.invokeContract();
@@ -857,13 +929,23 @@ export async function relayReclaimHandler(
    * not the sender's, already claimed) is still included and still charged, so any account holder
    * could bill the sponsor up to the fee cap per request, thirty times a minute per address, with
    * no drop of their own involved. A simulation that fails costs nothing and is refused here. A
-   * simulation that succeeds bounds the route by construction: the contract only releases a drop
-   * to the sender who made it, once, so the sponsor pays at most one fee per drop that sender was
-   * allowed (and capped) to create. */
+   * simulation that succeeds bounds the route only TOGETHER with the authorization check after it
+   * (`refuseUnauthorizedInner`): with no auth entries the simulation records instead of enforcing,
+   * so on its own it passed a stranger's reclaim of somebody else's drop and let the ledger fail it
+   * at the sponsor's expense. With both, the contract only releases a drop to the sender who made
+   * it, once, so the sponsor pays at most one fee per drop that sender was allowed (and capped) to
+   * create. */
   const sim = await server.simulateTransaction(inner);
   // The first line only: when the refusal comes from the token transfer, the event log after it
   // carries the sender's full address and the amount.
   if (rpc.Api.isSimulationError(sim)) throw new Error(`v2-reclaim would fail: ${simErrorHead(sim.error)}`);
+  /* A passing simulation is not enough: with no auth entries it runs in recording mode, where the
+   * contract's `sender.require_auth()` passes for ANY source and the entry it would need is only
+   * written into the answer. The inner is fee-bumped as signed, so the ledger then refuses it
+   * INCLUDED and the sponsor pays. The helper refuses that shape, and with it any reclaim whose
+   * inner source is not the drop's recorded sender (the simulation records an address credential
+   * for the real sender then, never a source-account one). */
+  refuseUnauthorizedInner("v2-reclaim", inner, op, sim);
   /* And the fee is what the invoke needs, not what the caller wrote. The inner fee is signed by
    * the sender and cannot be lowered here, so an inflated one is refused instead. The headroom is
    * the client's own inclusion fee (0.2 XLM, lib/lumendrop.ts) plus a little slack; a simulation

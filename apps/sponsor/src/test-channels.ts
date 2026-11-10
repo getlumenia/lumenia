@@ -15,6 +15,7 @@
  */
 import { Keypair } from "@stellar/stellar-sdk";
 import { ACQUIRE_ANY_SCRIPT, ChannelManager, MAX_LEASE_PROBES, defaultLeaseStore, memoryLeaseStore } from "./lib/channels.js";
+import { STORE_TIMEOUT_MS } from "./lib/store-fetch.js";
 
 let passed = 0;
 let failed = 0;
@@ -253,6 +254,28 @@ async function main() {
     ok("a full pool answers null after one round trip per attempt (6), not one per channel (6 x 40 = 240)", none === null && trips === 6, `${trips} round trips`);
     await last!.release();
     ok("and the lease's release is the fenced compare-and-delete", !held.has(`chan:${mgr.publicKeys()[39]}`));
+
+    console.log("\n[9] a shared store that accepts the lease request and never answers: the fallback lands at the store deadline");
+    // Settles only when the caller's deadline aborts it (lib/store-fetch.ts), never on its own.
+    globalThis.fetch = (async (_u: string | URL, init?: { signal?: AbortSignal }) => {
+      trips++;
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")));
+      });
+    }) as typeof fetch;
+    {
+      const hungMgr = new ChannelManager(makeSecrets(3), defaultLeaseStore());
+      // Node's AbortSignal.timeout timer does not hold the event loop open (a Worker request does).
+      const keepAlive = setTimeout(() => {}, 10_000);
+      trips = 0;
+      const t0 = Date.now();
+      const lease = await hungMgr.lease({ delayMs: 1 });
+      const took = Date.now() - t0;
+      clearTimeout(keepAlive);
+      ok("a stalled store yields null (the sponsor-sourced fallback), never a lease", lease === null);
+      ok("after ONE round trip: a store that stalls is not probed again", trips === 1, `${trips} round trips`);
+      ok(`decided at the store deadline (${STORE_TIMEOUT_MS} ms), not at the platform's timeout`, took >= STORE_TIMEOUT_MS - 100 && took < STORE_TIMEOUT_MS + 1_500, `${took} ms`);
+    }
     globalThis.fetch = saved.fetch;
     if (saved.url === undefined) delete process.env.KV_REST_API_URL;
     else process.env.KV_REST_API_URL = saved.url;

@@ -29,7 +29,7 @@
  *
  * RUN: pnpm --filter @lumenia/sponsor test:watchdog-offline
  */
-import { Address, Keypair, nativeToScVal, xdr } from "@stellar/stellar-sdk";
+import { Address, Asset, Keypair, Networks, nativeToScVal, xdr } from "@stellar/stellar-sdk";
 import { makeConfig, USDC_ISSUERS } from "./lib/config.js";
 import {
   AUTO_HALT_FAILED_TITLE,
@@ -41,15 +41,22 @@ import {
   OPS_MAX_PAGES,
   OPS_PAGE_SIZE,
   OPS_SCAN_BEHIND_TITLE,
+  SPONSOR_ALLOWED_OPS,
+  STATE_EXPIRY_TITLE,
+  STORE_UNAVAILABLE_TITLE,
   TRIPWIRE_FORBIDDEN_OP,
   TRIPWIRE_WASM_CHANGED,
+  UPGRADE_PROPOSED_EVENT,
+  USDC_BALANCE_MISSING_TITLE,
   WASM_CONFIRM_DELAY_MS,
   WASM_UNCONFIRMED_TITLE,
   alertingStatus,
+  forbiddenSponsorOp,
   isAutoHaltTripwire,
   lastFullRunKey,
   lastRunKey,
   markAlerted,
+  resetWatchdogMemory,
   runWatchdog,
   watchdogAge,
   watchdogLastRun,
@@ -58,6 +65,8 @@ import {
   type Alert,
   type WatchdogOptions,
 } from "./lib/watchdog.js";
+import { CCTP_TESTNET_FORWARDER } from "./lib/cctp-relay.js";
+import { STORE_TIMEOUT_MS } from "./lib/store-fetch.js";
 import {
   HALT_KEY,
   clearHalt,
@@ -117,6 +126,8 @@ interface Op {
   transaction_hash: string;
   paging_token: string;
   created_at: string;
+  /** The fields Horizon adds per type, as the allowlist reads them: starting_balance, function, parameters, asset_balance_changes. */
+  [extra: string]: unknown;
 }
 
 interface World {
@@ -134,13 +145,17 @@ interface World {
   latest: number;
   instanceUntil: number;
   codeUntil: number;
+  /** The escrow's USDC balance entry on the SAC: its expiry, and whether the RPC has no live entry for it. */
+  balanceUntil: number;
+  balanceMissing: boolean;
   /**
    * Fail these upstreams: "horizon" a 502, "rpc" Cloudflare's throttle (429, "error code: 1015"), "kv" a
-   * 500 for every store request. Answers about the request, never busy: "horizon-404" (no such account),
-   * "rpc-answer" (a JSON-RPC error object), "rpc-refused" (a 403 firewall block). "kv-set": the store
-   * reads, and refuses every plain /set/.
+   * 500 for every store request, "kv-throw" a store that cannot be reached at all (fetch rejects).
+   * Answers about the request, never busy: "horizon-404" (no such account), "rpc-answer" (a JSON-RPC
+   * error object), "rpc-refused" (a 403 firewall block). "kv-set": the store reads, and refuses every
+   * plain /set/.
    */
-  down: Set<"horizon" | "horizon-404" | "rpc" | "rpc-answer" | "rpc-refused" | "kv" | "kv-set">;
+  down: Set<"horizon" | "horizon-404" | "rpc" | "rpc-answer" | "rpc-refused" | "kv" | "kv-throw" | "kv-set">;
   /** The Retry-After header the RPC throttle sends, or null for none. */
   retryAfter: string | null;
   /** The fee counter the caps module keeps, in stroops. */
@@ -153,6 +168,8 @@ interface World {
   readDelayMs: number;
   /** Pipelines that start with a GET never answer until the caller aborts them (a hung read). */
   readHangs: boolean;
+  /** Pipelines that start with a SET never answer until the caller aborts them (a hung halt write). */
+  writeHangs: boolean;
   /** The status Resend answers with. */
   resendStatus: number;
 }
@@ -169,6 +186,8 @@ const world: World = {
   latest: 1_000_000,
   instanceUntil: 1_000_000 + 1_000_000,
   codeUntil: 1_000_000 + 1_000_000,
+  balanceUntil: 1_000_000 + 1_000_000,
+  balanceMissing: false,
   down: new Set(),
   retryAfter: null,
   feeSpent: 0n,
@@ -176,6 +195,7 @@ const world: World = {
   getFails: null,
   readDelayMs: 0,
   readHangs: false,
+  writeHangs: false,
   resendStatus: 200,
 };
 
@@ -216,14 +236,54 @@ function instanceEntryXdr(hashHex: string): string {
 
 const topic = (name: string) => nativeToScVal(name, { type: "symbol" }).toXDR("base64");
 
-/** One Horizon operation record; `ageMs` sets its created_at relative to the real clock. */
-function op(type: string, source: string, token: number, ageMs = 60_000): Op {
+/** The escrow's USDC balance entry as the RPC returns it: contract data on the SAC, holding the amount. */
+function balanceEntryXdr(sac: string): string {
+  return xdr.LedgerEntryData.contractData(
+    new xdr.ContractDataEntry({
+      ext: new xdr.ExtensionPoint(0),
+      contract: Address.fromString(sac).toScAddress(),
+      key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Balance"), Address.fromString(CONTRACT).toScVal()]),
+      durability: xdr.ContractDataDurability.persistent(),
+      val: xdr.ScVal.scvMap([
+        new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("amount"), val: nativeToScVal(15_000_000n, { type: "i128" }) }),
+        new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("authorized"), val: xdr.ScVal.scvBool(true) }),
+        new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("clawback"), val: xdr.ScVal.scvBool(false) }),
+      ]),
+    }),
+  ).toXDR("base64");
+}
+
+/**
+ * One Horizon operation record; `ageMs` sets its created_at relative to the real clock, `extra` adds
+ * the per-type fields Horizon carries (a create_account's starting_balance, an invoke_host_function's
+ * function, parameters and asset_balance_changes).
+ */
+function op(type: string, source: string, token: number, ageMs = 60_000, extra: Record<string, unknown> = {}): Op {
   return {
     type,
     source_account: source,
     transaction_hash: token.toString(16).padStart(64, "0"),
     paging_token: String(token),
     created_at: new Date(Date.now() - ageMs).toISOString(),
+    // The shapes the sponsor really sources carry these fields on Horizon; a bare create_account is a 0-XLM one.
+    ...(type === "create_account" ? { starting_balance: "0.0000000" } : {}),
+    ...extra,
+  };
+}
+
+/** A Horizon invoke_host_function record's type-specific fields: a call of `fn` on `contract`, with its balance changes. */
+function invoke(
+  contract: string,
+  fn = "claim",
+  changes: Array<{ from: string; to: string; amount: string; asset_code?: string; asset_type?: string }> = [],
+): Record<string, unknown> {
+  return {
+    function: "HostFunctionTypeHostFunctionTypeInvokeContract",
+    parameters: [
+      { type: "Address", value: Address.fromString(contract).toScVal().toXDR("base64") },
+      { type: "Sym", value: nativeToScVal(fn, { type: "symbol" }).toXDR("base64") },
+    ],
+    asset_balance_changes: changes.map((c) => ({ type: "transfer", asset_type: c.asset_type ?? "credit_alphanum4", ...c })),
   };
 }
 
@@ -282,12 +342,15 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
       method: string;
       params?: { keys?: string[]; startLedger?: number; pagination?: { limit?: number } };
     };
+    /* Which entry a getLedgerEntries asks for: the escrow instance, the wasm code, or the escrow's USDC
+     * balance entry on the SAC (contract data too, but its key is the ["Balance", escrow] vector). */
+    const kindOf = (b64: string): "instance" | "code" | "balance" => {
+      const key = xdr.LedgerKey.fromXDR(b64, "base64");
+      if (key.switch().name !== "contractData") return "code";
+      return key.contractData().key().switch().name === "scvLedgerKeyContractInstance" ? "instance" : "balance";
+    };
     const firstKey = req.params?.keys?.[0];
-    trace.push(
-      req.method === "getLedgerEntries" && firstKey
-        ? `rpc:getLedgerEntries:${xdr.LedgerKey.fromXDR(firstKey, "base64").switch().name === "contractData" ? "instance" : "code"}`
-        : `rpc:${req.method}`,
-    );
+    trace.push(req.method === "getLedgerEntries" && firstKey ? `rpc:getLedgerEntries:${kindOf(firstKey)}` : `rpc:${req.method}`);
     if (req.method === "getLatestLedger") return json({ jsonrpc: "2.0", id: 1, result: { sequence: world.latest } });
     if (req.method === "getEvents") {
       // Ascending, from startLedger, at most `limit`: the shape the governance scan relies on.
@@ -297,14 +360,19 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
       return json({ jsonrpc: "2.0", id: 1, result: { events, latestLedger: world.latest } });
     }
     if (req.method === "getLedgerEntries") {
+      // The real RPC echoes each entry's key and leaves out the entries it has no live copy of.
       const entries = (req.params?.keys ?? []).flatMap((k) => {
-        const key = xdr.LedgerKey.fromXDR(k, "base64");
-        if (key.switch().name === "contractData") {
+        const kind = kindOf(k);
+        if (kind === "instance") {
           instanceReads.push(Date.now());
           const hex = world.wasmReads.length > 0 ? world.wasmReads.shift()! : world.instanceMissing ? null : world.runningWasm;
-          return hex === null ? [] : [{ xdr: instanceEntryXdr(hex), liveUntilLedgerSeq: world.instanceUntil }];
+          return hex === null ? [] : [{ key: k, xdr: instanceEntryXdr(hex), liveUntilLedgerSeq: world.instanceUntil }];
         }
-        return [{ xdr: "AAAA", liveUntilLedgerSeq: world.codeUntil }];
+        if (kind === "balance") {
+          const sac = Address.fromScAddress(xdr.LedgerKey.fromXDR(k, "base64").contractData().contract()).toString();
+          return world.balanceMissing ? [] : [{ key: k, xdr: balanceEntryXdr(sac), liveUntilLedgerSeq: world.balanceUntil }];
+        }
+        return [{ key: k, xdr: "AAAA", liveUntilLedgerSeq: world.codeUntil }];
       });
       return json({ jsonrpc: "2.0", id: 1, result: { latestLedger: world.latest, entries } });
     }
@@ -313,15 +381,17 @@ async function fakeFetch(url: string | URL, init?: { method?: string; body?: str
 
   if (u.startsWith("https://fake-kv.test/")) {
     if (world.down.has("kv")) return text("store down", 500);
+    if (world.down.has("kv-throw")) throw new Error("fetch failed: ECONNREFUSED");
     const path = u.slice("https://fake-kv.test".length);
     if (path === "/pipeline") {
       const cmds = JSON.parse(String(init?.body ?? "[]")) as string[][];
       storePipelines++;
       trace.push(`kv:pipeline ${cmds.map(([op, key]) => `${op} ${key}`).join(", ")}`);
       for (const [op, key, value] of cmds) if (op === "SET" && key === haltReasonKey("testnet")) haltReasons.push(String(value));
-      if (cmds[0]?.[0] === "GET" && world.readHangs) {
+      if ((cmds[0]?.[0] === "GET" && world.readHangs) || (cmds[0]?.[0] === "SET" && world.writeHangs)) {
+        // Settles only when the caller's deadline aborts it, with the reason `fetch` would give (a TimeoutError).
         const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
-        await new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+        await new Promise((_, reject) => signal?.addEventListener("abort", () => reject(signal.reason ?? new Error("aborted"))));
       }
       if (cmds[0]?.[0] === "GET" && world.readDelayMs > 0) await new Promise((r) => setTimeout(r, world.readDelayMs));
       return json(
@@ -389,6 +459,8 @@ function quiet(): void {
   world.latest = 1_000_000;
   world.instanceUntil = world.latest + 1_000_000;
   world.codeUntil = world.latest + 1_000_000;
+  world.balanceUntil = world.latest + 1_000_000;
+  world.balanceMissing = false;
   world.down.clear();
   world.retryAfter = null;
   world.feeSpent = 0n;
@@ -396,6 +468,7 @@ function quiet(): void {
   world.getFails = null;
   world.readDelayMs = 0;
   world.readHangs = false;
+  world.writeHangs = false;
   world.resendStatus = 200;
   kv.clear();
   resend.length = 0;
@@ -407,6 +480,7 @@ function quiet(): void {
   haltedAtFirstRpc = null;
   rpcRequests = 0;
   resetHaltCache();
+  resetWatchdogMemory(); // the outage clock and the mailed stamps this process keeps between runs
   delete process.env.SPONSOR_HALT;
   delete process.env.RESEND_API_KEY;
   delete process.env.ALERT_NOTIFY_TO;
@@ -745,7 +819,16 @@ async function main() {
   world.down.add("kv");
   {
     const r = await runWatchdog(config, SPONSOR, WORKER);
-    check("with the store unreadable there is no memory, so a busy source pages at once", titles(r.alerts, "page").includes("Watchdog check failed: escrow governance"), titles(r.alerts).join(" | "));
+    check(
+      "with the store unreadable there is no memory, so a busy source pages at once (the wasm check, which reached the RPC)",
+      titles(r.alerts, "page").includes("Watchdog check failed: escrow wasm hash") && titles(r.alerts, "page").includes("Watchdog check failed: escrow state expiry"),
+      titles(r.alerts).join(" | "),
+    );
+    check(
+      "while the governance scan, skipped at its unreadable cursor before it could be busy, is in the store line",
+      !has(r.alerts, "Watchdog check failed: escrow governance") && /escrow governance \(the ledger cursor could not be read/.test(detail(r.alerts, STORE_UNAVAILABLE_TITLE)),
+      detail(r.alerts, STORE_UNAVAILABLE_TITLE),
+    );
   }
 
   console.log("[13c] the grace rests on a record the store keeps, a refusal is no busy source, a late cron start costs no run, and a tripwire missed while blind still halts");
@@ -947,6 +1030,24 @@ async function main() {
       world.readHangs = false;
       check("a read that never answers fails OPEN after about 2 s instead of holding every request", !hung.halted && took >= 1_500 && took < 4_000, `${took} ms`);
       resetHaltCache();
+      world.writeHangs = true;
+      const keepAlive2 = setTimeout(() => {}, 10_000);
+      const t1 = Date.now();
+      let writeError = "";
+      try {
+        await setHalt("testnet", "a halt into a stalled store");
+      } catch (e) {
+        writeError = (e as Error).message;
+      }
+      const wrote = Date.now() - t1;
+      clearTimeout(keepAlive2);
+      world.writeHangs = false;
+      check(
+        `a halt WRITE that never answers fails at the store deadline (${STORE_TIMEOUT_MS} ms) and says so, instead of hanging the run`,
+        new RegExp(`did not answer within ${STORE_TIMEOUT_MS} ms`).test(writeError) && wrote >= 1_500 && wrote < 4_000 && !halted(),
+        `${wrote} ms: ${writeError}`,
+      );
+      resetHaltCache();
     }
     check("setHalt writes the key and the stamped reason", (await setHalt("testnet", "rehearsal")) && halted() && /rehearsal$/.test(kv.get(haltReasonKey("testnet")) ?? ""));
     check("and the verdict is halted at once (cache updated)", await isHalted());
@@ -984,9 +1085,14 @@ async function main() {
       "Escrow contract state expiry approaching",
       "Escrow contract instance not found",
       "Escrow governance event: paused",
+      `Escrow governance event: ${UPGRADE_PROPOSED_EVENT}`,
+      "Escrow governance event: ownership_transfer",
       "Watchdog check failed: sponsor account",
       "Sponsor fee budget nearly spent",
       "Watchdog cannot deliver alerts",
+      STATE_EXPIRY_TITLE,
+      USDC_BALANCE_MISSING_TITLE,
+      STORE_UNAVAILABLE_TITLE,
       FORBIDDEN_OP_OLD_TITLE,
       OPS_SCAN_BEHIND_TITLE,
       WASM_UNCONFIRMED_TITLE,
@@ -1167,7 +1273,7 @@ async function main() {
   }
   process.env.KV_REST_API_URL = "https://fake-kv.test";
 
-  console.log("[22b] a cursor the store cannot read is not a missing cursor: the scan is skipped, never restarted");
+  console.log("[22b] a cursor the store cannot read is not a missing cursor: the scan is skipped, never restarted, and the store is one line");
   quiet();
   process.env.LUMENDROP_WASM_HASH = WASM;
   kv.set(OPS_CURSOR, "40");
@@ -1177,18 +1283,28 @@ async function main() {
   {
     const r = await runWatchdog(config, SPONSOR, WORKER);
     check(
-      "an unreadable ops cursor pages 'Watchdog check failed: sponsor account' at once (a store error is no busy source), naming the cursor",
-      titles(r.alerts, "page").includes("Watchdog check failed: sponsor account") &&
-        /cursor could not be read/.test(detail(r.alerts, "Watchdog check failed: sponsor account")),
-      detail(r.alerts, "Watchdog check failed: sponsor account"),
+      "an unreadable ops cursor is the one 'Watchdog store unavailable' line (info on its first run), naming the skipped scan and the cursor, not a page per check",
+      titles(r.alerts, "info").includes(STORE_UNAVAILABLE_TITLE) &&
+        !has(r.alerts, "Watchdog check failed: sponsor account") &&
+        /sponsor account \(the operations scan cursor could not be read/.test(detail(r.alerts, STORE_UNAVAILABLE_TITLE)),
+      detail(r.alerts, STORE_UNAVAILABLE_TITLE),
     );
     check("no operations page was read (not restarted from the newest page)", opsRequests.length === 0, opsRequests.join(" | "));
     check("the cursor is untouched (no jump written down)", kv.get(OPS_CURSOR) === "40", kv.get(OPS_CURSOR));
     check("and it is not a full run: the heartbeat is stamped, the full-run stamp is not", r.lastRun !== null && r.lastFullRun === null);
     world.getFails = null;
     opsRequests.length = 0;
-    await runWatchdog(config, SPONSOR, WORKER);
+    const next = await runWatchdog(config, SPONSOR, WORKER);
     check("the next run with a readable store walks forward from the same cursor", (opsRequests[0] ?? "").includes("cursor=40") && kv.get(OPS_CURSOR) === "42", opsRequests[0]);
+    check("and says nothing about the store", !has(next.alerts, STORE_UNAVAILABLE_TITLE) && next.lastFullRun !== null);
+    world.getFails = /^watchdog:ops:/;
+    const operator = await runWatchdog(config, SPONSOR, { autoHalt: false, heartbeat: false, confirmDelayMs: 5 });
+    check(
+      "an operator's run (no heartbeat) still pages the failed check at once, by its own title",
+      titles(operator.alerts, "page").includes("Watchdog check failed: sponsor account") && !has(operator.alerts, STORE_UNAVAILABLE_TITLE),
+      titles(operator.alerts).join(" | "),
+    );
+    world.getFails = null;
   }
   quiet();
   process.env.LUMENDROP_WASM_HASH = WASM;
@@ -1197,8 +1313,11 @@ async function main() {
   {
     const r = await runWatchdog(config, SPONSOR, WORKER);
     check(
-      "an unreadable ledger cursor pages 'Watchdog check failed: escrow governance', and the cursor stays",
-      titles(r.alerts, "page").includes("Watchdog check failed: escrow governance") && kv.get(`watchdog:ledger:${CONTRACT}`) === String(world.latest - 5000) && r.lastFullRun === null,
+      "an unreadable ledger cursor: the store line names the governance scan, the cursor stays, not a full run",
+      titles(r.alerts, "info").includes(STORE_UNAVAILABLE_TITLE) &&
+        /escrow governance \(the ledger cursor could not be read/.test(detail(r.alerts, STORE_UNAVAILABLE_TITLE)) &&
+        kv.get(`watchdog:ledger:${CONTRACT}`) === String(world.latest - 5000) &&
+        r.lastFullRun === null,
       kv.get(`watchdog:ledger:${CONTRACT}`),
     );
     world.getFails = null;
@@ -1211,8 +1330,10 @@ async function main() {
   {
     const r = await runWatchdog(config, SPONSOR, WORKER);
     check(
-      "an unreadable store pin is not 'no pin yet': no re-pin to the running wasm, a check-failed page instead",
-      kv.get(`watchdog:wasm:${CONTRACT}`) === WASM && titles(r.alerts, "page").includes("Watchdog check failed: escrow wasm hash"),
+      "an unreadable store pin is not 'no pin yet': no re-pin to the running wasm, the store line names the wasm check instead",
+      kv.get(`watchdog:wasm:${CONTRACT}`) === WASM &&
+        titles(r.alerts, "info").includes(STORE_UNAVAILABLE_TITLE) &&
+        /escrow wasm hash \(the pinned wasm hash could not be read/.test(detail(r.alerts, STORE_UNAVAILABLE_TITLE)),
       kv.get(`watchdog:wasm:${CONTRACT}`),
     );
     world.getFails = null;
@@ -1415,6 +1536,382 @@ async function main() {
       haltWrites().length === 1 && !r.autoHalted && has(r.alerts, AUTO_HALT_FAILED_TITLE) && kv.get(OPS_CURSOR) === "0",
       `${haltWrites().length} writes, cursor ${kv.get(OPS_CURSOR)}`,
     );
+  }
+
+  console.log("[29] the sponsor-sourced ALLOWLIST: every shape the sponsor really sources stays quiet; anything else pages AND halts");
+  {
+    const LEGACY = "CDVZN53VEPNE4IFGOUBHOFDYF4N5XJXI5L7LWSN72HPB6ITJCHY4ST6S";
+    const legacyConfig = makeConfig({
+      network: "testnet",
+      sponsorSecret: sponsor.secret(),
+      usdcIssuer: USDC_ISSUERS.testnet,
+      lumendropContract: CONTRACT,
+      lumendropLegacyContracts: [LEGACY],
+      horizonUrl: "https://horizon.fake",
+      sorobanRpcUrl: "https://rpc.fake",
+    });
+    const XLM_SAC = Asset.native().contractId(Networks.TESTNET);
+    const USDC_SAC = config.usdc.contractId(config.networkPassphrase);
+    const other = stranger.publicKey();
+    const verdict = (type: string, extra: Record<string, unknown> = {}, cfg = config) =>
+      forbiddenSponsorOp(op(type, SPONSOR, 1, 60_000, extra), cfg, SPONSOR);
+
+    check(
+      "the allowlist is exactly the six shapes the code builds (a golden: widening it must fail here)",
+      [...SPONSOR_ALLOWED_OPS].sort().join(",") ===
+        "begin_sponsoring_future_reserves,create_account,end_sponsoring_future_reserves,extend_footprint_ttl,invoke_host_function,restore_footprint",
+      [...SPONSOR_ALLOWED_OPS].join(","),
+    );
+    const quietShapes: Array<[string, string, Record<string, unknown>, typeof config]> = [
+      ["begin_sponsoring_future_reserves (the onboarding sandwich)", "begin_sponsoring_future_reserves", {}, config],
+      ["end_sponsoring_future_reserves (moves nothing, whoever sources it)", "end_sponsoring_future_reserves", {}, config],
+      ["create_account with starting_balance 0.0000000 (the sponsored 0-XLM account)", "create_account", {}, config],
+      [
+        "invoke_host_function: claim on the escrow, the escrow paying the recipient (the relayed v2 claim with no channel free)",
+        "invoke_host_function",
+        invoke(CONTRACT, "claim", [{ from: CONTRACT, to: other, amount: "0.0100000", asset_code: "USDC" }]),
+        config,
+      ],
+      ["invoke_host_function: claim_share on the escrow", "invoke_host_function", invoke(CONTRACT, "claim_share"), config],
+      ["invoke_host_function: claim on a legacy escrow the config lists (exit only)", "invoke_host_function", invoke(LEGACY, "claim"), legacyConfig],
+      ["invoke_host_function: mint_and_forward on the CCTP forwarder", "invoke_host_function", invoke(CCTP_TESTNET_FORWARDER, "mint_and_forward"), config],
+      ["extend_footprint_ttl (rent: the runbook lets any funded key pay, the sponsor hot key included)", "extend_footprint_ttl", {}, config],
+      ["restore_footprint (rent)", "restore_footprint", {}, config],
+    ];
+    for (const [label, type, extra, cfg] of quietShapes) {
+      const v = verdict(type, extra, cfg);
+      check(`quiet: ${label}`, v === null, v ?? "");
+    }
+    const loudShapes: Array<[string, string, Record<string, unknown>, RegExp]> = [
+      ["create_account with starting_balance 1.0000000 (XLM leaving the sponsor)", "create_account", { starting_balance: "1.0000000" }, /starting balance of 1\.0000000 XLM/],
+      ["create_account with starting_balance 0.0000001", "create_account", { starting_balance: "0.0000001" }, /starting balance of 0\.0000001 XLM/],
+      ["create_account without a readable starting_balance (strict)", "create_account", { starting_balance: undefined }, /\(unreadable\)/],
+      [
+        "invoke_host_function: transfer on the XLM Stellar Asset Contract, paid by the sponsor",
+        "invoke_host_function",
+        invoke(XLM_SAC, "transfer", [{ from: SPONSOR, to: other, amount: "100.0000000", asset_type: "native" }]),
+        new RegExp(`on ${XLM_SAC}`),
+      ],
+      ["invoke_host_function: transfer on the USDC Stellar Asset Contract", "invoke_host_function", invoke(USDC_SAC, "transfer"), new RegExp(`on ${USDC_SAC}`)],
+      [
+        "invoke_host_function: a call on the escrow whose balance change is paid BY the sponsor",
+        "invoke_host_function",
+        invoke(CONTRACT, "deposit", [{ from: SPONSOR, to: CONTRACT, amount: "5.0000000", asset_code: "USDC" }]),
+        /moved 5\.0000000 USDC out of the sponsor/,
+      ],
+      ["invoke_host_function: an upload of contract code", "invoke_host_function", { ...invoke(CONTRACT), function: "HostFunctionTypeHostFunctionTypeUploadContractWasm" }, /never uploads or creates/],
+      ["invoke_host_function: a legacy escrow the config does NOT list", "invoke_host_function", invoke(LEGACY), new RegExp(`on ${LEGACY}`)],
+      ["invoke_host_function: no parameters to read the contract from (strict)", "invoke_host_function", { ...invoke(CONTRACT), parameters: [] }, /unreadable contract/],
+      ["liquidity_pool_deposit", "liquidity_pool_deposit", {}, /a liquidity_pool_deposit: the sponsor never sources one/],
+      ["liquidity_pool_withdraw", "liquidity_pool_withdraw", {}, /never sources one/],
+      ["change_trust", "change_trust", {}, /a change_trust: the sponsor never sources one/],
+      ["payment", "payment", {}, /a payment: the sponsor never sources one/],
+      ["path_payment_strict_send", "path_payment_strict_send", {}, /never sources one/],
+      ["path_payment_strict_receive", "path_payment_strict_receive", {}, /never sources one/],
+      ["account_merge", "account_merge", {}, /never sources one/],
+      ["set_options (the signer rewrite that precedes a theft; a rotation trips it by design)", "set_options", {}, /a set_options: the sponsor never sources one/],
+      ["create_claimable_balance", "create_claimable_balance", {}, /never sources one/],
+      ["claim_claimable_balance", "claim_claimable_balance", {}, /never sources one/],
+      ["revoke_sponsorship", "revoke_sponsorship", {}, /never sources one/],
+      ["manage_data", "manage_data", {}, /never sources one/],
+      ["bump_sequence", "bump_sequence", {}, /never sources one/],
+      ["manage_sell_offer", "manage_sell_offer", {}, /never sources one/],
+      ["manage_buy_offer", "manage_buy_offer", {}, /never sources one/],
+      ["create_passive_sell_offer", "create_passive_sell_offer", {}, /never sources one/],
+      ["clawback", "clawback", {}, /never sources one/],
+      ["set_trust_line_flags", "set_trust_line_flags", {}, /never sources one/],
+      ["an operation without a type (strict)", "", {}, /typeless operation/],
+    ];
+    for (const [label, type, extra, re] of loudShapes) {
+      const v = verdict(type, extra);
+      check(`loud: ${label}`, typeof v === "string" && re.test(v), v ?? "null");
+    }
+
+    /* Through the whole scheduled run, against the fake Horizon: the page, the halt and the cursor. */
+    const scan = async (label: string, ops: Op[], expectHalt: boolean, detailRe?: RegExp) => {
+      quiet();
+      process.env.LUMENDROP_WASM_HASH = WASM;
+      kv.set(OPS_CURSOR, "0");
+      world.ops = ops;
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      if (expectHalt) {
+        check(`${label}: pages the tripwire AND halts`, has(r.alerts, TRIPWIRE_FORBIDDEN_OP) && r.autoHalted && halted(), titles(r.alerts).join(" | "));
+        if (detailRe) check(`${label}: the page says why`, detailRe.test(detail(r.alerts, TRIPWIRE_FORBIDDEN_OP)), detail(r.alerts, TRIPWIRE_FORBIDDEN_OP));
+      } else {
+        check(
+          `${label}: no page, no halt, the cursor moves past it`,
+          !has(r.alerts, TRIPWIRE_FORBIDDEN_OP) && !has(r.alerts, FORBIDDEN_OP_OLD_TITLE) && !r.autoHalted && !halted() && kv.get(OPS_CURSOR) === String(ops.length),
+          `${titles(r.alerts, "page").join(" | ")} cursor ${kv.get(OPS_CURSOR)}`,
+        );
+      }
+    };
+    await scan(
+      "a scheduled run over every allowed shape at once",
+      [
+        op("begin_sponsoring_future_reserves", SPONSOR, 1),
+        op("create_account", SPONSOR, 2),
+        op("invoke_host_function", SPONSOR, 3, 60_000, invoke(CONTRACT, "claim", [{ from: CONTRACT, to: other, amount: "0.5000000", asset_code: "USDC" }])),
+        op("extend_footprint_ttl", SPONSOR, 4),
+        op("restore_footprint", SPONSOR, 5),
+        op("end_sponsoring_future_reserves", SPONSOR, 6),
+        op("invoke_host_function", SPONSOR, 7, 60_000, invoke(CCTP_TESTNET_FORWARDER, "mint_and_forward")),
+      ],
+      false,
+    );
+    await scan("a sponsor-sourced create_account with a positive starting_balance", [op("create_account", SPONSOR, 1, 60_000, { starting_balance: "2.5000000" })], true, /starting balance of 2\.5000000 XLM/);
+    await scan(
+      "a sponsor-sourced invoke_host_function on the XLM SAC (a transfer out of the sponsor)",
+      [op("invoke_host_function", SPONSOR, 1, 60_000, invoke(XLM_SAC, "transfer", [{ from: SPONSOR, to: other, amount: "50.0000000", asset_type: "native" }]))],
+      true,
+      new RegExp(`on ${XLM_SAC}`),
+    );
+    await scan("a sponsor-sourced liquidity_pool_deposit", [op("liquidity_pool_deposit", SPONSOR, 1)], true, /a liquidity_pool_deposit/);
+    await scan("a sponsor-sourced change_trust", [op("change_trust", SPONSOR, 1)], true, /a change_trust/);
+    await scan("a sponsor-sourced extend_footprint_ttl (routine TTL maintenance paid from the hot key)", [op("extend_footprint_ttl", SPONSOR, 1)], false);
+    await scan("a sponsor-sourced restore_footprint", [op("restore_footprint", SPONSOR, 1)], false);
+    await scan(
+      "the same forbidden shapes sourced by somebody else",
+      [
+        op("create_account", other, 1, 60_000, { starting_balance: "100.0000000" }),
+        op("liquidity_pool_deposit", other, 2),
+        op("invoke_host_function", other, 3, 60_000, invoke(XLM_SAC, "transfer", [{ from: other, to: SPONSOR, amount: "1.0000000", asset_type: "native" }])),
+      ],
+      false,
+    );
+  }
+
+  console.log("[30] governance events: the names OpenZeppelin 0.7.2 and the timelock really emit page; the names the old list carried do not");
+  {
+    const event = (name: string, extraTopics: string[] = [], value?: string) => ({
+      topic: [topic(name), ...extraTopics],
+      ledger: 999_990,
+      txHash: "ee".repeat(32),
+      ...(value ? { value } : {}),
+    });
+    const govTitles = (alerts: Alert[]) => titles(alerts).filter((t) => t.startsWith("Escrow governance event"));
+    // Spelled out here, never taken from the code's own list: a list that drifts back to wrong names fails.
+    const REAL = ["paused", "unpaused", "ownership_transfer", "ownership_transfer_completed", "ownership_renounced", "upgrade_proposed", "upgrade_cancelled", "upgraded"];
+    const STALE = ["ownership_transfer_started", "owner_set", "role_granted", "role_revoked"];
+    const PRODUCT = ["deposit", "claim", "reclaim", "newpool", "share", "repool"];
+    for (const name of REAL) {
+      quiet();
+      process.env.LUMENDROP_WASM_HASH = WASM;
+      world.events = [event(name)];
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check(`"${name}" pages and never halts`, has(r.alerts, `Escrow governance event: ${name}`) && !r.autoHalted && !halted(), govTitles(r.alerts).join(" | "));
+    }
+    for (const name of STALE) {
+      quiet();
+      process.env.LUMENDROP_WASM_HASH = WASM;
+      world.events = [event(name)];
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check(`the old list's "${name}", which no vendored crate emits, is no governance page`, govTitles(r.alerts).length === 0, govTitles(r.alerts).join(" | "));
+    }
+    for (const name of PRODUCT) {
+      quiet();
+      process.env.LUMENDROP_WASM_HASH = WASM;
+      world.events = [event(name)];
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check(`the product's own "${name}" event is no governance page`, govTitles(r.alerts).length === 0, govTitles(r.alerts).join(" | "));
+    }
+    check("upgrade_proposed is the critical name the suite spells", UPGRADE_PROPOSED_EVENT === "upgrade_proposed");
+
+    quiet();
+    mailOn();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.xlm = "20.0000000"; // a float page beside it, raised earlier in the run
+    /* The timelock's exact encoding (contracts/lumen-drop 0.3.0): topics ["upgrade_proposed", wasm_hash
+     * (BytesN<32>)], data a map {not_before: u64} in ledger seconds; the other two carry the hash the
+     * same way and an EMPTY map as data, never void. 1,800,000,000 s is 2027-01-15T08:00:00Z. */
+    const hashTopic = nativeToScVal(Buffer.from(OTHER_WASM, "hex"), { type: "bytes" }).toXDR("base64");
+    const notBeforeMap = xdr.ScVal.scvMap([
+      new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("not_before"), val: nativeToScVal(1_800_000_000n, { type: "u64" }) }),
+    ]).toXDR("base64");
+    const emptyMap = xdr.ScVal.scvMap([]).toXDR("base64");
+    world.events = [event("upgrade_proposed", [hashTopic], notBeforeMap)];
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      const crit = r.alerts.find((a) => a.title === `Escrow governance event: ${UPGRADE_PROPOSED_EVENT}`);
+      check("upgrade_proposed is the one CRITICAL alert", crit?.severity === "critical", crit?.severity);
+      check(
+        "its page names the scheduled wasm hash from the topic and the not_before from the data map, as a date",
+        (crit?.detail ?? "").includes(`New bytecode ${OTHER_WASM} is SCHEDULED`) && /installable from 2027-01-15T08:00:00\.000Z \(not_before 1800000000, the 7-day timelock\)|from 2027-01-15T08:00:00\.000Z \(not_before 1800000000/.test(crit?.detail ?? ""),
+        crit?.detail,
+      );
+      check("it says what to do if it was not you", /cancel_upgrade/.test(crit?.detail ?? "") && /7-day timelock/.test(crit?.detail ?? ""));
+      check(
+        "one mail, CRITICAL in the subject, the upgrade named first although the float and capacity pages were raised first",
+        resend.length === 1 && /^CRITICAL: Lumenia testnet alert: Escrow governance event: upgrade_proposed \(\+2 more\)$/.test(resend[0]?.subject ?? ""),
+        resend[0]?.subject,
+      );
+      check("the mail body lists the critical line first", (resend[0]?.text ?? "").startsWith("[CRITICAL] Escrow governance event: upgrade_proposed"));
+      check("never a halt", !r.autoHalted && !halted());
+    }
+    for (const name of ["upgrade_cancelled", "upgraded"]) {
+      quiet();
+      process.env.LUMENDROP_WASM_HASH = WASM;
+      world.events = [event(name, [hashTopic], emptyMap)];
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      const d = detail(r.alerts, `Escrow governance event: ${name}`);
+      check(
+        `"${name}" with the hash topic and an EMPTY map as data pages, naming the hash (a void is never assumed)`,
+        has(r.alerts, `Escrow governance event: ${name}`) && d.includes(`topics: ${OTHER_WASM}`) && /data: \{\}/.test(d) && !r.autoHalted,
+        d,
+      );
+    }
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.events = [event("upgrade_proposed", [hashTopic], emptyMap)];
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      const d = detail(r.alerts, `Escrow governance event: ${UPGRADE_PROPOSED_EVENT}`);
+      check("an upgrade_proposed without a readable not_before still pages critical and says the field was missing", r.alerts.some((a) => a.severity === "critical") && /no readable not_before/.test(d), d);
+    }
+  }
+
+  console.log("[31] the escrow's USDC balance entry on the SAC has rent of its own: inside the floor it pages with the --key-xdr command, missing it pages, otherwise it is in the info line");
+  {
+    const USDC_SAC = config.usdc.contractId(config.networkPassphrase);
+    const keyXdr = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Balance"), Address.fromString(CONTRACT).toScVal()]).toXDR("base64");
+    const extendBalance = `stellar contract extend --id ${USDC_SAC} --key-xdr ${keyXdr} --ledgers-to-extend 3000000 --durability persistent --source-account <any funded key> --network testnet`;
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.balanceUntil = world.latest + 100_000; // 5.8 days at 5 s per ledger; instance and code far away
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      const page = detail(r.alerts, STATE_EXPIRY_TITLE);
+      check("inside the floor: the expiry page names the USDC balance entry as the soonest", has(r.alerts, STATE_EXPIRY_TITLE) && /^The USDC balance entry archives in 100000 ledgers, about 5\.8 days/.test(page), page.slice(0, 120));
+      check("the page carries the extend command for it: the SAC as --id and the Balance key as --key-xdr", page.includes(extendBalance), page);
+      check("and still the instance and the code commands", page.includes(`--id ${CONTRACT} --ledgers-to-extend`) && page.includes(`--wasm-hash ${WASM}`));
+      check("each entry's days are listed", /instance until ledger 2000000, 57\.9 days/.test(page) && /USDC balance until ledger 1100000, 5\.8 days/.test(page), page);
+      check("the entry was read from the SAC by its own key, once", trace.filter((t) => t === "rpc:getLedgerEntries:balance").length === 1, trace.filter((t) => t.startsWith("rpc:getLedgerEntries")).join(","));
+      check("never a halt", !r.autoHalted && !halted());
+    }
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.balanceMissing = true;
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      const page = detail(r.alerts, USDC_BALANCE_MISSING_TITLE);
+      check("no live balance entry: a page, naming the key and the restore command, never a halt", has(r.alerts, USDC_BALANCE_MISSING_TITLE) && page.includes(`stellar contract restore --id ${USDC_SAC} --key-xdr ${keyXdr}`) && !r.autoHalted, page);
+      check("the instance and the code are still reported", has(r.alerts, "Escrow contract state expiry") && /instance until ledger/.test(detail(r.alerts, "Escrow contract state expiry")));
+      check("the run is still a full run: the check did its job", r.lastFullRun !== null);
+    }
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check(
+        "far from expiry: the info line counts the USDC balance entry with the other two",
+        /USDC balance until ledger 2000000, 57\.9 days/.test(detail(r.alerts, "Escrow contract state expiry")) && !has(r.alerts, STATE_EXPIRY_TITLE) && !has(r.alerts, USDC_BALANCE_MISSING_TITLE),
+        detail(r.alerts, "Escrow contract state expiry"),
+      );
+    }
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.balanceUntil = world.latest + 380_000; // 22.0 days: just outside the 21-day floor
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check("22 days left is outside the 21-day floor: an info line", !has(r.alerts, STATE_EXPIRY_TITLE));
+    }
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.balanceUntil = world.latest + 354_127; // what the mainnet entry had on 2026-11-08: 20.5 days
+    {
+      const r = await runWatchdog(config, SPONSOR, WORKER);
+      check("20.5 days left (the mainnet entry on 2026-11-08) is inside the floor: a page", has(r.alerts, STATE_EXPIRY_TITLE) && /about 20\.5 days/.test(detail(r.alerts, STATE_EXPIRY_TITLE)));
+    }
+  }
+
+  console.log("[32] a store outage: the skipped scans are ONE line, info until the grace, then ONE page per outage, every other cooldown kept, no mail storm");
+  {
+    const LEDGER_CURSOR = `watchdog:ledger:${CONTRACT}`;
+    const at = (t0: number, minutes: number, mode: "kv" | "kv-throw" | null) => {
+      world.down.clear();
+      if (mode) world.down.add(mode);
+      return runWatchdog(config, SPONSOR, { ...WORKER, now: t0 + minutes * 60_000 });
+    };
+    const storeInfo = (r: Awaited<ReturnType<typeof runWatchdog>>) => titles(r.alerts, "info").includes(STORE_UNAVAILABLE_TITLE) && !titles(r.alerts, "page").includes(STORE_UNAVAILABLE_TITLE);
+    quiet();
+    mailOn();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    kv.set(OPS_CURSOR, "5");
+    kv.set(LEDGER_CURSOR, String(world.latest - 100));
+    {
+      const t0 = Date.now();
+      // Six scheduled runs, 15 minutes apart, the store answering 500 or refusing the connection on every call.
+      const runs = [await at(t0, 0, "kv"), await at(t0, 15, "kv"), await at(t0, 30, "kv-throw"), await at(t0, 45, "kv-throw"), await at(t0, 60, "kv"), await at(t0, 75, "kv-throw")];
+      check(
+        "no run pages a check of its own ('Watchdog check failed: ...') for a store error",
+        runs.every((r) => !titles(r.alerts).some((t) => t.startsWith("Watchdog check failed"))),
+        runs.map((r) => titles(r.alerts, "page").join("|")).join(" / "),
+      );
+      check("the first three runs carry one info line for the store", runs.slice(0, 3).every(storeInfo), runs.map((r) => titles(r.alerts).join("|")).join(" / "));
+      check(
+        "the line names the scans it skipped and why, and that nothing was restarted",
+        /sponsor account \(the operations scan cursor could not be read \(the store answered 500\)/.test(detail(runs[0]!.alerts, STORE_UNAVAILABLE_TITLE)) &&
+          /escrow governance \(the ledger cursor could not be read/.test(detail(runs[0]!.alerts, STORE_UNAVAILABLE_TITLE)) &&
+          /SKIPPED, never restarted/.test(detail(runs[0]!.alerts, STORE_UNAVAILABLE_TITLE)) &&
+          /ECONNREFUSED/.test(detail(runs[2]!.alerts, STORE_UNAVAILABLE_TITLE)),
+        detail(runs[0]!.alerts, STORE_UNAVAILABLE_TITLE),
+      );
+      check("the first run says when it will page", /pages once if this lasts 45 minutes/.test(detail(runs[0]!.alerts, STORE_UNAVAILABLE_TITLE)));
+      check(
+        "the 45-minute run pages, once, saying how long",
+        titles(runs[3]!.alerts, "page").includes(STORE_UNAVAILABLE_TITLE) && /Every run for 45 minutes \(since \d{4}-/.test(detail(runs[3]!.alerts, STORE_UNAVAILABLE_TITLE)),
+        detail(runs[3]!.alerts, STORE_UNAVAILABLE_TITLE).slice(-160),
+      );
+      check(
+        "the runs after it are info lines again, saying it was already paged",
+        runs.slice(4).every((r) => storeInfo(r) && /already paged at \d{4}-/.test(detail(r.alerts, STORE_UNAVAILABLE_TITLE))),
+        runs.slice(4).map((r) => detail(r.alerts, STORE_UNAVAILABLE_TITLE).slice(-80)).join(" / "),
+      );
+      check("six runs, ONE mail, about the store", resend.length === 1 && (resend[0]?.text ?? "").includes(STORE_UNAVAILABLE_TITLE), `${resend.length} mails`);
+      check("no cursor moved and no scan was restarted", kv.get(OPS_CURSOR) === "5" && kv.get(LEDGER_CURSOR) === String(world.latest - 100) && opsRequests.length === 0);
+      check("no heartbeat could be written, which is what the dead-man workflow reads", runs.every((r) => r.lastRun === null && r.lastFullRun === null));
+      check("never a halt", runs.every((r) => !r.autoHalted) && !halted());
+
+      const back = await at(t0, 90, null);
+      check("the store answers again: no store line, a full run, the heartbeat stamped", !has(back.alerts, STORE_UNAVAILABLE_TITLE) && back.lastFullRun !== null && back.lastRun !== null, titles(back.alerts).join(" | "));
+      check("and the scans continue from their cursors", opsRequests.length === 1 && (opsRequests[0] ?? "").includes("cursor=5"), opsRequests[0]);
+
+      const second = [await at(t0, 120, "kv"), await at(t0, 135, "kv"), await at(t0, 150, "kv"), await at(t0, 165, "kv")];
+      check(
+        "a second outage is a new one: info again, then its own single page at 45 minutes",
+        second.slice(0, 3).every(storeInfo) && titles(second[3]!.alerts, "page").includes(STORE_UNAVAILABLE_TITLE) && resend.length === 2,
+        `${resend.length} mails`,
+      );
+    }
+
+    quiet();
+    mailOn();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.xlm = "20.0000000"; // a float page alive through the outage
+    kv.set(OPS_CURSOR, "5");
+    {
+      const t0 = Date.now();
+      await at(t0, 0, null);
+      check("the float page is mailed once while the store answers", resend.length === 1 && /float below the floor/i.test(resend[0]?.text ?? ""));
+      const during = [await at(t0, 15, "kv"), await at(t0, 30, "kv"), await at(t0, 45, "kv"), await at(t0, 60, "kv")];
+      check("the float page is still raised on every run of the outage", during.every((r) => has(r.alerts, "Sponsor float below the floor")));
+      check(
+        "but held by the stamp this isolate kept when it mailed: no re-mail on every run, only the store's single page",
+        resend.length === 2 && (resend[1]?.text ?? "").includes(STORE_UNAVAILABLE_TITLE) && !/float below the floor/i.test(resend[1]?.text ?? ""),
+        `${resend.length} mails: ${resend.map((m) => m.subject).join(" / ")}`,
+      );
+    }
+
+    quiet();
+    process.env.LUMENDROP_WASM_HASH = WASM;
+    world.down.add("kv");
+    {
+      const r = await runWatchdog(config, SPONSOR, { autoHalt: false, heartbeat: false, confirmDelayMs: 5 });
+      check(
+        "an operator's run (no heartbeat) still pages each store failure at once, by the check's own title",
+        titles(r.alerts, "page").includes("Watchdog check failed: sponsor account") && titles(r.alerts, "page").includes("Watchdog check failed: escrow governance") && !has(r.alerts, STORE_UNAVAILABLE_TITLE),
+        titles(r.alerts).join(" | "),
+      );
+    }
   }
 
   console.log("\n============================================================");

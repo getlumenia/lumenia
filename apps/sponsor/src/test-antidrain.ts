@@ -49,6 +49,7 @@ import {
   type PayoutPolicy,
   type SweepPolicy,
 } from "./lib/anti-drain.js";
+import { checkSendBudget, sendBudgetFromEnv, __resetSendBudgetForTests } from "./lib/send-budget.js";
 
 const NETWORK = Networks.TESTNET;
 
@@ -406,6 +407,146 @@ check(
   validateInnerTransaction(buildTx(recipient.publicKey(), sendOps(goodClaimants)), basePolicy),
   false,
   "disallowed op type",
+);
+
+/* ---- /send SHAPE, pinned (review 2026-11-08, S4): WHICH claimant is unconditional, and the
+ * sender's predicate. The two checks above (one unconditional claimant, the sender among the
+ * claimants) were satisfied by a sender naming ITSELF as the unconditional claimant with a
+ * far-future predicate on the other, which locked the sponsor's ~1 XLM reserve until the sender
+ * chose to act. */
+const FAR_FUTURE = String(100 * 365 * 24 * 60 * 60); // a century
+check(
+  "SEND-R7 the SENDER as the unconditional claimant (roles swapped: the reserve waits on the sender)",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(recipient.publicKey(), Claimant.predicateUnconditional()),
+        new Claimant(bearer.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(RECLAIM))),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  false,
+  "reclaim-after shape",
+);
+check(
+  "SEND-R8 the sender unconditional with a far-future predicate on the recipient (nobody else can ever release the reserve)",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(recipient.publicKey(), Claimant.predicateUnconditional()),
+        new Claimant(bearer.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(FAR_FUTURE))),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  false,
+  "reclaim-after shape",
+);
+check(
+  "SEND-R9 the recipient unconditional but the sender's reclaim window longer than the product's 7 days",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(bearer.publicKey(), Claimant.predicateUnconditional()),
+        new Claimant(recipient.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(String(8 * 24 * 60 * 60)))),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  false,
+  "reclaim-after shape",
+);
+check(
+  "SEND-R10 the sender's predicate as an ABSOLUTE time (not the product's relative shape)",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(bearer.publicKey(), Claimant.predicateUnconditional()),
+        new Claimant(recipient.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeAbsoluteTime("4102444800"))),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  false,
+  "reclaim-after shape",
+);
+check(
+  "SEND-R11 both claimants unconditional (the sender with no reclaim window is not the product's shape either)",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(bearer.publicKey(), Claimant.predicateUnconditional()),
+        new Claimant(recipient.publicKey(), Claimant.predicateUnconditional()),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  false,
+  "reclaim-after shape",
+);
+check(
+  "SEND-R12 the sender named twice (unconditional AND reclaim) with no recipient at all",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(recipient.publicKey(), Claimant.predicateUnconditional()),
+        new Claimant(recipient.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(RECLAIM))),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  false,
+  "names the sender 2 times",
+);
+check(
+  "SEND-R13 the recipient time-locked while the sender keeps the product's own reclaim predicate (nobody unconditional)",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(bearer.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(FAR_FUTURE))),
+        new Claimant(recipient.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(RECLAIM))),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  false,
+  "unconditional",
+);
+check(
+  "SEND-G2 a shorter reclaim window (1 day) is still the product's shape",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(bearer.publicKey(), Claimant.predicateUnconditional()),
+        new Claimant(recipient.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(String(24 * 60 * 60)))),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  true,
+);
+check(
+  "SEND-G3 the request-money shape (the asker's ADDRESS as the unconditional claimant) still passes unchanged",
+  validateInnerTransaction(
+    buildTx(
+      recipient.publicKey(),
+      sendOps([
+        new Claimant(anchor.publicKey(), Claimant.predicateUnconditional()),
+        new Claimant(recipient.publicKey(), Claimant.predicateNot(Claimant.predicateBeforeRelativeTime(RECLAIM))),
+      ]),
+    ),
+    sendPolicy,
+  ),
+  true,
 );
 
 /* ---- /sweep SHAPE: consolidate a per-link throwaway account into ONE home account ----
@@ -884,6 +1025,76 @@ checkRedacted("LOG-8 a sweep merge to another destination shortens it", validate
 checkRedacted("LOG-9 a sweep claiming another balance shortens the balance id", validateSweepTransaction(buildTx(throwaway.publicKey(), sweepOps({ balanceId: OTHER_BALANCE_ID })), sweepPolicy), "balanceid", [OTHER_BALANCE_ID.slice(4)]);
 checkRedacted("LOG-10 a sweep trustline that is not removed does not echo its limit", validateSweepTransaction(buildTx(throwaway.publicKey(), sweepOps({ ctLimit: "1000" })), sweepPolicy), "limit 0", ["1000"]);
 checkRedacted("LOG-11 a sweep from another tx source shortens it", validateSweepTransaction(buildTx(attacker.publicKey(), sweepOps()), sweepPolicy), "tx source", [attacker.publicKey().slice(4)]);
+
+/* ---- SPONSORED-BALANCE BUDGET (lib/send-budget.ts, review 2026-11-08 S4): the NUMBER of balances
+ * the sponsor reserves for in a day, bounded apart from their dollars. Offline: no store is
+ * configured here, so the per-isolate counter is what is exercised, with the same two bounds. ---- */
+console.log("\n--- the sponsored-balance day budget ---");
+{
+  const saved = {
+    sends: process.env.MAX_DAY_SENDS,
+    perSender: process.env.MAX_DAY_SENDS_PER_SENDER,
+    failClosed: process.env.CAPS_FAIL_CLOSED,
+    kvUrl: process.env.KV_REST_API_URL,
+    kvToken: process.env.KV_REST_API_TOKEN,
+  };
+  delete process.env.KV_REST_API_URL;
+  delete process.env.KV_REST_API_TOKEN;
+  delete process.env.CAPS_FAIL_CLOSED;
+  process.env.MAX_DAY_SENDS = "2";
+  process.env.MAX_DAY_SENDS_PER_SENDER = "2";
+  __resetSendBudgetForTests();
+  const budget = sendBudgetFromEnv("testnet");
+  check("SEND-B1 the first sponsored balance of the day is admitted", await checkSendBudget(budget, recipient.publicKey()), true);
+  const second = await checkSendBudget(budget, recipient.publicKey());
+  check("SEND-B2 the second (the day's last) is admitted", second, true);
+  check("SEND-B3 the third is refused: the day's budget is spent", await checkSendBudget(budget, attacker.publicKey()), false, "budget");
+  await second.release?.();
+  check("SEND-B4 a send that definitely did not happen gives its slot back, and the next is admitted", await checkSendBudget(budget, attacker.publicKey()), true);
+
+  __resetSendBudgetForTests();
+  process.env.MAX_DAY_SENDS = "10";
+  process.env.MAX_DAY_SENDS_PER_SENDER = "1";
+  const perSender = sendBudgetFromEnv("testnet");
+  check("SEND-B5 one sender's share: the first is admitted", await checkSendBudget(perSender, recipient.publicKey()), true);
+  check("SEND-B6 the same sender's second is refused with the per-sender sentence", await checkSendBudget(perSender, recipient.publicKey()), false, "per-sender");
+  check("SEND-B7 another sender is still admitted (the day is open to others)", await checkSendBudget(perSender, attacker.publicKey()), true);
+
+  delete process.env.MAX_DAY_SENDS;
+  delete process.env.MAX_DAY_SENDS_PER_SENDER;
+  const mainnet = sendBudgetFromEnv("mainnet");
+  check(
+    "SEND-B8 mainnet with no counter store configured refuses (fail-closed, like the escrow caps)",
+    await checkSendBudget(mainnet, recipient.publicKey()),
+    false,
+    "fail-closed",
+  );
+  const defaults = { testnet: sendBudgetFromEnv("testnet"), mainnet };
+  check(
+    "SEND-B9 the defaults: 200 a day on testnet (a fifth per sender, floor 10), 40 a day on mainnet (an eighth per sender), per-sender never above the day",
+    {
+      ok:
+        defaults.testnet.maxDaySends === 200 &&
+        defaults.testnet.maxDaySenderSends === 40 &&
+        defaults.mainnet.maxDaySends === 40 &&
+        defaults.mainnet.maxDaySenderSends === 5 &&
+        defaults.mainnet.failClosed === true,
+    },
+    true,
+  );
+
+  __resetSendBudgetForTests();
+  for (const [k, v] of [
+    ["MAX_DAY_SENDS", saved.sends],
+    ["MAX_DAY_SENDS_PER_SENDER", saved.perSender],
+    ["CAPS_FAIL_CLOSED", saved.failClosed],
+    ["KV_REST_API_URL", saved.kvUrl],
+    ["KV_REST_API_TOKEN", saved.kvToken],
+  ] as const) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+}
 
 console.log("\n============================================================");
 console.log(failed === 0 ? ` ✅ ANTI-DRAIN TESTS PASS (${passed}/${passed + failed})` : ` ❌ ANTI-DRAIN TESTS FAIL (${failed} failed)`);

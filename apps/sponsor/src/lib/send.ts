@@ -20,6 +20,7 @@
 import { TransactionBuilder, type FeeBumpTransaction, type Transaction, type Horizon } from "@stellar/stellar-sdk";
 import { validateInnerTransaction, ALLOWED_SEND_OP_TYPES, type InnerTxPolicy } from "./anti-drain.js";
 import { capsFromEnv, chargeSponsorFee, checkCaps, PublicRefusal, USDC_STROOPS } from "./caps.js";
+import { checkSendBudget, sendBudgetFromEnv } from "./send-budget.js";
 import type { SponsorConfig } from "./config.js";
 import type { SponsorSigner } from "./signer.js";
 import { submit, createdBalanceIdFromResult, isSubmitUnconfirmed, SubmitUnconfirmedError } from "./stellar.js";
@@ -83,10 +84,18 @@ export async function sendLinkHandler(
     | { amount?: string }
     | undefined;
   const amountStroops = BigInt(Math.round(Number.parseFloat(cbOp?.amount ?? "0") * Number(USDC_STROOPS)));
+  // The NUMBER of sponsored balances is bounded apart from their dollars (lib/send-budget.ts): each
+  // one locks about 1 XLM of the sponsor's float until it is claimed or taken back, and the policy
+  // above only made sure that CAN happen, not how many are waiting on it at once.
+  const slot = await checkSendBudget(sendBudgetFromEnv(), input.senderPublicKey);
+  if (!slot.ok) throw new PublicRefusal(slot.reason!);
   // The sender's key is the per-sender day bound: one wallet, or one client looping on a bug,
   // cannot spend the whole day's escrow budget on everybody else's behalf.
   const cap = await checkCaps(amountStroops, capsFromEnv(), Date.now(), input.senderPublicKey);
-  if (!cap.ok) throw new PublicRefusal(`canary cap: ${cap.reason}`);
+  if (!cap.ok) {
+    await slot.release?.();
+    throw new PublicRefusal(`canary cap: ${cap.reason}`);
+  }
 
   let submitted: Awaited<ReturnType<typeof submit>>;
   try {
@@ -126,7 +135,10 @@ export async function sendLinkHandler(
      * releasing its cap here let the same amount be sent again on top of it, and the counter ended
      * the day under-counted by one real send. The undecided case keeps its reservation: the day's
      * budget is the one thing that must err on the side of "spent". */
-    if (!isSubmitUnconfirmed(e)) await cap.release?.();
+    if (!isSubmitUnconfirmed(e)) {
+      await cap.release?.();
+      await slot.release?.();
+    }
     throw e;
   }
   const { hash, ledger, resultXdr } = submitted;

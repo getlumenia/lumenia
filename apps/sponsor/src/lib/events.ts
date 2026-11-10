@@ -70,6 +70,7 @@
  * no aid.
  */
 import { kvConfigFromEnv } from "./rate-limit.js";
+import { storeFetch } from "./store-fetch.js";
 
 const ALLOWED_EVENTS = new Set<string>([
   "claim_opened",
@@ -225,10 +226,11 @@ export function allowedEvents(): string[] {
   return [...ALLOWED_EVENTS];
 }
 
+/** Bounded by the store deadline (lib/store-fetch.ts): a stalled store throws, and the caller treats it as a number not written. */
 async function kvPipeline(commands: string[][]): Promise<unknown[] | null> {
   const kv = kvConfigFromEnv();
   if (!kv) return null;
-  const res = await fetch(`${kv.url}/pipeline`, {
+  const res = await storeFetch(`${kv.url}/pipeline`, {
     method: "POST",
     headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
     body: JSON.stringify(commands),

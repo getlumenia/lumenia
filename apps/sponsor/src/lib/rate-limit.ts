@@ -14,6 +14,8 @@
  * handling stays out of SOW scope (mainnet upgrade).
  */
 
+import { storeFetch } from "./store-fetch.js";
+
 interface Bucket {
   tokens: number;
   ts: number;
@@ -144,10 +146,14 @@ export function kvConfigFromEnv(): KvConfig | null {
   return url && token ? { url, token } : null;
 }
 
-/** Fixed-window counter in the shared store: `true` = this request is over the limit. */
+/**
+ * Fixed-window counter in the shared store: `true` = this request is over the limit. Bounded by
+ * the store deadline (lib/store-fetch.ts): a stalled store is a store error, and the caller drops
+ * to the in-memory buckets instead of holding the request.
+ */
 async function kvLimited(kv: KvConfig, key: string, cap: number, windowMs: number, now: number): Promise<boolean> {
   const windowKey = `rl:${key}:${Math.floor(now / windowMs)}`;
-  const res = await fetch(`${kv.url}/pipeline`, {
+  const res = await storeFetch(`${kv.url}/pipeline`, {
     method: "POST",
     headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
     body: JSON.stringify([

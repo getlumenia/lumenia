@@ -485,8 +485,12 @@ Rollback: disable the workflow in the Actions tab. The stamp costs one store wri
 The watchdog halts the sponsor on its own on exactly two findings, the two signatures of a key in
 someone else's hands:
 
-- "Sponsor SOURCED a forbidden operation" (a payment, merge, offer, claimable balance or set_options
-  whose source is the sponsor account);
+- "Sponsor SOURCED a forbidden operation" (since 2026-11-10 an allowlist, not a denylist: the
+  sponsor may source only begin/end sponsoring, a create_account with a zero starting balance, a
+  call into the escrow, a legacy escrow or the CCTP forwarder that moves nothing out of the
+  sponsor, and a TTL extend or restore; a payment, merge, offer, claimable balance, set_options,
+  change_trust, a funded create_account, a liquidity-pool op or any other contract call sourced by
+  the sponsor account pages and halts);
 - "Escrow WASM CHANGED - the contract was upgraded" (the deployed escrow bytecode differs from
   `LUMENDROP_WASM_HASH`).
 

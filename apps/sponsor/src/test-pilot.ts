@@ -31,6 +31,7 @@ import { ipBucket, rateLimitKeys, checkRateLimit } from "./lib/rate-limit.js";
 import { SubmitUnconfirmedError } from "./lib/stellar.js";
 import { resetHaltCache } from "./lib/kill-switch.js";
 import { resetServiceCache } from "./lib/service.js";
+import { STORE_TIMEOUT_MS } from "./lib/store-fetch.js";
 import { handleProofMessage, proofNonce } from "./lib/handles.js";
 import { idForEmail } from "./lib/recovery-otp.js";
 import { putBox } from "./lib/recovery-store.js";
@@ -63,7 +64,7 @@ interface SentMail {
   html?: string;
 }
 function installFakeKv(
-  opts: { failGets?: () => boolean; mailStatus?: () => number; mailThrows?: () => boolean } = {},
+  opts: { failGets?: () => boolean; hang?: () => boolean; mailStatus?: () => number; mailThrows?: () => boolean } = {},
 ) {
   const store = new Map<string, string>();
   const ttls = new Map<string, number>();
@@ -77,7 +78,7 @@ function installFakeKv(
     ttls.delete(key);
     if (ex !== undefined && Number.isFinite(ex)) ttls.set(key, ex);
   };
-  globalThis.fetch = (async (_url: string | URL, init?: { body?: string; method?: string }) => {
+  globalThis.fetch = (async (_url: string | URL, init?: { body?: string; method?: string; signal?: AbortSignal }) => {
     const url = String(_url);
     if (url.startsWith("https://api.resend.com/")) {
       if (opts.mailThrows?.()) throw new Error("mailer unreachable");
@@ -87,6 +88,12 @@ function installFakeKv(
     }
     // A store that stops answering (the approve-link test's outage, the 503 checks), on request.
     if (opts.failGets?.()) return { ok: false, status: 500, json: async () => [] } as unknown as Response;
+    // A store that accepts the request and never answers: settles only when the caller's deadline aborts it.
+    if (opts.hang?.()) {
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")));
+      });
+    }
     const parsed = new URL(url);
     const segs = parsed.pathname.split("/").filter(Boolean).map((p) => decodeURIComponent(p));
     const [cmd, key, member] = segs;
@@ -192,6 +199,10 @@ function mainnetEnv(): void {
   // These sections ask far more often than a person would; the limits are not what they test.
   process.env.RATE_CAP = "1000";
   process.env.ACCOUNT_RATE_CAP = "1000";
+  // The day's mail budget (lib/mail-budget.ts) is not what this suite tests, except in its own block.
+  for (const cap of ["MAIL_DAY_CAP_TOTAL", "MAIL_DAY_CAP_TARGET", "MAIL_DAY_CAP_RECOVERY_OTP", "MAIL_DAY_CAP_PILOT_REQUEST", "MAIL_DAY_CAP_PILOT_INTEREST", "MAIL_DAY_CAP_FEEDBACK"]) {
+    process.env[cap] = "1000";
+  }
   resetServiceCache(); // the service (and its network) is built once per isolate
   resetHaltCache();
 }
@@ -337,6 +348,24 @@ async function main() {
   console.log("[7] fail-closed: no store, no admission");
   clearKv();
   check("with no KV configured, admission is refused", !(await enforcePilot(W)).ok);
+
+  console.log("[7b] fail-closed: a store that accepts the request and never answers is refused at the store deadline");
+  installFakeKv({ hang: () => true });
+  {
+    // Node's AbortSignal.timeout timer does not hold the event loop open (a Worker request does).
+    const keepAlive = setTimeout(() => {}, 10_000);
+    const t0 = Date.now();
+    const hung = await enforcePilot(W);
+    const took = Date.now() - t0;
+    clearTimeout(keepAlive);
+    check("a stalled allowlist read refuses (fail-closed), never admits", !hung.ok);
+    check(
+      "and the reason says the store did not answer in time",
+      /unreadable \(fail-closed\)/.test(hung.reason ?? "") && new RegExp(`did not answer within ${STORE_TIMEOUT_MS} ms`).test(hung.reason ?? ""),
+      hung.reason,
+    );
+    check(`decided at the deadline (${STORE_TIMEOUT_MS} ms), not at the platform's timeout`, took >= STORE_TIMEOUT_MS - 100 && took < STORE_TIMEOUT_MS + 1_500, `${took} ms`);
+  }
 
   console.log("[8] the allowlist is namespaced per network");
   installFakeKv();
@@ -974,6 +1003,35 @@ async function signedOutcomeChecks(): Promise<void> {
     "with exactly one log line naming the wallet and the contact",
     requestLines.length === 1 && requestLines[0] === `[pilot:request] mainnet wallet ${w4.publicKey()} ${THROWS} (mail failed)`,
     requestLines.join(" | "),
+  );
+
+  // The day's mail budget (lib/mail-budget.ts) decides only whether the owner mail is SENT: the ask
+  // is filed and answered 200 pending either way, one log line says it was not mailed, and no marker
+  // is written, so the next ask mails as soon as the budget allows.
+  const wBudget = Keypair.random();
+  const BUDGETED = "budgeted@example.test";
+  const budgetedCode = await pilotCode(mails, BUDGETED);
+  const mailsBeforeBudget = ownerMails().length;
+  process.env.MAIL_DAY_CAP_TARGET = "1"; // the owner's inbox has had its mail for the day already
+  const budgeted = await captureLogs(() => ask(wBudget, BUDGETED, { code: budgetedCode }));
+  process.env.MAIL_DAY_CAP_TARGET = "1000";
+  const budgetLines = budgeted.lines.filter((l) => l.startsWith("[pilot:request]"));
+  check(
+    "over the day's mail budget: the ask is still filed and answers 200 pending (filed:true for a first ask)",
+    budgeted.result.status === 200 && budgeted.result.json.state === "pending" && budgeted.result.json.filed === true,
+    JSON.stringify(budgeted.result.json),
+  );
+  check("no owner mail went out, and no marker says one did", ownerMails().length === mailsBeforeBudget && !store.has(`pilot:mainnet:mailed:${wBudget.publicKey()}`));
+  check(
+    "and exactly one log line names the wallet, the contact and the budget",
+    budgetLines.length === 1 && budgetLines[0] === `[pilot:request] mainnet wallet ${wBudget.publicKey()} ${BUDGETED} (not mailed: the day's target mail budget is spent)`,
+    budgetLines.join(" | "),
+  );
+  const budgetRetry = await askWithCode(wBudget, BUDGETED);
+  check(
+    "with the budget back, the next ask mails the owner at once (filed:true, marker written)",
+    budgetRetry.json.filed === true && store.get(`pilot:mainnet:mailed:${wBudget.publicKey()}`) === "1" && ownerMails().length === mailsBeforeBudget + 1,
+    JSON.stringify(budgetRetry.json),
   );
 
   // Approved with every send used: the ask is for more sends, once a week.

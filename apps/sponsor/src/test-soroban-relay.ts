@@ -113,7 +113,19 @@ function depositArgs(amountStroops: bigint): xdr.ScVal[] {
  * `fee` (the inclusion fee), exactly as an assembled transaction looks.
  */
 function buildInvoke(
-  opts: { fn: string; args: xdr.ScVal[]; contract?: string; fee?: string; network?: string; ops?: number; resourceFee?: number },
+  opts: {
+    fn: string;
+    args: xdr.ScVal[];
+    contract?: string;
+    fee?: string;
+    network?: string;
+    ops?: number;
+    resourceFee?: number;
+    /** Auth entries on the invoke op, as an assembled transaction carries them (section [18]); none by default. */
+    auth?: xdr.SorobanAuthorizationEntry[];
+    /** An op source other than the transaction's (section [18]); unset by default, as the web builds it. */
+    opSource?: string;
+  },
 ): Transaction {
   const network = opts.network ?? Networks.TESTNET;
   const b = new TransactionBuilder(new Account(sender.publicKey(), "123456789"), {
@@ -122,9 +134,55 @@ function buildInvoke(
     ...(opts.resourceFee !== undefined ? { sorobanData: new SorobanDataBuilder().setResourceFee(opts.resourceFee).build() } : {}),
   });
   for (let i = 0; i < (opts.ops ?? 1); i++) {
-    b.addOperation(new Contract(opts.contract ?? CONTRACT).call(opts.fn, ...opts.args));
+    b.addOperation(
+      opts.auth === undefined && opts.opSource === undefined
+        ? new Contract(opts.contract ?? CONTRACT).call(opts.fn, ...opts.args)
+        : Operation.invokeHostFunction({
+            func: xdr.HostFunction.hostFunctionTypeInvokeContract(invokeArgs(opts.contract ?? CONTRACT, opts.fn, opts.args)),
+            auth: opts.auth ?? [],
+            ...(opts.opSource ? { source: opts.opSource } : {}),
+          }),
+    );
   }
   return b.setTimeout(180).build();
+}
+
+/** The call `new Contract(c).call(fn, ...args)` makes, as the value an authorization entry names too. */
+function invokeArgs(contract: string, fn: string, args: xdr.ScVal[]): xdr.InvokeContractArgs {
+  return new xdr.InvokeContractArgs({ contractAddress: Address.fromString(contract).toScAddress(), functionName: fn, args });
+}
+
+function authorizedCall(contract: string, fn: string, args: xdr.ScVal[]): xdr.SorobanAuthorizedInvocation {
+  return new xdr.SorobanAuthorizedInvocation({
+    function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(invokeArgs(contract, fn, args)),
+    subInvocations: [],
+  });
+}
+
+/**
+ * The entry a recording-mode simulation returns for a `require_auth` the transaction's own source
+ * satisfies by signing the envelope: what the web's assembled reclaim and deposit carry.
+ */
+function sourceAuth(contract: string, fn: string, args: xdr.ScVal[]): xdr.SorobanAuthorizationEntry {
+  return new xdr.SorobanAuthorizationEntry({
+    credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
+    rootInvocation: authorizedCall(contract, fn, args),
+  });
+}
+
+/** The entry it returns for an account OTHER than the source: an address credential nobody here has signed. */
+function addressAuth(address: string, contract: string, fn: string, args: xdr.ScVal[]): xdr.SorobanAuthorizationEntry {
+  return new xdr.SorobanAuthorizationEntry({
+    credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+      new xdr.SorobanAddressCredentials({
+        address: Address.fromString(address).toScAddress(),
+        nonce: xdr.Int64.fromString("1"),
+        signatureExpirationLedger: 100,
+        signature: xdr.ScVal.scvVoid(),
+      }),
+    ),
+    rootInvocation: authorizedCall(contract, fn, args),
+  });
 }
 
 interface GuardVerdict {
@@ -141,7 +199,7 @@ interface GuardVerdict {
  * Shapes follow the SDK's parsed types (rpc.Api.*): `_parsed: true` keeps `assembleTransaction`
  * from re-parsing, `transactionData` carries the resource fee it adds to the classic fee, and
  * `result.auth` is what it copies onto the invoke op (lib/esm/rpc/transaction.js in the SDK). */
-type SimPlan = { error: string } | { minResourceFee: number } | { noResourceFee: true };
+type SimPlan = { error: string } | { minResourceFee: number; auth?: xdr.SorobanAuthorizationEntry[] } | { noResourceFee: true };
 /**
  * THROW_UNANSWERED: the send call itself throws the way a dropped connection does (an Error with no
  * HTTP response), so the RPC may have queued the transaction. THROW_REFUSED: it throws the JSON-RPC
@@ -190,7 +248,8 @@ function fakeRpc(
         events: [],
         minResourceFee: String(p.minResourceFee),
         transactionData: new SorobanDataBuilder().setResourceFee(p.minResourceFee),
-        result: { auth: [], retval: xdr.ScVal.scvVoid() },
+        // `auth`: what a recording-mode simulation says the invoke needs (section [18]); none by default.
+        result: { auth: p.auth ?? [], retval: xdr.ScVal.scvVoid() },
       } as unknown as rpc.Api.SimulateTransactionResponse;
     },
     async sendTransaction(tx: Transaction | FeeBumpTransaction) {
@@ -1228,6 +1287,117 @@ async function main() {
         else process.env[k] = v;
       }
       resetServiceCache();
+    }
+  }
+
+  console.log("\n[18] authorization: a sender-signed inner carries exactly the source-account auth the invoke needs, or nothing is paid");
+  {
+    /* The hole (review 2026-11-08, S1): `simulateTransaction` on an inner with NO auth entries runs
+     * in recording mode, where every require_auth passes and the entries it needed are only written
+     * into the answer; the relay then fee-bumped the inner as signed, the ledger refused it INCLUDED,
+     * and the sponsor paid. The fake RPC here answers what a real one records for each shape. */
+    const reclaimArgs = [link()];
+    const mine = sourceAuth(CONTRACT, "reclaim", reclaimArgs);
+    const theirs = addressAuth(stranger.publicKey(), CONTRACT, "reclaim", reclaimArgs);
+    const reclaimWith = (auth?: xdr.SorobanAuthorizationEntry[], opSource?: string) =>
+      buildInvoke({ fn: "reclaim", args: reclaimArgs, fee: "1000000", auth, opSource });
+    const runReclaim = async (tx: Transaction, plan: Parameters<typeof fakeRpc>[0]) => {
+      const sim = depsFor(plan);
+      const rec = recordingSigner();
+      const out = await outcomeOf(() =>
+        relayReclaimHandler(TESTNET, rec.signer, { xdr: tx.toXDR(), senderPublicKey: sender.publicKey() }, sim.deps),
+      );
+      return { ...out, signed: rec.fees.length, sent: sim.calls.send };
+    };
+
+    // The attacker: reclaim(link) for a drop somebody else deposited, no auth entries at all. The
+    // recording-mode simulation passes and names the real sender's ADDRESS credential as needed.
+    const stolen = await runReclaim(reclaimWith(), { sim: { minResourceFee: 500_000, auth: [theirs] } });
+    check(
+      "a reclaim with no auth whose simulation records another account's authorization is refused (the drop is not the source's)",
+      /needs an authorization from an account other than the source/.test(stolen.message),
+      stolen.message,
+    );
+    check("and nothing was signed or sent for it", stolen.signed === 0 && stolen.sent === 0, `${stolen.signed} signed, ${stolen.sent} sent`);
+    const bare = await runReclaim(reclaimWith(), { sim: { minResourceFee: 500_000, auth: [mine] } });
+    check(
+      "a reclaim with no auth whose invoke needs the source's own is refused too: the ledger would need the entry the inner lacks",
+      /carries no authorization but the invoke needs 1/.test(bare.message) && bare.sent === 0,
+      bare.message,
+    );
+    const honest = await runReclaim(reclaimWith([mine]), { sim: { minResourceFee: 500_000, auth: [mine] }, get: ["SUCCESS"] });
+    check("the honest reclaim, carrying the source-account entry its simulation recorded, is relayed", honest.returned?.confirmed === true && honest.sent === 1, honest.message);
+    const echoless = await runReclaim(reclaimWith([mine]), { sim: { minResourceFee: 500_000, auth: [] }, get: ["SUCCESS"] });
+    check("an enforcing simulation that returns no entries still relays an inner carrying source-account auth", echoless.returned?.confirmed === true, echoless.message);
+    const forged = await runReclaim(reclaimWith([theirs]), { sim: { minResourceFee: 500_000, auth: [theirs] } });
+    check("a reclaim carrying another account's unsigned address credential is refused", /not the source account's own/.test(forged.message) && forged.sent === 0, forged.message);
+    const swapped = await runReclaim(reclaimWith([mine]), { sim: { minResourceFee: 500_000, auth: [sourceAuth(CONTRACT, "reclaim", [link()])] } });
+    check("an inner whose entry is not the one the invoke needs is refused", /differs from what the invoke needs/.test(swapped.message) && swapped.sent === 0, swapped.message);
+    const opSourced = await runReclaim(reclaimWith([mine], stranger.publicKey()), { sim: { minResourceFee: 500_000, auth: [mine] } });
+    check("an invoke sourced by another account than the transaction is refused", /sourced by another account than the transaction/.test(opSourced.message) && opSourced.sent === 0, opSourced.message);
+
+    // /v2-deposit has the same shape: `from.require_auth()` is the sender's own, carried as a source-account entry.
+    const depArgs = depositArgs(usdc(5));
+    const depMine = sourceAuth(CONTRACT, "deposit", depArgs);
+    const runDeposit = async (auth: xdr.SorobanAuthorizationEntry[] | undefined, plan: Parameters<typeof fakeRpc>[0]) => {
+      const sim = depsFor(plan);
+      const verdict = await relayDeposit(TESTNET, buildInvoke({ fn: "deposit", args: depArgs, auth }), sender.publicKey(), sim.deps);
+      return { ...verdict, sent: sim.calls.send };
+    };
+    const depBare = await runDeposit(undefined, { sim: { minResourceFee: 500_000, auth: [depMine] } });
+    check("/v2-deposit: an inner with no auth whose invoke needs the sender's is refused", !depBare.accepted && /carries no authorization/.test(depBare.message) && depBare.sent === 0, depBare.message);
+    const depHonest = await runDeposit([depMine], { sim: { minResourceFee: 500_000, auth: [depMine] } });
+    check("/v2-deposit: the honest deposit carrying the sender's own entry reaches the signer", depHonest.accepted, depHonest.message);
+    const depForged = await runDeposit([addressAuth(stranger.publicKey(), CONTRACT, "deposit", depArgs)], { sim: { minResourceFee: 500_000, auth: [] } });
+    check("/v2-deposit: an address credential on the inner is refused", !depForged.accepted && /not the source account's own/.test(depForged.message), depForged.message);
+
+    // /v2-claim: the sponsor assembles the simulation's entries into a transaction IT signs, so any
+    // entry at all is the sponsor being asked to authorize on its own behalf.
+    const claimSim = depsFor({ sim: { minResourceFee: 500_000, auth: [sourceAuth(CONTRACT, "claim", [])] } });
+    const claimOut = await outcomeOf(() => relayClaimHandler(TESTNET, stubSigner, claimInput(), undefined, claimSim.deps));
+    check(
+      "/v2-claim: a simulation that records any authorization is refused before the signer is reached",
+      /authorization the sponsor would have to give/.test(claimOut.message) && claimSim.calls.send === 0,
+      claimOut.message,
+    );
+
+    // Through the Worker's front door: the attacker's shape is a 400 with nothing sent.
+    {
+      const proto = rpc.Server.prototype as unknown as Record<string, unknown>;
+      const saved = { ...Object.fromEntries(["getAccount", "simulateTransaction", "sendTransaction", "getTransaction"].map((k) => [k, proto[k]])) };
+      const f = fakeRpc({ sim: { minResourceFee: 500_000, auth: [theirs] } }).factory("x");
+      let sent = 0;
+      proto.getAccount = f.getAccount;
+      proto.simulateTransaction = f.simulateTransaction;
+      proto.getTransaction = f.getTransaction;
+      proto.sendTransaction = async (tx: Transaction | FeeBumpTransaction) => {
+        sent++;
+        return { status: "PENDING", hash: tx.hash().toString("hex"), latestLedger: 1, latestLedgerCloseTime: 0 };
+      };
+      // A fresh source, so the per-account window the earlier sections spent on `sender` cannot turn this into a 429.
+      const thief = Keypair.random();
+      const inner = new TransactionBuilder(new Account(thief.publicKey(), "7"), { fee: "1000000", networkPassphrase: Networks.TESTNET })
+        .addOperation(new Contract(CONTRACT).call("reclaim", ...reclaimArgs))
+        .setTimeout(180)
+        .build();
+      try {
+        const res = await worker.fetch(
+          new Request("https://sponsor.test/v2-reclaim", {
+            method: "POST",
+            headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.77" },
+            body: JSON.stringify({ xdr: inner.toXDR(), senderPublicKey: thief.publicKey() }),
+          }),
+          { STELLAR_NETWORK: "testnet", SPONSOR_SECRET: sponsor.secret(), USDC_ISSUER: issuer.publicKey(), LUMENDROP_CONTRACT: CONTRACT },
+        );
+        const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        check(
+          "/v2-reclaim through the Worker: the stranger's reclaim is 400 and nothing reached the network",
+          res.status === 400 && sent === 0 && /authorization/.test(String(body.error)),
+          `${res.status} ${JSON.stringify(body)} sent ${sent}`,
+        );
+      } finally {
+        Object.assign(proto, saved);
+      }
     }
   }
 

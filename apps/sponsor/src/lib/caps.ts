@@ -47,6 +47,7 @@
  */
 import { StrKey } from "@stellar/stellar-sdk";
 import { ipBucket, kvConfigFromEnv } from "./rate-limit.js";
+import { storeFetch } from "./store-fetch.js";
 
 /** 1 USDC = 1e7 stroops (Stellar's 7-decimal fixed point). */
 export const USDC_STROOPS = 10_000_000n;
@@ -255,9 +256,13 @@ type KvReply = { result?: unknown; error?: string };
 /** 48h so a bucket outlives its day even with clock skew, then self-cleans. */
 const DAY_KEY_TTL_SECONDS = "172800";
 
-/** One `/pipeline` round trip: the commands in order, the replies in the same order. */
+/**
+ * One `/pipeline` round trip: the commands in order, the replies in the same order. Bounded by the
+ * store deadline (lib/store-fetch.ts), so a store that stalls is a store error here and takes the
+ * fail-open or fail-closed posture each caller documents, instead of holding the request open.
+ */
 async function pipeline(kv: KvConn, cmds: string[][]): Promise<KvReply[]> {
-  const res = await fetch(`${kv.url}/pipeline`, {
+  const res = await storeFetch(`${kv.url}/pipeline`, {
     method: "POST",
     headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
     body: JSON.stringify(cmds),
@@ -1114,7 +1119,7 @@ export interface FeeDayReading {
 /** One `/get/<key>` read as stroops: 0 for a missing key, null for a store that did not answer. */
 async function getStroops(kv: KvConn, key: string): Promise<bigint | null> {
   try {
-    const res = await fetch(`${kv.url}/get/${key}`, { headers: { authorization: `Bearer ${kv.token}` } });
+    const res = await storeFetch(`${kv.url}/get/${key}`, { headers: { authorization: `Bearer ${kv.token}` } });
     if (!res.ok) return null;
     const body = (await res.json()) as { result?: unknown };
     return body.result == null ? 0n : BigInt(String(body.result));

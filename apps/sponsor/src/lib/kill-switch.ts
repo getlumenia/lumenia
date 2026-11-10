@@ -32,6 +32,7 @@
  */
 import type { StellarNetwork } from "./config.js";
 import { kvConfigFromEnv } from "./rate-limit.js";
+import { STORE_TIMEOUT_MS, storeFetch } from "./store-fetch.js";
 
 const CACHE_MS = 5_000;
 
@@ -56,9 +57,11 @@ const inflight = new Map<StellarNetwork, Promise<HaltVerdict>>();
  *  not tell: the watchdog stamps its halt with the time its RUN started, seconds before a read
  *  that left during the run, which then overwrote the halt with "not halted" (a review showed it). */
 let generation = 0;
-/** A halt read that does not answer in time fails open like any other store error, instead of
- *  holding every value request of the isolate behind it. */
-const READ_TIMEOUT_MS = 2_000;
+/** A halt read that does not answer within STORE_TIMEOUT_MS (lib/store-fetch.ts, the deadline every
+ *  store request shares) fails open like any other store error, instead of holding every value
+ *  request of the isolate behind it. The halt WRITE has the same deadline, so a stalled store makes
+ *  the watchdog's auto-halt fail loudly (and be retried next run) rather than hang. */
+export const HALT_READ_TIMEOUT_MS = STORE_TIMEOUT_MS;
 
 /** The network this process serves according to its environment: the halt the request path obeys. */
 function envNetwork(): StellarNetwork {
@@ -75,12 +78,11 @@ export function haltReasonKey(network: StellarNetwork): string {
   return `${haltKey(network)}:reason`;
 }
 
-async function kvPipeline(kv: { url: string; token: string }, commands: string[][], timeoutMs?: number): Promise<unknown[]> {
-  const res = await fetch(`${kv.url}/pipeline`, {
+async function kvPipeline(kv: { url: string; token: string }, commands: string[][]): Promise<unknown[]> {
+  const res = await storeFetch(`${kv.url}/pipeline`, {
     method: "POST",
     headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
     body: JSON.stringify(commands),
-    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   });
   if (!res.ok) throw new Error(`halt store returned ${res.status}`);
   const rows = (await res.json()) as Array<{ result?: unknown; error?: string }>;
@@ -88,17 +90,13 @@ async function kvPipeline(kv: { url: string; token: string }, commands: string[]
   return rows.map((r) => r.result);
 }
 
-/** Read both keys (and the reason) in one round trip; throws on a store error. */
+/** Read both keys (and the reason) in one round trip, within HALT_READ_TIMEOUT_MS; throws on a store error. */
 async function readHalt(kv: { url: string; token: string }, network: StellarNetwork): Promise<HaltVerdict> {
-  const [scoped, legacy, reason] = await kvPipeline(
-    kv,
-    [
-      ["GET", haltKey(network)],
-      ["GET", HALT_KEY],
-      ["GET", haltReasonKey(network)],
-    ],
-    READ_TIMEOUT_MS,
-  );
+  const [scoped, legacy, reason] = await kvPipeline(kv, [
+    ["GET", haltKey(network)],
+    ["GET", HALT_KEY],
+    ["GET", haltReasonKey(network)],
+  ]);
   if (scoped === "1") return { halted: true, source: "store", reason: typeof reason === "string" ? reason : null };
   if (legacy === "1") return { halted: true, source: "store-legacy", reason: null };
   return { halted: false, source: null, reason: null };

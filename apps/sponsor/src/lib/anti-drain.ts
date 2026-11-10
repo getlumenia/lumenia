@@ -17,7 +17,35 @@
  * that fails CI if any allowlist silently widens.
  */
 import { StrKey } from "@stellar/stellar-sdk";
-import type { Asset, Transaction } from "@stellar/stellar-sdk";
+import type { Asset, Transaction, xdr } from "@stellar/stellar-sdk";
+
+/**
+ * The longest reclaim window a sponsored send may carry, in seconds: the 7 days the product builds
+ * (apps/web/lib/send.ts, RECLAIM_AFTER_SECONDS; the extension sends through the same module).
+ *
+ * The /send-link policy pins the claimant SHAPE, not only the count: the recipient claimant is
+ * unconditional and the sender claimant carries `not(beforeRelativeTime(<= this))`. Before the
+ * shape was pinned a sender could name ITS OWN key as the unconditional claimant and put a
+ * far-future predicate on the other, so the sponsor's reserve (about 1 XLM per balance) stayed
+ * locked until the sender chose to act, for the price of the $0.01 minimum the sender gets back.
+ * A shorter window than the product's is still the product's shape; a longer one, an absolute
+ * time, or any other predicate on the sender is not.
+ */
+export const SEND_RECLAIM_AFTER_MAX_SECONDS = 7 * 24 * 60 * 60;
+
+/** The XDR arm name of a parsed claim predicate, or "" for anything that is not one. */
+function predicateName(p: unknown): string {
+  return (p as { switch?(): { name: string } } | undefined)?.switch?.().name ?? "";
+}
+
+/** `not(beforeRelativeTime(seconds))` with 0 < seconds <= max: the sender's reclaim-after shape. */
+function isReclaimAfterPredicate(p: unknown, maxSeconds: number): boolean {
+  if (predicateName(p) !== "claimPredicateNot") return false;
+  const inner = (p as xdr.ClaimPredicate).notPredicate();
+  if (!inner || inner.switch().name !== "claimPredicateBeforeRelativeTime") return false;
+  const seconds = BigInt(inner.relBefore().toString());
+  return seconds > 0n && seconds <= BigInt(maxSeconds);
+}
 
 export const ALLOWED_INNER_OP_TYPES = new Set<string>([
   "beginSponsoringFutureReserves",
@@ -318,6 +346,27 @@ export function validateInnerTransaction(
         // The sender must be a claimant (the reclaim path — money returns to them).
         if (!claimants.some((c) => c.destination === policy.expectedSource)) {
           return { ok: false, reason: "createClaimableBalance missing the sender as a reclaim claimant" };
+        }
+        // WHICH claimant is which (SEND_RECLAIM_AFTER_MAX_SECONDS): the sender's claimant carries the
+        // reclaim-after predicate and every other claimant is unconditional, so the balance can
+        // always be claimed by somebody who is not the sender and the sponsor's reserve never waits
+        // on the sender's goodwill. The two checks above stay as they are: they name the cheaper
+        // mistakes, and the tests pin their words.
+        const senderClaimants = claimants.filter((c) => c.destination === policy.expectedSource);
+        if (senderClaimants.length !== 1) {
+          return { ok: false, reason: `createClaimableBalance names the sender ${senderClaimants.length} times, expected once` };
+        }
+        if (!isReclaimAfterPredicate(senderClaimants[0]!.predicate, SEND_RECLAIM_AFTER_MAX_SECONDS)) {
+          return {
+            ok: false,
+            reason: `createClaimableBalance sender claimant must carry not(beforeRelativeTime(<= ${SEND_RECLAIM_AFTER_MAX_SECONDS}s)), the reclaim-after shape`,
+          };
+        }
+        for (const c of claimants) {
+          if (c.destination === policy.expectedSource) continue;
+          if (predicateName(c.predicate) !== "claimPredicateUnconditional") {
+            return { ok: false, reason: "createClaimableBalance recipient claimant must be unconditional" };
+          }
         }
         break;
       }

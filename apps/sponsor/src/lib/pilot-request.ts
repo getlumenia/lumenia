@@ -41,6 +41,7 @@ import {
   type PilotSource,
   type PilotState,
 } from "./pilot.js";
+import { postResend, reserveMail } from "./mail-budget.js";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -172,6 +173,14 @@ function alsoLine(other: OwnerMail["other"]): string | null {
  * mailer configured, a refusal, a throw) is exactly one log line naming the wallet and the contact,
  * and false. Never throws: a mail must not fail the ask it reports.
  */
+/**
+ * Mail the owner about an ask. True when Resend accepted it; false otherwise, with exactly one log
+ * line naming the wallet and the contact, so the ask is never invisible everywhere. The ask itself
+ * is filed before this runs and is answered the same whether or not the mail went out: the ask is
+ * the record (the owner's `pilot` CLI reads it), the mail a notification. The day's mail budget
+ * (lib/mail-budget.ts) decides only whether the mail is SENT. A mail that did not go out writes no
+ * "mailed recently" marker, so the next ask mails at once.
+ */
 async function mailOwner(m: OwnerMail, origin?: string): Promise<boolean> {
   const to = process.env.OWNER_EMAIL;
   const key = process.env.RESEND_API_KEY;
@@ -180,25 +189,30 @@ async function mailOwner(m: OwnerMail, origin?: string): Promise<boolean> {
     console.log(`[pilot:request] ${network} wallet ${m.pubkey} ${m.email} (no mailer)`);
     return false;
   }
+  const slot = await reserveMail("pilot-request", to);
+  if (!slot.ok) {
+    console.log(`[pilot:request] ${network} wallet ${m.pubkey} ${m.email} (not mailed: the day's ${slot.bound} mail budget is spent)`);
+    return false;
+  }
   try {
     const mail = await composeOwnerMail(m, network, origin);
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({
+    await postResend(
+      key,
+      {
         from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
         to: [to],
         subject: mail.subject,
         text: mail.text,
         html: mail.html,
-      }),
-    });
-    if (res.ok) return true;
+      },
+      "pilot:request",
+      { quiet: true }, // the one line below is this mail's whole log
+    );
+    return true;
   } catch {
-    /* reported by the one line below */
+    console.log(`[pilot:request] ${network} wallet ${m.pubkey} ${m.email} (mail failed)`);
+    return false;
   }
-  console.log(`[pilot:request] ${network} wallet ${m.pubkey} ${m.email} (mail failed)`);
-  return false;
 }
 
 async function composeOwnerMail(
@@ -426,25 +440,38 @@ export async function notifyPilotInterest(email: string, origin?: string): Promi
   const network = process.env.STELLAR_NETWORK ?? "testnet";
   if (!to || !key) {
     // Visible in `wrangler tail` even without a mailer, so the ask is never invisible everywhere.
-    console.log(`[pilot:interest] ${clean} (${network}) — no OWNER_EMAIL/RESEND_API_KEY`);
+    console.log(`[pilot:interest] ${clean} (${network}) - no OWNER_EMAIL/RESEND_API_KEY`);
     return;
   }
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify({
-      from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
-      to: [to],
-      subject: `Real-money interest — ${clean} (${network})`,
-      text:
-        `Somebody asked for real money from onboarding, with no account yet.\n\n` +
-        `Contact: ${clean}\n` +
-        `Where:   ${origin ?? "unknown"}\n\n` +
-        `There is no wallet to approve — they have not opened an account. When they do, they can ` +
-        `ask from /pilot and that request will carry their address.\n`,
-    }),
-  });
-  if (!res.ok) console.log(`[pilot:interest] resend ${res.status} — ${clean}`);
+  /* Bounded by the day's mail budget (lib/mail-budget.ts), and still best-effort: this runs after
+   * the response (worker.ts, waitUntil) because the ask is recorded on the list first, so a spent
+   * budget or a refusal from Resend is one log line here, never an answer. The list is the record;
+   * the owner's `pilot` CLI reads it. */
+  const slot = await reserveMail("pilot-interest", to);
+  if (!slot.ok) {
+    console.log(`[pilot:interest] not mailed (the day's ${slot.bound} mail budget is spent); the ask is on the list: ${clean}`);
+    return;
+  }
+  try {
+    await postResend(
+      key,
+      {
+        from: process.env.RESEND_FROM ?? "Lumenia <onboarding@resend.dev>",
+        to: [to],
+        subject: `Real-money interest - ${clean} (${network})`,
+        text:
+          `Somebody asked for real money from onboarding, with no account yet.\n\n` +
+          `Contact: ${clean}\n` +
+          `Where:   ${origin ?? "unknown"}\n\n` +
+          `There is no wallet to approve: they have not opened an account. When they do, they can ` +
+          `ask from /pilot and that request will carry their address.\n`,
+      },
+      "pilot:interest",
+      { quiet: true },
+    );
+  } catch {
+    console.log(`[pilot:interest] mail failed; the ask is on the list: ${clean}`);
+  }
 }
 
 /**

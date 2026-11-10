@@ -17,10 +17,11 @@
  * ============================================================================
  */
 import { Keypair } from "@stellar/stellar-sdk";
-import worker from "./worker.js";
+import worker, { lookupCacheStatsForTests, resetLookupCache } from "./worker.js";
 import { handleProofMessage, proofNonce } from "./lib/handles.js";
 import { idForEmail } from "./lib/recovery-otp.js";
-import { identityId } from "./lib/identity-links.js";
+import { identityId, OAUTH_PROVIDERS } from "./lib/identity-links.js";
+import { __resetMailBudgetForTests } from "./lib/mail-budget.js";
 
 // Never a real store or a real mailer, whatever the shell exports (see the note above).
 for (const k of ["KV_REST_API_URL", "KV_REST_API_TOKEN", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "RESEND_API_KEY"]) {
@@ -332,6 +333,222 @@ async function main(): Promise<void> {
   ok("the account's own signature over detach:<id> disconnects it", detached.status === 200 && detached.json.ok === true, JSON.stringify(detached.json));
   const unlinked = await call("POST", "/identity-check", { proof: await emailProof(FRESH) });
   ok("and the email leads nowhere now", unlinked.status === 200 && unlinked.json.taken === false);
+
+  /* ------------------------- lookups: metered, validated, cached ------------------------- */
+  console.log("\n[lookups] GET /handle, /handle-of and /federation are metered, judged before the store, and cached");
+  {
+    const from = (ip: string, path: string) => worker.fetch(new Request(`${BASE}${path}`, { headers: { "cf-connecting-ip": ip } }), ENV);
+    resetLookupCache();
+    const first = await call("GET", "/handle?name=meric");
+    const second = await call("GET", "/handle?name=meric");
+    const stats = lookupCacheStatsForTests();
+    ok("two lookups of one name inside the window: one store read, one cache hit", stats.misses === 1 && stats.hits === 1, JSON.stringify(stats));
+    ok("and the cached answer is the same answer", first.status === second.status && JSON.stringify(first.json) === JSON.stringify(second.json));
+    const cem = Keypair.random();
+    const before = await call("GET", "/handle?name=zeynep");
+    const written = await call("POST", "/handle-claim", signed(cem, "claim", "zeynep"));
+    const after = await call("GET", "/handle?name=zeynep");
+    ok(
+      "a name write drops the cache: the lookup right after it sees the new name",
+      before.status === 404 && written.status === 200 && after.status === 200 && after.json.address === cem.publicKey(),
+      `${before.status} ${written.status} ${after.status}`,
+    );
+    const badOf = await call("GET", "/handle-of?pubkey=not-a-key");
+    ok("/handle-of with a malformed pubkey is 400 before any store read", badOf.status === 400);
+    const badShape = await call("GET", "/handle?name=supp0rt");
+    ok("/handle with a reserved lookalike answers from the shape alone", badShape.status === 404 && badShape.json.available === false && /reserved/.test(String(badShape.json.error)));
+    const badFed = await call("GET", "/federation?q=%2A&type=name");
+    ok("/federation with a malformed address is the SEP-0002 404 detail", badFed.status === 404 && badFed.json.detail === "invalid federation address");
+    const badFedId = await call("GET", "/federation?q=junk&type=id");
+    ok("/federation type=id with a malformed account is not found, read nowhere", badFedId.status === 404 && badFedId.json.detail === "not found");
+    const badType = await call("GET", "/federation?q=x&type=txid");
+    ok("/federation with an unsupported type says so", badType.status === 404 && /unsupported/.test(String(badType.json.detail)));
+    const provider = OAUTH_PROVIDERS[0]!;
+    const badState = await worker.fetch(new Request(`${BASE}/oauth/${provider}/callback?code=abc&state=not-hex`), ENV);
+    ok("the OAuth callback with a malformed state is 400 before the store", badState.status === 400);
+    const noCode = await worker.fetch(new Request(`${BASE}/oauth/${provider}/callback?state=${"a".repeat(32)}`), ENV);
+    ok("and with no code", noCode.status === 400);
+    const badProvider = await worker.fetch(new Request(`${BASE}/oauth/nobody/callback?code=abc&state=${"a".repeat(32)}`), ENV);
+    ok("and for an unknown provider", badProvider.status === 400);
+
+    // The limiter: its own bucket (`lookup:`), so a lookup storm never spends a value window and a
+    // value window never refuses a lookup.
+    const savedCap = process.env.RATE_CAP;
+    process.env.RATE_CAP = "3";
+    const statuses: number[] = [];
+    try {
+      for (let i = 0; i < 4; i++) statuses.push((await from("198.51.100.42", "/handle?name=meric")).status);
+    } finally {
+      if (savedCap === undefined) delete process.env.RATE_CAP;
+      else process.env.RATE_CAP = savedCap;
+    }
+    ok("the fourth lookup from one address inside a 3-a-window cap is 429", statuses.slice(0, 3).every((s) => s !== 429) && statuses[3] === 429, statuses.join(","));
+    const otherBucket = await worker.fetch(
+      new Request(`${BASE}/handle-claim`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "cf-connecting-ip": "198.51.100.42" },
+        body: JSON.stringify({ ...signed(Keypair.random(), "claim", "nobody1"), proof: "bad" }),
+      }),
+      ENV,
+    );
+    ok("and the same address's name WRITE is in another bucket (refused for its proof, not throttled)", otherBucket.status === 409, String(otherBucket.status));
+  }
+
+  /* ------------------------- keys: judged before they key anything ------------------------- */
+  console.log("\n[keys] a malformed account key is 400 before it becomes a limiter bucket, a pilot slot or a store key");
+  {
+    const huge = "G" + "A".repeat(10_000);
+    const claimJunk = await call("POST", "/handle-claim", { ...signed(alice, "claim", "x"), pubkey: huge });
+    ok("/handle-claim with a 10 KB pubkey is 400", claimJunk.status === 400, String(claimJunk.json.error));
+    ok("/handle-release too", (await call("POST", "/handle-release", { name: "x", pubkey: "junk", ts: 1, nonce: "n", proof: "p" })).status === 400);
+    ok("/identity-links with a junk pubkey is 400", (await call("POST", "/identity-links", { pubkey: "junk", ts: 1, nonce: "n", proof: "p" })).status === 400);
+    ok("/identity-detach-mine too", (await call("POST", "/identity-detach-mine", { pubkey: "junk", provider: "email", ts: 1, nonce: "n", proof: "p" })).status === 400);
+    ok("/recovery-alias-fetch with a junk id is 400", (await call("POST", "/recovery-alias-fetch", { id: "junk" })).status === 400);
+    const valueRoutes: Array<[string, Record<string, unknown>]> = [
+      ["/create-account", { recipientPublicKey: huge }],
+      ["/feebump", { xdr: "AAAA", recipientPublicKey: huge, balanceId: "00" }],
+      ["/send-link", { xdr: "AAAA", senderPublicKey: huge }],
+      ["/payout", { xdr: "AAAA", senderPublicKey: huge, destination: alice.publicKey(), amount: "1" }],
+      ["/sweep", { xdr: "AAAA", throwawayPublicKey: huge, homePublicKey: alice.publicKey(), amount: "1" }],
+      ["/v2-claim", { method: "claim", linkHex: "ab".repeat(32), payout: huge, sigHex: "cd".repeat(64) }],
+      ["/v2-deposit", { xdr: "AAAA", senderPublicKey: huge }],
+      ["/v2-reclaim", { xdr: "AAAA", senderPublicKey: huge }],
+    ];
+    for (const [route, body] of valueRoutes) {
+      const r = await call("POST", route, body);
+      ok(`${route} with a 10 KB key is 400 naming the field`, r.status === 400 && /must be (a )?G/.test(String(r.json.error)), `${r.status} ${String(r.json.error).slice(0, 60)}`);
+    }
+    const contractPayout = await call("POST", "/v2-claim", {
+      method: "claim",
+      linkHex: "ab".repeat(32),
+      payout: "CAMCI5VPRLQUL6H4QKLZ6X7ASLVCEYBYWS7N3QG7JVOA25HCY2TN3HP3",
+      sigHex: "cd".repeat(64),
+    });
+    ok("/v2-claim still takes a C... contract as the payout (refused later, not for its shape)", contractPayout.status !== 400 || !/must be a G/.test(String(contractPayout.json.error)), `${contractPayout.status} ${String(contractPayout.json.error).slice(0, 60)}`);
+  }
+
+  /* ------------------------- mail: budgeted, and never a silent 200 ------------------------- */
+  console.log("\n[mail] mail is budgeted per day, per route and per inbox, and a refusal from Resend is not a 200");
+  {
+    const realFetch = globalThis.fetch;
+    const resend = { calls: 0, refuse: false };
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const u = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      if (u.startsWith("https://api.resend.com/")) {
+        resend.calls++;
+        return new Response(JSON.stringify(resend.refuse ? { message: "rate limited" } : { id: "mail_1" }), {
+          status: resend.refuse ? 429 : 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
+    const names = ["RESEND_API_KEY", "OWNER_EMAIL", "FEEDBACK_NOTIFY_TO", "MAIL_DAY_CAP_TARGET", "MAIL_DAY_CAP_RECOVERY_OTP", "MAIL_DAY_CAP_FEEDBACK", "MAIL_DAY_CAP_PILOT_REQUEST"] as const;
+    const savedEnv = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+    process.env.RESEND_API_KEY = "re_test_never_sent";
+    process.env.OWNER_EMAIL = "owner@example.com";
+    process.env.FEEDBACK_NOTIFY_TO = "owner@example.com";
+    process.env.MAIL_DAY_CAP_TARGET = "2";
+    process.env.MAIL_DAY_CAP_RECOVERY_OTP = "5";
+    process.env.MAIL_DAY_CAP_FEEDBACK = "1";
+    process.env.MAIL_DAY_CAP_PILOT_REQUEST = "1";
+    __resetMailBudgetForTests();
+    try {
+      const victim = "victim@example.com";
+      const r1 = await call("POST", "/recovery-otp", { email: victim });
+      const r2 = await call("POST", "/recovery-otp", { email: "  Victim@Example.com " });
+      const r3 = await call("POST", "/recovery-otp", { email: victim });
+      ok("two codes to one inbox go out (the address is normalized before it is counted)", r1.status === 200 && r2.status === 200 && resend.calls === 2, `${r1.status} ${r2.status} ${resend.calls}`);
+      ok("the third is 429 with the mail-budget code, and no mail", r3.status === 429 && r3.json.code === "mail-budget" && resend.calls === 2, `${r3.status} ${JSON.stringify(r3.json)}`);
+      const other = await call("POST", "/recovery-otp", { email: "other@example.com" });
+      ok("another inbox is still served (the route's share is not spent)", other.status === 200 && resend.calls === 3, `${other.status} ${resend.calls}`);
+      resend.refuse = true;
+      const refused = await call("POST", "/recovery-otp", { email: "third@example.com" });
+      ok("a code Resend refuses is 503 with the mail-unavailable code, never a 200", refused.status === 503 && refused.json.code === "mail-unavailable", `${refused.status} ${JSON.stringify(refused.json)}`);
+      resend.refuse = false;
+
+      /* The owner-notification routes: the record is kept and the route answers as it always did;
+       * the budget decides only whether the mail is SENT, and a skipped or refused mail is one log
+       * line (the counter of calls that reached the Resend stub is what shows it). */
+      const quietly = async <T,>(run: () => Promise<T>): Promise<{ result: T; lines: string[] }> => {
+        const lines: string[] = [];
+        const real = console.log;
+        console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+        try {
+          return { result: await run(), lines };
+        } finally {
+          console.log = real;
+        }
+      };
+      __resetMailBudgetForTests();
+      resend.calls = 0;
+      const f1 = await call("POST", "/feedback", { category: "site", message: "the button is blue" });
+      const f2 = await quietly(() => call("POST", "/feedback", { category: "site", message: "the button is still blue" }));
+      ok(
+        "one report mails the owner; the route's second of the day is still 200 and stored, and mails nothing",
+        f1.status === 200 && f2.result.status === 200 && resend.calls === 1 && f2.lines.some((l) => /^\[feedback:notify\] not mailed: the day's route mail budget is spent/.test(l)),
+        `${f1.status} ${f2.result.status} ${resend.calls} | ${f2.lines.join(" | ")}`,
+      );
+      __resetMailBudgetForTests();
+      resend.refuse = true;
+      const f3 = await quietly(() => call("POST", "/feedback", { category: "site", message: "the owner reads the list for this one" }));
+      ok(
+        "a report Resend refuses is still stored and 200; the refusal is one log line with the status",
+        f3.result.status === 200 && f3.lines.filter((l) => l.startsWith("[feedback:notify]")).length === 1 && f3.lines.some((l) => /resend returned 429/.test(l)),
+        `${f3.result.status} | ${f3.lines.join(" | ")}`,
+      );
+      resend.refuse = false;
+
+      __resetMailBudgetForTests();
+      resend.calls = 0;
+      const p1 = await call("POST", "/pilot-request", { pubkey: Keypair.random().publicKey(), email: "ask1@example.com" });
+      const w2 = Keypair.random().publicKey();
+      const p2 = await quietly(() => call("POST", "/pilot-request", { pubkey: w2, email: "ask2@example.com" }));
+      const p2lines = p2.lines.filter((l) => l.startsWith("[pilot:request]"));
+      ok(
+        "the first pilot ask mails the owner; the route's second of the day is filed and 200 with no mail",
+        p1.status === 200 && p2.result.status === 200 && p2.result.json.ok === true && resend.calls === 1,
+        `${p1.status} ${p2.result.status} ${resend.calls}`,
+      );
+      ok(
+        "and exactly one log line names the wallet, the contact and the budget",
+        p2lines.length === 1 && p2lines[0] === `[pilot:request] testnet wallet ${w2} ask2@example.com (not mailed: the day's route mail budget is spent)`,
+        p2lines.join(" | "),
+      );
+      __resetMailBudgetForTests();
+      resend.refuse = true;
+      const w3 = Keypair.random().publicKey();
+      const p3 = await quietly(() => call("POST", "/pilot-request", { pubkey: w3, email: "ask3@example.com" }));
+      const p3lines = p3.lines.filter((l) => l.startsWith("[pilot:request]"));
+      ok(
+        "a pilot ask whose owner mail Resend refuses is still filed and 200, with the one '(mail failed)' line",
+        p3.result.status === 200 && p3lines.length === 1 && p3lines[0] === `[pilot:request] testnet wallet ${w3} ask3@example.com (mail failed)`,
+        `${p3.result.status} | ${p3lines.join(" | ")}`,
+      );
+      resend.refuse = false;
+
+      __resetMailBudgetForTests();
+      resend.calls = 0;
+      process.env.MAIL_DAY_CAP_FEEDBACK = "5";
+      process.env.MAIL_DAY_CAP_PILOT_REQUEST = "5";
+      const a = await call("POST", "/feedback", { category: "site", message: "one" });
+      const b = await call("POST", "/pilot-request", { pubkey: Keypair.random().publicKey(), email: "ask4@example.com" });
+      const c = await quietly(() => call("POST", "/feedback", { category: "site", message: "three" }));
+      ok(
+        "the owner's inbox is one budget across routes: a report and a pilot ask spend it, the third notification is skipped",
+        a.status === 200 && b.status === 200 && c.result.status === 200 && resend.calls === 2 && c.lines.some((l) => /target mail budget is spent/.test(l)),
+        `${a.status} ${b.status} ${c.result.status} ${resend.calls}`,
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+      __resetMailBudgetForTests();
+      for (const n of names) {
+        const v = savedEnv[n];
+        if (v === undefined) delete process.env[n];
+        else process.env[n] = v;
+      }
+    }
+  }
 
   console.log(`\n${failed === 0 ? "✅" : "❌"} IDENTITY ROUTE TESTS ${passed}/${passed + failed}`);
   if (failed > 0) process.exit(1);

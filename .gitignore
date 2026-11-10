@@ -72,6 +72,9 @@ apps/sponsor/public/
 # the adversarial run's and the rehearsal's reports and throwaway keys (seeds that hold test funds),
 # at any depth for the same reason
 **/adversarial-out/
+# the mainnet demo's sender key and every demo link's secret (REAL money), written before each
+# deposit is posted (apps/sponsor/src/mainnet-demo.ts); same depth rule
+**/mainnet-demo-out/
 **/.wrangler/
 
 # Heavy 3D GLB models (~60M) used ONLY by the internal /brand-kit workspace, which

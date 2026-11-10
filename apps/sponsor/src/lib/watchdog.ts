@@ -8,9 +8,11 @@
  *   1. **Sponsor balance floor** — the float is meant to be small and topped up on a schedule.
  *      Falling under the floor means either the top-up stopped or something is spending faster
  *      than expected.
- *   2. **Sponsor sourcing value** — the sponsor creates accounts and pays fees. It must NEVER
- *      source a payment, merge its account, or rewrite its own signers. One of those in the
- *      history is the signature of a stolen key, and it is the alert that should wake someone up.
+ *   2. **Sponsor sourcing value**: the sponsor opens 0-XLM accounts, sponsors their reserves,
+ *      relays escrow calls and pays fees and rent, and that short ALLOWLIST (`SPONSOR_ALLOWED_OPS`)
+ *      is all it may source. A payment, a merge, a SetOptions, a funded create_account or a call
+ *      into any other contract in its history is the signature of a stolen key, and it is the
+ *      alert that should wake someone up.
  *   3. **Escrow governance calls** — pause/unpause/upgrade/ownership are rare and human-initiated.
  *      An unexpected one means the owner key is compromised.
  *
@@ -32,43 +34,143 @@ import { Address, scValToNative, xdr } from "@stellar/stellar-sdk";
 import type { SponsorConfig, StellarNetwork } from "./config.js";
 import { kvConfigFromEnv } from "./rate-limit.js";
 import { feeBudgetFromEnv, readSponsorFeeDay, stroopsToXlm } from "./caps.js";
+import { CCTP_FORWARDERS } from "./cctp-relay.js";
 import { haltKey, haltReasonKey, setHalt, storeHaltIsSet } from "./kill-switch.js";
+import { storeFetch } from "./store-fetch.js";
 
 /**
- * Operations the sponsor must never be the source of. Most are a way to move value out; the
- * sponsor legitimately sources only begin-sponsoring, createAccount and Soroban invocations
- * (see anti-drain.ts `SPONSOR_SOURCEABLE_OPS`). `set_options` moves nothing by itself — it is
- * how a stolen key adds a signer or drops a threshold BEFORE the op that does, and catching the
- * preparation is the only chance to catch it in time.
+ * What the sponsor legitimately SOURCES. Every other operation it sources is the signature of a
+ * stolen key and trips the auto-halt.
+ *
+ * Until 2026-11-10 this was a DENYLIST of nine operation types, and a denylist is a list of the
+ * thefts somebody thought of: a sponsor-sourced `create_account` with a positive starting balance,
+ * an `invoke_host_function` moving XLM or USDC through a Stellar Asset Contract, a `change_trust`
+ * or a `liquidity_pool_deposit` never paged, and with the hot key signing on both Workers this scan
+ * is the only theft detection there is. The allowlist is derived from the code that builds
+ * sponsor-sourced operations (lib/create-account.ts, lib/soroban-relay.ts, lib/cctp-relay.ts, and
+ * anti-drain.ts `SPONSOR_SOURCEABLE_OPS` for the client-built shapes) and was checked against every
+ * sponsor-sourced operation Horizon lists for both accounts on 2026-11-10: mainnet GBLBAK...YZZ2
+ * sourced 85 begin_sponsoring_future_reserves, 78 create_account (every one at 0 XLM) and 5
+ * invoke_host_function (all `claim`/`claim_share` on the escrow); testnet GDQFGI...XDLL sourced
+ * 984, 925 (every one at 0 XLM) and 19 (all `claim`, on the current and the three legacy escrows);
+ * nothing else, ever. So the halt cannot fire on anything the sponsor has actually done.
+ *
+ *   - begin_sponsoring_future_reserves and end_sponsoring_future_reserves: the sandwich around every
+ *     onboarding. The sponsor sources `begin`; `end` is recipient-sourced today and moves nothing
+ *     whoever sources it, so it is allowed rather than made an outage;
+ *   - create_account, ONLY with a starting balance of exactly 0: the sponsored 0-XLM account
+ *     (anti-drain.ts `maxStartingBalance` defaults to "0" and nothing overrides it). Any other
+ *     balance is XLM leaving the sponsor;
+ *   - invoke_host_function, ONLY an InvokeContract of the escrow, a superseded escrow or the CCTP
+ *     forwarder, and ONLY when no balance change names the sponsor as the payer: the relayed v2
+ *     claims and the CCTP mint when no channel was free. A call into any other contract, the XLM
+ *     or USDC Stellar Asset Contract above all, is value leaving the sponsor;
+ *   - extend_footprint_ttl and restore_footprint: rent. The state-expiry runbook lets any funded
+ *     key pay it, the sponsor hot key included, and both move nothing.
+ *
+ * `set_options` stays out on purpose, as before: it is how a stolen key adds a signer or drops a
+ * threshold BEFORE the operation that moves value, and catching the preparation is the only chance
+ * to catch it in time; the KMS cutover's and every rotation's SetOptions trip this by design
+ * (ops/RUNBOOK_SPONSOR_KEY.md section 4).
  */
-const FORBIDDEN_SOURCE_OPS = new Set([
-  "payment",
-  "path_payment_strict_send",
-  "path_payment_strict_receive",
-  "account_merge",
-  "manage_sell_offer",
-  "manage_buy_offer",
-  "create_passive_sell_offer",
-  "create_claimable_balance",
-  "set_options",
+export const SPONSOR_ALLOWED_OPS = new Set([
+  "begin_sponsoring_future_reserves",
+  "end_sponsoring_future_reserves",
+  "create_account",
+  "invoke_host_function",
+  "extend_footprint_ttl",
+  "restore_footprint",
 ]);
 
+/** Horizon's `function` of an invoke_host_function that calls a contract (not an upload or a create). */
+const INVOKE_CONTRACT = "HostFunctionTypeHostFunctionTypeInvokeContract";
+
+/** The contracts the sponsor may invoke: the escrow, its superseded ids (exit only) and the CCTP forwarder. */
+function allowedContracts(config: SponsorConfig): Set<string> {
+  return new Set([
+    ...(config.lumendropContract ? [config.lumendropContract] : []),
+    ...config.lumendropLegacyContracts,
+    ...CCTP_FORWARDERS,
+  ]);
+}
+
+/** The contract an invoke_host_function record calls (its first parameter, an Address); null when unreadable. */
+function invokedContract(op: Record<string, unknown>): string | null {
+  const params = op.parameters;
+  if (!Array.isArray(params) || params.length === 0) return null;
+  const first = params[0] as { value?: unknown } | null;
+  if (typeof first?.value !== "string") return null;
+  try {
+    return Address.fromScVal(xdr.ScVal.fromXDR(first.value, "base64")).toString();
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Escrow event names that are always worth a page. These are the DECODED first topics, which is
- * what OpenZeppelin's Ownable/Pausable modules emit — `paused`/`unpaused` for the pause switch,
- * and the ownership-transfer events. Note that `upgrade` emits NOTHING (OZ's implementation just
- * calls `update_current_contract_wasm`), which is why an upgrade is detected by watching the
- * deployed wasm hash instead — see `checkWasmHash`.
+ * Why a sponsor-sourced Horizon operation record is forbidden, as a phrase for the page, or null
+ * when it is one of the allowed shapes. Strict: a shape that cannot be read (a create_account
+ * without a starting balance, an invocation whose contract does not decode) is forbidden, because
+ * a theft signal is never downgraded on a missing field. Exported so the offline suite can prove
+ * every allowed shape quiet and every other one loud.
+ */
+export function forbiddenSponsorOp(op: Record<string, unknown>, config: SponsorConfig, sponsorPublicKey: string): string | null {
+  const type = String(op.type ?? "");
+  if (!SPONSOR_ALLOWED_OPS.has(type)) return `a ${type || "(typeless operation)"}: the sponsor never sources one`;
+  if (type === "create_account") {
+    const raw = typeof op.starting_balance === "string" ? op.starting_balance : "";
+    const balance = Number.parseFloat(raw);
+    if (!Number.isFinite(balance) || balance !== 0) {
+      return `a create_account with a starting balance of ${raw || "(unreadable)"} XLM: the sponsor funds accounts with exactly 0 XLM`;
+    }
+    return null;
+  }
+  if (type === "invoke_host_function") {
+    const fn = String(op.function ?? "");
+    if (fn !== INVOKE_CONTRACT) {
+      return `an invoke_host_function of kind ${fn || "(unreadable)"}: the sponsor only calls contracts, it never uploads or creates one`;
+    }
+    const contract = invokedContract(op);
+    if (!contract || !allowedContracts(config).has(contract)) {
+      return `an invoke_host_function on ${contract ?? "an unreadable contract"}: the sponsor only calls the escrow, a superseded escrow or the CCTP forwarder`;
+    }
+    const changes = Array.isArray(op.asset_balance_changes)
+      ? (op.asset_balance_changes as Array<{ from?: unknown; to?: unknown; amount?: unknown; asset_code?: unknown; asset_type?: unknown }>)
+      : [];
+    const paid = changes.find((c) => c.from === sponsorPublicKey);
+    if (paid) {
+      const asset = typeof paid.asset_code === "string" ? paid.asset_code : paid.asset_type === "native" ? "XLM" : "an asset";
+      return `an invoke_host_function on ${contract} that moved ${String(paid.amount ?? "?")} ${asset} out of the sponsor to ${String(paid.to ?? "?")}: the sponsor's own balance never pays a contract call`;
+    }
+    return null;
+  }
+  return null;
+}
+
+/** An owner has scheduled new bytecode: the one governance event that pages at the highest severity. */
+export const UPGRADE_PROPOSED_EVENT = "upgrade_proposed";
+
+/**
+ * Escrow event names that are always worth a page: the DECODED first topics of the events the
+ * OpenZeppelin modules the contract uses actually emit, read from the vendored crates
+ * (stellar-access 0.7.2 `ownable`, stellar-contract-utils 0.7.2 `pausable`; a `#[contractevent]`
+ * without `topics` is named after its struct in snake case), plus the three the timelock being
+ * added to contracts/lumen-drop emits. Until 2026-11-10 this set named ownership_transfer_started,
+ * owner_set, role_granted and role_revoked, none of which exists in those crates, so the START of an
+ * ownership transfer went unpaged. OZ's `upgrade` itself emits nothing (it calls
+ * `update_current_contract_wasm`), which is why an upgrade is also detected by watching the
+ * deployed wasm hash, `checkWasmHash`; once the timelock lands, `upgraded` names it and the hash
+ * check confirms it.
  */
 const GOVERNANCE_EVENTS = new Set([
-  "paused",
-  "unpaused",
-  "ownership_transfer_started",
-  "ownership_transfer_completed",
-  "ownership_renounced",
-  "owner_set",
-  "role_granted",
-  "role_revoked",
+  "paused", // Paused {}
+  "unpaused", // Unpaused {}
+  "ownership_transfer", // OwnershipTransfer { old_owner, new_owner, live_until_ledger }: the transfer STARTED
+  "ownership_transfer_completed", // OwnershipTransferCompleted { new_owner }
+  "ownership_renounced", // OwnershipRenounced { old_owner }
+  UPGRADE_PROPOSED_EVENT, // the timelock: new bytecode scheduled, installable after the 7-day delay
+  "upgrade_cancelled", // the timelock: the pending bytecode was withdrawn
+  "upgraded", // the timelock: the pending bytecode was installed
 ]);
 
 /** Decode a base64 XDR topic into its native value (topics are ScVals, never plain strings). */
@@ -81,8 +183,48 @@ function decodeTopic(t: string): string {
   }
 }
 
+/** A base64 ScVal decoded to its native value; `undefined` when it does not decode (a void decodes to null). */
+function nativeOf(b64: string): unknown {
+  try {
+    return scValToNative(xdr.ScVal.fromXDR(b64, "base64"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** A decoded ScVal as a reader can use it: bytes as hex, integers as digits, addresses as strings, maps as JSON. */
+function describeNative(v: unknown): string {
+  if (v === undefined) return "(undecoded)";
+  if (v === null) return "(void)";
+  if (v instanceof Uint8Array) return Buffer.from(v).toString("hex");
+  if (typeof v === "bigint") return v.toString();
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v, (_k, x: unknown) => (typeof x === "bigint" ? x.toString() : x instanceof Uint8Array ? Buffer.from(x).toString("hex") : x));
+  } catch {
+    return "(undecoded)";
+  }
+}
+
+function describeScVal(b64: string): string {
+  return describeNative(nativeOf(b64));
+}
+
+/**
+ * The timelock's `not_before` out of an upgrade_proposed event's data (a map `{not_before: u64}`,
+ * ledger seconds), as digits and as a date; null when the data carries no readable one.
+ */
+function notBeforeOf(data: unknown): { seconds: string; iso: string } | null {
+  if (!data || typeof data !== "object") return null;
+  const raw = (data as { not_before?: unknown }).not_before;
+  const n = typeof raw === "bigint" ? raw : typeof raw === "number" && Number.isFinite(raw) ? BigInt(Math.trunc(raw)) : null;
+  if (n === null || n < 0n || n > 253_402_300_799n) return null; // past year 9999: not a timestamp
+  return { seconds: n.toString(), iso: new Date(Number(n) * 1000).toISOString() };
+}
+
 export interface Alert {
-  severity: "page" | "info";
+  /** `critical` is a page that is mailed first with a CRITICAL subject; `page` is mailed; `info` is logged only. */
+  severity: "critical" | "page" | "info";
   title: string;
   detail: string;
 }
@@ -232,7 +374,7 @@ async function kvRead(key: string): Promise<KvRead> {
   const kv = kvConfigFromEnv();
   if (!kv) return { ok: true, value: null };
   try {
-    const res = await fetch(`${kv.url}/get/${key}`, { headers: { authorization: `Bearer ${kv.token}` } });
+    const res = await storeFetch(`${kv.url}/get/${key}`, { headers: { authorization: `Bearer ${kv.token}` } });
     if (!res.ok) return { ok: false, error: `the store answered ${res.status}` };
     const body = (await res.json()) as { result?: unknown; error?: string };
     if (body.error) return { ok: false, error: body.error };
@@ -253,7 +395,7 @@ async function kvSet(key: string, value: string): Promise<boolean> {
   const kv = kvConfigFromEnv();
   if (!kv) return false;
   try {
-    const res = await fetch(`${kv.url}/set/${key}/${encodeURIComponent(value)}`, {
+    const res = await storeFetch(`${kv.url}/set/${key}/${encodeURIComponent(value)}`, {
       headers: { authorization: `Bearer ${kv.token}` },
     });
     return res.ok;
@@ -261,6 +403,48 @@ async function kvSet(key: string, value: string): Promise<boolean> {
     /* a cursor we fail to persist just means the next run re-scans: never fatal */
     return false;
   }
+}
+
+/**
+ * A read the run needed (a scan cursor, the wasm pin) that the store could not answer. The check
+ * that needed it is SKIPPED for the run, never restarted from scratch, and the scheduled run folds
+ * every such skip into one `STORE_UNAVAILABLE_TITLE` line (see `runWatchdog`) instead of paging each
+ * check at once: during a store outage the cooldown cannot be read or written either, so each check
+ * paging on its own mailed about eight times an hour across the two Workers and spent the Resend
+ * quota the theft and float pages need.
+ */
+export class StoreUnavailableError extends Error {}
+
+/** The one line a scheduled run says about a store it cannot reach. */
+export const STORE_UNAVAILABLE_TITLE = "Watchdog store unavailable";
+
+/**
+ * What this isolate remembers between scheduled runs when the STORE cannot: when the store was first
+ * found unavailable and whether that outage was paged, and when each page was last mailed. A
+ * Worker's module memory outlives a run only while its isolate stays warm, so this bounds the mail
+ * an outage produces (at most one page per outage per isolate, the cooldown of every other page
+ * kept) rather than recording anything; the heartbeat a store outage also stops
+ * (`watchdog:<net>:lastrun`) is what reaches a person through the dead-man workflow when no isolate
+ * lives long enough to count the grace. Keyed by network so one process serving both (the offline
+ * suite, an operator's script) never answers one network's question with the other's memory.
+ */
+interface IsolateMemory {
+  outage: { since: number; pagedAt: number | null } | null;
+  alerted: Map<string, number>;
+}
+const memories = new Map<StellarNetwork, IsolateMemory>();
+function memoryOf(network: StellarNetwork): IsolateMemory {
+  let m = memories.get(network);
+  if (!m) {
+    m = { outage: null, alerted: new Map() };
+    memories.set(network, m);
+  }
+  return m;
+}
+
+/** Test seam: forget what this process remembers between runs (the outage clock and the mailed stamps). */
+export function resetWatchdogMemory(): void {
+  memories.clear();
 }
 
 /** One run's settings and the decisions its checks hand to runWatchdog, which acts after the halt step. */
@@ -475,7 +659,7 @@ async function checkSponsorAccount(
   const cursorRead = await kvRead(cursorKey);
   if (!cursorRead.ok) {
     // Skipped, not restarted: this run is then not a full run, and no cursor is written.
-    throw new Error(
+    throw new StoreUnavailableError(
       `the operations scan cursor could not be read (${cursorRead.error}), so the forbidden-operation scan was skipped ` +
         `rather than restarted from the newest page, which would jump over every operation since the cursor`,
     );
@@ -492,8 +676,10 @@ async function checkSponsorAccount(
   let next = cursor;
   let tripped = false;
   const inspect = (op: Record<string, unknown>): void => {
-    const type = String(op.type ?? "");
-    if (String(op.source_account ?? "") !== sponsorPublicKey || !FORBIDDEN_SOURCE_OPS.has(type)) return;
+    if (String(op.source_account ?? "") !== sponsorPublicKey) return;
+    // Allowlisted, not denylisted (SPONSOR_ALLOWED_OPS): anything but the known shapes is the signal.
+    const why = forbiddenSponsorOp(op, config, sponsorPublicKey);
+    if (why === null) return;
     const tx = String(op.transaction_hash ?? "?");
     const createdAt = typeof op.created_at === "string" ? op.created_at : "";
     const at = Date.parse(createdAt);
@@ -507,7 +693,7 @@ async function checkSponsorAccount(
         severity: "page",
         title: FORBIDDEN_OP_OLD_TITLE,
         detail:
-          `The sponsor sourced a ${type} at ${createdAt} (transaction ${tx}), more than a day ago, and the watchdog ` +
+          `The sponsor sourced ${why} at ${createdAt} (transaction ${tx}), more than a day ago, and the watchdog ` +
           `is only now reading it (a first run, or a scan cursor the store lost). Not halted. If it was not a ` +
           `planned SetOptions or other operation you made, treat the key as compromised: halt and rotate ` +
           `(ops/RUNBOOK_SPONSOR_KEY.md section 4).`,
@@ -519,9 +705,9 @@ async function checkSponsorAccount(
       severity: "page",
       title: TRIPWIRE_FORBIDDEN_OP,
       detail:
-        `The sponsor only creates accounts and pays fees; it must never source a ${type}. ` +
-        `Transaction ${tx}${createdAt ? ` at ${createdAt}` : ""}. Treat the key as compromised: halt ` +
-        `(ops/RUNBOOK_SPONSOR_KEY.md section 4) and rotate.`,
+        `The sponsor sourced ${why}. The sponsor only opens 0-XLM accounts, sponsors their reserves, relays ` +
+        `escrow calls and pays fees and rent. Transaction ${tx}${createdAt ? ` at ${createdAt}` : ""}. Treat the key ` +
+        `as compromised: halt (ops/RUNBOOK_SPONSOR_KEY.md section 4) and rotate.`,
     });
   };
 
@@ -580,7 +766,7 @@ async function checkGovernance(config: SponsorConfig, alerts: Alert[], run: Run)
   const cursorKey = `watchdog:ledger:${config.lumendropContract}`;
   const savedRead = await kvRead(cursorKey);
   if (!savedRead.ok) {
-    throw new Error(
+    throw new StoreUnavailableError(
       `the ledger cursor could not be read (${savedRead.error}), so the scan was skipped rather than restarted from ` +
         `the cold-start window, which would jump over every event since the cursor`,
     );
@@ -600,7 +786,7 @@ async function checkGovernance(config: SponsorConfig, alerts: Alert[], run: Run)
   // An out-of-range startLedger (the RPC only retains a rolling window) comes back as a
   // JSON-RPC error, and `rpcCall` throws it rather than swallowing it: it means the watchdog
   // has a blind spot, which is a real condition.
-  const events = await rpcCall<{ events?: Array<{ topic?: string[]; ledger?: number; txHash?: string }> }>(
+  const events = await rpcCall<{ events?: Array<{ topic?: string[]; value?: string; ledger?: number; txHash?: string }> }>(
     rpcUrl,
     "getEvents",
     {
@@ -612,18 +798,41 @@ async function checkGovernance(config: SponsorConfig, alerts: Alert[], run: Run)
 
   const list = events.events ?? [];
   for (const ev of list) {
-    const names = (ev.topic ?? []).map(decodeTopic);
+    const topics = ev.topic ?? [];
+    const names = topics.map(decodeTopic);
     const hit = names.find((n) => GOVERNANCE_EVENTS.has(n));
     if (hit) {
-      alerts.push({
-        severity: "page",
-        title: `Escrow governance event: ${hit}`,
-        detail:
-          `Contract ${config.lumendropContract} emitted "${hit}" at ledger ${ev.ledger ?? "?"}` +
-          (ev.txHash ? ` (tx ${ev.txHash})` : "") +
-          `. If this was not you, the owner key is compromised — halt and rotate ` +
-          `(ops/RUNBOOK_SPONSOR_KEY.md §4).`,
-      });
+      /* The rest of the event, decoded, so the page carries what was scheduled or transferred (the
+       * timelock's wasm hash and not-before, a transfer's new owner) without a second lookup. The
+       * timelock's encoding (contracts/lumen-drop 0.3.0): topics ["upgrade_proposed", wasm_hash
+       * (BytesN<32>)] with the data a map {not_before: u64} in ledger seconds; "upgrade_cancelled" and
+       * "upgraded" carry the hash the same way and an EMPTY map as data, never void. The OZ events
+       * carry their fields in the data map too. Nothing here assumes a void. */
+      const rest = topics.slice(1).map(describeScVal);
+      const data = typeof ev.value === "string" ? nativeOf(ev.value) : undefined;
+      const payload = (rest.length > 0 ? `; topics: ${rest.join(", ")}` : "") + (ev.value !== undefined ? `; data: ${describeNative(data)}` : "");
+      const where = `Contract ${config.lumendropContract} emitted "${hit}" at ledger ${ev.ledger ?? "?"}` + (ev.txHash ? ` (tx ${ev.txHash})` : "") + payload;
+      if (hit === UPGRADE_PROPOSED_EVENT) {
+        const hash = rest[0] ?? "(no hash topic)";
+        const notBefore = notBeforeOf(data);
+        alerts.push({
+          severity: "critical",
+          title: `Escrow governance event: ${hit}`,
+          detail:
+            `${where}. New bytecode ${hash} is SCHEDULED for the escrow: it can be installed from ` +
+            (notBefore
+              ? `${notBefore.iso} (not_before ${notBefore.seconds}, the 7-day timelock)`
+              : "the end of the 7-day timelock (the event carried no readable not_before)") +
+            `, and the wasm-hash check confirms the install. If this was not you, cancel it now with cancel_upgrade ` +
+            `from the owner multisig and treat the owner keys as compromised (ops/RUNBOOK_SPONSOR_KEY.md section 4).`,
+        });
+      } else {
+        alerts.push({
+          severity: "page",
+          title: `Escrow governance event: ${hit}`,
+          detail: `${where}. If this was not you, the owner key is compromised: halt and rotate (ops/RUNBOOK_SPONSOR_KEY.md section 4).`,
+        });
+      }
     }
   }
   /* A full page means the window held more events than one call returns (getEvents answers in
@@ -779,9 +988,42 @@ function wasmHashOf(entryXdr: string): Buffer | null {
 }
 
 /**
- * Days until the instance or the code archives, whichever is sooner, and a page when that is
- * inside the floor. The alert carries the exact commands, because the moment it fires is not
- * the moment to research them; any funded key may run them, no owner or sponsor key is needed.
+ * The escrow's USDC balance on the USDC Stellar Asset Contract is a ledger entry of ITS OWN, with
+ * its own rent: contract data on the SAC, key `["Balance", Address(escrow)]`, persistent. It was
+ * written when the first deposit reached the escrow and the SAC only bumps it when its own
+ * threshold is crossed, so it can archive months before the instance and the code (found on
+ * 2026-11-08: the mainnet entry, holding the escrow's 1.5 USDC, had 20.5 days left while the
+ * instance and the code had four months). An archived balance entry stops every claim, reclaim
+ * and exit that moves USDC out of the escrow just as surely as an archived instance does.
+ *
+ * `--key-xdr` of `stellar contract extend` takes this `storageKey` (the ScVal, base64), with
+ * `--id` naming the SAC, not the escrow; the full ledger key is what `getLedgerEntries` reads.
+ */
+function usdcBalanceKey(config: SponsorConfig, contractId: string): { sac: string; storageKey: xdr.ScVal; ledgerKey: xdr.LedgerKey } {
+  const sac = config.usdc.contractId(config.networkPassphrase);
+  const storageKey = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Balance"), Address.fromString(contractId).toScVal()]);
+  const ledgerKey = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: Address.fromString(sac).toScAddress(),
+      key: storageKey,
+      durability: xdr.ContractDataDurability.persistent(),
+    }),
+  );
+  return { sac, storageKey, ledgerKey };
+}
+
+/** The ledgers the runbook extends by: just under the network maximum of 3,110,400 (about 174 days at 5 s). */
+const EXTEND_LEDGERS = 3_000_000;
+
+/** The page's titles, shared with the offline suite. */
+export const STATE_EXPIRY_TITLE = "Escrow contract state expiry approaching";
+export const USDC_BALANCE_MISSING_TITLE = "Escrow USDC balance entry not found";
+
+/**
+ * Days until the instance, the code or the escrow's USDC balance entry archives, whichever is
+ * sooner, and a page when that is inside the floor. The alert carries the exact commands, because
+ * the moment it fires is not the moment to research them; any funded key may run them, no owner or
+ * sponsor key is needed (the sponsor hot key may pay too: extend_footprint_ttl is on its allowlist).
  */
 async function checkStateExpiry(
   config: SponsorConfig,
@@ -797,34 +1039,57 @@ async function checkStateExpiry(
   const code = hash
     ? (await readLedgerEntries(config, [xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash }))])).entries[0]
     : undefined;
+  const balanceKey = usdcBalanceKey(config, config.lumendropContract);
+  const balance = (await readLedgerEntries(config, [balanceKey.ledgerKey])).entries[0];
 
   const latest = inst.latestLedger;
-  const lives = [
-    { what: "instance", until: instance.liveUntilLedgerSeq },
-    { what: "code", until: code?.liveUntilLedgerSeq },
-  ].filter((l): l is { what: string; until: number } => typeof l.until === "number");
+  const network = networkOf(config);
+  const anyKey = "<any funded key>";
+  const extendCommand = (target: string) =>
+    `stellar contract extend ${target} --ledgers-to-extend ${EXTEND_LEDGERS} --durability persistent --source-account ${anyKey} --network ${network}`;
+  const hex = hash ? hash.toString("hex") : "<wasm hash>";
+  const balanceTarget = `--id ${balanceKey.sac} --key-xdr ${balanceKey.storageKey.toXDR("base64")}`;
+  const entries = [
+    { what: "instance", until: instance.liveUntilLedgerSeq, command: extendCommand(`--id ${config.lumendropContract}`) },
+    { what: "code", until: code?.liveUntilLedgerSeq, command: extendCommand(`--wasm-hash ${hex}`) },
+    { what: "USDC balance", until: balance?.liveUntilLedgerSeq, command: extendCommand(balanceTarget) },
+  ];
+  const lives = entries.filter((l): l is { what: string; until: number; command: string } => typeof l.until === "number");
   if (!latest || lives.length === 0) throw new Error("the RPC answered without ledger expiry data");
+
+  const daysOf = (until: number) => ((until - latest) * SECONDS_PER_LEDGER) / 86_400;
+  if (!balance) {
+    /* The entry exists from the first deposit on, and the RPC does not return an archived one, so on
+     * an escrow that has ever held USDC its absence means it archived. Never a halt: the money is
+     * not lost, and a halt would also close the exits that do not touch this entry. */
+    alerts.push({
+      severity: "page",
+      title: USDC_BALANCE_MISSING_TITLE,
+      detail:
+        `No live ledger entry for the escrow's USDC balance (contract data on the USDC Stellar Asset Contract ` +
+        `${balanceKey.sac}, key ["Balance", ${config.lumendropContract}], persistent). Either the escrow has ` +
+        `never held USDC, or the entry ARCHIVED and every claim, reclaim and exit that moves USDC out of the escrow ` +
+        `fails until it is restored: stellar contract restore ${balanceTarget} --durability persistent ` +
+        `--source-account ${anyKey} --network ${network} (then extend it: ${extendCommand(balanceTarget)}). ` +
+        `Runbook: ops/RUNBOOK_STATE_EXPIRY.md.`,
+    });
+  }
 
   const soonest = lives.reduce((a, b) => (b.until < a.until ? b : a));
   const ledgersLeft = soonest.until - latest;
-  const daysLeft = (ledgersLeft * SECONDS_PER_LEDGER) / 86_400;
-  const network = networkOf(config);
-  const hex = hash ? hash.toString("hex") : "<wasm hash>";
-  const commands =
-    `stellar contract extend --id ${config.lumendropContract} --ledgers-to-extend 3000000 ` +
-    `--durability persistent --source-account <any funded key> --network ${network} ; ` +
-    `stellar contract extend --wasm-hash ${hex} --ledgers-to-extend 3000000 ` +
-    `--durability persistent --source-account <any funded key> --network ${network}`;
-  const summary = lives.map((l) => `${l.what} until ledger ${l.until}`).join(", ");
+  const daysLeft = daysOf(soonest.until);
+  const summary = lives.map((l) => `${l.what} until ledger ${l.until}, ${daysOf(l.until).toFixed(1)} days`).join("; ");
+  const commands = lives.map((l) => `${l.what}: ${l.command}`).join(" ; ");
 
   if (daysLeft < ttlFloorDays()) {
     alerts.push({
       severity: "page",
-      title: "Escrow contract state expiry approaching",
+      title: STATE_EXPIRY_TITLE,
       detail:
         `The ${soonest.what} entry archives in ${ledgersLeft} ledgers, about ${daysLeft.toFixed(1)} days at ` +
         `${SECONDS_PER_LEDGER}s per ledger (${summary}; latest ledger ${latest}; floor ${ttlFloorDays()} days). ` +
-        `Once archived every claim and reclaim fails until the entries are restored. Extend both now: ${commands}`,
+        `Once archived every claim and reclaim fails until the entries are restored. Extend every entry inside the ` +
+        `floor now, from any funded key (ops/RUNBOOK_STATE_EXPIRY.md): ${commands}`,
     });
     return true;
   }
@@ -863,7 +1128,7 @@ async function checkWasmHash(
   if (!pinned) {
     const pinRead = await kvRead(storeKey);
     // Unreadable is not "no pin yet": taking it for one would re-pin to whatever runs now.
-    if (!pinRead.ok) throw new Error(`the pinned wasm hash could not be read (${pinRead.error})`);
+    if (!pinRead.ok) throw new StoreUnavailableError(`the pinned wasm hash could not be read (${pinRead.error})`);
     pinned = pinRead.value;
   }
   if (!pinned) {
@@ -984,15 +1249,23 @@ export async function withoutRepeats(
 ): Promise<Alert[]> {
   const now = opts.now ?? Date.now();
   const active = new Set(alerts.map((a) => alertSlug(a.title)));
+  const memory = memoryOf(network);
 
   /* Namespaced by network (D3). These keys were `watchdog:alerting` and `watchdog:alerted:<slug>`
    * for both Workers, and the two very likely share one store: a testnet float alert stamped the
    * cooldown that the MAINNET float alert then read, and the mainnet email stayed unsent for six
    * hours. Each network now keeps its own clock. */
   const prefix = `watchdog:${network}`;
-  const previous = (await kvGet(`${prefix}:alerting`)) ?? "";
-  for (const slug of previous.split(",").filter(Boolean)) {
-    if (!active.has(slug)) await kvSet(`${prefix}:alerted:${slug}`, "0");
+  const previousRead = await kvRead(`${prefix}:alerting`);
+  const previous = previousRead.ok ? (previousRead.value ?? "") : "";
+  /* A page that cleared resets its clock, in the store and in this isolate's memory alike: the
+   * memory's stamps are listed too, because a page mailed during a store outage was never written
+   * to the store's list, and once the outage is over it must be free to page again when it recurs. */
+  for (const slug of new Set([...previous.split(",").filter(Boolean), ...memory.alerted.keys()])) {
+    if (!active.has(slug)) {
+      await kvSet(`${prefix}:alerted:${slug}`, "0");
+      memory.alerted.delete(slug);
+    }
   }
   await kvSet(`${prefix}:alerting`, [...active].join(","));
 
@@ -1003,16 +1276,27 @@ export async function withoutRepeats(
       continue;
     }
     const slug = alertSlug(a.title);
-    const last = Number.parseInt((await kvGet(`${prefix}:alerted:${slug}`)) ?? "0", 10);
-    if (Number.isFinite(last) && last > 0 && now - last < alertCooldownMs()) continue;
+    /* The stamp the store keeps, or, while the store cannot be read, the one this isolate kept when
+     * it mailed (markAlerted): the store's outage is exactly when a page would otherwise be mailed on
+     * every run. The later of the two counts; a stamp the store has reset to 0 wins nothing. */
+    const stored = Number.parseInt((await kvGet(`${prefix}:alerted:${slug}`)) ?? "0", 10);
+    const remembered = memory.alerted.get(slug) ?? 0;
+    const last = Math.max(Number.isFinite(stored) && stored > 0 ? stored : 0, remembered);
+    if (last > 0 && now - last < alertCooldownMs()) continue;
     due.push(a);
   }
   return due;
 }
 
-/** Start the cooldown of alerts that were DELIVERED: only after Resend answered 2xx, so a failed send is retried next run. */
+/**
+ * Start the cooldown of alerts that were DELIVERED: only after Resend answered 2xx, so a failed send
+ * is retried next run. Kept in the store and in this isolate's memory, so a store that cannot be
+ * written does not re-mail the same page on every run while it lasts.
+ */
 export async function markAlerted(alerts: Alert[], network: StellarNetwork, now = Date.now()): Promise<void> {
+  const memory = memoryOf(network);
   for (const slug of new Set(alerts.map((a) => alertSlug(a.title)))) {
+    memory.alerted.set(slug, now);
     await kvSet(`watchdog:${network}:alerted:${slug}`, String(now));
   }
 }
@@ -1037,7 +1321,11 @@ async function emailAlerts(alerts: Alert[], network: string): Promise<boolean> {
   const key = process.env.RESEND_API_KEY;
   const to = process.env.ALERT_NOTIFY_TO ?? process.env.FEEDBACK_NOTIFY_TO;
   if (!key || !to || alerts.length === 0) return false;
-  const body = alerts.map((a) => `[${a.severity.toUpperCase()}] ${a.title}\n${a.detail}`).join("\n\n");
+  // Critical first: the subject names the first alert, and a scheduled upgrade must not sit behind a float line.
+  const rank = (a: Alert) => (a.severity === "critical" ? 0 : a.severity === "page" ? 1 : 2);
+  const ordered = [...alerts].sort((a, b) => rank(a) - rank(b));
+  const first = ordered[0]!;
+  const body = ordered.map((a) => `[${a.severity.toUpperCase()}] ${a.title}\n${a.detail}`).join("\n\n");
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -1046,8 +1334,8 @@ async function emailAlerts(alerts: Alert[], network: string): Promise<boolean> {
         from: process.env.RESEND_FROM ?? "Lumenia Watchdog <onboarding@resend.dev>",
         to: [to],
         subject:
-          `Lumenia ${network} alert: ${alerts[0]!.title}` +
-          (alerts.length > 1 ? ` (+${alerts.length - 1} more)` : ""),
+          `${first.severity === "critical" ? "CRITICAL: " : ""}Lumenia ${network} alert: ${first.title}` +
+          (ordered.length > 1 ? ` (+${ordered.length - 1} more)` : ""),
         text: body,
       }),
     });
@@ -1162,6 +1450,8 @@ export async function runWatchdog(
   const blindKey = `watchdog:${network}:blind`;
   let blindKnown = false;
   let blindBefore: Record<string, number> = {};
+  /** The store could not answer the blind ledger: evidence of a store outage even if no check needed a cursor. */
+  let blindUnreadable = false;
   if (run.persist && kvConfigFromEnv()) {
     const read = await kvRead(blindKey);
     if (read.ok) {
@@ -1172,13 +1462,21 @@ export async function runWatchdog(
       } catch {
         blindBefore = {};
       }
+    } else {
+      blindUnreadable = true;
     }
   }
   const blindNow: Record<string, number> = {};
   /** The failures this run let wait as info lines, each resting on its start time in the ledger. */
   const waiting: Array<{ alert: Alert; slug: string; since: number; lead: string; why: string }> = [];
+  /** The checks this scheduled run skipped because the STORE could not answer (StoreUnavailableError), folded into one line below. */
+  const storeSkipped: Array<{ check: string; why: string }> = [];
   const checkFailed = (title: string, lead: string, e: unknown): void => {
     const why = (e as Error).message;
+    if (e instanceof StoreUnavailableError && run.persist) {
+      storeSkipped.push({ check: title.replace(/^Watchdog check failed: /, ""), why });
+      return;
+    }
     if (!(e instanceof SourceBusyError) || !run.persist || !blindKnown) {
       alerts.push({ severity: "page", title, detail: `${lead}: ${why}` });
       return;
@@ -1240,6 +1538,48 @@ export async function runWatchdog(
     if (await checkFeeBudget(alerts, run)) checked.push("fee-budget");
   } catch (e) {
     checkFailed("Watchdog check failed: fee budget", "The day's fee spend is unobserved until this clears", e);
+  }
+
+  /* THE STORE OUTAGE, as one line. A store that cannot be read is the blind source every check
+   * rests on at once: the scans above were skipped (never restarted), the cooldown and the heartbeat
+   * below cannot be written. Paging each skipped check at once, with no cooldown to hold it, mailed
+   * on every run of both Workers (about eight mails an hour) until the Resend quota was spent, and
+   * the theft and float pages the outage might mask were then refused. So the outage gets the grace
+   * every other blind source gets, counted in this isolate's memory because the store cannot keep
+   * it, and ONE page per outage once it has lasted BLIND_GRACE_MS; before that, and after, an info
+   * line. A cold isolate on every run counts no grace and pages nothing: the heartbeat it cannot
+   * write is then the alarm, through the dead-man workflow. An operator's run (no heartbeat) still
+   * pages every failure at once, as before. */
+  const memory = memoryOf(network);
+  if (run.persist) {
+    if (storeSkipped.length > 0 || blindUnreadable) {
+      if (!memory.outage || memory.outage.since > now) memory.outage = { since: now, pagedAt: null };
+      const since = memory.outage.since;
+      const minutes = Math.round((now - since) / 60_000);
+      const skipped = storeSkipped.length > 0 ? storeSkipped.map((s) => `${s.check} (${s.why})`).join("; ") : "no scan needed it on this run";
+      const lead =
+        `The store could not be read, so the scans that rest on it were SKIPPED, never restarted: ${skipped}. Every ` +
+        `cursor stays where it was and the next readable run continues from it. The alert cooldown and the heartbeat ` +
+        `cannot be written while this lasts, and the dead-man workflow opens an issue when the heartbeat goes stale`;
+      if (memory.outage.pagedAt === null && now - since >= BLIND_GRACE_MS - BLIND_START_SLACK_MS) {
+        memory.outage.pagedAt = now;
+        alerts.push({
+          severity: "page",
+          title: STORE_UNAVAILABLE_TITLE,
+          detail: `${lead}. Every run for ${minutes} minutes (since ${new Date(since).toISOString()}) found the store unavailable. Paged once per outage.`,
+        });
+      } else {
+        alerts.push({
+          severity: "info",
+          title: STORE_UNAVAILABLE_TITLE,
+          detail:
+            `${lead}. ${minutes > 0 ? `For ${minutes} minutes so far` : "On this run"}; ` +
+            (memory.outage.pagedAt === null ? `it pages once if this lasts ${BLIND_GRACE_MS / 60_000} minutes.` : `already paged at ${new Date(memory.outage.pagedAt).toISOString()}.`),
+        });
+      }
+    } else {
+      memory.outage = null; // the store answered: a later outage is a new one
+    }
   }
 
   /* The halt step's REPORT. Every write already happened as its tripwire was raised (`haltNow`);
@@ -1319,17 +1659,17 @@ export async function runWatchdog(
   }
 
   for (const a of alerts) {
-    const line = `[watchdog:${a.severity}] ${a.title} — ${a.detail}`;
-    if (a.severity === "page") console.error(line);
-    else console.log(line);
+    const line = `[watchdog:${a.severity}] ${a.title} - ${a.detail}`;
+    if (a.severity === "info") console.log(line);
+    else console.error(line);
   }
   /* With no delivery there is nothing to de-duplicate, and running the cooldown anyway would
-   * stamp every live condition as "already sent" — buying hours of silence on the first run
-   * after someone finally sets the keys. A read-only run (no heartbeat) sends nothing either: its
+   * stamp every live condition as "already sent" (buying hours of silence on the first run
+   * after someone finally sets the keys). A read-only run (no heartbeat) sends nothing either: its
    * email would read exactly like the Worker's, and its cooldown stamps would silence the Worker's. */
   if (run.persist && alerting.configured) {
     const force = freshHalt ? (a: Alert) => a.title === AUTO_HALT_TITLE || isAutoHaltTripwire(a.title) : undefined;
-    const due = await withoutRepeats(alerts.filter((a) => a.severity === "page"), network, { now, force });
+    const due = await withoutRepeats(alerts.filter((a) => a.severity !== "info"), network, { now, force });
     if (due.length > 0 && (await emailAlerts(due, network))) await markAlerted(due, network, now);
   }
 
