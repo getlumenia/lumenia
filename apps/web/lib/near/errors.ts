@@ -15,7 +15,7 @@ export function describeError(e: unknown): string {
     if (typeof typed.data === "string" && !parts.join(" ").includes(typed.data)) parts.push(typed.data);
     const text = parts.join(" ").trim();
     if (/failed to fetch|networkerror|load failed/i.test(text)) {
-      return `The NEAR network did not answer (${text}). Check your connection and try again.`;
+      return `The network did not answer (${text}). Check your connection and try again.`;
     }
     return text || "Unknown error";
   }

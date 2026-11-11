@@ -1,8 +1,9 @@
 /*
- * /c/near, the NEAR claim screen. Light-only Periwinkle through the `.claim-pw` scope (globals.css),
- * like the v2 claim route, with the product's type: a person opening a money link should meet the
- * same Lumenia the sender saw. Layout only; the form pieces come from components/near/near.css,
- * whose field, button, notice and state-line classes are written against the same brand variables.
+ * /claim, the claim screen of a practice link (and /c/near, its old path, which forwards here).
+ * Light-only Periwinkle through the `.claim-pw` scope (globals.css), like the v2 claim route, with
+ * the product's type: a person opening a money link should meet the same Lumenia the sender saw.
+ * Layout only; the form pieces come from components/near/near.css, whose field, button, notice,
+ * Details and state-line classes are written against the same brand variables.
  */
 .nc {
   position: relative; isolation: isolate; overflow: hidden;
@@ -55,5 +56,23 @@
   font-size: 12px; font-weight: 600; color: var(--ink-soft); border: 1px solid var(--line); background: var(--surface);
 }
 .nc [tabindex="-1"]:focus { outline: none }
+/* The practice band sits under the wordmark on every beat, the same width as the column. */
+.nc-band { max-width: 460px; margin-bottom: 4px }
+/* The secondary ways to take the money, collapsed under the one primary form (value first, one button). */
+.nc-more { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line) }
+.nc-option > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; list-style: none;
+  padding: 8px 0; font-size: 14.5px; font-weight: 600; color: var(--ink);
+}
+.nc-option > summary::-webkit-details-marker { display: none }
+.nc-option > summary::after {
+  content: ""; flex: none; width: 7px; height: 7px; border-right: 1.5px solid var(--ink-soft); border-bottom: 1.5px solid var(--ink-soft);
+  transform: rotate(45deg); transition: transform .18s;
+}
+.nc-option[open] > summary::after { transform: rotate(-135deg) }
+.nc-option > summary:hover { color: var(--money) }
+.nc-option > summary:focus-visible { outline: 2px solid var(--money); outline-offset: 2px; border-radius: 6px }
+.nc-option-body { padding: 4px 0 10px }
+.nc-option-body p + p { margin-top: 8px }
 @keyframes nc-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
 @media (prefers-reduced-motion: reduce) { .nc-main { animation: none } }

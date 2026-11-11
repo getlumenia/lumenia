@@ -156,7 +156,8 @@ export default function HowItWorks() {
             <h2 className="hw-close-h">Watch it happen, end to end.</h2>
             <p className="hw-close-p">
               It runs the exact same code. A real link, a real claim, and a
-              transaction you can open at the end of it. We target about 30 seconds.
+              transaction you can open at the end of it. We target about 30 seconds. The money is
+              always written to a public ledger; the developer page lists the networks.
             </p>
             <div className="pg-cta">
               <Link className="pg-btn pg-btn-primary" href="/try">

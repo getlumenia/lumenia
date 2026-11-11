@@ -1,17 +1,22 @@
 "use client";
 
 /**
- * The NEAR claim, value-first: the money is shown before any choice is asked. The link's secret is
- * read from the #fragment in the browser, taken out of the address bar at once (the v2 route's
- * posture: the address bar, the history and any screenshot of either stop carrying the money), and
- * kept in memory for this visit only. Nothing moves until the person chooses where it goes.
+ * The claim screen of a practice link, value-first: the money is shown before any choice is asked.
+ * The link's secret is read from the #fragment in the browser, taken out of the address bar at once
+ * (the v2 route's posture: the address bar, the history and any screenshot of either stop carrying
+ * the money), and kept in memory for this visit only. Nothing moves until the person chooses where
+ * it goes.
  *
- * Three ways to take it, in the order a first-timer needs them:
- *   1. a NEW named account (yourname.testnet), made by the escrow at the claim; a plain address
- *      (an implicit account) as the fallback behind "use an address instead";
- *   2. a NEAR account they already have;
- *   3. another chain through NEAR Intents: a live dry quote for USDC on Stellar or Base, and
- *      nothing more, because Intents has no testnet and the page says so.
+ * ONE PRIMARY BUTTON. The dollars, then "Create my account and claim": a NEW named account
+ * (yourname.testnet), made by the escrow at the claim, with a plain address (an implicit account)
+ * as the fallback behind "use an address instead". The other two ways sit collapsed under it:
+ *   - an account they already have;
+ *   - another network through NEAR Intents: a live dry quote for USDC on Stellar or Base, and
+ *     nothing more, because Intents has no testnet and the card says so.
+ *
+ * ONE PRODUCT. No heading, button or lead names the network. It appears in the Details disclosures
+ * (date, status, amount, network fee, Network, explorer), the one consumer place that may say it,
+ * and the practice band under the wordmark says what kind of money this is on every beat.
  *
  * KEYS BEFORE MONEY. A new account's key pair is made here and kept in the encrypted store
  * (lib/near/store.ts) BEFORE the claim is sent, and a browser that cannot keep a key is told so and
@@ -23,19 +28,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { KeyPair, type KeyPairString } from "near-api-js";
-import { Mascot } from "../../../components/brand/Mascot";
-import { MoneyCard } from "../../../components/brand/MoneyCard";
-import { PrimaryButton } from "../../../components/brand/PrimaryButton";
-import { CopyButton, ExplorerLink, Field, Notice, SmallButton, Spinner, StateLine, downloadText } from "../../../components/near/primitives";
-import { useInterval, useLoadable, useNow } from "../../../lib/near/hooks";
-import { NEAR_CONTRACT_ID, NEAR_IS_TESTNET, NEAR_NETWORK, explorerAccountUrl, explorerTxUrl } from "../../../lib/near/config";
-import { formatNear, formatUsd, formatUsdc } from "../../../lib/near/amount";
-import { isImplicitAccountId, isValidAccountId } from "../../../lib/near/account-id";
-import { NAME_RULES, availabilityFromLookup, checkName, type Availability } from "../../../lib/near/names";
-import { encryptWithPassword } from "../../../lib/near/crypto";
-import { isTerminal, type DropView } from "../../../lib/near/drops";
-import { describeError } from "../../../lib/near/errors";
-import { formatLocal, formatRemaining, isExpired, nsToMs, toIso } from "../../../lib/near/expiry";
+import { Mascot } from "../../components/brand/Mascot";
+import { MoneyCard } from "../../components/brand/MoneyCard";
+import { PrimaryButton } from "../../components/brand/PrimaryButton";
+import { CopyButton, Details, ExplorerLink, Field, Notice, PracticeBand, SmallButton, Spinner, StateLine, downloadText, escrowExplorer, escrowRows } from "../../components/near/primitives";
+import { useInterval, useLoadable, useNow } from "../../lib/near/hooks";
+import { NEAR_CONTRACT_ID, NEAR_IS_TESTNET, NEAR_NETWORK, explorerAccountUrl, explorerTxUrl } from "../../lib/near/config";
+import { formatNear, formatUsd } from "../../lib/near/amount";
+import { isImplicitAccountId, isValidAccountId } from "../../lib/near/account-id";
+import { NAME_RULES, availabilityFromLookup, checkName, type Availability } from "../../lib/near/names";
+import { encryptWithPassword } from "../../lib/near/crypto";
+import { isTerminal, type DropView } from "../../lib/near/drops";
+import { describeError } from "../../lib/near/errors";
+import { formatLocal, formatRemaining, isExpired, nsToMs, toIso } from "../../lib/near/expiry";
 import {
   DESTINATIONS,
   buildQuoteRequest,
@@ -44,12 +49,12 @@ import {
   requestQuote,
   type Destination,
   type QuoteResult,
-} from "../../../lib/near/intents";
-import { decodeLinkFragment, implicitAccountId, publicKeyOf, secretFromPastedLink } from "../../../lib/near/keys";
-import { accountExists, getConfig, getDrop, usdcBalance } from "../../../lib/near/rpc";
-import { sendFunctionCall } from "../../../lib/near/chain";
-import { chainResult, receiptFailure, txFailure } from "../../../lib/near/outcome";
-import { accountKey, claimForDrop, saveClaim, secretStoreReady, upsertClaim, type ClaimedAccount } from "../../../lib/near/store";
+} from "../../lib/near/intents";
+import { decodeLinkFragment, implicitAccountId, publicKeyOf, secretFromPastedLink } from "../../lib/near/keys";
+import { accountExists, getConfig, getDrop, usdcBalance } from "../../lib/near/rpc";
+import { sendFunctionCall } from "../../lib/near/chain";
+import { chainResult, receiptFailure, txFailure } from "../../lib/near/outcome";
+import { accountKey, claimForDrop, saveClaim, secretStoreReady, upsertClaim, type ClaimedAccount } from "../../lib/near/store";
 import { PayForwardCard } from "./NearPayForward";
 
 type ClaimState =
@@ -59,24 +64,22 @@ type ClaimState =
   | { kind: "done"; target: string; txHash?: string }
   | { kind: "failed"; target: string; txHash?: string; message: string };
 
-type Choice = "new" | "existing" | "other";
-
 const CONFIRM_PATIENCE_MS = 30_000;
 
+/** The wordmark, and under it the practice band: on every beat, so the kind of money is never in doubt. */
 function Wordmark() {
   return (
-    <header className="nc-top">
-      <Link href="/" aria-label="Lumenia home">
-        {/* The light wordmark: this route is light-only, like the v2 claim. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/brand-kit-assets/logo-wordmark-t.svg" alt="" />
-      </Link>
-    </header>
+    <>
+      <header className="nc-top">
+        <Link href="/" aria-label="Lumenia home">
+          {/* The light wordmark: this route is light-only, like the v2 claim. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand-kit-assets/logo-wordmark-t.svg" alt="" />
+        </Link>
+      </header>
+      <PracticeBand className="nc-band" />
+    </>
   );
-}
-
-function TestnetLine() {
-  return NEAR_IS_TESTNET ? <p className="nc-foot">Test network. This money isn&apos;t real.</p> : null;
 }
 
 export function NearClaim() {
@@ -118,7 +121,7 @@ function PasteLink({ onOpen }: { onOpen: (s: KeyPairString) => void }) {
     e.preventDefault();
     const s = secretFromPastedLink(pasted);
     if (!s) {
-      setErr("That does not look like a Lumenia link. A NEAR link ends with #ed25519: followed by a long code.");
+      setErr("That does not look like a Lumenia link. A link made with practice money ends with #ed25519: followed by a long code.");
       return;
     }
     onOpen(s);
@@ -130,8 +133,8 @@ function PasteLink({ onOpen }: { onOpen: (s: KeyPairString) => void }) {
         <Mascot pose="wave" size="md" />
         <h1 className="nc-title">Got a link?</h1>
         <p className="nc-lead">
-          A Lumenia link on NEAR ends with <b>#ed25519:</b> and a long code. If you opened one and landed here, that part
-          was lost on the way; ask the sender to share it again, or paste the whole link below.
+          A Lumenia link made with practice money ends with <b>#ed25519:</b> and a long code. If you opened one and landed
+          here, that part was lost on the way; ask the sender to share it again, or paste the whole link below.
         </p>
         <form onSubmit={open} className="nc-stack nc-card">
           <Field label="Paste the link you received" htmlFor="nc-paste">
@@ -140,7 +143,7 @@ function PasteLink({ onOpen }: { onOpen: (s: KeyPairString) => void }) {
               className="nr-input nr-input--mono"
               value={pasted}
               onChange={(e) => setPasted(e.target.value)}
-              placeholder="https://getlumenia.com/c/near#ed25519:..."
+              placeholder="https://getlumenia.com/claim#ed25519:..."
               autoComplete="off"
               spellCheck={false}
               inputMode="url"
@@ -150,9 +153,8 @@ function PasteLink({ onOpen }: { onOpen: (s: KeyPairString) => void }) {
           <PrimaryButton type="submit">Open my link</PrimaryButton>
         </form>
         <p className="nc-foot">
-          The link&apos;s key stays in your browser; it never reaches a server. <Link href="/near">About Lumenia on NEAR</Link>
+          The link&apos;s key stays in your browser; it never reaches a server. <Link href="/">What is Lumenia?</Link>
         </p>
-        <TestnetLine />
       </div>
     </>
   );
@@ -354,12 +356,12 @@ function Claim({ secret }: { secret: KeyPairString }) {
             Nothing is waiting behind this link.
           </h1>
           <p className="nc-lead">
-            The escrow on NEAR {NEAR_NETWORK} has no record for it. Either it was never funded, it was made on a different
-            network, or the link was copied incompletely. Ask the sender to share it again.
+            The escrow has no record of it. Either it was never funded, it was made for a different network, or the link was
+            copied incompletely. Ask the sender to share it again.
           </p>
           <p className="nc-foot nc-mono">Link key: {dropKey}</p>
           <SmallButton onClick={() => void load()}>Check again</SmallButton>
-          <TestnetLine />
+          <Details rows={[["Status", "no record"], ...escrowRows()]} explorer={escrowExplorer()} />
         </div>
       </>
     );
@@ -373,7 +375,8 @@ function Claim({ secret }: { secret: KeyPairString }) {
     const target = claim.kind === "done" ? claim.target : (drop.claimed_to as string);
     const txHash = claim.kind === "done" ? claim.txHash : mine?.claimTxHash;
     const own = mine && mine.accountId === target ? mine : undefined;
-    return <Done amount={amount} target={target} txHash={txHash} account={own} heading={heading} />;
+    const claimedAt = drop.status_changed_at_ns ? nsToMs(drop.status_changed_at_ns) : undefined;
+    return <Done amount={amount} target={target} txHash={txHash} account={own} claimedAt={claimedAt} heading={heading} />;
   }
 
   if (drop.status === "Claimed") {
@@ -389,8 +392,16 @@ function Claim({ secret }: { secret: KeyPairString }) {
             The {amount} went to <span className="nc-mono">{drop.claimed_to}</span>
             {drop.memo ? ` (memo: ${drop.memo})` : ""}. If that was not you, the link was opened by someone else first.
           </p>
-          {drop.claimed_to ? <ExplorerLink href={explorerAccountUrl(drop.claimed_to)}>View the account on the explorer</ExplorerLink> : null}
-          <TestnetLine />
+          <Details
+            rows={[
+              drop.status_changed_at_ns ? ["Claimed", formatLocal(nsToMs(drop.status_changed_at_ns))] : null,
+              ["Status", "Claimed"],
+              ["Amount", amount],
+              drop.claimed_to ? ["Claimed by", <span key="to" className="nc-mono">{drop.claimed_to}</span>] : null,
+              ["Network fee", "covered by Lumenia"],
+            ]}
+            explorer={drop.claimed_to ? [["View the account on explorer", explorerAccountUrl(drop.claimed_to)]] : undefined}
+          />
         </div>
       </>
     );
@@ -408,7 +419,6 @@ function Claim({ secret }: { secret: KeyPairString }) {
           <p className="nc-lead">
             This link for {amount} expired on {formatLocal(expiresAt)} and the sender reclaimed it. Ask them for a new link.
           </p>
-          <TestnetLine />
         </div>
       </>
     );
@@ -432,7 +442,7 @@ function Claim({ secret }: { secret: KeyPairString }) {
                 : "This is taking longer than usual. The transaction is on chain and the escrow still shows the claim in progress. Keep this page open, or come back to this link in a minute."}
           </p>
           <p className="nc-foot nc-mono">to {claim.target}</p>
-          {claim.txHash ? <ExplorerLink href={explorerTxUrl(claim.txHash)}>View on the explorer</ExplorerLink> : null}
+          {claim.txHash ? <ExplorerLink href={explorerTxUrl(claim.txHash)}>View on explorer</ExplorerLink> : null}
         </div>
       </>
     );
@@ -448,7 +458,6 @@ function Claim({ secret }: { secret: KeyPairString }) {
             <Spinner /> This link is being claimed right now.
           </h1>
           <p className="nc-lead">A claim is in progress. If it was you on another device, wait a moment; this page updates on its own.</p>
-          <TestnetLine />
         </div>
       </>
     );
@@ -466,7 +475,6 @@ function Claim({ secret }: { secret: KeyPairString }) {
           <p className="nc-lead">
             {amount} was waiting here until {formatLocal(expiresAt)}. The sender can take it back now; ask them for a new link.
           </p>
-          <TestnetLine />
         </div>
       </>
     );
@@ -484,7 +492,8 @@ function Claim({ secret }: { secret: KeyPairString }) {
         </h1>
         {drop.memo ? <p className="nc-memo">{drop.memo}</p> : null}
         <p className="nc-lead">
-          In dollars (USDC), on NEAR. Claim it within <b>{formatRemaining(expiresAt - now)}</b>. No wallet, no app, and you pay no gas.
+          In dollars. Claim it within <b>{formatRemaining(expiresAt - now)}</b>. No wallet, no app. Network fee: covered by
+          Lumenia.
         </p>
         {claim.kind === "failed" ? (
           <div className="nc-card">
@@ -492,7 +501,7 @@ function Claim({ secret }: { secret: KeyPairString }) {
               The claim did not go through: {claim.message}
               {claim.txHash ? (
                 <div className="mt-2">
-                  <ExplorerLink href={explorerTxUrl(claim.txHash)}>View on the explorer</ExplorerLink>
+                  <ExplorerLink href={explorerTxUrl(claim.txHash)}>View on explorer</ExplorerLink>
                 </div>
               ) : null}
             </Notice>
@@ -512,7 +521,17 @@ function Claim({ secret }: { secret: KeyPairString }) {
           Sent by <span className="nc-mono">{drop.funder}</span>. Nothing moves until you choose. The link&apos;s key stays in your browser;
           it never reaches a server.
         </p>
-        <TestnetLine />
+        <Details
+          rows={[
+            ["Sent", formatLocal(nsToMs(drop.created_at_ns))],
+            ["Expires", formatLocal(expiresAt)],
+            ["Status", "Waiting for you"],
+            ["Amount", amount],
+            ["Network fee", "covered by Lumenia"],
+            ...escrowRows(),
+          ]}
+          explorer={escrowExplorer()}
+        />
       </div>
     </>
   );
@@ -538,54 +557,54 @@ function Choices({
   onNamed: (id: string) => void;
   refundAccount: () => Promise<string>;
 }) {
-  const [choice, setChoice] = useState<Choice>("new");
   // Named accounts are the default; "use an address instead" falls back to the implicit path.
   const [useName, setUseName] = useState(true);
-  // Short on the tab (three have to share 343px on a phone); the full sentence heads each form.
-  const tabs: { id: Choice; label: string }[] = [
-    { id: "new", label: "New account" },
-    { id: "existing", label: "My account" },
-    { id: "other", label: "Another chain" },
-  ];
   const amount = formatUsd(drop.amount);
+  const cannotKeep = canKeep === false;
   return (
     <MoneyCard className="nc-card flex flex-col gap-4 p-4 sm:p-5">
-      <div className="nr-tabs" role="tablist" aria-label="Where should the money go">
-        {tabs.map((t) => (
-          <button key={t.id} role="tab" aria-selected={choice === t.id} className="nr-tab" type="button" onClick={() => setChoice(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-      {choice === "new" && canKeep === false ? (
+      {cannotKeep ? (
         <Notice kind="warn">
           This browser cannot keep a key safe (its storage is blocked, as in some private windows and in-app browsers), so a new
           account cannot be made here. Open the link in your regular browser, or send the money to an account you already have.
         </Notice>
-      ) : null}
-      {choice === "new" ? <h2 className="text-base font-semibold text-ink">Create my NEAR account</h2> : null}
-      {choice === "existing" ? <h2 className="text-base font-semibold text-ink">Send it to a NEAR account I already have</h2> : null}
-      {choice === "other" ? <h2 className="text-base font-semibold text-ink">Another chain, through NEAR Intents</h2> : null}
-      {choice === "new" && canKeep !== false && useName ? (
-        <NamedForm busy={busy || canKeep === null} amount={amount} onSubmit={onNamed} onSkip={() => setUseName(false)} />
-      ) : null}
-      {choice === "new" && canKeep !== false && !useName ? (
-        <div className="flex flex-col gap-3">
-          <p className="text-sm text-ink-soft">
-            One tap makes a NEAR account that is yours alone (a 64-character address) and puts the money in it. The key is made in
-            this browser; you save it right after.
-            {mine?.kind === "implicit" ? ` This browser already prepared an address (${mine.accountId.slice(0, 8)}...); the same one will be used.` : ""}
-          </p>
-          <PrimaryButton onClick={onNew} loading={busy || canKeep === null} loadingLabel="One moment...">
-            Create my NEAR account and claim {amount}
-          </PrimaryButton>
-          <button type="button" className="nr-link self-start" onClick={() => setUseName(true)}>
-            Prefer a name like yourname.testnet? Pick one instead
-          </button>
-        </div>
-      ) : null}
-      {choice === "existing" ? <ExistingForm busy={busy} amount={amount} onSubmit={onExisting} /> : null}
-      {choice === "other" ? <OtherChain amountUnits={drop.amount} refundAccount={refundAccount} /> : null}
+      ) : (
+        <>
+          <h2 className="text-base font-semibold text-ink">Create my account</h2>
+          {useName ? (
+            <NamedForm busy={busy || canKeep === null} amount={amount} onSubmit={onNamed} onSkip={() => setUseName(false)} />
+          ) : (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-ink-soft">
+                One tap makes an account that is yours alone (a 64-character address) and puts the money in it. The key is made in
+                this browser; you save it right after.
+                {mine?.kind === "implicit" ? ` This browser already prepared an address (${mine.accountId.slice(0, 8)}...); the same one will be used.` : ""}
+              </p>
+              <PrimaryButton onClick={onNew} loading={busy || canKeep === null} loadingLabel="One moment...">
+                Create my account and claim {amount}
+              </PrimaryButton>
+              <button type="button" className="nr-link self-start" onClick={() => setUseName(true)}>
+                Prefer a name? Pick one instead
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {/* The other ways to take it, collapsed: the first-timer meets one button, not a menu. */}
+      <div className="nc-more">
+        <details className="nc-option" open={cannotKeep || undefined}>
+          <summary>Send it to an account I already have</summary>
+          <div className="nc-option-body">
+            <ExistingForm busy={busy} amount={amount} onSubmit={onExisting} />
+          </div>
+        </details>
+        <details className="nc-option">
+          <summary>Another network</summary>
+          <div className="nc-option-body">
+            <OtherChain amountUnits={drop.amount} refundAccount={refundAccount} />
+          </div>
+        </details>
+      </div>
     </MoneyCard>
   );
 }
@@ -599,14 +618,14 @@ function ExistingForm({ busy, amount, onSubmit }: { busy: boolean; amount: strin
     setErr(null);
     const v = id.trim().toLowerCase();
     if (!isValidAccountId(v)) {
-      setErr("That is not a valid NEAR account id (like alice.testnet or a 64-character hex id).");
+      setErr("That is not a valid account id (like alice.testnet or a 64-character address).");
       return;
     }
     setChecking(true);
     try {
       const exists = await accountExists(v);
       if (!exists && !isImplicitAccountId(v)) {
-        setErr(`${v} does not exist on NEAR ${NEAR_NETWORK}. Check the spelling, or create a new account instead.`);
+        setErr(`${v} does not exist on this network. Check the spelling, or create a new account instead.`);
         return;
       }
       onSubmit(v);
@@ -618,7 +637,7 @@ function ExistingForm({ busy, amount, onSubmit }: { busy: boolean; amount: strin
   };
   return (
     <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3">
-      <Field label="Your NEAR account id" htmlFor="nc-existing" hint={`An existing ${NEAR_NETWORK} account. The USDC is sent straight to it.`}>
+      <Field label="Your account id" htmlFor="nc-existing" hint="An account that already exists on this network. The money is sent straight to it.">
         <input id="nc-existing" className="nr-input" value={id} onChange={(e) => setId(e.target.value)} placeholder="alice.testnet" autoComplete="off" autoCapitalize="none" spellCheck={false} />
       </Field>
       {err ? <Notice kind="error">{err}</Notice> : null}
@@ -682,8 +701,20 @@ function NamedForm({ busy, amount, onSubmit, onSkip }: { busy: boolean; amount: 
   const tone = status.kind === "checked" && status.availability === "free" ? "ok" : status.kind === "invalid" || (status.kind === "checked" && status.availability !== "free") ? "bad" : undefined;
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
-      <p className="text-sm text-ink-soft">Pick a name for your new NEAR account. The money lands in it and the key stays with you.</p>
-      <Field label="Your name on NEAR" htmlFor="nc-name" hint={NAME_RULES}>
+      <p className="text-sm text-ink-soft">Pick a name for your new account. The money lands in it and the key stays with you.</p>
+      <Field
+        label="Your name"
+        htmlFor="nc-name"
+        hint={
+          <>
+            {NAME_RULES}. Your account address will be{" "}
+            <span className="nc-mono">
+              {name.trim().toLowerCase() || "yourname"}.{root ?? NEAR_NETWORK}
+            </span>
+            .
+          </>
+        }
+      >
         <div className="nr-suffix">
           <input
             id="nc-name"
@@ -728,7 +759,7 @@ function NamedForm({ busy, amount, onSubmit, onSkip }: { busy: boolean; amount: 
         )}
       </div>
       <PrimaryButton type="submit" loading={busy} loadingLabel="One moment..." disabled={!free}>
-        {free ? `Create ${status.accountId} and claim ${amount}` : `Create my NEAR account and claim ${amount}`}
+        {free ? `Create ${status.accountId} and claim ${amount}` : `Create my account and claim ${amount}`}
       </PrimaryButton>
       <button type="button" className="nr-link nr-link--quiet self-start" onClick={onSkip}>
         Skip the name, use an address instead
@@ -770,9 +801,13 @@ function OtherChain({ amountUnits, refundAccount }: { amountUnits: string; refun
   return (
     <form onSubmit={(e) => void getQuote(e)} className="flex flex-col gap-3">
       <p className="text-sm text-ink-soft">
-        <span className="nc-pill">mainnet only</span> NEAR Intents can deliver this USDC to another chain. Intents has no testnet, so here
-        you see a real quote and nothing is sent. On mainnet the claim would pay the quote&apos;s deposit address and Intents would deliver to
-        your address; if that failed, the USDC would be refunded to a NEAR account whose key this browser holds.
+        <span className="nc-pill">real money only</span> The money can be delivered to another network instead. There is no practice
+        version of this service, so here you see a real quote and nothing is sent. With real money the claim would pay the quote&apos;s
+        deposit address and the money would be delivered to your address; if that failed, it would be refunded to an account whose key
+        this browser holds.
+      </p>
+      <p className="text-sm text-ink-soft">
+        Make sure the destination supports this network; sending to an incompatible network can cause permanent loss.
       </p>
       <Field label="Deliver as" htmlFor="nc-dest">
         <select id="nc-dest" className="nr-select" value={destination} onChange={(e) => setDestination(e.target.value as Destination)}>
@@ -798,10 +833,10 @@ function OtherChain({ amountUnits, refundAccount }: { amountUnits: string; refun
               You would receive about {result.quote.amountOutFormatted} USDC on {dest.chain}.
             </p>
             <p className="mt-1">
-              For {formatUsdc(amountUnits)} USDC in, delivered in {describeTimeEstimate(result.quote.timeEstimate)}.
+              For {formatUsd(amountUnits)} in, delivered in {describeTimeEstimate(result.quote.timeEstimate)}.
               {result.quote.minAmountOut ? " The quote carries a 1% slippage tolerance." : ""}
             </p>
-            <p className="mt-1 text-xs">Dry quote from 1Click (NEAR Intents). {NEAR_IS_TESTNET ? "This is testnet money: the claim stops here on purpose." : ""}</p>
+            <p className="mt-1 text-xs">Dry quote from NEAR Intents (1Click). {NEAR_IS_TESTNET ? "Practice money: the claim stops here on purpose." : ""}</p>
           </Notice>
         ) : (
           <Notice kind="error">The quote service said: {result.message}</Notice>
@@ -816,12 +851,15 @@ function Done({
   target,
   txHash,
   account,
+  claimedAt,
   heading,
 }: {
   amount: string;
   target: string;
   txHash: string | undefined;
   account: ClaimedAccount | undefined;
+  /** When the escrow recorded the claim (ms), once the chain has said so. */
+  claimedAt: number | undefined;
   heading: React.RefObject<HTMLHeadingElement | null>;
 }) {
   const balance = useLoadable(() => usdcBalance(target), [target]);
@@ -849,10 +887,10 @@ function Done({
           {account ? (
             account.kind === "named" ? (
               <>
-                It is in your new NEAR account <b>{account.accountId}</b>.
+                It is in your new account <b>{account.accountId}</b>.
               </>
             ) : (
-              "It is in your new NEAR account."
+              "It is in your new account."
             )
           ) : (
             <>
@@ -878,16 +916,22 @@ function Done({
               </button>
             </span>
           ) : (
-            <b>{formatUsdc(balance.value.value)} USDC</b>
+            <b>{formatUsd(balance.value.value)}</b>
           )}
         </p>
-        {account && starter !== null && starter > 0n ? (
-          <p className="nc-foot">Your account also received {formatNear(starter, 2)} NEAR from the escrow, for its first transactions.</p>
-        ) : null}
-        <div className="flex flex-wrap justify-center gap-x-4 gap-y-1">
-          <ExplorerLink href={explorerAccountUrl(target)}>the account on the explorer</ExplorerLink>
-          {txHash ? <ExplorerLink href={explorerTxUrl(txHash)}>the claim on the explorer</ExplorerLink> : null}
-        </div>
+        <p className="text-sm text-ink">Network fee: covered by Lumenia.</p>
+        {/* The receipt. The network, and the small balance a new account holds for its own fees, live here. */}
+        <Details
+          rows={[
+            claimedAt !== undefined ? ["Claimed", formatLocal(claimedAt)] : null,
+            ["Status", "Claimed"],
+            ["Amount", amount],
+            ["Network fee", "covered by Lumenia"],
+            account && starter !== null && starter > 0n ? ["Your account also holds", `${formatNear(starter, 2)} NEAR for network fees`] : null,
+            ["Held as", "USDC, a dollar-denominated asset"],
+          ]}
+          explorer={[["View the account on explorer", explorerAccountUrl(target)], ...(txHash ? [["View the claim on explorer", explorerTxUrl(txHash)] as [string, string]] : [])]}
+        />
         {account ? (
           privateKey ? (
             <SaveKey account={account} privateKey={privateKey} />
@@ -901,13 +945,17 @@ function Done({
           )
         ) : null}
         {account ? (
-          <MoneyCard className="nc-card p-5">
-            <h2 className="text-lg font-semibold text-ink">Open it in a wallet</h2>
-            <p className="mt-1 text-sm text-ink-soft">
-              Any NEAR wallet that imports an ed25519 private key can hold this account. In HOT Wallet, look for Import account and
-              paste the private key from your key file. In Meteor Wallet, look for Import account, choose Private key and paste it.
-              Your account id is <span className="nc-mono">{account.accountId}</span>.
-            </p>
+          <MoneyCard className="nc-card p-4 sm:p-5">
+            <details className="nc-option">
+              <summary>Use this account in another app</summary>
+              <div className="nc-option-body">
+                <p className="text-sm text-ink-soft">
+                  Any NEAR wallet app that imports an ed25519 private key can hold this account. In HOT Wallet, look for Import account
+                  and paste the private key from your key file. In Meteor Wallet, look for Import account, choose Private key and paste
+                  it. Your account id is <span className="nc-mono">{account.accountId}</span>.
+                </p>
+              </div>
+            </details>
           </MoneyCard>
         ) : null}
         {account && privateKey ? (
@@ -919,9 +967,8 @@ function Done({
           />
         ) : null}
         <p className="nc-foot">
-          <Link href="/near">About Lumenia on NEAR</Link>
+          <Link href="/">What is Lumenia?</Link>
         </p>
-        <TestnetLine />
       </div>
     </>
   );
@@ -929,7 +976,7 @@ function Done({
 
 function SaveKey({ account, privateKey }: { account: ClaimedAccount; privateKey: string }) {
   const plain = JSON.stringify({ account_id: account.accountId, public_key: account.publicKey, private_key: privateKey, network: NEAR_NETWORK }, null, 2);
-  const stem = `near-${account.accountId.slice(0, 10)}`;
+  const stem = `lumenia-${account.accountId.slice(0, 10)}`;
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -998,7 +1045,7 @@ function SaveKey({ account, privateKey }: { account: ClaimedAccount; privateKey:
           </button>
         </form>
       </details>
-      <p className="text-xs text-ink-soft">The private key can be imported into any NEAR wallet app later. Until then this page, and your file, are your wallet.</p>
+      <p className="text-xs text-ink-soft">The key file also opens this account in other apps later (see Use this account in another app). Until then this page, and your file, are the way in.</p>
     </MoneyCard>
   );
 }

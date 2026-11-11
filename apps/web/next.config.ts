@@ -151,8 +151,18 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // The NEAR claim route is a static segment under /c, so the two entries above already cover
-        // it; this one is written out so the rule survives if those patterns ever narrow.
+        // The claim screen of a link made with practice money (app/claim): the key rides in its
+        // #fragment like the others, so the same no-referrer and noindex.
+        source: "/claim",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+      {
+        // The old path of that screen, kept as a client-side forward to /claim with the fragment
+        // intact. A static segment under /c, so the two entries above already cover it; written out
+        // so the rule survives if those patterns ever narrow.
         source: "/c/near",
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },

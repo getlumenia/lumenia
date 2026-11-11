@@ -30,8 +30,6 @@ const LINKS = [
   { href: "/extension", label: "Extension" },
   { href: "/about", label: "About" },
   { href: "/developers", label: "Developers" },
-  // The second rail, during and after NEAR HACKATHON 2026. One word, so the centre cell holds it.
-  { href: "/near", label: "NEAR" },
 ];
 
 function NavLink({ href, label }: { href: string; label: string }) {

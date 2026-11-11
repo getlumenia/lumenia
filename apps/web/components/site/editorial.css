@@ -123,6 +123,33 @@
   background: color-mix(in srgb, var(--tone) 65%, transparent);
 }
 
+/* ---- The rails (/developers) -------------------------------------------------------------
+   The one page that lists every network the product runs on: a stacked card per rail with a
+   label/value grid, which reads as a table on a desktop and as a list on a phone. This is the
+   technical page, so the mono ids are on-brand here. */
+.ed-rails { max-width: 66ch; margin: clamp(48px, 7vh, 76px) auto 0; display: flex; flex-direction: column; gap: 16px }
+.ed-rails-h {
+  font-family: "Sentient", Georgia, serif; font-weight: 600;
+  font-size: clamp(22px, 2.4vw, 30px); line-height: 1.1; letter-spacing: -.015em; color: var(--pw-ink);
+}
+.ed-rails-p { margin-bottom: 8px; font-size: clamp(15.5px, 1.6vw, 17.5px); line-height: 1.6; color: var(--pw-muted) }
+.ed-rail { border: 1px solid var(--pw-line); border-radius: 16px; background: var(--pw-surface); padding: clamp(16px, 2.4vw, 22px) clamp(16px, 2.6vw, 24px) }
+.ed-rail-h {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 10px;
+  font-family: "Sentient", Georgia, serif; font-weight: 600; font-size: clamp(18px, 2vw, 22px); line-height: 1.15; color: var(--pw-ink);
+}
+.ed-rail-h code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; font-weight: 500; color: var(--pw-muted);
+  padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, var(--pw-accent) 10%, var(--pw-surface));
+}
+.ed-rail dl { margin: 14px 0 0; display: grid; grid-template-columns: 1fr; gap: 10px 18px }
+@media (min-width: 600px) { .ed-rail dl { grid-template-columns: max-content minmax(0, 1fr) } }
+.ed-rail dt { font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--pw-muted); padding-top: 2px }
+.ed-rail dd { margin: 0; font-size: 15px; line-height: 1.55; color: var(--pw-ink); min-width: 0; overflow-wrap: anywhere }
+.ed-rail dd code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--pw-ink) }
+.ed-rail dd a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
+.ed-rail dd a:hover { text-decoration: underline; text-underline-offset: 3px }
+
 /* ---- Close row --------------------------------------------------------------------------- */
 .ed-close { max-width: 66ch; margin: clamp(48px, 7vh, 76px) auto 0; padding-top: clamp(28px, 4vh, 40px); border-top: 1px solid var(--pw-line) }
 .ed-close-p { font-size: 15px; line-height: 1.6; color: var(--pw-muted) }

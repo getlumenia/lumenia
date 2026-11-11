@@ -1,32 +1,33 @@
 "use client";
 
 /**
- * Pay it forward: the claimed account makes a new link from its own USDC. It signs a NEP-366
+ * Pay it forward: the claimed account makes a new link from its own money. It signs a NEP-366
  * delegate with the full-access key the escrow gave it; the relayer pays the fee, so the account
- * keeps its starter NEAR. The orchestration is lib/near/pay-forward.ts (record before sign, held by
- * the self-test); this is the screen around it, plus the list of links this account paid forward
- * with a relayer-paid take-back after expiry.
+ * keeps its starter balance for network fees. The orchestration is lib/near/pay-forward.ts (record
+ * before sign, held by the self-test); this is the screen around it, plus the list of links this
+ * account paid forward with a relayer-paid take-back after expiry. In the copy the relayer is
+ * "the network fee is covered by Lumenia": who pays it is a detail, that it is covered is the point.
  */
 import { useState, type FormEvent } from "react";
 import type { KeyPairString } from "near-api-js";
 import QRCode from "react-qr-code";
-import { MoneyCard } from "../../../components/brand/MoneyCard";
-import { PrimaryButton } from "../../../components/brand/PrimaryButton";
-import { CopyButton, ExplorerLink, Field, Notice, SmallButton, StateLine } from "../../../components/near/primitives";
-import { useInterval, useLoadable, useNow } from "../../../lib/near/hooks";
-import { NEAR_CONTRACT_ID, NEAR_NETWORK, NEAR_USDC_ID, explorerTxUrl, nearLinkOrigin } from "../../../lib/near/config";
-import { formatNear, formatUsd, formatUsdc, parseUsdcAmount } from "../../../lib/near/amount";
-import { DEFAULT_MIN_AMOUNT_UNITS } from "../../../lib/near/batch";
-import { MAX_MEMO_BYTES, isTerminal, memoBytes } from "../../../lib/near/drops";
-import { describeError } from "../../../lib/near/errors";
-import { EXPIRY_OPTIONS } from "../../../lib/near/expiry";
-import { claimUrl, newLinkKey } from "../../../lib/near/keys";
-import { getConfig, getDrop, nearBalance } from "../../../lib/near/rpc";
-import { sharedProvider } from "../../../lib/near/chain";
-import { canTakeBack, linkStateOf, linkStatusLine, recordDrop } from "../../../lib/near/link-state";
-import { describeRelayError, isRelayerExpiry, runPayForward, type PayForwardResult } from "../../../lib/near/pay-forward";
-import { buildSignedDelegateForPayForward, buildSignedDelegateForReclaim, relay } from "../../../lib/near/relayer";
-import { loadLinks, saveLink, upsertLink, type ClaimedAccount, type StoredLink } from "../../../lib/near/store";
+import { MoneyCard } from "../../components/brand/MoneyCard";
+import { PrimaryButton } from "../../components/brand/PrimaryButton";
+import { CopyButton, Details, Field, Notice, SmallButton, StateLine } from "../../components/near/primitives";
+import { useInterval, useLoadable, useNow } from "../../lib/near/hooks";
+import { NEAR_CONTRACT_ID, NEAR_NETWORK, NEAR_USDC_ID, explorerTxUrl, nearLinkOrigin } from "../../lib/near/config";
+import { formatNear, formatUsd, parseUsdcAmount } from "../../lib/near/amount";
+import { DEFAULT_MIN_AMOUNT_UNITS } from "../../lib/near/batch";
+import { MAX_MEMO_BYTES, isTerminal, memoBytes } from "../../lib/near/drops";
+import { describeError } from "../../lib/near/errors";
+import { EXPIRY_OPTIONS, formatLocal } from "../../lib/near/expiry";
+import { claimUrl, newLinkKey } from "../../lib/near/keys";
+import { getConfig, getDrop, nearBalance } from "../../lib/near/rpc";
+import { sharedProvider } from "../../lib/near/chain";
+import { canTakeBack, linkExpiresAt, linkStateOf, linkStatusLine, recordDrop } from "../../lib/near/link-state";
+import { describeRelayError, isRelayerExpiry, runPayForward, type PayForwardResult } from "../../lib/near/pay-forward";
+import { buildSignedDelegateForPayForward, buildSignedDelegateForReclaim, relay } from "../../lib/near/relayer";
+import { loadLinks, saveLink, upsertLink, type ClaimedAccount, type StoredLink } from "../../lib/near/store";
 
 const RELAYER_EXPIRIES = EXPIRY_OPTIONS.filter((o) => isRelayerExpiry(o.seconds));
 
@@ -64,7 +65,7 @@ export function PayForwardCard({
       return;
     }
     if (BigInt(parsed.units) < BigInt(minUnits)) {
-      setErr(`The smallest link is ${formatUsdc(minUnits)} USDC.`);
+      setErr(`The smallest link is ${formatUsd(minUnits)}.`);
       return;
     }
     if (memoBytes(memo) > MAX_MEMO_BYTES) {
@@ -99,7 +100,7 @@ export function PayForwardCard({
             });
           },
           relay: (b64) => {
-            setStep("Asking the relayer to pay the fee");
+            setStep("Covering the network fee");
             return relay(b64);
           },
           now: Date.now,
@@ -136,8 +137,8 @@ export function PayForwardCard({
         <div>
           <h2 className="text-lg font-semibold text-ink">Pay it forward</h2>
           <p className="mt-1 text-sm text-ink-soft">
-            Send part of this money on as a new link, straight from your account. You sign with your own key; the relayer pays
-            the NEAR fee, so you keep your starter NEAR.
+            Send part of this money on as a new link, straight from your account. You sign with your own key, and the network
+            fee is covered by Lumenia.
           </p>
         </div>
         {done ? (
@@ -147,14 +148,14 @@ export function PayForwardCard({
             <Field
               label="Amount"
               htmlFor="nc-pf-amount"
-              hint={balanceUnits !== null ? `You hold ${formatUsd(balanceUnits)}; the smallest link is ${formatUsdc(minUnits)} USDC.` : `The smallest link is ${formatUsdc(minUnits)} USDC.`}
+              hint={balanceUnits !== null ? `You hold ${formatUsd(balanceUnits)}; the smallest link is ${formatUsd(minUnits)}.` : `The smallest link is ${formatUsd(minUnits)}.`}
             >
               <div className="nr-amount">
                 <span>$</span>
                 <input id="nc-pf-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.25" autoComplete="off" />
               </div>
             </Field>
-            <Field label="The link expires in" htmlFor="nc-pf-expiry" hint="The relayer pays for links that live between 1 hour and 7 days.">
+            <Field label="The link expires in" htmlFor="nc-pf-expiry" hint="The network fee is covered for links that live between 1 hour and 7 days.">
               <select id="nc-pf-expiry" className="nr-select" value={expiry} onChange={(e) => setExpiry(Number(e.target.value))}>
                 {RELAYER_EXPIRIES.map((o) => (
                   <option key={o.seconds} value={o.seconds}>
@@ -171,14 +172,15 @@ export function PayForwardCard({
                 {err}
                 {errTx ? (
                   <div className="mt-2">
-                    <ExplorerLink href={explorerTxUrl(errTx)}>View the transaction on the explorer</ExplorerLink>
+                    <Details rows={[["Status", "not created"], ["Network fee", "covered by Lumenia"]]} explorer={[["View the transaction on explorer", explorerTxUrl(errTx)]]} />
                   </div>
                 ) : null}
               </Notice>
             ) : null}
             <PrimaryButton type="submit" loading={busy} loadingLabel={step ? `${step}...` : "Working..."} disabled={balanceUnits === null || BigInt(balanceUnits) < BigInt(minUnits)}>
-              Create the link, fee paid by the relayer
+              Create the link
             </PrimaryButton>
+            <p className="text-xs text-ink-soft">Network fee: covered by Lumenia.</p>
           </form>
         )}
       </MoneyCard>
@@ -212,11 +214,21 @@ function PayForwardDone({ result, nearLeft, onAnother }: { result: PayForwardRes
       </div>
       <StateLine state={linkStateOf(live, now)} />
       <p className="text-sm text-ink-soft">{linkStatusLine(live, now)}</p>
-      <p className="text-sm text-ink">The relayer paid the fee; you still hold {nearLeft !== null ? `${formatNear(nearLeft, 2)} NEAR` : "your NEAR"}.</p>
+      <p className="text-sm text-ink">Network fee: covered by Lumenia.</p>
+      <Details
+        rows={[
+          ["Made", formatLocal(Date.parse(result.link.createdAt))],
+          ["Status", linkStatusLine(live, now)],
+          ["Amount", formatUsd(result.link.amountUnits)],
+          ["Network fee", "covered by Lumenia"],
+          ["Expires", formatLocal(linkExpiresAt(live))],
+          nearLeft !== null ? ["Your account holds", `${formatNear(nearLeft, 2)} NEAR for network fees`] : null,
+        ]}
+        explorer={[["View the transaction on explorer", result.explorerUrl || explorerTxUrl(result.txHash)]]}
+      />
       <div className="nr-row-actions">
         <CopyButton text={url} />
         <SmallButton onClick={onAnother}>Pay forward again</SmallButton>
-        <ExplorerLink href={result.explorerUrl || explorerTxUrl(result.txHash)}>explorer</ExplorerLink>
       </div>
     </div>
   );
@@ -293,14 +305,23 @@ function PayForwardLinks({ account, privateKey, version, onChanged }: { account:
               </div>
               <StateLine state={state} />
               <p className="nr-row-sub">{linkStatusLine(l, now)}</p>
+              <Details
+                rows={[
+                  ["Made", formatLocal(Date.parse(l.createdAt))],
+                  ["Status", linkStatusLine(l, now)],
+                  ["Amount", formatUsd(l.amountUnits)],
+                  ["Network fee", "covered by Lumenia"],
+                  ["Expires", formatLocal(linkExpiresAt(l))],
+                ]}
+                explorer={tx ? [[l.lastStatus === "Reclaimed" && l.reclaimTxHash ? "View the take-back on explorer" : "View the transaction on explorer", explorerTxUrl(tx)]] : undefined}
+              />
               {err ? <Notice kind="error">{err}</Notice> : null}
               <div className="nr-row-actions">
                 {canTakeBack(l, now) ? (
                   <SmallButton className="nr-btn--accent" busy={busyKey === l.publicKey} onClick={() => void takeBack(l)}>
-                    Take it back, fee paid by the relayer
+                    Take it back (network fee covered)
                   </SmallButton>
                 ) : null}
-                {tx ? <ExplorerLink href={explorerTxUrl(tx)}>explorer</ExplorerLink> : null}
               </div>
             </div>
           );

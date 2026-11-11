@@ -1,13 +1,13 @@
 /*
- * The NEAR rail's pages on the (site) group: /near (the rail, explained), /near/send (the sender)
- * and /near/ledger (the public ledger). Sits on page.css (ground, hero, buttons) and is written
- * against the --pw-* tokens, so both themes come for free.
+ * The practice-money screens on the (site) group, /try/send (the sender) and /ledger (the public
+ * ledger), plus the form pieces the /claim screen shares. Sits on page.css (ground, hero, buttons)
+ * and is written against the --pw-* tokens, so both themes come for free.
  *
  * The money screens reuse the (app) group's brand components (MoneyCard, PrimaryButton,
  * LinkReadyCard, StatusPill), which are written in the Tailwind brand utilities (bg-money,
  * text-ink, border-line ...). Those resolve to var(--money), var(--ink), var(--line) ..., which at
  * :root are the light palette only. The first block below re-points them at the --pw-* tokens
- * inside the rail's root, the same trick app-theme.css plays for the app group: one scope class,
+ * inside these pages' root, the same trick app-theme.css plays for the app group: one scope class,
  * both themes, no component rewritten. The token scope and the page root are the SAME class
  * (`.pg.nr`), for the reason docs/SITE_REDESIGN.md section 5 gives: one class cannot be half-applied.
  */
@@ -42,6 +42,7 @@
 /* A shorter hero for the working pages: the task starts closer to the top. */
 .nr-hero--short { padding-top: clamp(96px, 13vh, 140px); padding-bottom: clamp(28px, 5vh, 48px) }
 .nr-hero--short .pg-lead { margin-top: 14px }
+/* The network detail under a lead (the ledger): one quiet line, the network named once. */
 .nr-badge {
   display: inline-flex; align-items: center; gap: 8px; margin-top: 18px;
   padding: 7px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--pw-muted);
@@ -68,71 +69,7 @@
 .nr-p a:hover, .nr-sub a:hover, .nr-foot a:hover { text-decoration: underline; text-underline-offset: 3px }
 .nr-foot { font-size: 13.5px; line-height: 1.55; color: var(--pw-muted) }
 
-/* ---- The three doors: one leads, two follow (never three equal cards in a row) --------------- */
-.nr-ways { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 28px }
-@media (min-width: 760px) {
-  .nr-ways { grid-template-columns: 1.25fr 1fr; grid-auto-rows: 1fr }
-  .nr-way--lead { grid-row: span 2 }
-}
-.nr-way {
-  position: relative; display: flex; flex-direction: column; gap: 8px; text-decoration: none;
-  padding: clamp(20px, 2.6vw, 28px); border-radius: 20px;
-  border: 1px solid var(--pw-line); background: var(--pw-surface); color: var(--pw-ink);
-  transition: transform .2s, border-color .2s, box-shadow .2s;
-}
-.nr-way:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--pw-accent) 40%, var(--pw-line));
-  box-shadow: 0 18px 36px -22px color-mix(in srgb, var(--pw-accent) 55%, transparent);
-}
-.nr-way--lead {
-  background:
-    radial-gradient(90% 70% at 100% 0%, color-mix(in srgb, var(--pw-accent) 18%, transparent), transparent 60%),
-    var(--pw-surface);
-  justify-content: flex-end; min-height: 240px;
-}
-.nr-way-k { font-size: 12.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--pw-accent) }
-.nr-way-t { font-family: "Sentient", Georgia, serif; font-weight: 600; font-size: clamp(20px, 2.2vw, 28px); line-height: 1.12; letter-spacing: -.015em }
-.nr-way--lead .nr-way-t { font-size: clamp(24px, 2.8vw, 34px) }
-.nr-way-s { font-size: 15px; line-height: 1.55; color: var(--pw-muted) }
-.nr-way-go { margin-top: auto; padding-top: 6px; font-size: 14px; font-weight: 600; color: var(--pw-accent); display: inline-flex; gap: 6px; align-items: center }
-.nr-way-go svg { transition: transform .2s }
-.nr-way:hover .nr-way-go svg { transform: translateX(3px) }
-
-/* ---- How NEAR is used: a list of plain sentences, not a numbered rail ----------------------- */
-.nr-how { margin-top: 28px; display: grid; grid-template-columns: 1fr; gap: 10px }
-@media (min-width: 760px) { .nr-how { grid-template-columns: 1fr 1fr } }
-.nr-how-item {
-  display: grid; grid-template-columns: 40px 1fr; gap: 14px; align-items: start;
-  padding: 18px 18px 18px 16px; border-radius: 16px; border: 1px solid var(--pw-line); background: var(--pw-surface);
-}
-.nr-how-icon {
-  width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px;
-  background: color-mix(in srgb, var(--pw-accent) 12%, var(--pw-surface)); color: var(--pw-accent);
-}
-.nr-how-icon svg { width: 20px; height: 20px }
-.nr-how-t { font-size: 16px; font-weight: 600; color: var(--pw-ink); line-height: 1.3 }
-.nr-how-s { margin-top: 4px; font-size: 14.5px; line-height: 1.55; color: var(--pw-muted) }
-.nr-how-s code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--pw-ink) }
-
-/* ---- Live numbers ---------------------------------------------------------------------------- */
-.nr-tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 24px }
-@media (min-width: 640px) { .nr-tiles { grid-template-columns: repeat(4, 1fr) } }
-.nr-tile {
-  display: flex; flex-direction: column; gap: 6px; min-height: 112px;
-  padding: 20px 18px; border-radius: 16px; border: 1px solid var(--pw-line); background: var(--pw-surface);
-}
-.nr-tile-n {
-  font-family: "Sentient", Georgia, serif; font-weight: 500; font-size: clamp(1.9rem, 4.6vw, 2.6rem);
-  line-height: 1; letter-spacing: -.02em; color: var(--pw-ink); font-variant-numeric: tabular-nums;
-}
-.nr-tile-n--accent { color: var(--pw-accent) }
-.nr-tile-l { font-size: 13.5px; font-weight: 600; color: var(--pw-ink) }
-.nr-tile-s { font-size: 12.5px; line-height: 1.4; color: var(--pw-muted) }
-.nr-empty {
-  margin-top: 24px; padding: 24px; border-radius: 16px; border: 1px solid var(--pw-line);
-  background: var(--pw-surface); font-size: 15px; line-height: 1.55; color: var(--pw-muted);
-}
+/* ---- The ledger's footer line ------------------------------------------------------------- */
 .nr-meta { margin-top: 14px; font-size: 12.5px; color: var(--pw-muted) }
 .nr-meta a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
 .nr-meta a:hover { text-decoration: underline; text-underline-offset: 2px }
@@ -200,6 +137,44 @@
 .nr-notice--soft { border-color: color-mix(in srgb, var(--money) 30%, var(--line)); background: color-mix(in srgb, var(--money) 6%, var(--surface)); color: var(--ink-soft) }
 .nr-notice a { color: inherit; font-weight: 600 }
 
+/* ---- Details: the one consumer place where the network is named --------------------------
+   A small disclosure under a payment row, a form or a done screen: date and time, status, amount,
+   network fee, a Network row, then the explorer link. Closed by default, the summary a quiet link. */
+.nr-details { font-size: 12.5px; line-height: 1.5; color: var(--ink-soft) }
+.nr-details > summary {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none;
+  font-weight: 600; color: var(--money); text-decoration: none;
+}
+.nr-details > summary::-webkit-details-marker { display: none }
+.nr-details > summary::after {
+  content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: translateY(-1px) rotate(45deg); transition: transform .18s;
+}
+.nr-details[open] > summary::after { transform: translateY(1px) rotate(-135deg) }
+.nr-details > summary:hover { text-decoration: underline; text-underline-offset: 3px }
+.nr-details > summary:focus-visible { outline: 2px solid var(--money); outline-offset: 2px; border-radius: 4px }
+.nr-details-rows {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 8px 0 0;
+  padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface);
+}
+.nr-details-rows > div { display: contents }
+.nr-details-rows dt { color: var(--ink-soft) }
+.nr-details-rows dd { margin: 0; color: var(--ink); min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums }
+.nr-details-links { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0 }
+
+/* The one line under a form: a plain sentence, then the Details disclosure beside it. */
+.nr-formfoot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 12.5px; line-height: 1.5; color: var(--ink-soft) }
+.nr-formfoot .nr-details { flex: 0 1 auto }
+.nr-formfoot .nr-details[open] { flex: 1 1 100% }
+
+/* ---- Practice mode: the quiet, persistent band ------------------------------------------- */
+.nr-practice {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; border-radius: 10px;
+  font-size: 12.5px; font-weight: 500; line-height: 1.4; color: var(--ink-soft);
+  border: 1px dashed color-mix(in srgb, var(--money) 45%, var(--line)); background: color-mix(in srgb, var(--money) 6%, var(--surface));
+}
+.nr-practice-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--money) }
+
 /* ---- The state line: Waiting -> Claimed | Expired -> Returned ------------------------------- */
 .nr-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12.5px; color: var(--ink-soft) }
 .nr-state-step { padding: 3px 8px; border-radius: 999px; border: 1px solid transparent }
@@ -260,7 +235,6 @@
 .nr-spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--ink-soft) 40%, transparent); border-top-color: var(--money); animation: nr-spin .8s linear infinite; vertical-align: -2px; margin-right: 6px }
 @keyframes nr-spin { to { transform: rotate(360deg) } }
 @media (prefers-reduced-motion: reduce) {
-  .nr-way, .nr-way-go svg, .nr-btn, .nr-tab, .nr-input, .nr-select, .nr-textarea { transition: none }
-  .nr-way:hover { transform: none }
+  .nr-btn, .nr-tab, .nr-input, .nr-select, .nr-textarea { transition: none }
   .nr-spin { animation: none }
 }

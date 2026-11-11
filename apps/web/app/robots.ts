@@ -15,6 +15,9 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://getlumenia.com";
  * level rather than inside the noindexed (app) group, and its amount and sender are query params
  * that render into the OG card.
  *
+ * `/claim` is the claim screen of a link made with practice money (the key rides in its #fragment,
+ * like the others) and `/try/send` is the screen that makes those links: a money surface, like /send.
+ *
  * /spike and /dev are 404 in production already; listing them is belt-and-braces.
  *
  * `/dev$` is anchored, and that matters. A robots rule is a PREFIX match, so a bare `/dev` also
@@ -29,7 +32,7 @@ export default function robots(): MetadataRoute.Robots {
       userAgent: "*",
       allow: "/",
       // `/r/` keeps its trailing slash: a bare `/r` prefix would also block /roadmap.
-      disallow: ["/c/", "/v2/c/", "/r/", "/request", "/claimed", "/home", "/account", "/activity", "/contacts", "/notifications", "/split", "/send", "/sent/", "/unlock", "/add-money", "/pilot", "/settings", "/start", "/activate", "/welcome", "/near/send", "/brand-kit", "/dev$", "/spike"],
+      disallow: ["/c/", "/v2/c/", "/r/", "/request", "/claimed", "/home", "/account", "/activity", "/contacts", "/notifications", "/split", "/send", "/sent/", "/unlock", "/add-money", "/pilot", "/settings", "/start", "/activate", "/welcome", "/try/send", "/claim", "/brand-kit", "/dev$", "/spike"],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
     host: SITE_URL,

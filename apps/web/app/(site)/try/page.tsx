@@ -19,11 +19,17 @@
  * NO ANALYTICS, deliberately: there is no demo event in lib/events.ts's allowlist, and adding one
  * client-side without the matching entry in the sponsor's ALLOWED_EVENTS is exactly the silent-drop
  * drift that file documents. The funnel's id-space problem is the owner's call (SITE_REDESIGN §8).
+ *
+ * THE SECOND THING THIS PAGE OFFERS: sending. Below the steps, a section leads to /try/send, where a
+ * shared practice balance makes a real link anyone can open. It took over from the old /near page:
+ * one product, so the section speaks of practice money, accounts and the public ledger, and the
+ * network it runs on is a detail on the send screen itself (and on /developers), not a headline here.
  */
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AmbientVideo } from "../../../components/site/AmbientVideo";
 import { Footer } from "../../../components/site/sections/Footer";
+import { Mascot } from "../../../components/brand/Mascot";
 import { MintButton } from "./MintButton";
 import "../../../components/site/page.css";
 import "./try.css";
@@ -121,6 +127,44 @@ export default function Demo() {
             Want the technical account first?{" "}
             <Link href="/how-it-works">See how it works, and how to check it.</Link>
           </p>
+        </div>
+      </section>
+
+      {/* Sending, with practice money. The messenger stands beside it: the same character that hands
+          over the envelope on the landing, now handing one to you to send. */}
+      <section className="dm-send" aria-labelledby="dm-send-h">
+        <div className="dm-send-inner">
+          <div>
+            <p className="pg-eyebrow">
+              <span className="pg-dot" aria-hidden="true" />
+              Practice money
+            </p>
+            <h2 id="dm-send-h" className="dm-send-h">
+              Try sending a link with practice money.
+            </h2>
+            <p className="dm-send-p">
+              Make a link from a <strong>shared practice balance</strong>, up to five dollars a link, and share it
+              any way you like. Whoever opens it gets an account with the money already in it, with the
+              network fee covered. If nobody claims it before it expires, you take it back. Nothing to
+              install, and nothing here is real money.
+            </p>
+            <div className="pg-cta">
+              {/* prefetch={false}: a prefetched route hoists its own images into this document
+                  (docs/SITE_REDESIGN.md section 5), and the send screen is a client island anyway. */}
+              <Link className="pg-btn pg-btn-primary" href="/try/send" prefetch={false}>
+                Send a link
+              </Link>
+              <Link className="pg-btn pg-btn-ghost" href="/ledger">
+                See the public ledger
+              </Link>
+            </div>
+            <p className="dm-send-note">
+              Every practice link, amount and outcome is on a public ledger anyone can open.
+            </p>
+          </div>
+          <div className="dm-send-figure">
+            <Mascot pose="messenger" size="md" alt="The Lumenia messenger, holding a glowing envelope" />
+          </div>
         </div>
       </section>
 

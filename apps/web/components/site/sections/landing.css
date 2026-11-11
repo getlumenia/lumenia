@@ -188,35 +188,7 @@
   .hiw-more{margin-top:16px}
 }
 
-/* Section 5 — proof + Stellar (the one Stellar-dark strip, brand.md §4.4) */
-.proof{position:relative;z-index:1;color:#F6F7F8;overflow:hidden;
-  background:radial-gradient(120% 90% at 26% 0%, #0b3d68 0%, #002E5D 40%, #03131f 100%);
-  padding:clamp(96px,16vh,200px) clamp(24px,7vw,90px)}
-.proof-inner{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:1.05fr .95fr;gap:clamp(40px,6vw,90px);align-items:center}
-@media (max-width:860px){.proof-inner{grid-template-columns:1fr;gap:40px}}
-.proof-eyebrow{font-size:12.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#B7ACE8}
-.proof-h{margin-top:16px;font-family:"Sentient",Georgia,serif;font-weight:600;font-size:clamp(32px,5vw,58px);line-height:1.02;letter-spacing:-.025em;color:#fff;text-wrap:balance}
-.proof-p{margin-top:20px;font-family:"Switzer",ui-sans-serif,sans-serif;font-size:clamp(16px,1.9vw,20px);line-height:1.6;color:rgba(246,247,248,.78);max-width:48ch}
-.proof-p strong{color:#fff;font-weight:600}
-.proof-seal{display:inline-flex;align-items:center;gap:9px;margin-top:28px;font-family:"Switzer",ui-sans-serif,sans-serif;font-size:13px;font-weight:600;color:#F6F7F8;
-  background:rgba(183,172,232,.12);border:1px solid rgba(183,172,232,.28);border-radius:999px;padding:8px 15px}
-.proof-seal-star{width:12px;height:12px;flex:none;background:#FDDA24;clip-path:polygon(50% 0%,58% 42%,100% 50%,58% 58%,50% 100%,42% 58%,0% 50%,42% 42%)}
-.proof-receipt{display:block;text-decoration:none;color:inherit;border-radius:18px;padding:24px;
-  background:linear-gradient(180deg, rgba(255,255,255,.065), rgba(255,255,255,.02));border:1px solid rgba(183,172,232,.24);
-  box-shadow:0 40px 80px -40px rgba(0,0,0,.6);transition:transform .2s, border-color .2s}
-.proof-receipt:hover{transform:translateY(-3px);border-color:rgba(183,172,232,.5)}
-.proof-rc-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
-.proof-rc-label{font-family:"Switzer",ui-sans-serif,sans-serif;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#B7ACE8}
-.proof-rc-net{font-family:"Switzer",ui-sans-serif,sans-serif;font-size:12px;color:rgba(246,247,248,.5)}
-.proof-rc-what{font-family:"Switzer",ui-sans-serif,sans-serif;font-size:clamp(16px,1.7vw,19px);line-height:1.45;color:#F6F7F8;font-weight:500}
-.proof-rc-hash{display:flex;align-items:center;gap:10px;margin-top:18px;padding:12px 14px;border-radius:10px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.06)}
-.proof-rc-k{font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;color:#FDDA24;text-transform:uppercase;letter-spacing:.06em}
-.proof-rc-v{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13.5px;color:rgba(246,247,248,.9)}
-.proof-rc-cta{display:inline-flex;align-items:center;gap:8px;margin-top:20px;font-family:"Switzer",ui-sans-serif,sans-serif;font-weight:600;font-size:15px;color:#FDDA24}
-.proof-rc-arrow{transition:transform .2s}
-.proof-receipt:hover .proof-rc-arrow{transform:translateX(3px)}
-
-/* Section 6 — trust + FAQ (compact + interactive: iconed cards + shadcn Accordion) */
+/* Section 5 — trust + FAQ (compact + interactive: iconed cards + shadcn Accordion) */
 .trust{position:relative;z-index:1;background:var(--pw-paper);color:var(--pw-ink);padding:clamp(88px,13vh,170px) clamp(20px,6vw,64px)}
 .trust-inner{max-width:1080px;margin:0 auto}
 .trust-head{display:grid;grid-template-columns:1.1fr .9fr;gap:clamp(28px,5vw,64px);align-items:center;margin-bottom:clamp(40px,6vh,68px)}
@@ -407,8 +379,8 @@
    data-theme on <html> (the (site) ThemeProvider — never the legacy .dark class), and the
    paper/ink/line/surface/accent tokens cascade to every var-driven section (greeting,
    hero-resolution, fears, how-it-works, trust, close). What stays here is what is the LANDING's
-   own: the three intentionally-dark surfaces that do NOT flip in either theme — the moment photo,
-   the ONE Stellar-navy proof strip (brand.md §4.4), and the footer — plus the per-asset trims below.
+   own: the two intentionally-dark surfaces that do NOT flip in either theme — the moment photo
+   and the footer — plus the per-asset trims below.
    ========================================================================= */
 /* Greeting wordmark: swap the light-only mark for the dark-safe variant in dark mode. */
 .op-brandlogo--dark{display:none}
@@ -438,18 +410,17 @@
 /* SHORT / showpiece sections PIN (position:sticky;top:0) so the next slides over them — the overlay
    transition. min-height:140vh + padding-bottom:40vh gives DWELL (content centred in the top ~100vh,
    ~40vh still zone below) so a small scroll doesn't swap sections and the overlay spans ~a viewport.
-   READING-HEAVY sections (fears, proof, trust) stay RELATIVE so they scroll at the reader's own pace
+   READING-HEAVY sections (fears, trust) stay RELATIVE so they scroll at the reader's own pace
    (pinning "stuck scroll" ruins reading) — they still get a transition-in by sliding OVER the pinned
    showpiece before them, but the reader controls the pace and nothing covers the text early. */
 .op-scrub{z-index:1}
 .op-after{position:sticky;top:0;z-index:2;min-height:140vh;padding-bottom:40vh}
 .fears{position:relative;z-index:3}
-/* Reading-heavy, and short — it scrolls at the reader's pace like fears/proof/trust
+/* Reading-heavy, and short — it scrolls at the reader's pace like fears/trust
    rather than pinning, and the moment overlays it next. */
 .diff{position:relative;z-index:4}
 .moment{position:sticky;top:0;z-index:5;min-height:140vh;padding-bottom:40vh}
 .hiw{position:relative;z-index:6}
-.proof{position:relative;z-index:7}
 .trust{position:relative;z-index:8}
 .close{position:relative;z-index:9}
 /* The footer's base rules live in ./footer.css now (it is shared with the group's other pages),
@@ -478,7 +449,6 @@
    ========================================================================= */
 .fears-inner{max-width:clamp(1060px,56vw,1560px)}
 .hiw-sticky{max-width:clamp(1240px,64vw,1800px)}
-.proof-inner{max-width:clamp(1120px,58vw,1640px)}
 .trust-inner{max-width:clamp(1080px,56vw,1580px)}
 .faq{max-width:clamp(760px,40vw,1100px)}
 .close-copy{max-width:clamp(640px,34vw,940px)}
@@ -492,7 +462,6 @@
 .fears-title{font-size:max(clamp(28px,4.4vw,52px),min(2.8vw,76px))}
 .hiw-title{font-size:max(clamp(26px,3.4vw,44px),min(2.3vw,64px))}
 .hiw-stt{font-size:max(clamp(20px,2.4vw,30px),min(1.6vw,42px))}
-.proof-h{font-size:max(clamp(32px,5vw,58px),min(3.05vw,84px))}
 .trust-h{font-size:max(clamp(30px,4.6vw,54px),min(2.85vw,78px))}
 .faq-h{font-size:max(clamp(24px,3vw,38px),min(2vw,54px))}
 .close-h{font-size:max(clamp(34px,6vw,68px),min(3.6vw,98px))}

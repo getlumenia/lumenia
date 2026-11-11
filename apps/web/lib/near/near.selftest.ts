@@ -4,7 +4,7 @@
  * port added. Offline: no RPC, no keys, no relayer. near-api-js runs for key derivation only.
  *
  *   [1]  implicit account derivation (golden key -> hex, agreement with near-api-js)
- *   [2]  link fragment codec, the /c/near claim URL, pasted links
+ *   [2]  link fragment codec, the /claim URL (and the old /c/near path when pasted), pasted links
  *   [3]  USDC amounts in and out
  *   [4]  expiry math
  *   [5]  1Click quote body, address shapes, quote responses
@@ -18,14 +18,20 @@
  *   [13] account id rules
  *   [14] the password-protected key file round-trips
  *   [15] the store never writes a secret into the plain record
+ *   [16] the one-product rule, read from the source: no network name in a heading, a button, a tab,
+ *        a toast or a page title; the network lives in the Details disclosures and the practice band
  *
  * RUN: pnpm --filter @lumenia/web test:near
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { KeyPair, keyToImplicitAddress } from "near-api-js";
 import { RelayRequestError, relay, type RelayOk } from "@lumenia/near/relayer/client";
 import { isImplicitAccountId, isValidAccountId, namedAccountId } from "./account-id";
 import { formatNear, formatUnits, formatUsd, formatUsdc, parseUsdcAmount } from "./amount";
 import { MAX_BATCH_DROPS, batchTotal, buildBatchMsg, parseBatchRows, splitCsvLine } from "./batch";
+import { NEAR_CLAIM_PATH } from "./config";
 import { decryptWithPassword, encryptWithPassword } from "./crypto";
 import { LINK_CSV_COLUMNS, csvField, csvLine, csvTextField, linkCsvLine, linksCsv } from "./csv";
 import { DEMO_MAX_LINK_UNITS, demoSenderAvailable, linkLimits } from "./demo";
@@ -111,12 +117,14 @@ async function main() {
   {
     const key = newLinkKey();
     const url = claimUrl("https://example.test/", key.secret);
-    ok("a link is <origin>/c/near#ed25519:<base58>", /^https:\/\/example\.test\/c\/near#ed25519:[1-9A-HJ-NP-Za-km-z]+$/.test(url), url);
+    ok("a link is <origin>/claim#ed25519:<base58>", /^https:\/\/example\.test\/claim#ed25519:[1-9A-HJ-NP-Za-km-z]+$/.test(url), url);
+    eq("the claim path names the act, never the network", NEAR_CLAIM_PATH, "/claim");
     const hash = url.slice(url.indexOf("#"));
     eq("the fragment decodes back to the secret", decodeLinkFragment(hash), key.secret);
     eq("and derives the drop's public key", publicKeyOf(decodeLinkFragment(hash)!), key.publicKey);
     eq("the fragment is the secret itself (no encoding)", encodeLinkFragment(key.secret), key.secret);
-    eq("a pasted whole link is accepted", secretFromPastedLink(`  https://host/c/near#${key.secret} `), key.secret);
+    eq("a pasted whole link is accepted", secretFromPastedLink(`  https://host/claim#${key.secret} `), key.secret);
+    eq("a link on the old /c/near path is accepted when pasted (that path forwards to /claim in the browser)", secretFromPastedLink(`https://host/c/near#${key.secret}`), key.secret);
     eq("a bare secret is accepted", secretFromPastedLink(key.secret), key.secret);
     eq("a percent-encoded copy is accepted", secretFromPastedLink(`#${encodeURIComponent(key.secret)}`), key.secret);
   }
@@ -125,7 +133,7 @@ async function main() {
   eq("a PUBLIC key is refused (too short to be a secret)", decodeLinkFragment(`#${GOLDEN_PUBLIC_KEY}`), null);
   eq("a secp256k1 key is refused", decodeLinkFragment("#secp256k1:" + "1".repeat(88)), null);
   eq("88 zeros are not base58", decodeLinkFragment("#ed25519:" + "0".repeat(88)), null);
-  eq("a link with no fragment yields nothing", secretFromPastedLink("https://host/c/near"), null);
+  eq("a link with no fragment yields nothing", secretFromPastedLink("https://host/claim"), null);
 
   section(3, "USDC amounts");
   eq('"5" -> 5000000', parseUsdcAmount("5"), { ok: true, units: "5000000" });
@@ -595,6 +603,71 @@ async function main() {
     ok("upsertLink strips a secret too", !(mem.get("lumenia.near.links.v1") ?? "").includes("leak"));
     eq("the secret is still recallable this session", await store.linkSecret("ed25519:pub"), link.secret);
     eq("a claim record is kept, its key separately", (store.upsertClaim({ accountId: "a.testnet", publicKey: "pk", dropPublicKey: "ed25519:pub", kind: "named", createdAt: "x" }), store.claimForDrop("ed25519:pub")?.accountId), "a.testnet");
+  }
+
+  section(16, "the one-product rule, read from the source");
+  {
+    const WEB_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+    const src = (...parts: string[]) => readFileSync(join(WEB_ROOT, ...parts), "utf8");
+    const NETWORK_NAME = /\bNEAR\b|\bStellar\b|\bSoroban\b|\bblockchain\b/;
+    const SCREENS: [string, string[]][] = [
+      ["the claim screen", ["app", "claim", "NearClaim.tsx"]],
+      ["pay it forward", ["app", "claim", "NearPayForward.tsx"]],
+      ["the sender", ["components", "near", "NearSend.tsx"]],
+      ["send to many", ["components", "near", "NearSendMany.tsx"]],
+      ["the ledger", ["components", "near", "NearLedger.tsx"]],
+    ];
+    /** The text a person reads in a heading, a button, a tab or a toast, with JSX expressions left in. */
+    const spoken = (code: string): string[] => {
+      const out: string[] = [];
+      for (const re of [
+        /<h[123][^>]*>([\s\S]*?)<\/h[123]>/g,
+        /<PrimaryButton[^>]*>([\s\S]*?)<\/PrimaryButton>/g,
+        /<SmallButton[^>]*>([\s\S]*?)<\/SmallButton>/g,
+        /<button[^>]*>([\s\S]*?)<\/button>/g,
+        /<summary>([\s\S]*?)<\/summary>/g,
+        /toast\(([^)]*)\)/g,
+        /loadingLabel=\{?["'`]([^"'`]*)["'`]/g,
+      ]) {
+        for (const m of code.matchAll(re)) out.push(m[1] ?? "");
+      }
+      return out;
+    };
+    for (const [label, parts] of SCREENS) {
+      const code = src(...parts);
+      const offenders = spoken(code).filter((t) => NETWORK_NAME.test(t));
+      ok(`${label}: no heading, button, tab, toast or loading label names a network`, offenders.length === 0, offenders.join(" | ").slice(0, 160));
+      ok(`${label}: never says "wallet" for an account of ours (headings and buttons)`, !spoken(code).some((t) => /\b(a|your|my) wallet\b/i.test(t)));
+    }
+    const claim = src("app", "claim", "NearClaim.tsx");
+    ok("the claim screen shows the money, then one primary form; the other ways are collapsed <details>", /<h2[^>]*>Create my account<\/h2>/.test(claim) && (claim.match(/<details className="nc-option"/g) ?? []).length >= 2 && !/role="tablist"/.test(claim));
+    ok("the claim screen says who covers the network fee in the recipient's words", /Network fee: covered by\s+Lumenia/.test(claim));
+    ok("the claim screen's \"Another network\" card carries the incompatible-network warning", /sending to an incompatible network can cause permanent loss/.test(claim));
+    ok("the recipient's balance is printed in dollars (formatUsd), never as a token amount", !/formatUsdc\(/.test(claim));
+    const prim = src("components", "near", "primitives.tsx");
+    ok("Details always renders the Network row (NETWORK_LABEL), the one consumer place the network is named", /<dt>Network<\/dt>\s*<dd>\{NETWORK_LABEL\}<\/dd>/.test(prim) && /NETWORK_LABEL = `NEAR \$\{NEAR_NETWORK\}`/.test(prim));
+    ok("the practice band reads \"Practice mode: no real money moves\"", /Practice mode: no real money moves/.test(prim));
+    for (const [label, parts] of [
+      ["the sender", ["components", "near", "NearSend.tsx"]],
+      ["the claim screen", ["app", "claim", "NearClaim.tsx"]],
+    ] as [string, string[]][]) {
+      ok(`${label} mounts the practice band`, /<PracticeBand/.test(src(...parts)));
+    }
+    for (const [label, parts] of [
+      ["/try/send", ["app", "(site)", "try", "send", "page.tsx"]],
+      ["/ledger", ["app", "(site)", "ledger", "page.tsx"]],
+      ["/try", ["app", "(site)", "try", "page.tsx"]],
+    ] as [string, string[]][]) {
+      const code = src(...parts);
+      const title = code.match(/PAGE_TITLE = "([^"]*)"/)?.[1] ?? "";
+      const description = code.match(/DESCRIPTION =\s*"([^"]*)"/)?.[1] ?? "";
+      ok(`${label}: the title and the description name no network`, title.length > 0 && description.length > 0 && !NETWORK_NAME.test(title) && !NETWORK_NAME.test(description), `${title} / ${description.slice(0, 60)}`);
+    }
+    const nav = src("components", "site", "SiteNav.tsx");
+    const footer = src("components", "site", "sections", "Footer.tsx");
+    ok("the nav and the footer carry no network item", !/\/near"/.test(nav) && !/NEAR/.test(footer) && /\["Public ledger", "\/ledger"\]/.test(footer));
+    const forward = src("app", "c", "near", "Forward.tsx");
+    ok("the old /c/near path forwards to /claim with the fragment intact, in the browser", /window\.location\.replace\(`\$\{NEAR_CLAIM_PATH\}\$\{window\.location\.search\}\$\{window\.location\.hash\}`\)/.test(forward));
   }
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"} NEAR SELF-TEST ${passed}/${passed + failed}`);

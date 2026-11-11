@@ -1,11 +1,14 @@
 "use client";
 
 /**
- * /near/send, the sender screen of the NEAR rail. The shape is the Stellar /send's: an amount, a
- * link to share, a list of what you sent with its live state. What differs is who signs: there is no
- * Lumenia account on NEAR yet, so the sender is a testnet account whose key lives in this tab's
- * session only: the shared demo sender (its key is public by design and set by the deployment), or
- * an account the person pastes.
+ * /try/send, the practice-money sender. The shape is /send's: an amount, a link to share, a list of
+ * what you sent with its live state. What differs is who signs: there is no Lumenia account on this
+ * network yet, so the sender is a test account whose key lives in this tab's session only: the
+ * shared practice balance (its key is public by design and set by the deployment), or an account
+ * key the person pastes.
+ *
+ * ONE PRODUCT. Headings, buttons and notices say "account", "balance" and "network fee"; the
+ * network itself is named only inside the Details disclosures (primitives.tsx) and on receipts.
  *
  * RECORD BEFORE SIGN, the rule lib/sent-links.ts states for the Stellar side: the link's record and
  * its key go to storage (the key encrypted, lib/near/store.ts) before the transfer is signed, and
@@ -20,14 +23,13 @@ import { PrimaryButton } from "../brand/PrimaryButton";
 import { LinkReadyCard } from "../brand/LinkReadyCard";
 import { StatusPill } from "../brand/StatusPill";
 import { ToastHost, toast } from "../brand/Toast";
-import { CopyButton, ExplorerLink, Field, Notice, SmallButton, Spinner, StateLine, downloadText } from "./primitives";
+import { CopyButton, Details, Field, Notice, PracticeBand, SmallButton, Spinner, StateLine, downloadText, escrowExplorer, escrowRows } from "./primitives";
 import { NearSendMany } from "./NearSendMany";
 import { useInterval, useLoadable, useNow } from "../../lib/near/hooks";
 import {
   NEAR_CONTRACT_ID,
   NEAR_DEMO_FUNDER_ID,
   NEAR_DEMO_FUNDER_KEY,
-  NEAR_IS_TESTNET,
   NEAR_MAX_LINK_UNITS,
   NEAR_NETWORK,
   NEAR_USDC_ID,
@@ -86,6 +88,7 @@ export function NearSend() {
 
   return (
     <div className="nr-column">
+      <PracticeBand />
       <ContractStatus />
       {!hydrated ? null : funder ? (
         <FunderPanel
@@ -112,7 +115,7 @@ export function NearSend() {
       {funder && mode === "many" ? <NearSendMany funder={funder} onChange={bump} /> : null}
       {hydrated ? <YourLinks funder={funder} version={version} onChange={bump} /> : null}
       <p className="nr-foot">
-        Prefer the other rail? <Link href="/send">Send on Stellar instead</Link>.
+        Ready for an account of your own? <Link href="/start">Get started</Link>.
       </p>
       <ToastHost />
     </div>
@@ -155,7 +158,7 @@ function FunderForm({ onReady }: { onReady: (f: FunderSession) => void }) {
       const kp = KeyPair.fromString(NEAR_DEMO_FUNDER_KEY as KeyPairString);
       const ok = await keyBelongsToAccount(NEAR_DEMO_FUNDER_ID, kp.getPublicKey().toString());
       if (!ok) {
-        setErr(`The demo sender ${NEAR_DEMO_FUNDER_ID} does not carry the configured key on NEAR ${NEAR_NETWORK}. Bring your own account below.`);
+        setErr(`The practice balance ${NEAR_DEMO_FUNDER_ID} does not carry the configured key on this network. Use your own account key below.`);
         return;
       }
       const f: FunderSession = { accountId: NEAR_DEMO_FUNDER_ID, secret: kp.toString(), demo: true };
@@ -176,14 +179,14 @@ function FunderForm({ onReady }: { onReady: (f: FunderSession) => void }) {
     setErr(null);
     const id = accountId.trim().toLowerCase();
     if (!isValidAccountId(id)) {
-      setErr("That is not a valid NEAR account id.");
+      setErr("That is not a valid account id.");
       return;
     }
     let kp: KeyPair;
     try {
       kp = KeyPair.fromString(secret.trim() as KeyPairString);
     } catch {
-      setErr("The key should look like ed25519:... (the private_key field of a NEAR credentials file).");
+      setErr("The key should look like ed25519:... (the private_key field of your credentials file).");
       return;
     }
     setBusy(true);
@@ -191,7 +194,7 @@ function FunderForm({ onReady }: { onReady: (f: FunderSession) => void }) {
       const pk = kp.getPublicKey().toString();
       const ok = await keyBelongsToAccount(id, pk);
       if (!ok) {
-        setErr(`${id} does not have the key ${pk} on NEAR ${NEAR_NETWORK}. Check the account id and the key.`);
+        setErr(`${id} does not have the key ${pk} on this network. Check the account id and the key.`);
         return;
       }
       const f: FunderSession = { accountId: id, secret: kp.toString() };
@@ -213,28 +216,29 @@ function FunderForm({ onReady }: { onReady: (f: FunderSession) => void }) {
         <p className="font-semibold text-ink">Who is sending</p>
         <p className="mt-1 text-sm text-ink-soft">
           {demoAvailable
-            ? "Use the shared demo sender, a throwaway testnet account anyone may use, or bring your own testnet account."
-            : "A NEAR testnet account whose key you paste here. It stays in this tab only and is gone when the tab closes."}
+            ? "Send from the shared practice balance, which anyone may use, or use your own account key."
+            : "An account on the test network whose key you paste here. It stays in this tab only and is gone when the tab closes."}
         </p>
       </div>
       {demoAvailable && !own ? (
         <>
-          <PrimaryButton onClick={() => void pickDemo()} loading={demoBusy} loadingLabel="Checking the demo sender...">
-            Use the demo sender
+          <PrimaryButton onClick={() => void pickDemo()} loading={demoBusy} loadingLabel="Checking the practice balance...">
+            Use the shared practice balance
           </PrimaryButton>
           <p className="text-xs text-ink-soft">
-            Up to $5.00 a link. Its key is public on purpose, so treat it as a playground, not a wallet.
+            Up to $5.00 a link. The balance is shared with everyone trying this, so treat it as a playground.
           </p>
           <button type="button" className="nr-link self-start" onClick={() => setOwn(true)}>
-            Bring my own testnet account instead
+            Use your own account key instead
           </button>
           {err ? <Notice kind="error">{err}</Notice> : null}
         </>
       ) : (
         <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4">
+          <p className="font-semibold text-ink">Use your own account key</p>
           <p className="text-xs text-ink-soft">
-            The key stays in this tab&apos;s session storage, never in local storage, and is sent nowhere but the NEAR
-            network. Use a test account you do not care about.
+            The key stays in this tab&apos;s session storage, never in local storage, and never leaves this browser: only the
+            transactions it signs go to the network. Use a test account you do not care about.
           </p>
           <Field label="Account id" htmlFor="nr-funder-id">
             <input
@@ -248,7 +252,7 @@ function FunderForm({ onReady }: { onReady: (f: FunderSession) => void }) {
               spellCheck={false}
             />
           </Field>
-          <Field label="Private key" htmlFor="nr-funder-key" hint="ed25519:... from ~/.near-credentials/testnet/<account>.json">
+          <Field label="Private key" htmlFor="nr-funder-key" hint="ed25519:... (the private_key field of your credentials file)">
             <input
               id="nr-funder-key"
               className="nr-input nr-input--mono"
@@ -265,7 +269,7 @@ function FunderForm({ onReady }: { onReady: (f: FunderSession) => void }) {
           </PrimaryButton>
           {demoAvailable ? (
             <button type="button" className="nr-link self-start" onClick={() => setOwn(false)}>
-              Back to the demo sender
+              Back to the practice balance
             </button>
           ) : null}
         </form>
@@ -292,16 +296,16 @@ function FunderPanel({ funder, onForget }: { funder: FunderSession; onForget: ()
           <p className="font-semibold text-ink">Sending from</p>
           <p className="nr-mono mt-1 text-ink-soft">{funder.accountId}</p>
         </div>
-        <SmallButton onClick={onForget}>{funder.demo ? "Switch sender" : "Forget key"}</SmallButton>
+        <SmallButton onClick={onForget}>{funder.demo ? "Switch" : "Forget key"}</SmallButton>
       </div>
       {funder.demo ? (
         <Notice kind="warn">
-          Shared demo sender: anyone can use it and its balance may be low (refill at faucet.circle.com for {funder.accountId}).
+          Shared practice balance: anyone can use it and it may run low (refill at faucet.circle.com for {funder.accountId}).
           Links are capped at $5.00 each here.
         </Notice>
       ) : null}
       <dl className="nr-kv">
-        <dt>USDC</dt>
+        <dt>Balance</dt>
         <dd>
           {usdc.value.state === "loading" ? (
             <span className="text-ink-soft">reading...</span>
@@ -314,28 +318,35 @@ function FunderPanel({ funder, onForget }: { funder: FunderSession; onForget: ()
             </span>
           ) : (
             <>
-              {formatUsdc(usdc.value.value.balance)} USDC
-              {!usdc.value.value.registered ? <span className="ml-2 text-xs text-ink-soft">(not registered with the USDC contract)</span> : null}
+              {formatUsd(usdc.value.value.balance)}
+              {!usdc.value.value.registered ? <span className="ml-2 text-xs text-ink-soft">(not registered with the token contract)</span> : null}
             </>
           )}
         </dd>
-        <dt>NEAR</dt>
-        <dd>
-          {near.value.state === "loading" ? (
-            <span className="text-ink-soft">reading...</span>
-          ) : near.value.state === "error" ? (
-            <span className="text-danger">
-              could not read it{" "}
-              <button type="button" className="nr-link" onClick={near.reload}>
-                retry
-              </button>
-            </span>
-          ) : (
-            `${formatNear(near.value.value)} NEAR`
-          )}
-        </dd>
       </dl>
-      <ExplorerLink href={explorerAccountUrl(funder.accountId)}>View the account on the explorer</ExplorerLink>
+      {/* The network, the fee balance and the escrow live behind Details: the one place they are named. */}
+      <Details
+        rows={[
+          ["Account", <span key="id" className="nr-mono">{funder.accountId}</span>],
+          [
+            "Network fee balance",
+            near.value.state === "loading" ? (
+              "reading..."
+            ) : near.value.state === "error" ? (
+              <span key="fee" className="text-danger">
+                could not read it{" "}
+                <button type="button" className="nr-link" onClick={near.reload}>
+                  retry
+                </button>
+              </span>
+            ) : (
+              `${formatNear(near.value.value)} NEAR`
+            ),
+          ],
+          ...escrowRows(),
+        ]}
+        explorer={[["View the account on explorer", explorerAccountUrl(funder.accountId)], ...escrowExplorer()]}
+      />
     </MoneyCard>
   );
 }
@@ -379,7 +390,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
     } else {
       const parsed = parseUsdcAmount(amount, { maxUnits: limits.maxUnits });
       if (!parsed.ok) {
-        setFormErr(funder.demo && /limit here/.test(parsed.reason) ? "The shared demo sender is capped at $5.00 a link. Bring your own account for more." : parsed.reason);
+        setFormErr(funder.demo && /limit here/.test(parsed.reason) ? "The shared practice balance is capped at $5.00 a link. Use your own account key for more." : parsed.reason);
         return;
       }
       if (memoBytes(memo) > MAX_MEMO_BYTES) {
@@ -453,7 +464,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
             link,
             txHash,
             retryable: false,
-            message: `The escrow did not keep the USDC, so the token contract refunded ${funder.accountId}` + (why ? `: ${why}` : "."),
+            message: `The escrow did not keep the money, so it was refunded to ${funder.accountId}` + (why ? `: ${why}` : "."),
           });
           return;
         }
@@ -485,6 +496,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
         link={result.link}
         txHash={result.txHash}
         kept={result.kept}
+        feeNote={funder.demo ? "paid by the practice balance" : "paid by your account"}
         onAnother={() => {
           setResult(null);
           setMemo("");
@@ -518,7 +530,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
             ))}
           </select>
         </Field>
-        <Field label="Memo (optional)" htmlFor="nr-memo" hint="Stored on chain with the link, shown to the person who opens it.">
+        <Field label="Memo (optional)" htmlFor="nr-memo" hint="Stored on the public ledger with the link, shown to the person who opens it.">
           <input id="nr-memo" className="nr-input" value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="For the concert tickets" maxLength={MAX_MEMO_BYTES} />
         </Field>
         {formErr ? <Notice kind="error">{formErr}</Notice> : null}
@@ -529,7 +541,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
             {result.message}
             {result.txHash ? (
               <div className="mt-2">
-                <ExplorerLink href={explorerTxUrl(result.txHash)}>View the transaction on the explorer</ExplorerLink>
+                <Details rows={[["Status", "not created"], ["Network fee", funder.demo ? "paid by the practice balance" : "paid by your account"]]} explorer={[["View the transaction on explorer", explorerTxUrl(result.txHash)]]} />
               </div>
             ) : null}
           </Notice>
@@ -537,12 +549,17 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
         <PrimaryButton type="submit" loading={busy} loadingLabel={step ? `${step}...` : "Working..."} disabled={paused}>
           Create a money link
         </PrimaryButton>
+        {/* The one line under the form that says where this money lives. The network itself is inside Details. */}
+        <div className="nr-formfoot">
+          <span>Practice money on a test network.</span>
+          <Details rows={escrowRows()} explorer={escrowExplorer()} />
+        </div>
       </form>
     </MoneyCard>
   );
 }
 
-function LinkCreated({ link, txHash, kept, onAnother }: { link: StoredLink; txHash: string | null; kept: boolean; onAnother: () => void }) {
+function LinkCreated({ link, txHash, kept, feeNote, onAnother }: { link: StoredLink; txHash: string | null; kept: boolean; feeNote: string; onAnother: () => void }) {
   const url = claimUrl(nearLinkOrigin(), link.secret as KeyPairString);
   const [live, setLive] = useState<StoredLink>(link);
   const now = useNow(1000);
@@ -569,7 +586,16 @@ function LinkCreated({ link, txHash, kept, onAnother }: { link: StoredLink; txHa
       <MoneyCard className="flex flex-col gap-2 p-4">
         <StateLine state={state} />
         <p className="text-sm text-ink-soft">{linkStatusLine(live, now)}</p>
-        {txHash ? <ExplorerLink href={explorerTxUrl(txHash)}>View the transaction on the explorer</ExplorerLink> : null}
+        <Details
+          rows={[
+            ["Made", formatLocal(Date.parse(link.createdAt))],
+            ["Status", linkStatusLine(live, now)],
+            ["Amount", formatUsd(link.amountUnits)],
+            ["Network fee", feeNote],
+            ["Expires", formatLocal(linkExpiresAt(live))],
+          ]}
+          explorer={txHash ? [["View the transaction on explorer", explorerTxUrl(txHash)]] : undefined}
+        />
         {!kept ? (
           <Notice kind="warn">This browser could not keep the link&apos;s key on disk. It stays only while this tab is open, so copy the link now.</Notice>
         ) : null}
@@ -650,7 +676,7 @@ function YourLinks({ funder, version, onChange }: { funder: FunderSession | null
       explorer_url: l.createTxHash ? explorerTxUrl(l.createTxHash) : "",
       label: l.label ?? "",
     }));
-    downloadText(`lumenia-near-links-${new Date().toISOString().slice(0, 10)}.csv`, CSV_BOM + linksCsv(rows), "text/csv");
+    downloadText(`lumenia-practice-links-${new Date().toISOString().slice(0, 10)}.csv`, CSV_BOM + linksCsv(rows), "text/csv");
     toast("CSV downloaded.");
   };
 
@@ -766,16 +792,22 @@ function YourLinks({ funder, version, onChange }: { funder: FunderSession | null
                   <span className="nr-row-sub">{linkStatusLine(l, now)}</span>
                 </div>
                 <StateLine state={state} />
-                <p className="nr-row-sub">
-                  Expires {formatLocal(linkExpiresAt(l))}
-                  {!mine ? ` from ${l.funder}` : ""}
-                  {l.lastStatus === "Claimed" && l.claimedTo ? (
-                    <>
-                      {" "}
-                      <ExplorerLink href={explorerAccountUrl(l.claimedTo)}>recipient on the explorer</ExplorerLink>
-                    </>
-                  ) : null}
-                </p>
+                <Details
+                  rows={[
+                    ["Made", formatLocal(Date.parse(l.createdAt))],
+                    ["Status", linkStatusLine(l, now)],
+                    ["Amount", formatUsd(l.amountUnits)],
+                    ["Network fee", l.relayed ? "covered by Lumenia" : mine ? (funder?.demo ? "paid by the practice balance" : "paid by your account") : `paid by ${l.funder}`],
+                    ["Expires", formatLocal(linkExpiresAt(l))],
+                    !mine ? ["Sent from", <span key="from" className="nr-mono">{l.funder}</span>] : null,
+                    l.lastStatus === "Claimed" && l.claimedTo ? ["Claimed by", <span key="to" className="nr-mono">{l.claimedTo}</span>] : null,
+                  ]}
+                  explorer={[
+                    ...(l.lastStatus === "Reclaimed" && l.reclaimTxHash ? [["View the take-back on explorer", explorerTxUrl(l.reclaimTxHash)] as [string, string]] : []),
+                    ...(l.createTxHash ? [["View the transaction on explorer", explorerTxUrl(l.createTxHash)] as [string, string]] : []),
+                    ...(l.lastStatus === "Claimed" && l.claimedTo ? [["View the recipient on explorer", explorerAccountUrl(l.claimedTo)] as [string, string]] : []),
+                  ]}
+                />
                 {err ? <Notice kind="error">{err}</Notice> : null}
                 <div className="nr-row-actions">
                   {!terminal && url ? <CopyButton text={url} /> : null}
@@ -786,7 +818,7 @@ function YourLinks({ funder, version, onChange }: { funder: FunderSession | null
                   ) : null}
                   {canReclaimViaRelayer ? (
                     <SmallButton className="nr-btn--accent" busy={busyKey === l.publicKey} onClick={() => void reclaimViaRelayer(l)}>
-                      Take it back, fee paid by the relayer
+                      Take it back (network fee covered)
                     </SmallButton>
                   ) : null}
                   {terminal ? (
@@ -799,18 +831,12 @@ function YourLinks({ funder, version, onChange }: { funder: FunderSession | null
                       Remove from this list
                     </SmallButton>
                   ) : null}
-                  {(l.lastStatus === "Reclaimed" && l.reclaimTxHash) || l.createTxHash ? (
-                    <ExplorerLink href={explorerTxUrl(l.lastStatus === "Reclaimed" && l.reclaimTxHash ? l.reclaimTxHash : (l.createTxHash as string))}>
-                      explorer
-                    </ExplorerLink>
-                  ) : null}
                 </div>
               </div>
             );
           })}
         </div>
       )}
-      {NEAR_IS_TESTNET ? <p className="mt-3 text-xs text-ink-soft">Test network. This money isn&apos;t real.</p> : null}
       {busyKey ? <Spinner /> : null}
     </MoneyCard>
   );

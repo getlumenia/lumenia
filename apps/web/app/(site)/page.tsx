@@ -11,9 +11,8 @@
  *   2b Difference  — everyone else makes the RECEIVER do the work; we don't
  *   3 Moment       — the real human beat (treated photograph)
  *   4 HowItWorks   — pinned 3-step scroll story
- *   5 Proof        — the one Stellar-dark strip + real on-chain receipt
- *   6 Trust        — "Where is my money, exactly?" essay + FAQ
- *   7 CloseCTA + Footer — dual CTA over the living video + the dark footer
+ *   5 Trust        — "Where is my money, exactly?" essay + FAQ
+ *   6 CloseCTA + Footer — dual CTA over the living video + the dark footer
  */
 import type { Metadata } from "next";
 import { jsonLdSafe } from "../../lib/utils";
@@ -27,7 +26,6 @@ import { Fears } from "../../components/site/sections/Fears";
 import { Difference } from "../../components/site/sections/Difference";
 import { Moment } from "../../components/site/sections/Moment";
 import { HowItWorks } from "../../components/site/sections/HowItWorks";
-import { Proof } from "../../components/site/sections/Proof";
 import { Trust } from "../../components/site/sections/Trust";
 import { CloseCTA } from "../../components/site/sections/CloseCTA";
 import { Footer } from "../../components/site/sections/Footer";
@@ -148,7 +146,6 @@ export default function Landing() {
           <Difference />
           <Moment />
           <HowItWorks />
-          <Proof />
           <Trust />
           <CloseCTA />
           <Footer />

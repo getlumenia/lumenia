@@ -106,6 +106,33 @@
 .dm-steps-foot a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
 .dm-steps-foot a:hover { text-decoration: underline; text-underline-offset: 3px }
 
+/* ---- Try sending: practice money ----------------------------------------------------------
+   The page's second offer, after the steps: copy left, the messenger right, stacked on a phone
+   (the figure first, as on the landing's greeting). Same ground and hairline as the steps, so it
+   reads as the next paragraph of the page, not a second page. */
+.dm-send {
+  position: relative; z-index: 2; background: var(--pw-paper);
+  padding: clamp(64px, 9vh, 110px) clamp(20px, 6vw, 64px) clamp(88px, 12vh, 140px);
+  border-top: 1px solid var(--pw-line);
+}
+.dm-send-inner {
+  max-width: 940px; margin: 0 auto;
+  display: grid; grid-template-columns: 1fr; gap: clamp(28px, 4vw, 56px); align-items: center;
+}
+.dm-send-figure { order: -1; display: flex; justify-content: center }
+@media (min-width: 900px) {
+  .dm-send-inner { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr) }
+  .dm-send-figure { order: 0 }
+}
+.dm-send-h {
+  margin-top: 14px; font-family: "Sentient", Georgia, serif; font-weight: 600;
+  font-size: clamp(24px, 3vw, 38px); line-height: 1.06; letter-spacing: -.02em; color: var(--pw-ink); text-wrap: balance;
+}
+.dm-send-p { margin-top: 14px; font-size: clamp(15.5px, 1.6vw, 17.5px); line-height: 1.6; color: var(--pw-muted); max-width: 54ch }
+.dm-send-p strong { color: var(--pw-ink); font-weight: 600 }
+.dm-send .pg-cta { margin-top: 24px }
+.dm-send-note { margin-top: 14px; font-size: 13.5px; line-height: 1.5; color: var(--pw-muted); max-width: 46ch }
+
 /* ---- Narrow -----------------------------------------------------------------------------
    Kept BELOW the base rules on purpose: same specificity, so whichever comes last wins. Placed
    above them these overrides look applied and silently do nothing. */
@@ -133,5 +160,7 @@
    forms are continuous and cross over past 1600px, so nothing at the sizes this page was composed
    at moves by a pixel. Reading measures (the ch maxes) deliberately do NOT scale. */
 .dm-steps-inner { max-width: clamp(940px, 58vw, 1640px) }
+.dm-send-inner { max-width: clamp(940px, 58vw, 1640px) }
 .dm-steps-h { font-size: max(clamp(24px, 3vw, 38px), min(2vw, 54px)) }
+.dm-send-h { font-size: max(clamp(24px, 3vw, 38px), min(2vw, 54px)) }
 .dm-step-t { font-size: max(clamp(18px, 2vw, 23px), min(1.35vw, 32px)) }

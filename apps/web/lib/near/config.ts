@@ -50,8 +50,13 @@ export const NEAR_EXPLORER = NEAR_NETWORK === "mainnet" ? "https://nearblocks.io
 /** The largest link this client will create outside demo mode, in USDC units (100 USDC). */
 export const NEAR_MAX_LINK_UNITS = "100000000";
 
-/** Where a NEAR link opens. A static segment beside the Stellar claim routes. */
-export const NEAR_CLAIM_PATH = "/c/near";
+/**
+ * Where a link made here opens. One product, one word: the path names the act (claim), never the
+ * network. The old /c/near path still answers: it is a tiny client page that forwards to /claim with
+ * the fragment intact (app/c/near/page.tsx), so links minted before the move, and the ones the agent
+ * MCP still writes on /c/near#, keep working.
+ */
+export const NEAR_CLAIM_PATH = "/claim";
 
 /**
  * The origin a link is written with: the deployed site, so a link made on a preview or a laptop

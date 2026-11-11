@@ -11,19 +11,19 @@ import type { KeyPairString } from "near-api-js";
 import QRCode from "react-qr-code";
 import { MoneyCard } from "../brand/MoneyCard";
 import { PrimaryButton } from "../brand/PrimaryButton";
-import { CopyButton, ExplorerLink, Field, Notice, SmallButton, StateLine } from "./primitives";
+import { CopyButton, Details, ExplorerLink, Field, Notice, SmallButton, StateLine } from "./primitives";
 import { useInterval, useLoadable, useNow } from "../../lib/near/hooks";
 import { NEAR_CONTRACT_ID, NEAR_MAX_LINK_UNITS, NEAR_NETWORK, NEAR_USDC_ID, explorerTxUrl, nearLinkOrigin } from "../../lib/near/config";
 import { linkLimits } from "../../lib/near/demo";
-import { formatUsd, formatUsdc } from "../../lib/near/amount";
+import { formatUsd } from "../../lib/near/amount";
 import { DEFAULT_MIN_AMOUNT_UNITS, MAX_BATCH_DROPS, buildBatchMsg, parseBatchRows, type BatchRow } from "../../lib/near/batch";
 import { describeError } from "../../lib/near/errors";
-import { DEFAULT_EXPIRY_S, EXPIRY_OPTIONS, toIso } from "../../lib/near/expiry";
+import { DEFAULT_EXPIRY_S, EXPIRY_OPTIONS, formatLocal, toIso } from "../../lib/near/expiry";
 import { claimUrl, newLinkKey } from "../../lib/near/keys";
 import { getConfig, getDropsByFunder, usdcBalance } from "../../lib/near/rpc";
 import { sendFunctionCall } from "../../lib/near/chain";
 import { ftTransferCallUsedAmount, refusalReason, txFailure } from "../../lib/near/outcome";
-import { linkStateOf } from "../../lib/near/link-state";
+import { linkExpiresAt, linkStateOf, linkStatusLine } from "../../lib/near/link-state";
 import { loadLinks, saveLink, upsertLink, type FunderSession, type StoredLink } from "../../lib/near/store";
 
 const EXAMPLE = "Ada, 5, rent\nBob, 0.10\nCy, 1.25, thanks";
@@ -111,7 +111,7 @@ export function NearSendMany({ funder, onChange }: { funder: FunderSession; onCh
       const used = ftTransferCallUsedAmount(sent.outcome);
       if (used !== null && used !== parsed.totalUnits) {
         const why = refusalReason(sent.outcome);
-        const message = `The escrow handed the USDC back to ${funder.accountId}${why ? ` (${why})` : ""}. No links were created.`;
+        const message = `The escrow handed the money back to ${funder.accountId}${why ? ` (${why})` : ""}. No links were created.`;
         for (const l of links) upsertLink({ publicKey: l.publicKey, createError: why ?? "refunded" });
         setOutcome({ kind: "failed", batchId, txHash, message });
         return;
@@ -132,7 +132,7 @@ export function NearSendMany({ funder, onChange }: { funder: FunderSession; onCh
   };
 
   if (outcome?.kind === "created") {
-    return <BatchCreated outcome={outcome} onAnother={() => setOutcome(null)} />;
+    return <BatchCreated outcome={outcome} feeNote={funder.demo ? "paid by the practice balance" : "paid by your account"} onAnother={() => setOutcome(null)} />;
   }
 
   return (
@@ -140,7 +140,7 @@ export function NearSendMany({ funder, onChange }: { funder: FunderSession; onCh
       <div>
         <p className="font-semibold text-ink">Send to many</p>
         <p className="mt-1 text-sm text-ink-soft">
-          One row per person: <code className="nr-mono">label, amount[, memo]</code>. Up to {MAX_BATCH_DROPS} rows, at least {formatUsdc(minUnits)} USDC each.
+          One row per person: <code className="nr-mono">label, amount[, memo]</code>. Up to {MAX_BATCH_DROPS} rows, at least {formatUsd(minUnits)} each.
           One transaction makes every link; if anything is off, the escrow returns all of it.
         </p>
       </div>
@@ -202,7 +202,7 @@ export function NearSendMany({ funder, onChange }: { funder: FunderSession; onCh
       ) : null}
       {balance.value.state === "error" ? (
         <Notice kind="error" onRetry={balance.reload}>
-          Could not read your USDC balance: {balance.value.message}
+          Could not read your balance: {balance.value.message}
         </Notice>
       ) : overBalance && balanceUnits !== null ? (
         <Notice kind="error">
@@ -252,7 +252,7 @@ async function confirmBatch(funder: string, links: StoredLink[]): Promise<number
   }
 }
 
-function BatchCreated({ outcome, onAnother }: { outcome: Extract<Outcome, { kind: "created" }>; onAnother: () => void }) {
+function BatchCreated({ outcome, feeNote, onAnother }: { outcome: Extract<Outcome, { kind: "created" }>; feeNote: string; onAnother: () => void }) {
   // The secrets are in memory on `outcome.links`; the statuses come from what Your links keeps polling.
   const [records, setRecords] = useState<StoredLink[]>(() => loadLinks().filter((l) => l.batchId === outcome.batchId));
   const [qrFor, setQrFor] = useState<string | null>(null);
@@ -287,6 +287,16 @@ function BatchCreated({ outcome, onAnother }: { outcome: Extract<Outcome, { kind
               {l.memo ? <p className="nr-row-memo">{l.memo}</p> : null}
               <StateLine state={state} />
               {url ? <p className="nr-mono break-all rounded-[12px] border border-line bg-paper px-3 py-2 text-xs text-ink-soft">{url}</p> : null}
+              <Details
+                rows={[
+                  ["Made", formatLocal(Date.parse(l.createdAt))],
+                  ["Status", linkStatusLine(l, now)],
+                  ["Amount", formatUsd(l.amountUnits)],
+                  ["Network fee", feeNote],
+                  ["Expires", formatLocal(linkExpiresAt(l))],
+                ]}
+                explorer={[["View the transaction on explorer", explorerTxUrl(outcome.txHash)]]}
+              />
               <div className="nr-row-actions">
                 {url ? <CopyButton text={url} /> : null}
                 {url ? (

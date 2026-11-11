@@ -1,16 +1,17 @@
 "use client";
 
 /**
- * /near/ledger: every link the escrow knows, newest first, 25 to a page, refreshed every 15 s.
- * Amounts and account ids only. A memo belongs to the two people involved, so it is shown only on
- * a link THIS browser made (matched by the public key in local storage), and a link's secret never
- * appears anywhere here: the public key is what identifies a drop.
+ * /ledger: every link the escrow knows, newest first, 25 to a page, refreshed every 15 s. Amounts
+ * and short account ids only. A memo belongs to the two people involved, so it is shown only on a
+ * link THIS browser made (matched by the public key in local storage), and a link's secret never
+ * appears anywhere here: the public key is what identifies a drop. The network is named in the
+ * page's detail line and inside each row's Details, nowhere else.
  */
 import { useEffect, useMemo, useState } from "react";
 import { StatusPill } from "../brand/StatusPill";
-import { ExplorerLink, Notice, SmallButton, Spinner } from "./primitives";
+import { Details, Notice, SmallButton, Spinner } from "./primitives";
 import { useLoadable, useNow } from "../../lib/near/hooks";
-import { NEAR_CONTRACT_ID, NEAR_NETWORK, explorerAccountUrl, explorerTxUrl } from "../../lib/near/config";
+import { NEAR_CONTRACT_ID, explorerAccountUrl, explorerTxUrl } from "../../lib/near/config";
 import { formatUsd } from "../../lib/near/amount";
 import type { DropStatus, StatsView } from "../../lib/near/drops";
 import { formatLocal, isExpired, nsToMs } from "../../lib/near/expiry";
@@ -111,12 +112,20 @@ export function NearLedger({ initialStats }: { initialStats: StatsView | null })
                     </>
                   ) : null}
                   <br />
-                  made {formatLocal(nsToMs(r.createdAtNs))}, expires {formatLocal(nsToMs(r.expiresAtNs))}.{" "}
-                  {r.createTxHash ? (
-                    <ExplorerLink href={explorerTxUrl(r.createTxHash)}>Transaction on the explorer</ExplorerLink>
-                  ) : (
-                    <ExplorerLink href={explorerAccountUrl(r.claimedTo ?? r.funder)}>{r.claimedTo ? "Recipient" : "Sender"} on the explorer</ExplorerLink>
-                  )}
+                  made {formatLocal(nsToMs(r.createdAtNs))}, expires {formatLocal(nsToMs(r.expiresAtNs))}.
+                  <Details
+                    rows={[
+                      ["Made", formatLocal(nsToMs(r.createdAtNs))],
+                      ["Status", s.label],
+                      ["Amount", formatUsd(r.amountUnits)],
+                      ["Network fee", r.claimedTo ? "the claim was covered by Lumenia" : "covered by Lumenia at the claim"],
+                      ["Expires", formatLocal(nsToMs(r.expiresAtNs))],
+                    ]}
+                    explorer={[
+                      ...(r.createTxHash ? [["View the transaction on explorer", explorerTxUrl(r.createTxHash)] as [string, string]] : []),
+                      [r.claimedTo ? "View the recipient on explorer" : "View the sender on explorer", explorerAccountUrl(r.claimedTo ?? r.funder)],
+                    ]}
+                  />
                 </span>
                 <span className="nr-ledger-status">
                   {r.mine ? <span className="nr-yours">yours</span> : null}
@@ -143,7 +152,7 @@ export function NearLedger({ initialStats }: { initialStats: StatsView | null })
         </div>
       ) : null}
       <p className="nr-meta">
-        Read from {NEAR_CONTRACT_ID} on NEAR {NEAR_NETWORK} every 15 seconds. Newest first. A link&apos;s secret never appears
+        Read from the escrow account {NEAR_CONTRACT_ID} every 15 seconds. Newest first. A link&apos;s secret never appears
         here; only its public key identifies a drop. Memos are shown only for links made in this browser.
       </p>
     </>

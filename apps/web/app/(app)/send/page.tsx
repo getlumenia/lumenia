@@ -1042,12 +1042,12 @@ export default function SendPage() {
               Paying for a group? One link, many people.
             </Link>
           )}
-          {/* The second rail (NEAR HACKATHON 2026), one line and out of the way: the same product on
-              NEAR testnet, with its own sender. prefetch={false}: a prefetched route hoists its own
-              images into this document (docs/SITE_REDESIGN.md section 5). */}
+          {/* The practice-money sender (/try/send), one line and out of the way: a shared practice
+              balance anyone may send from, no account needed. prefetch={false}: a prefetched route
+              hoists its own images into this document (docs/SITE_REDESIGN.md section 5). */}
           {!paying && (
-            <Link href="/near/send" prefetch={false} className="text-sm text-ink-soft underline-offset-2 hover:text-ink hover:underline">
-              Also available: send on NEAR (testnet).
+            <Link href="/try/send" prefetch={false} className="text-sm text-ink-soft underline-offset-2 hover:text-ink hover:underline">
+              Want to try with practice money? Send a link from the practice balance.
             </Link>
           )}
           {/* THE SECOND WAY IN (Stellar Wallets Kit, D7): a link paid for by a wallet the person

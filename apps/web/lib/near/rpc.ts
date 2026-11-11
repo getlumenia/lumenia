@@ -75,7 +75,7 @@ export async function rpcCall<T>(method: string, params: Record<string, unknown>
     if (json.error) throw new NearRpcError(rpcErrorMessage(json.error), json.error.cause?.name ?? json.error.name, json.error.data);
     return json.result as T;
   }
-  throw new NearRpcError(`The NEAR network did not answer (${describeError(lastNetwork)}). Check your connection and try again.`);
+  throw new NearRpcError(`The network did not answer (${describeError(lastNetwork)}). Check your connection and try again.`);
 }
 
 function toBase64(text: string): string {
