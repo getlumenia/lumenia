@@ -10,7 +10,11 @@
 #   bash ops/near-mainnet-owner.sh status                  read-only: balances, config, registration
 #   bash ops/near-mainnet-owner.sh unwrap <near>           only if wNEAR arrived instead of NEAR (near_withdraw on wrap.near)
 #   bash ops/near-mainnet-owner.sh create                  create lumenia.near with 4 NEAR from the deployer
-#   bash ops/near-mainnet-owner.sh deploy                  build the wasm, deploy + init the escrow on lumenia.near
+#   bash ops/near-mainnet-owner.sh deploy                  build the wasm, deploy + init the escrow on lumenia.near with the mainnet
+#                                                          values: key_allowance 0.25 NEAR per link key, starter 0 NEAR (testnet runs
+#                                                          1 NEAR and 0.05 NEAR); OWNER_ID=<account> sets owner_id (default lumenia.near).
+#                                                          owner_id is fixed at init (no transfer method), and `lock` refuses while it is
+#                                                          lumenia.near: pick another existing account here if you will ever lock
 #   bash ops/near-mainnet-owner.sh register                register lumenia.near and the deployer on USDC
 #   bash ops/near-mainnet-owner.sh link <usdc> <label>     lock <usdc> in a new link (key saved under ~/.lumenia-near/mainnet-links/<label>/)
 #   bash ops/near-mainnet-owner.sh claim-named <label> <name>   claim link <label> into a NEW account <name>.near (the link key signs; the recipient pays nothing)
@@ -20,9 +24,14 @@
 #   bash ops/near-mainnet-owner.sh intents-status <depositAddress>
 #   bash ops/near-mainnet-owner.sh swap-usdc <near>             swap <near> NEAR into USDC on NEAR through NEAR Intents (same-chain, about 20 s)
 #   bash ops/near-mainnet-owner.sh send-rest <keep> <to>        send everything above <keep> NEAR from the deployer to <to>
+#   bash ops/near-mainnet-owner.sh lock                         IRREVERSIBLE: delete every full-access key of lumenia.near, so nobody can
+#                                                               ever redeploy the escrow; its pool NEAR is then spent only by claims.
+#                                                               Refuses unless owner_id is another existing account and CONFIRM_LOCK=yes
+#                                                               (without it, prints the plan and sends nothing). Never part of `all`.
 #   bash ops/near-mainnet-owner.sh all <name> <to>              the whole proof in one go: create, deploy, register, swap 1.5 NEAR to USDC,
 #                                                               a 2 USDC link claimed into the NEW account <name>.near, a 1 USDC link claimed
-#                                                               to <to>, then the rest of the deployer's NEAR to <to> (stops at the first error)
+#                                                               to <to>, then the rest of the deployer's NEAR to <to> (stops at the first error;
+#                                                               OWNER_ID, when set, reaches its deploy step; it does not lock)
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$HOME/.nvm/versions/node/v24.21.0/bin:/opt/homebrew/bin:$PATH"
 NEAR=${NEAR_BIN:-$HOME/.cargo/bin/near}
@@ -35,6 +44,26 @@ CRATE="$(cd "$(dirname "$0")/.." && pwd)/contracts/lumen-drop-near"
 WASM=$CRATE/target/near/lumenia_drop/lumenia_drop.wasm
 LINKS="$HOME/.lumenia-near/mainnet-links"
 X=https://nearblocks.io/txns
+RPC_MAINNET=${RPC_MAINNET:-https://rpc.mainnet.fastnear.com}
+# One read-only JSON-RPC `query` on mainnet (params as JSON); prints the raw answer.
+rpcq() { curl -sS -m 20 -A "Mozilla/5.0 (lumenia-ops)" -H 'content-type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"query\",\"params\":$1}" "$RPC_MAINNET"; }
+# Prints yes / no / error: whether a mainnet account exists (read-only).
+account_exists() {
+  rpcq "{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$1\"}" | python3 -c "import json,sys
+d=json.load(sys.stdin)
+print('yes' if 'result' in d else ('no' if 'UNKNOWN_ACCOUNT' in json.dumps(d.get('error', {})) else 'error: ' + json.dumps(d.get('error'))[:200]))"
+}
+# Prints three lines for an account's access keys: its full-access keys (comma-separated), the function-call keys
+# that can do more than a link key (anything but claim + claim_to_new_account on the escrow itself), the number
+# of function-call keys (read-only).
+key_summary() {
+  rpcq "{\"request_type\":\"view_access_key_list\",\"finality\":\"final\",\"account_id\":\"$1\"}" | python3 -c "import json,sys
+acct=sys.argv[1]; ks=json.load(sys.stdin)['result']['keys']
+fa=[k['public_key'] for k in ks if k['access_key']['permission']=='FullAccess']
+fc=[k for k in ks if k['access_key']['permission']!='FullAccess']
+odd=[k['public_key'] for k in fc if k['access_key']['permission']['FunctionCall']['receiver_id']!=acct or sorted(k['access_key']['permission']['FunctionCall']['method_names'])!=['claim','claim_to_new_account']]
+print(','.join(fa)); print(','.join(odd)); print(len(fc))" "$1"
+}
 units() { python3 -c "import sys,decimal;print(int(decimal.Decimal(sys.argv[1])*1000000))" "$1"; }
 keyfield() { python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
 genkey() { mkdir -p "$1"; chmod 700 "$1"; "$NEAR" account create-account fund-later use-auto-generation save-to-folder "$1" >/dev/null 2>&1; ls -t "$1"/*.json | head -1; }
@@ -44,7 +73,12 @@ case "$STEP" in
     for A in "$DEPLOYER" "$CONTRACT"; do echo "-- $A"; "$NEAR" account view-account-summary "$A" network-config mainnet now 2>&1 | grep -E "Native account balance|does not exist" || true; done
     for A in "$DEPLOYER" "$CONTRACT"; do printf "USDC units %s: " "$A"; "$NEAR" contract call-function as-read-only "$USDC" ft_balance_of json-args "{\"account_id\":\"$A\"}" network-config mainnet now 2>&1 | grep -E '^"' || echo "?"; done
     printf "wNEAR units %s: " "$DEPLOYER"; "$NEAR" contract call-function as-read-only wrap.near ft_balance_of json-args "{\"account_id\":\"$DEPLOYER\"}" network-config mainnet now 2>&1 | grep -E '^"' || echo "?"
-    "$NEAR" contract call-function as-read-only "$CONTRACT" get_config json-args '{}' network-config mainnet now 2>&1 | grep -E "token_id|starter|min_amount|paused|root_account" || echo "(escrow not deployed yet)"
+    "$NEAR" contract call-function as-read-only "$CONTRACT" get_config json-args '{}' network-config mainnet now 2>&1 | grep -E "owner_id|token_id|key_allowance|starter|min_amount|paused|root_account" || echo "(escrow not deployed yet)"
+    # A missing account also lists no keys, so the key count is shown only for an account that exists.
+    if [ "$(account_exists "$CONTRACT" 2>/dev/null || true)" = yes ]; then
+      KS=$(key_summary "$CONTRACT" 2>/dev/null || true)
+      if [ -n "$(printf '%s\n' "$KS" | sed -n 3p)" ]; then printf "full-access keys on %s: %s (0 = locked); function-call keys: %s\n" "$CONTRACT" "$(printf '%s\n' "$KS" | sed -n 1p | tr ',' '\n' | grep -c . || true)" "$(printf '%s\n' "$KS" | sed -n 3p)"; fi
+    fi
     ;;
   unwrap)
     AMT=$(python3 -c "import sys,decimal;print(int(decimal.Decimal(sys.argv[1])*10**24))" "$2")
@@ -55,9 +89,29 @@ case "$STEP" in
     "$NEAR" account create-account fund-myself "$CONTRACT" '4 NEAR' autogenerate-new-keypair save-to-legacy-keychain sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
     ;;
   deploy)
+    # owner_id signs pause / unpause / set_config and is fixed at init: the contract has no ownership transfer.
+    # Default: the escrow account itself. `lock` refuses for that owner (the methods would die with the key).
+    OWNER=${OWNER_ID:-$CONTRACT}
+    ACCOUNT_RE='^(([a-z0-9]+[-_])*[a-z0-9]+[.])*([a-z0-9]+[-_])*[a-z0-9]+$'
+    if ! [[ "$OWNER" =~ $ACCOUNT_RE ]] || [ ${#OWNER} -lt 2 ] || [ ${#OWNER} -gt 64 ]; then echo "REFUSED: OWNER_ID '$OWNER' is not a valid NEAR account id; nothing was sent"; exit 1; fi
+    if [ "$OWNER" != "$CONTRACT" ]; then
+      case "$(account_exists "$OWNER" || true)" in
+        yes) ;;
+        no) echo "REFUSED: OWNER_ID $OWNER does not exist on mainnet (whoever registers that name would own the escrow); nothing was sent"; exit 1;;
+        *) echo "REFUSED: could not check that OWNER_ID $OWNER exists ($RPC_MAINNET); nothing was sent"; exit 1;;
+      esac
+    else
+      echo "note: owner_id = $CONTRACT (the default): its full-access key signs pause/set_config, and \`lock\` will refuse for this escrow; set OWNER_ID=<another account> now if you will ever lock"
+    fi
     (cd "$CRATE/contract" && cargo near build non-reproducible-wasm >/dev/null)
     ls -la "$WASM"; shasum -a 256 "$WASM"
-    INIT="{\"owner_id\":\"$CONTRACT\",\"token_id\":\"$USDC\",\"root_account_id\":\"$ROOT\",\"key_allowance\":\"1000000000000000000000000\",\"registration_deposit\":\"1250000000000000000000\",\"max_expiry_s\":604800,\"starter_yocto\":\"50000000000000000000000\",\"min_amount\":\"100000\"}"
+    # key_allowance 0.25 NEAR per link key (testnet: 1 NEAR): enough for a 100 Tgas claim at the 0.001 NEAR/Tgas
+    # minimum purchase price, and the most gas one link key can ever burn from the pool.
+    # starter_yocto 0 (testnet: 0.05 NEAR): on mainnet the starter can be farmed, because a sender who claims their
+    # own links into fresh implicit accounts pockets it every round; a recipient's first fee is paid by the
+    # relayer or their own wallet instead. claim_to_new_account then attaches 0 NEAR to near.create_account, which
+    # sets no minimum (near/near-linkdrop @9a6bb316, the source the mainnet root's NEP-330 metadata names).
+    INIT="{\"owner_id\":\"$OWNER\",\"token_id\":\"$USDC\",\"root_account_id\":\"$ROOT\",\"key_allowance\":\"250000000000000000000000\",\"registration_deposit\":\"1250000000000000000000\",\"max_expiry_s\":604800,\"starter_yocto\":\"0\",\"min_amount\":\"100000\"}"
     echo "== deploy + init $CONTRACT: $INIT"
     "$NEAR" contract deploy "$CONTRACT" use-file "$WASM" with-init-call new json-args "$INIT" prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config mainnet sign-with-legacy-keychain send
     ;;
@@ -128,7 +182,7 @@ case "$STEP" in
     ;;
   send-rest)
     KEEP=$2; TO=$3
-    SEND=$(curl -s -A "Mozilla/5.0" https://rpc.mainnet.fastnear.com -H 'content-type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"query\",\"params\":{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$DEPLOYER\"}}" | python3 -c "
+    SEND=$(curl -s -A "Mozilla/5.0" "$RPC_MAINNET" -H 'content-type: application/json' -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"query\",\"params\":{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$DEPLOYER\"}}" | python3 -c "
 import json,sys,decimal
 a=int(json.load(sys.stdin)['result']['amount']); keep=int(decimal.Decimal(sys.argv[1])*10**24)
 s=a-keep
@@ -136,6 +190,54 @@ print(s if s>0 else 0)" "$KEEP")
     if [ "$SEND" = "0" ]; then echo "nothing above $KEEP NEAR to send"; exit 0; fi
     echo "== send $SEND yoctoNEAR (everything above $KEEP NEAR) from $DEPLOYER to $TO"
     "$NEAR" tokens "$DEPLOYER" send-near "$TO" "$SEND yoctonear" network-config mainnet sign-with-legacy-keychain send
+    ;;
+  lock)
+    echo "!!! IRREVERSIBLE, REAL MONEY: lock deletes EVERY full-access key of $CONTRACT on mainnet."
+    echo "!!! Afterwards nobody, not the owner and not this script, can ever redeploy, migrate or delete the escrow"
+    echo "!!! or add a key to it, and the pool NEAR left in $CONTRACT can then only be spent by claims (and the storage"
+    echo "!!! of new links): the contract has no withdraw. pause / unpause / set_config stay with owner_id (set_config"
+    echo "!!! can still raise starter_yocto, which claims then pay out of that pool)."
+    echo "!!! Without CONFIRM_LOCK=yes this step only checks and prints the plan; it sends nothing."
+    CODE_HASH=$(rpcq "{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\"}" | python3 -c "import json,sys;print(json.load(sys.stdin).get('result',{}).get('code_hash',''))" 2>/dev/null || true)
+    if [ -z "$CODE_HASH" ]; then echo "REFUSED: $CONTRACT does not exist on mainnet (or $RPC_MAINNET did not answer); nothing was sent"; exit 1; fi
+    if [ "$CODE_HASH" = 11111111111111111111111111111111 ]; then echo "REFUSED: $CONTRACT holds no contract code; deploy first (a locked account without code is lost for good); nothing was sent"; exit 1; fi
+    ESCROW_OWNER=$(rpcq "{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\",\"method_name\":\"get_config\",\"args_base64\":\"e30=\"}" | python3 -c "import json,sys;r=json.load(sys.stdin)['result'];print(json.loads(bytes(r['result']).decode())['owner_id'])" 2>/dev/null || true)
+    if [ -z "$ESCROW_OWNER" ]; then echo "REFUSED: get_config on $CONTRACT gave no owner_id (is the escrow deployed and initialised?); nothing was sent"; exit 1; fi
+    if [ "$ESCROW_OWNER" = "$CONTRACT" ]; then
+      echo "REFUSED: the escrow's owner_id is $CONTRACT itself: without its full-access key nobody could ever call pause, unpause or set_config again."
+      echo "         owner_id is fixed at init (there is no transfer method); an escrow that should be locked is deployed with OWNER_ID=<another account>. Nothing was sent."
+      exit 1
+    fi
+    case "$(account_exists "$ESCROW_OWNER" || true)" in
+      yes) ;;
+      no) echo "REFUSED: owner_id $ESCROW_OWNER does not exist on mainnet (whoever registers that name would own the escrow); nothing was sent"; exit 1;;
+      *) echo "REFUSED: could not check that owner_id $ESCROW_OWNER exists ($RPC_MAINNET); nothing was sent"; exit 1;;
+    esac
+    KS=$(key_summary "$CONTRACT" 2>/dev/null || true)
+    FULL=$(printf '%s\n' "$KS" | sed -n 1p); ODD=$(printf '%s\n' "$KS" | sed -n 2p); NFC=$(printf '%s\n' "$KS" | sed -n 3p)
+    if [ -z "$NFC" ]; then echo "REFUSED: could not read the access keys of $CONTRACT ($RPC_MAINNET); nothing was sent"; exit 1; fi
+    if [ -n "$ODD" ]; then
+      echo "REFUSED: function-call key(s) on $CONTRACT that can do more than a link key would survive the lock: $ODD"
+      echo "         delete them first: $NEAR account delete-keys $CONTRACT public-keys $ODD network-config mainnet sign-with-legacy-keychain send"
+      exit 1
+    fi
+    if [ -z "$FULL" ]; then echo "$CONTRACT has no full-access key left: it is already locked ($NFC link keys remain, claim only)"; exit 0; fi
+    echo "== plan: delete the full-access key(s) $FULL of $CONTRACT (code hash $CODE_HASH, owner_id $ESCROW_OWNER; the $NFC link keys stay, claim and claim_to_new_account only)"
+    if [ "${CONFIRM_LOCK:-}" != yes ]; then echo "REFUSED: CONFIRM_LOCK=yes is not set; nothing was sent. Re-run as: CONFIRM_LOCK=yes bash $0 lock"; exit 1; fi
+    "$NEAR" account delete-keys "$CONTRACT" public-keys "$FULL" network-config mainnet sign-with-legacy-keychain send
+    # Confirm from the chain: an answered key list (its third line, the function-call key count, is present)
+    # with no full-access key. An RPC that does not answer is never read as "locked".
+    LEFT="?"
+    for i in 1 2 3 4 5; do
+      KS=$(key_summary "$CONTRACT" 2>/dev/null || true)
+      if [ -n "$(printf '%s\n' "$KS" | sed -n 3p)" ]; then
+        LEFT=$(printf '%s\n' "$KS" | sed -n 1p)
+        if [ -z "$LEFT" ]; then echo "== locked: $CONTRACT has no full-access key. Nobody can redeploy it; its pool NEAR is spent only by claims."; exit 0; fi
+      fi
+      sleep 2
+    done
+    echo "!!! could not confirm the lock (full-access keys still listed: $LEFT; ? = the RPC did not answer): check with $NEAR account list-keys $CONTRACT network-config mainnet now"
+    exit 1
     ;;
   all)
     NAME=$2; TO=$3

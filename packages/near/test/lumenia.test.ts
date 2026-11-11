@@ -199,7 +199,13 @@ describe("reclaim", () => {
     const { chain, lumenia } = setup();
     const paid = await lumenia.createPayLink({ amountUsdc: 1, expiresHours: 2 });
     await expect(lumenia.reclaim(paid.publicKey)).rejects.toThrow(/Not expired yet.*2 h from now/);
-    await expect(lumenia.reclaim(parseLinkOrKey(paid.link).publicKey.replace(/.$/, "1"))).rejects.toThrow(/No drop on chain|not a valid/);
+    // An altered key: its last base58 character always becomes a different one ("1" -> "2", anything else
+    // -> "1"). The key is random, so a fixed `.replace(/.$/, "1")` changed nothing whenever it already ended
+    // in "1" and then hit the real drop ("Not expired yet"), about 1 run in 58.
+    const realKey = parseLinkOrKey(paid.link).publicKey;
+    const alteredKey = realKey.slice(0, -1) + (realKey.endsWith("1") ? "2" : "1");
+    expect(alteredKey).not.toBe(realKey);
+    await expect(lumenia.reclaim(alteredKey)).rejects.toThrow(/No drop on chain|not a valid/);
     chain.drops.get(paid.publicKey)!.status = "Claimed";
     chain.drops.get(paid.publicKey)!.claimed_to = "b.testnet";
     await expect(lumenia.reclaim(paid.publicKey)).rejects.toThrow(/status is "Claimed to b.testnet"/);

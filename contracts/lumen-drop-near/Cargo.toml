@@ -6,6 +6,10 @@ members = ["contract", "test-usdc", "test-root"]
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
+# The public monorepo that holds this crate (contracts/lumen-drop-near). The escrow's NEP-330
+# `contract_source_metadata` view returns it as `link`: cargo-near passes `package.repository` to the
+# build as NEP330_LINK, so the URL is baked into the wasm and changing it changes the code hash.
+repository = "https://github.com/getlumenia/lumenia"
 
 [workspace.dependencies]
 near-sdk = "5.30.1"

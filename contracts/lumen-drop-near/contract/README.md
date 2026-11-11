@@ -14,8 +14,9 @@ is `contracts/lumen-drop`); `contracts/lumen-drop-near` is its own Cargo workspa
 | | |
 |---|---|
 | Contract account | `lumenia-near.testnet` (owner key = deploy key for now) |
-| Code hash on chain | `7RpDA5CPMQjJYww6do9jX1quJcZm3MAuyQdGJq9d1jhA` |
-| wasm sha256 | `5f8170e790a71a92217f19efe7804e6e801945acc7efe53b39849223cf63a5c1` (236,038 bytes, `cargo near build non-reproducible-wasm`) |
+| Code hash on chain | `GDKwUNKV1mvWVr48y77m9FEWkodcvCignc4GzJNAAcYv` (since 2026-11-12, third deploy below) |
+| wasm sha256 | `e207b02d57a4ead89053a61ac575501f7472b122112b076223aaea0b19093bff` (236,030 bytes, `cargo near build non-reproducible-wasm`) |
+| Source metadata (NEP-330) | `contract_source_metadata` returns `{"version":"0.1.0","link":"https://github.com/getlumenia/lumenia","standards":[{"standard":"nep330","version":"1.3.0"}],"build_info":null}`; `link` is `package.repository` (set once in the workspace `Cargo.toml`), baked into the wasm at build time |
 | Token | Circle testnet USDC `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` (6 decimals, storage min = max = 0.00125 NEAR) |
 | Root for named accounts | `testnet` (mainnet: `near`) |
 | Live config | read it with `get_config` (`scripts/views.sh`); the owner changes it with `scripts/set-config.sh` at any time, so the numbers below are the deploy defaults, not a promise |
@@ -32,8 +33,10 @@ is `contracts/lumen-drop`); `contracts/lumen-drop-near` is its own Cargo workspa
 | Create `lumenia-funder.testnet` (faucet) | `2rwMYkddUzgpwYY4UMEAhPBeDb3bPwwergm4Pseknd8L` | https://testnet.nearblocks.io/txns/2rwMYkddUzgpwYY4UMEAhPBeDb3bPwwergm4Pseknd8L |
 | Register the funder on USDC | `8RytRwWJShETYgsfme71NMxHrUvPf4zTM8mfxeZnNJLz` | https://testnet.nearblocks.io/txns/8RytRwWJShETYgsfme71NMxHrUvPf4zTM8mfxeZnNJLz |
 | Probe: real root `testnet.create_account` with 0 NEAR attached returned `true` and created `lumenia-probe-0deposit.testnet` with a 0 NEAR balance (NEP-448), which `claim_to_new_account` relies on | `2MwLhhhHmtw2insgsVEzhiUAvXdfav6PACD7hLm5NjzB` | https://testnet.nearblocks.io/txns/2MwLhhhHmtw2insgsVEzhiUAvXdfav6PACD7hLm5NjzB |
-| Second deploy + `migrate` (current code: starter, min_amount, batch create, ledger views) | `HQ2i1UDH37oXu7YLAoGLYupNVhd5HoJjNwV2GqMKeJ13` | https://testnet.nearblocks.io/txns/HQ2i1UDH37oXu7YLAoGLYupNVhd5HoJjNwV2GqMKeJ13 |
-| Live create -> claim round | not run: `lumenia-funder.testnet` still held 0 USDC when this was written (checked after the second deploy). Run `scripts/live-round.sh` once faucet.circle.com USDC has arrived and paste the two hashes here. | |
+| Second deploy + `migrate` (the current code: starter, min_amount, batch create, ledger views; code hash `7RpDA5CPMQjJYww6do9jX1quJcZm3MAuyQdGJq9d1jhA`, whose NEP-330 `link` named the former standalone repository, a 404) | `HQ2i1UDH37oXu7YLAoGLYupNVhd5HoJjNwV2GqMKeJ13` | https://testnet.nearblocks.io/txns/HQ2i1UDH37oXu7YLAoGLYupNVhd5HoJjNwV2GqMKeJ13 |
+| Third deploy, no init call (2026-11-12): the same code, only the NEP-330 `link` changed to https://github.com/getlumenia/lumenia, so the state layout is unchanged and nothing was migrated; code hash `GDKwUNKV1mvWVr48y77m9FEWkodcvCignc4GzJNAAcYv`. Building today's source with `NEP330_LINK` set to the old URL reproduces the second deploy's `7RpDA5CP...` byte for byte, so the link is the only difference. `get_config` and `get_stats` answered the same values before and after (the pool lost exactly the 0.00174 NEAR fee) | `4c8ofXGBypJ13LooQS3Pctn6FUEb3Mm62ufwWXScobnv` | https://testnet.nearblocks.io/txns/4c8ofXGBypJ13LooQS3Pctn6FUEb3Mm62ufwWXScobnv |
+| Live create -> claim round (`scripts/live-round.sh`, 2026-11-11): the funder escrows 1 USDC behind a fresh link key | `4pV1q11f7UXLooG9cA3t1HBSFm9B4pYnUWYxr3gEgZAD` | https://testnet.nearblocks.io/txns/4pV1q11f7UXLooG9cA3t1HBSFm9B4pYnUWYxr3gEgZAD |
+| ... and the link key claims it into a fresh implicit account (created by the claim, 1 USDC and the 0.05 NEAR starter); this and the later proof transactions are listed in the monorepo's NEAR.md, and `pnpm near:verify:live` checks each one's final status on chain | `FhL77xssNU1P57uCcuC4DiDSaU17BFNUPfcceLn3dEgu` | https://testnet.nearblocks.io/txns/FhL77xssNU1P57uCcuC4DiDSaU17BFNUPfcceLn3dEgu |
 
 Views right after the second deploy: `get_config` returned the deploy
 defaults (the live values can change through `set_config`, always read them);
@@ -229,8 +232,9 @@ returns to Open and the funder can try again.
 - Anyone who sees a link can claim it: the fragment is the money, exactly as
   on Stellar. The fragment never reaches a server.
 - Honest limit: the account's full-access key (the deploy key, held by the
-  owner) can redeploy the contract code (it did, for `migrate`). "The owner
-  can never move a drop" holds for this code, not against a redeploy. Locking
+  owner) can redeploy the contract code (it did, for `migrate`, and again for
+  the NEP-330 link fix). "The owner can never move a drop" holds for this
+  code, not against a redeploy. Locking
   the account or a multisig owner is a mainnet decision, not a hackathon one.
 - Stuck-claim recovery: a drop that stays Claiming for 10 minutes may be
   reclaimed. The chain was designed so that `on_claim` cannot fail after the
@@ -285,7 +289,7 @@ margin; a full batch needs the funder to attach 300 Tgas to `ft_transfer_call`.
   refunded entirely; a 30-drop batch in gas with 300 Tgas attached. Time
   passes with `sandbox.fast_forward`.
 
-All green on 2026-11-11: `43 passed` and `21 passed`.
+All green on 2026-11-11 and again on 2026-11-12 after the NEP-330 link change: `43 passed` and `21 passed`; `cargo clippy --all-targets -- -D warnings` clean.
 
 ## Build, test, deploy (exactly as run)
 
@@ -323,9 +327,13 @@ the near-cli-rs legacy keychain (`~/.near-credentials/testnet/`).
 - Reproducible build not run: the wasm is a `non-reproducible-wasm` build.
   `[package.metadata.near.reproducible_build]` is in `Cargo.toml` so
   `cargo near build reproducible-wasm` can run inside the pinned Docker image
-  later; set the real `repository` URL first (the three `Cargo.toml` files still
-  name the standalone `mericcintosun/lumenia-near`; it is NEP-330 metadata baked
-  into the wasm, so changing it changes the wasm hash recorded above).
+  later. `package.repository` already names the public monorepo
+  (https://github.com/getlumenia/lumenia, inherited by all three crates from the
+  workspace `Cargo.toml`), which a reproducible build requires; that build records
+  `<repository>/tree/<commit>` as the link and fills `build_info`, so its wasm hash
+  will differ from the one recorded above. A host build also embeds the builder's
+  absolute `~/.cargo/registry` paths in panic locations; the Docker build embeds
+  the container's paths instead.
 - Named-account path: implemented and tested against a mock root in the
   sandbox; the real `testnet` root was verified to create a 0 NEAR account
   (probe tx above) but a full `claim_to_new_account` has not run on testnet.

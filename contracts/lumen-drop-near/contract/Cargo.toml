@@ -5,8 +5,9 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-# NEP-330 contract source metadata (contract_source_metadata view). Update when the repo is public.
-repository = "https://github.com/mericcintosun/lumenia-near"
+# NEP-330 contract source metadata (`contract_source_metadata` view, field `link`): the public
+# monorepo https://github.com/getlumenia/lumenia, set once in the workspace Cargo.toml.
+repository.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
