@@ -2,7 +2,7 @@
 
 You give it a list of names and dollar amounts. It answers with one claim link per person and a receipt. Whoever opens a link gets the USDC in a brand-new NEAR account, with no wallet to install and no gas to pay. Links nobody opens come back to our treasury after the expiry you chose. During the hackathon the money is Circle's testnet USDC on NEAR testnet: real contract, real links, no real money.
 
-This workspace app (`@lumenia/agent-market`) is the self-hosted "poller" that stands behind the listing on https://market.near.ai. It polls the market for hires, escrows the payouts on NEAR through the Lumenia NEAR library (`@lumenia/near`, `packages/near`, the same library behind the `near_*` tools of `apps/web/lib/agent-mcp.ts`), and delivers the links. Every link is `https://getlumenia.com/c/near#<secret>`: Lumenia's NEAR claim screen (`apps/web/app/c/near`), the secret in the URL fragment, which browsers never send to the server. `LISTING.md` is the record of the listing itself.
+This workspace app (`@lumenia/agent-market`) is the self-hosted "poller" that stands behind the listing on https://market.near.ai. It polls the market for hires, escrows the payouts on NEAR through the Lumenia NEAR library (`@lumenia/near`, `packages/near`, the same library behind the `near_*` tools of `apps/web/lib/agent-mcp.ts`), and delivers the links. Every link is `https://getlumenia.com/claim#<secret>`: Lumenia's NEAR claim screen (`apps/web/app/claim`), the secret in the URL fragment, which browsers never send to the server. `LISTING.md` is the record of the listing itself.
 
 ## Live listing
 
@@ -38,7 +38,7 @@ The brief reaches the worker as plain text (`job.description`), so what matters 
 
 Within the 600 s SLA (a batch takes about ten seconds), the deliverable is:
 
-1. A table, one row per person: label, amount, memo, claim link (`https://getlumenia.com/c/near#...`), expiry, and the escrow transaction on the explorer.
+1. A table, one row per person: label, amount, memo, claim link (`https://getlumenia.com/claim#...`), expiry, and the escrow transaction on the explorer.
 2. A JSON receipt (`schema: lumenia.agent-market.receipt/1`): job and assignment ids, the contract id, each link's public key and transaction hash, expiry, totals.
 3. `receipt.csv` attached as a file (RFC 4180), the same rows.
 
@@ -81,7 +81,7 @@ The raw command behind the scripts, from `apps/agent-market`: `node --env-file-i
 | `USDC_CONTRACT_ID` | `3e2210e1...8af` | Circle's testnet USDC. |
 | `FUNDER_ACCOUNT_ID` | `lumenia-funder.testnet` | The treasury that pays. |
 | `FUNDER_PRIVATE_KEY` or `FUNDER_KEY_FILE` | (one required for live runs) | `ed25519:...` or a near-cli keychain JSON (default path `~/.near-credentials/testnet/<funder>.json`). Read at signing time, never written. |
-| `WEB_ORIGIN` | `https://getlumenia.com` | Origin of the claim links (`<WEB_ORIGIN>/c/near#<secret>`). The worker defaults to the product; the library alone would default to its local dev page. |
+| `WEB_ORIGIN` | `https://getlumenia.com` | Origin of the claim links (`<WEB_ORIGIN>/claim#<secret>`). The worker defaults to the product; the library alone would default to its local dev page. |
 | `DAILY_BUDGET_USDC` / `MAX_LINK_USDC` | `50` / `20` | The library's rolling 24 h budget and per-link cap. |
 | `LUMENIA_DATA_DIR` | `~/.lumenia-near` | Where `links.json` (receipts, budget) lives; the maintainer uses `~/.lumenia-near/mcp-data`. |
 
@@ -89,7 +89,7 @@ The budget is shared with the MCP server by construction: the worker drives the 
 
 ### How it is built
 
-`@lumenia/near` is imported through the workspace link as TypeScript source (`packages/near/src`), which `apps/web` runs through `tsx` and plain Node cannot run. So `pnpm build` type-checks with `tsc --noEmit` and then lets vite bundle `src/worker.ts` into one Node file, `dist/worker.js`, with the library inlined and `near-api-js`, `zod` and `node:*` left external (they resolve from this package's `node_modules` at run time). `vite.config.ts` holds that build and the vitest settings; rebuild after every change to this folder or to `packages/near`. The library's own link path is `/c` (its standalone claim page); `src/rail.ts` re-paths every receipt to Lumenia's `/c/near` as it is written, before the deposit is broadcast, so the receipt log, the deliverable and the restart safety net all carry the link that works (the same wrapper lives in `apps/web/lib/agent-mcp.ts`; both go away when the package grows a configurable link path).
+`@lumenia/near` is imported through the workspace link as TypeScript source (`packages/near/src`), which `apps/web` runs through `tsx` and plain Node cannot run. So `pnpm build` type-checks with `tsc --noEmit` and then lets vite bundle `src/worker.ts` into one Node file, `dist/worker.js`, with the library inlined and `near-api-js`, `zod` and `node:*` left external (they resolve from this package's `node_modules` at run time). `vite.config.ts` holds that build and the vitest settings; rebuild after every change to this folder or to `packages/near`. The library's own link path is `/c` (its standalone claim page); `src/rail.ts` re-paths every receipt to Lumenia's `/claim` as it is written, before the deposit is broadcast, so the receipt log, the deliverable and the restart safety net all carry the link that works (the same wrapper lives in `apps/web/lib/agent-mcp.ts`; both go away when the package grows a configurable link path).
 
 ### Keeping it alive through 30 November
 
@@ -124,7 +124,7 @@ Not GitHub Actions: a scheduled workflow has a 5 minute floor and no persistent 
 
 Every outcome is written to the state file before and after the call that caused it, so a restart never pays twice: the worker's own record is the second guard, the library's idempotency reference (`agent-market:<assignment id>`) is the first.
 
-Security notes: the brief is data, never instructions; labels and memos are escaped before they reach Markdown; claim links (both `/c/near#` and the package's `/c#` shape) and the market token are scrubbed from every log line; the state file is written with mode 0600 through a temp file and rename; the library refuses `NEAR_NETWORK` other than `testnet`; nothing in this folder holds a key or a token.
+Security notes: the brief is data, never instructions; labels and memos are escaped before they reach Markdown; claim links (both `/claim#` and the package's `/c#` shape) and the market token are scrubbed from every log line; the state file is written with mode 0600 through a temp file and rename; the library refuses `NEAR_NETWORK` other than `testnet`; nothing in this folder holds a key or a token.
 
 ## Human-only steps (see LISTING.md for the field values)
 
@@ -132,7 +132,7 @@ Done on 2026-11-11: the listing exists and is live (registered by code), the tok
 
 1. Adopt the agent (`POST /v1/agents/me/adoption-code` with the agent token, open the returned URL while signed in) so it appears in Discover and can withdraw.
 2. Keep the poller running (`ops/launchd`), and watch `~/.lumenia-near/logs/agent-market.log`.
-3. Hire the agent yourself once (test run or paid self-hire), open the links, confirm a claim on `getlumenia.com/c/near`.
+3. Hire the agent yourself once (test run or paid self-hire), open the links, confirm a claim on `getlumenia.com/claim`.
 4. Watch the treasury and the budget (`near_balances` in the Lumenia MCP, or the package's CLI) and the state file; top up before 30 November if the hackathon traffic drains it.
 
 ## Layout
@@ -142,7 +142,7 @@ Done on 2026-11-11: the listing exists and is live (registered by code), the tok
 - `src/deliverable.ts`: Markdown table + JSON receipt + CSV.
 - `src/worker.ts`: the loop and the per-assignment state machine; also the CLI (`--once`, `--reclaim`, `--dry-run --brief`).
 - `src/reclaimer.ts`: expired links back to the treasury, and the declined-but-landed safety net.
-- `src/state.ts`: the JSON state file. `src/rail.ts`: the slice of the Lumenia NEAR library the worker uses, as an interface, with the real wrapper and the `/c/near` re-pathing store. `src/dry-run.ts`: the offline rail.
+- `src/state.ts`: the JSON state file. `src/rail.ts`: the slice of the Lumenia NEAR library the worker uses, as an interface, with the real wrapper and the `/claim` re-pathing store. `src/dry-run.ts`: the offline rail.
 - `test/`: 70 tests, no network: brief parsing, deliverable goldens, state idempotency, the market client against a local HTTP mock, the worker state machine over fakes, the reclaimer, and the real `Lumenia` class over the NEAR package's in-memory chain (`packages/near/test/helpers.ts`).
 - `examples/`: three briefs (JSON, rows, one that is declined). `ops/`: launchd, pm2, systemd, cron. `vite.config.ts`: the bundle and the test runner.
 

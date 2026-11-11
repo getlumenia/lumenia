@@ -10,8 +10,8 @@ export interface Logger {
 }
 
 const TOKEN_RE = /aat_[0-9a-zA-Z_-]{4,}/g;
-/** Lumenia's NEAR claim route (/c/near#secret) and the package's standalone one (/c#secret). */
-const LINK_RE = /\/c(?:\/near)?#ed25519:[1-9A-HJ-NP-Za-km-z]+/g;
+/** Lumenia's claim route (/claim#secret), the old one it still forwards (/c/near#secret) and the package's standalone one (/c#secret). */
+const LINK_RE = /\/(?:claim|c(?:\/near)?)#ed25519:[1-9A-HJ-NP-Za-km-z]+/g;
 const SECRET_KEY_RE = /ed25519:[1-9A-HJ-NP-Za-km-z]{80,}/g;
 
 export function redact(text: string): string {

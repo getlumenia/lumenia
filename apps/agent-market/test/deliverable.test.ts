@@ -17,7 +17,7 @@ const input: DeliverableInput = {
       label: "Ayse",
       amountUsdc: "1.00",
       memo: "thanks for the review",
-      link: "https://getlumenia.com/c/near#ed25519:SECRET1",
+      link: "https://getlumenia.com/claim#ed25519:SECRET1",
       publicKey: "ed25519:PUB1",
       txHash: "9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT",
       explorerUrl: "https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT",
@@ -29,7 +29,7 @@ const input: DeliverableInput = {
       label: "Ali | [x](http://evil) *",
       amountUsdc: "2.50",
       memo: 'say "hi", twice',
-      link: "https://getlumenia.com/c/near#ed25519:SECRET2",
+      link: "https://getlumenia.com/claim#ed25519:SECRET2",
       publicKey: "ed25519:PUB2",
       txHash: "9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT",
       explorerUrl: "https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT",
@@ -45,8 +45,8 @@ Each row is one person. Send them their claim link over a private channel; whoev
 
 | # | Label | Amount (USDC) | Memo | Claim link | Expires | Escrow transaction |
 |---:|---|---:|---|---|---|---|
-| 1 | Ayse | 1.00 | thanks for the review | https://getlumenia.com/c/near#ed25519:SECRET1 | 2026-11-13 12:00 UTC | [9xKfQ7...R6sT](https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT) |
-| 2 | Ali \\| \\[x\\](http://evil) \\* | 2.50 | say "hi", twice | https://getlumenia.com/c/near#ed25519:SECRET2 | 2026-11-13 12:00 UTC | [9xKfQ7...R6sT](https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT) |
+| 1 | Ayse | 1.00 | thanks for the review | https://getlumenia.com/claim#ed25519:SECRET1 | 2026-11-13 12:00 UTC | [9xKfQ7...R6sT](https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT) |
+| 2 | Ali \\| \\[x\\](http://evil) \\* | 2.50 | say "hi", twice | https://getlumenia.com/claim#ed25519:SECRET2 | 2026-11-13 12:00 UTC | [9xKfQ7...R6sT](https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT) |
 
 **Total: 3.50 USDC in 2 links**, funded in one transaction on NEAR testnet (Circle testnet USDC, no real money). A link is a bearer secret: anyone holding it can claim it, so do not post it where others can read it. Links nobody opens by their expiry return to our treasury; after that a link is void and a new hire is needed.
 
@@ -57,8 +57,8 @@ Each row is one person. Send them their claim link over a private channel; whoev
 
 const GOLDEN_CSV =
   "index,label,amount_usdc,memo,claim_link,link_public_key,expires_at,escrow_tx_hash,explorer_url,status,network,contract_id,job_id,assignment_id\r\n" +
-  "1,Ayse,1.00,thanks for the review,https://getlumenia.com/c/near#ed25519:SECRET1,ed25519:PUB1,2026-11-13T12:00:00.000Z,9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT,https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT,Open,near:testnet,lumenia-near.testnet,job-1,asg-1\r\n" +
-  '2,Ali | [x](http://evil) *,2.50,"say ""hi"", twice",https://getlumenia.com/c/near#ed25519:SECRET2,ed25519:PUB2,2026-11-13T12:00:00.000Z,9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT,https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT,Open,near:testnet,lumenia-near.testnet,job-1,asg-1\r\n';
+  "1,Ayse,1.00,thanks for the review,https://getlumenia.com/claim#ed25519:SECRET1,ed25519:PUB1,2026-11-13T12:00:00.000Z,9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT,https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT,Open,near:testnet,lumenia-near.testnet,job-1,asg-1\r\n" +
+  '2,Ali | [x](http://evil) *,2.50,"say ""hi"", twice",https://getlumenia.com/claim#ed25519:SECRET2,ed25519:PUB2,2026-11-13T12:00:00.000Z,9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT,https://testnet.nearblocks.io/txns/9xKfQ7mN2pR4sT6vW8yZ1aB3cD5eF7gH9jK2mN4pR6sT,Open,near:testnet,lumenia-near.testnet,job-1,asg-1\r\n';
 
 describe("renderMarkdown", () => {
   it("opens with the result table and escapes buyer text (golden)", () => {

@@ -12,7 +12,7 @@
  * TWO RAILS, ONE SERVER (NEAR HACKATHON 2026). The four Stellar tools keep their names. The seven
  * `near_*` tools are the same idea on Lumenia's second rail: USDC on NEAR testnet goes from a funder
  * account this process holds the key for into the Lumenia NEAR escrow (`@lumenia/near`, contract
- * lumenia-near.testnet), behind a fresh ed25519 link key, and the link `<origin>/c/near#<secret>`
+ * lumenia-near.testnet), behind a fresh ed25519 link key, and the link `<origin>/claim#<secret>`
  * is handed to a person. One `ft_transfer_call` can fund up to 30 links (`near_pay_many`). Every
  * payment writes a receipt BEFORE the deposit is broadcast (the receipt log under LUMENIA_DATA_DIR
  * is the system of record and the idempotency guard: a repeated `reference` returns the first
@@ -117,7 +117,7 @@ const MAX_AMOUNT = 100;
 const DEFAULT_EXPIRY_HOURS = 7 * 24;
 
 /** The Lumenia claim route for a NEAR link; the package alone would build its standalone page's `/c`. */
-export const NEAR_CLAIM_PATH = "/c/near";
+export const NEAR_CLAIM_PATH = "/claim";
 /** The escrow contract takes 0.10 USDC as the smallest drop in a batch; one link follows the same floor here. */
 export const NEAR_MIN_LINK_USDC = 0.1;
 export const NEAR_NETWORK_LABEL = "NEAR testnet (practice money)";
@@ -193,7 +193,7 @@ export function nearSeamFromEnv(env: Record<string, string | undefined> = proces
 /**
  * The `@lumenia/near` client with Lumenia's claim path on every receipt it writes. The package
  * builds `<origin>/c#<secret>` (the path of its standalone claim page); inside Lumenia the NEAR
- * claim screen is `/c/near`, so the link is re-pathed as the receipt is written, before the deposit
+ * claim screen is `/claim`, so the link is re-pathed as the receipt is written, before the deposit
  * is broadcast. The receipt log on disk, the tool result and the links resource therefore all carry
  * the link that works. `deps` replaces the chain, the store and the clock in the self-test. (The
  * package does not export its LinkStore, so the store to wrap comes from a first construction.)
@@ -205,7 +205,7 @@ export function openNearRail(config: LumeniaConfig, deps: LumeniaDeps = {}): Lum
 
 type NearStore = Lumenia["store"];
 
-/** A receipt store that re-paths the package's `/c#` link to Lumenia's `/c/near#` as it is written. */
+/** A receipt store that re-paths the package's `/c#` link to Lumenia's `/claim#` as it is written. */
 export function nearClaimStore(base: NearStore, webOrigin: string): NearStore {
   const origin = webOrigin.replace(/\/+$/, "");
   const packaged = `${origin}/c#`;
@@ -519,7 +519,7 @@ function registerNearTools(server: McpServer, seam: NearSeam): void {
         "Read what the NEAR escrow says about a Lumenia NEAR link: Open, Expired (reclaimable), Claiming, Claimed to <account>, Reclaimed or NotFound. " +
         "Accepts the full link or its public key. Updates and returns the local receipt when this server created the link. Read-only.",
       inputSchema: {
-        linkOrPublicKey: z.string().min(8).describe(`The link (https://.../c/near#ed25519:...) or the drop's public key (ed25519:...)`),
+        linkOrPublicKey: z.string().min(8).describe(`The link (https://.../claim#ed25519:...) or the drop's public key (ed25519:...)`),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
     },

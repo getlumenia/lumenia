@@ -17,7 +17,7 @@ The listing is live. This file is the record of what was registered and the text
 | A2A card, x402 payees | https://lumenia-payout.market.near.ai/.well-known/agent-card.json and https://lumenia-payout.market.near.ai/.well-known/x402 |
 | Worker | `apps/agent-market` in this repository (`@lumenia/agent-market`), run from the maintainer's machine during judging (see `ops/launchd`); state and receipts under `~/.lumenia-near` |
 | Token | the agent API token (`aat_...`) was shown once at registration and lives in `~/.lumenia-near/agent-market.env` (mode 0600), never in the repository |
-| Links it delivers | `https://getlumenia.com/c/near#<secret>`: Lumenia's NEAR claim screen (`apps/web/app/c/near`), the secret in the URL fragment |
+| Links it delivers | `https://getlumenia.com/claim#<secret>`: Lumenia's NEAR claim screen (`apps/web/app/claim`), the secret in the URL fragment |
 
 ## Fields (as registered)
 
@@ -33,11 +33,53 @@ The listing is live. This file is the record of what was registered and the text
 | Delivery SLA | 600 seconds |
 | Media | the 60-second demo video as a YouTube link, two screenshots (claim screen, deliverable) |
 
-## Bio (Markdown)
+## Bio (Markdown), the version to paste after adoption (the agent token can no longer edit the listing; the owner edits it at https://market.near.ai/building/agents -> Lumenia Payout Agent -> Edit)
+
+Avatar: upload `apps/web/public/icon-512.png` (the Lumenia mark, 512 x 512 PNG).
+
+Tagline (max 200): Give it names and dollar amounts; get one claim link per person. Whoever opens a link receives the money in a new account, with the network fee covered. Unclaimed links return after expiry.
+
+Tags: payouts, payroll, claim-links, usdc, walletless, agent-pays-human, lumenia
+
+Bio:
+
+# Lumenia Payout Agent
+
+**Pay people who have no wallet.** Give the agent names and dollar amounts; it returns one claim link per person and a receipt. Whoever opens a link gets the money in a brand-new account created at that moment, with the network fee covered, or in an account they already have, or on another network through NEAR Intents. Links nobody opens return to the treasury after the expiry you choose.
+
+Lumenia (https://getlumenia.com) is the product behind this agent: dollars sent by link, claimed walletless, on public ledgers. This listing runs on NEAR testnet during NEAR HACKATHON 2026 (real contract, Circle test USDC, no real money). The service fee is the only charge.
+
+## How to brief it
+
+Free text works. For an exact brief, send a JSON block:
+
+```json
+{
+  "payouts": [
+    {"label": "Ayse", "amount_usdc": "1.00", "memo": "thanks for the review"},
+    {"label": "Ali", "amount_usdc": "2.50"}
+  ],
+  "expires_in_hours": 72
+}
+```
+
+Limits: 1 to 10 payouts per job, 0.10 to 20.00 each, memo up to 64 characters, expiry 1 to 168 hours. Anything else is declined within the hour with a full refund.
+
+## What you get back
+
+A table with one row per person (label, amount, claim link, expiry, the escrow transaction on the explorer), a receipt in JSON and a receipt.csv file. Treat links like cash: anyone holding one can claim it.
+
+## What the agent cannot do
+
+It cannot move money out of a claimed account, cannot exceed its daily budget, cannot pay more than 10 people per job, and holds no key of yours; it only spends its own treasury.
+
+Source and verification: https://github.com/getlumenia/lumenia (NEAR.md).
+
+## Bio (Markdown), original draft
 
 Lumenia pays people who have no crypto wallet. You give it a list of names and dollar amounts; it answers with one claim link per person and a receipt. Whoever opens a link gets the money in a brand-new NEAR account created at that moment, or in an account they already have, or on another chain through NEAR Intents. They pay nothing and install nothing. Links that nobody opens return to the treasury after the expiry you chose.
 
-This is the Agent Market front of Lumenia on NEAR (built at NEAR HACKATHON 2026; repository: https://github.com/getlumenia/lumenia, folder `apps/agent-market`). Funds move on NEAR testnet during the hackathon: real contract, real Circle testnet USDC, no real money. The service fee is the only thing you pay. Each claim link opens Lumenia's claim screen (`https://getlumenia.com/c/near#...`).
+This is the Agent Market front of Lumenia on NEAR (built at NEAR HACKATHON 2026; repository: https://github.com/getlumenia/lumenia, folder `apps/agent-market`). Funds move on NEAR testnet during the hackathon: real contract, real Circle testnet USDC, no real money. The service fee is the only thing you pay. Each claim link opens Lumenia's claim screen (`https://getlumenia.com/claim#...`).
 
 How to brief the agent (free text is fine; a JSON block is exact):
 

@@ -34,8 +34,8 @@ describe("Worker: fresh assignment", () => {
     const sub = market.submissions[0]!;
     expect(sub.files).toEqual(["https://market.near.ai/files/tok1/receipt.csv"]);
     expect(sub.markdown).toMatch(/^# Lumenia payout: 2 claim links on NEAR testnet/);
-    expect(sub.markdown).toContain("| 1 | Ayse | 1.00 | thanks for the review | https://near.lumenia.test/c/near#ed25519:SECRET1 | 2026-11-13 12:00 UTC | [TX1](https://testnet.nearblocks.io/txns/TX1) |");
-    expect(sub.markdown).toContain("| 2 | Ali | 2.50 | - | https://near.lumenia.test/c/near#ed25519:SECRET2 |");
+    expect(sub.markdown).toContain("| 1 | Ayse | 1.00 | thanks for the review | https://near.lumenia.test/claim#ed25519:SECRET1 | 2026-11-13 12:00 UTC | [TX1](https://testnet.nearblocks.io/txns/TX1) |");
+    expect(sub.markdown).toContain("| 2 | Ali | 2.50 | - | https://near.lumenia.test/claim#ed25519:SECRET2 |");
     expect(market.files[0]?.filename).toBe("receipt.csv");
     expect(Buffer.from(market.files[0]!.bytes).toString("utf8")).toMatch(/^index,label,amount_usdc,memo,claim_link/);
     const rec = state.get(ID)!;
@@ -212,7 +212,7 @@ describe("Worker: request-changes and dispute redo", () => {
     const md = market.submissions[1]!.markdown;
     expect(md).toMatch(/after your request for changes/);
     expect(md).toMatch(/Your message, as received: "Please add Ali \\\| again \\\[now\\\]\(x\)"/);
-    expect(md).toContain("https://near.lumenia.test/c/near#ed25519:SECRET1");
+    expect(md).toContain("https://near.lumenia.test/claim#ed25519:SECRET1");
     expect(market.submissions[1]!.files).toEqual(["https://market.near.ai/files/tok1/receipt.csv"]);
     expect(market.messages.at(-1)?.body).toMatch(/Re-submitted with a note/);
     expect(rail.calls.filter((c) => c.startsWith("createPayLinks"))).toHaveLength(1);
@@ -251,8 +251,8 @@ describe("Worker: request-changes and dispute redo", () => {
     first.market.requestChanges(ID, "where are the links?", "2026-11-11T12:10:00.000Z");
     expect((await worker2.pollOnce()).outcomes[ID]).toBe("resubmitted");
     const md = first.market.submissions.at(-1)!.markdown;
-    expect(md).toContain("https://near.lumenia.test/c/near#ed25519:SECRET1");
-    expect(md).toContain("https://near.lumenia.test/c/near#ed25519:SECRET2");
+    expect(md).toContain("https://near.lumenia.test/claim#ed25519:SECRET1");
+    expect(md).toContain("https://near.lumenia.test/claim#ed25519:SECRET2");
     expect(state2.get(ID)?.notes.join(" ")).toMatch(/rebuilt from the library's receipt log/);
     expect(first.rail.calls.filter((c) => c.startsWith("createPayLinks"))).toHaveLength(1);
   });

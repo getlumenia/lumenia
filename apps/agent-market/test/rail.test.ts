@@ -1,6 +1,6 @@
 // The real library (@lumenia/near, packages/near) behind the worker, over the
 // package's in-memory chain: proves the wiring, the reference idempotency, the
-// /c/near# link shape and that LumeniaRail satisfies the PayoutRail interface
+// /claim# link shape and that LumeniaRail satisfies the PayoutRail interface
 // the worker is written to.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,13 +38,13 @@ describe("LumeniaRail over the real library", () => {
     expect(r.count).toBe(2);
     expect(r.totalUsdc).toBe("3.50");
     expect(r.txHash).toBe("FAKETX1");
-    expect(r.payouts[0]?.link).toMatch(/^https:\/\/getlumenia\.com\/c\/near#ed25519:/);
-    expect(NEAR_CLAIM_PATH).toBe("/c/near");
+    expect(r.payouts[0]?.link).toMatch(/^https:\/\/getlumenia\.com\/claim#ed25519:/);
+    expect(NEAR_CLAIM_PATH).toBe("/claim");
     expect(r.payouts.map((p) => p.receipt.status)).toEqual(["Open", "Open"]);
     expect(chain.calls.filter((c) => c === "ft_transfer_call")).toHaveLength(1);
     expect(chain.lastMsg).toMatchObject({ expires_in_s: 48 * 3600 });
     expect((chain.lastMsg?.drops as unknown[]).length).toBe(2);
-    // The receipt log on disk carries the same /c/near# link (re-pathed before the broadcast).
+    // The receipt log on disk carries the same /claim# link (re-pathed before the broadcast).
     expect(lumenia.store.findByPublicKey(r.payouts[0]!.publicKey)?.link).toBe(r.payouts[0]!.link);
 
     const again = await rail.createPayLinks({ payouts: [{ label: "Ayse", amountUsdc: "1.00" }], expiresHours: 48, reference: `agent-market:${ID}` });
@@ -78,7 +78,7 @@ describe("LumeniaRail over the real library", () => {
     expect((await worker.pollOnce()).outcomes[ID]).toBe("submitted");
     const md = market.submissions[0]!.markdown;
     expect(md).toMatch(/\[FAKETX1\]\(https:\/\/testnet\.nearblocks\.io\/txns\/FAKETX1\)/);
-    expect(md).toMatch(/https:\/\/getlumenia\.com\/c\/near#ed25519:/);
+    expect(md).toMatch(/https:\/\/getlumenia\.com\/claim#ed25519:/);
     expect(md).not.toMatch(/getlumenia\.com\/c#/);
     expect(chain.usdc).toBe(96_500_000n);
 

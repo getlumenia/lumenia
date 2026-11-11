@@ -198,7 +198,7 @@ export class FakeRail implements PayoutRail {
       this.drops.set(publicKey, { kind: "Open", label: "Open", claimedTo: null, expiresAt, reference: input.reference });
       return {
         label: p.label,
-        link: `${this.webOrigin}/c/near#ed25519:SECRET${n}`,
+        link: `${this.webOrigin}/claim#ed25519:SECRET${n}`,
         publicKey,
         receipt: { amount_usdc: p.amountUsdc, memo: p.memo ?? "", status: "Open", expires_at: expiresAt, create_tx_hash: txHash, explorer_url: explorerUrl },
       };

@@ -55,7 +55,7 @@ const RPC = process.env.NEAR_RPC_URL || "https://test.rpc.fastnear.com";
 const RELAYER_HEALTH = healthUrl(process.env.RELAYER_URL || "https://lumenia-sponsor.avakit.workers.dev/near/health", "/near/health");
 const LEGACY_RELAYER_HEALTH = healthUrl(process.env.LEGACY_RELAYER_URL || "https://lumenia-near-relayer.avakit.workers.dev/health", "/health");
 const SITE = (process.env.SITE_URL || "https://getlumenia.com").replace(/\/+$/, "");
-const SITE_PATHS = ["/near", "/c/near"];
+const SITE_PATHS = ["/try/send", "/claim", "/ledger"];
 const FETCH_TIMEOUT_MS = 20_000;
 
 function healthUrl(raw, defaultPath) {

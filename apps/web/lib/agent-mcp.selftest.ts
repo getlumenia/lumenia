@@ -5,7 +5,7 @@
  * built; reclaim goes to the right drop; nothing starts without the agent's own key).
  *
  * The NEAR half runs the real `@lumenia/near` client over the package's own FakeChain (an in-memory
- * escrow + USDC contract) and a temp receipt store: links come back on Lumenia's `/c/near#` path,
+ * escrow + USDC contract) and a temp receipt store: links come back on Lumenia's `/claim#` path,
  * receipts carry no secret, the budget and the reclaim rules refuse before anything is signed, and
  * a server without the NEAR env keeps the tools registered and refusing while Stellar still works.
  *
@@ -87,7 +87,7 @@ const deps: AgentDeps = {
 };
 
 const ALL_TOOLS = "agent_status,create_payment_link,list_reclaimable,near_balances,near_cross_chain_quote,near_link_status,near_pay_link,near_pay_many,near_receipts,near_reclaim,reclaim_link";
-const NEAR_LINK_RE = /^https:\/\/getlumenia\.com\/c\/near#ed25519:[1-9A-HJ-NP-Za-km-z]{80,}$/;
+const NEAR_LINK_RE = /^https:\/\/getlumenia\.com\/claim#ed25519:[1-9A-HJ-NP-Za-km-z]{80,}$/;
 const SECRET_KEY_RE = /ed25519:[1-9A-HJ-NP-Za-km-z]{80,}/;
 type ToolResult = Awaited<ReturnType<Client["callTool"]>>;
 const textOf = (r: ToolResult) => ((((r as { content?: unknown }).content ?? []) as { type: string; text?: string }[]).find((c) => c.type === "text")?.text ?? "");
@@ -114,7 +114,7 @@ async function main() {
     ok("create_payment_link says the fragment is the bearer key", /bearer key/.test(create?.description ?? ""));
     ok("...and that reclaim is not automatic", /not automatic/.test(create?.description ?? ""));
     const nearPay = tools.find((t) => t.name === "near_pay_link");
-    ok("near_pay_link says the fragment is the bearer key, names the /c/near path, NEAR testnet and near_reclaim", /bearer key/.test(nearPay?.description ?? "") && (nearPay?.description ?? "").includes(`${NEAR_CLAIM_PATH}#`) && /NEAR testnet/.test(nearPay?.description ?? "") && /near_reclaim/.test(nearPay?.description ?? ""));
+    ok("near_pay_link says the fragment is the bearer key, names the /claim path, NEAR testnet and near_reclaim", /bearer key/.test(nearPay?.description ?? "") && (nearPay?.description ?? "").includes(`${NEAR_CLAIM_PATH}#`) && /NEAR testnet/.test(nearPay?.description ?? "") && /near_reclaim/.test(nearPay?.description ?? ""));
     ok("  ...and states the per-link cap and the daily budget from the configured rail", /20\.00 USDC per link/.test(nearPay?.description ?? "") && /50\.00 USDC per rolling 24 hours/.test(nearPay?.description ?? ""));
     const { resources } = await client.listResources();
     const uris = resources.map((r) => r.uri).sort().join(",");
@@ -225,7 +225,7 @@ async function main() {
     const sc = r.structuredContent as PayLinkSc | undefined;
     firstLink = sc ?? null;
     ok("not an error", r.isError !== true, textOf(r).slice(0, 100));
-    ok("the link is on Lumenia's NEAR claim path: https://getlumenia.com/c/near#ed25519:<secret>", typeof sc?.link === "string" && NEAR_LINK_RE.test(sc.link), sc?.link?.slice(0, 40));
+    ok("the link is on Lumenia's NEAR claim path: https://getlumenia.com/claim#ed25519:<secret>", typeof sc?.link === "string" && NEAR_LINK_RE.test(sc.link), sc?.link?.slice(0, 40));
     ok("  ...and its fragment is the secret whose public key the escrow knows the drop by", !!sc && parseLinkOrKey(sc.link).publicKey === sc.publicKey && sc.publicKey.startsWith("ed25519:"));
     ok("the receipt carries amount, memo, reference, funder, tx and explorer url, status Open, network testnet", sc?.receipt.amount_usdc === "2.50" && sc?.receipt.memo === "logo round 2" && sc?.receipt.reference === "inv-1" && sc?.receipt.funder_account === "lumenia-funder.testnet" && sc?.receipt.create_tx_hash === "FAKETX1" && sc?.receipt.explorer_url === "https://testnet.nearblocks.io/txns/FAKETX1" && sc?.receipt.status === "Open" && sc?.receipt.network === "testnet");
     ok("  ...and the receipt never holds the secret link", !!sc && !("link" in sc.receipt));
@@ -236,7 +236,7 @@ async function main() {
     ok("the text names NEAR testnet, carries the link and points at near_reclaim, never the package's own tool name", /NEAR testnet/.test(text) && !!sc && text.includes(sc.link) && /near_reclaim/.test(text) && !/lumenia_reclaim/.test(text) && !/lumenia_reclaim/.test(sc.instruction));
     ok("the structure says which network", sc?.network === "NEAR testnet (practice money)");
     const stored = nearRail.store.findByPublicKey(sc?.publicKey ?? "");
-    ok("the receipt log on disk holds the same /c/near# link (re-pathed before the broadcast, not after)", !!stored && stored.link === sc?.link && stored.status === "Open");
+    ok("the receipt log on disk holds the same /claim# link (re-pathed before the broadcast, not after)", !!stored && stored.link === sc?.link && stored.status === "Open");
 
     nearNowMs += 1000;
     const again = await client.callTool({ name: "near_pay_link", arguments: { amountUsdc: 2.5, memo: "logo round 2", reference: "inv-1" } });
@@ -267,7 +267,7 @@ async function main() {
     const sc = r.structuredContent as ManySc | undefined;
     ok("not an error", r.isError !== true, textOf(r).slice(0, 100));
     ok("three links, 8.10 USDC, one transaction hash shared by every receipt", sc?.count === 3 && sc?.totalUsdc === "8.10" && typeof sc?.txHash === "string" && sc.payouts.every((p) => p.receipt.create_tx_hash === sc.txHash));
-    ok("every link is on /c/near# and every public key is distinct", !!sc && sc.payouts.every((p) => NEAR_LINK_RE.test(p.link) && parseLinkOrKey(p.link).publicKey === p.publicKey) && new Set(sc.payouts.map((p) => p.publicKey)).size === 3);
+    ok("every link is on /claim# and every public key is distinct", !!sc && sc.payouts.every((p) => NEAR_LINK_RE.test(p.link) && parseLinkOrKey(p.link).publicKey === p.publicKey) && new Set(sc.payouts.map((p) => p.publicKey)).size === 3);
     ok("labels, amounts and memos ride on the receipts with one shared batch_id", !!sc && sc.payouts.map((p) => [p.label, p.receipt.amount_usdc, p.receipt.memo, p.receipt.label].join("|")).join(";") === "Ali, courier|1.00|rent|Ali, courier;Bea|0.10||Bea;Can|7.00|logo|Can" && sc.payouts.every((p) => p.receipt.batch_id === sc.batchId && sc.batchId.startsWith("batch_")));
     ok("it was ONE ft_transfer_call asking for the batch gas", transfers() === 4 && chain.lastGas === BATCH_TRANSFER_CALL_GAS && Array.isArray(chain.lastMsg?.drops) && (chain.lastMsg?.drops as unknown[]).length === 3);
     ok("expiry is 48 hours from the rail's clock", sc?.expiresAt === new Date(nearNowMs + 48 * 3_600_000).toISOString());
@@ -372,7 +372,7 @@ async function main() {
   {
     const links = await client.readResource({ uri: "lumenia://near/links" });
     const list = JSON.parse(resourceText(links)) as { link: string | null; status: string }[];
-    ok("lumenia://near/links lists every link this installation made, secrets included, on /c/near#", list.length === 7 && list.every((l) => typeof l.link === "string" && NEAR_LINK_RE.test(l.link)));
+    ok("lumenia://near/links lists every link this installation made, secrets included, on /claim#", list.length === 7 && list.every((l) => typeof l.link === "string" && NEAR_LINK_RE.test(l.link)));
     const csv = await client.readResource({ uri: "lumenia://near/receipts.csv" });
     const csvText = resourceText(csv);
     const lines = csvText.split("\r\n").filter(Boolean);

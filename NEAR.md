@@ -2,8 +2,8 @@
 
 Built at NEAR HACKATHON 2026 (window 1 to 14 November 2026; this work: 11 to 14 November). Tracks: Real-World Money, Agent Economy, Open Innovation. This document lives in Lumenia's product repository (https://github.com/getlumenia/lumenia); only the NEAR rail described here is the submission.
 
-- Hosted demo (NEAR testnet, online through 30 November 2026): https://getlumenia.com/near (mirror for automated clients: https://lumenia-near.avakit.workers.dev)
-- Demo video (60 seconds, one live take on the product screens: a link is sent, claimed into the new account ayse-bzht.testnet, paid forward through the relayer, then the public ledger): https://lumenia-near.avakit.workers.dev/demo.mp4 (16:9 copy: /demo-720p.mp4; the first take on an earlier interface is /demo-first-take.mp4)
+- Hosted demo (NEAR testnet, online through 30 November 2026): https://getlumenia.com/try/send (send), https://getlumenia.com/claim (a link opens here), https://getlumenia.com/ledger (public ledger), https://getlumenia.com/developers (the per-network table)
+- Demo video (60 seconds, one live take on the product screens: a link is sent, claimed into the new account ayse-bzht.testnet, paid forward through the relayer, then the public ledger): https://lumenia-media.avakit.workers.dev/demo.mp4 (16:9 copy: /demo-720p.mp4; the first take on an earlier interface is /demo-first-take.mp4)
 - Escrow contract on NEAR testnet: `lumenia-near.testnet` (https://testnet.nearblocks.io/address/lumenia-near.testnet)
 - One command checks everything (tests, builds, live testnet reads): `pnpm near:verify` from the repository root. See "Run it yourself".
 - Hackathon tags: `pre-hackathon` (the last commit before the NEAR work) and `hackathon-submission` (the submitted state); diff https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission
@@ -22,7 +22,7 @@ Lumenia exists on Stellar as a capped pilot (109 transfers moving about $4.4 in 
 
 ## Try it in three minutes (no wallet, no faucet click)
 
-1. Open https://getlumenia.com/near and press "Send on NEAR". Sign in to the demo sender with the key shown on that page (a testnet account that already holds testnet USDC; the key never leaves your browser tab). Type an amount such as 1.00, choose "10 minutes (demo)" as the expiry if you want to watch a reclaim later, press Send.
+1. Open https://getlumenia.com/try/send and press "Use the shared practice balance" (a testnet account that already holds test USDC; anyone may use it). Type an amount such as 1.00, choose "10 minutes (demo)" as the expiry if you want to watch a reclaim later, press Send.
 2. You get a link and a QR code. Open the link in a private window or on your phone. That is the recipient.
 3. Type a name, for example your first name, and press "Create <name>.testnet and claim $1.00". After a few seconds the screen says the money is in your new account, with the account name and the balance read back from the token contract.
 4. Back on the sender screen, the link's state line reads "Claimed" with a small "View on explorer" link to the transaction. The "Public ledger" page lists the same link.
@@ -31,6 +31,8 @@ Lumenia exists on Stellar as a capped pilot (109 transfers moving about $4.4 in 
 Judges can repeat every step from the command line; see "Run it yourself".
 
 ## How NEAR is used, in plain words
+
+> One product: the person sending or claiming never sees a network name in a path, a heading or a button. Lumenia picks the rail; the network shows up only in each payment's Details (with the explorer link), on receipts, and on the developer page.
 
 - The money sits in a small contract on NEAR, an escrow. The sender moves USDC into it with one transaction; the contract remembers which link the money belongs to.
 - The link holds a key. On NEAR a key can be limited to one contract, a few methods and a gas allowance. The link key can only call "claim" on the escrow, and the escrow's own balance pays the gas. That is why the recipient pays nothing and needs no NEAR.
@@ -48,7 +50,7 @@ Lumenia's agent MCP server (apps/web/lib/agent-mcp.ts) gains the NEAR tools, bac
 | Part | What it is | Tests |
 |---|---|---|
 | contracts/lumen-drop-near/ | The escrow, in Rust (near-sdk-rs). Single and batch links, claim to a new named account, to a fresh address or to any account, sender reclaim after expiry, pause that never blocks exits, public ledger views, NEP-297 events. | 43 unit + 21 sandbox tests |
-| apps/web/app/near/*, app/c/near/ | The sender and recipient screens: send one or many, claim, pay forward, take back, public ledger, CSV export an accountant can open. | 70 tests |
+| apps/web/app/(site)/try/send, app/claim, app/(site)/ledger, components/near/ | The sender and recipient screens: send one or many, claim, pay forward, take back, public ledger, CSV export an accountant can open. | 70 tests |
 | apps/sponsor (/near/* routes) | The scoped NEP-366 relayer (Cloudflare Worker and a local server), live inside Lumenia's sponsor Worker at https://lumenia-sponsor.avakit.workers.dev/near/health | 60 tests |
 | apps/web/lib/agent-mcp.ts (near_* tools) + packages/near | MCP server and CLI for agents: pay one, pay many, status, reclaim, balances, cross-chain quote, receipts. | 78 tests |
 | apps/agent-market/ | The Agent Market worker: takes a job, creates the links in one transaction, delivers a table, a receipt and a CSV. | 69 tests |

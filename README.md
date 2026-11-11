@@ -8,7 +8,7 @@
 
 <img src="evidence/near/claim-done.png" alt="A claimed link on Lumenia: one dollar in a brand-new account, created at the moment of the claim" width="720">
 
-**For judges and coding agents, three lines:** `pnpm install --frozen-lockfile && pnpm near:verify` runs the contract tests, the NEAR packages and the live read-only checks and prints PASS/FAIL per step (about one minute; `pnpm near:verify:offline` needs no network). Try it without installing anything at https://getlumenia.com/near. Everything else you need is in [NEAR.md](NEAR.md).
+**For judges and coding agents, three lines:** `pnpm install --frozen-lockfile && pnpm near:verify` runs the contract tests, the NEAR packages and the live read-only checks and prints PASS/FAIL per step (about one minute; `pnpm near:verify:offline` needs no network). Try it without installing anything at https://getlumenia.com/try/send. Everything else you need is in [NEAR.md](NEAR.md).
 
 > For the judges and the coding agents that pre-screen: this section and [NEAR.md](NEAR.md) are the submission. Everything else in this README describes Lumenia's Stellar product, which predates the hackathon and is not part of what is judged (rule Q-002). Tags: `pre-hackathon` marks the last commit before the NEAR work, `hackathon-submission` the submitted state; diff: https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission
 
@@ -16,7 +16,7 @@
 
 **What it is, in one minute.** You want to send someone ten dollars. They have no crypto wallet, no NEAR, no app. You send them a link instead. They open it in any browser, pick a name, tap once, and the money is theirs: a NEAR account with that name is created at that moment, funded with USDC, and they paid nothing for it. If they already have a NEAR account they can take the money there; if they would rather have it on another chain they can choose that too. If nobody opens the link, the money comes back to you after it expires. The same works when the sender is a program: an AI agent calls one tool and gets a link and a receipt, and people or other agents can hire that service on NEAR Agent Market.
 
-**Try it (NEAR testnet, nothing to install):** https://getlumenia.com/near. Press "Send on NEAR", use the demo sender, send $1.00, open the link in a private window, type a name, press Create. If the main site blocks an automated client, the same screens are mirrored at https://lumenia-near.avakit.workers.dev. Demo video (60 seconds, one live take on these product screens: a link is sent, claimed into the new account ayse-bzht.testnet, paid forward through the relayer, then the public ledger): https://lumenia-near.avakit.workers.dev/demo.mp4 (16:9 copy: /demo-720p.mp4)
+**Try it (practice money on NEAR testnet, nothing to install):** open https://getlumenia.com/try/send, press "Use the shared practice balance", send $1.00, open the link in a private window, type a name and press "Create my account and claim $1.00". The money lands in a brand-new account; the network appears only under Details. Demo video (60 seconds, one live take on these product screens: a link is sent, claimed into the new account ayse-bzht.testnet, paid forward through the relayer, then the public ledger): https://lumenia-media.avakit.workers.dev/demo.mp4 (16:9 copy: /demo-720p.mp4)
 
 **One command checks everything:** `pnpm near:verify` (contract tests, the NEAR package, the web and sponsor NEAR suites, the Agent Market worker, then live read-only checks of the testnet contract, the relayer and the hosted pages). `pnpm near:verify:offline` skips the network.
 
@@ -26,7 +26,7 @@
 |---|---|
 | `contracts/lumen-drop-near/` | The escrow on NEAR (Rust, near-sdk-rs): single and batch links, claim into a new named account or any account, sender reclaim after expiry, pause that never blocks exits, public ledger views. Deployed on testnet as `lumenia-near.testnet`. |
 | `packages/near/` | The shared library (`@lumenia/near`): link creation, receipts, batch payouts, relayer policy and client, NEAR Intents quotes. |
-| `apps/web/app/near/*`, `apps/web/app/c/near/` | The product screens: Lumenia on NEAR, Send on NEAR (one or many, CSV export), the claim screen, pay it forward, the public ledger. |
+| `apps/web/app/(site)/try/send`, `apps/web/app/claim`, `apps/web/app/(site)/ledger`, `apps/web/components/near/` | The product screens: send a link with practice money (one or many, CSV export), the claim screen, pay it forward, the public ledger. The network is a detail of each payment, never a path or a heading. |
 | `apps/sponsor` (`/near/relay`, `/near/health`, `/near/policy`) | The meta-transaction relayer inside Lumenia's sponsor service: pays the fee only for creating a Lumenia link or taking one back, with caps. |
 | `apps/web/lib/agent-mcp.ts` (`near_*` tools) | Lumenia's agent MCP server gains the NEAR tools: pay one, pay many, status, reclaim, balances, cross-chain quote, receipts. |
 | `apps/agent-market/` | The Lumenia Payout Agent on NEAR Agent Market: https://market.near.ai/a/lumenia-payout |

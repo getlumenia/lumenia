@@ -6,8 +6,8 @@
 // signs with the funder key it reads from FUNDER_PRIVATE_KEY or FUNDER_KEY_FILE.
 import { loadConfig, Lumenia, LumeniaError, type Env, type LumeniaConfig, type LumeniaDeps, type Receipt } from "@lumenia/near";
 
-/** Lumenia's claim route for a NEAR link (apps/web/app/c/near); the package alone builds its standalone page's `/c`. */
-export const NEAR_CLAIM_PATH = "/c/near";
+/** Lumenia's claim route for a NEAR link (apps/web/app/claim); the package alone builds its standalone page's `/c`. */
+export const NEAR_CLAIM_PATH = "/claim";
 /** Where the links point when WEB_ORIGIN is unset: the product, not the package's local dev page. */
 export const DEFAULT_WEB_ORIGIN = "https://getlumenia.com";
 
@@ -169,7 +169,7 @@ export class LumeniaRail implements PayoutRail {
 /**
  * The library client with Lumenia's claim path on every receipt it writes. The package builds
  * `<origin>/c#<secret>` (the path of its standalone claim page); inside Lumenia the NEAR claim
- * screen is `/c/near`, so the link is re-pathed as the receipt is written, before the deposit is
+ * screen is `/claim`, so the link is re-pathed as the receipt is written, before the deposit is
  * broadcast. The receipt log on disk (which the restart safety net reads back) and the batch
  * result the deliverable renders therefore carry the link that works. `deps` replaces the chain,
  * the store and the clock in tests. The same wrapper lives in apps/web/lib/agent-mcp.ts; both go
@@ -183,7 +183,7 @@ export function openNearRail(config: LumeniaConfig, deps: LumeniaDeps = {}): Lum
 
 type NearStore = Lumenia["store"];
 
-/** A receipt store that re-paths the package's `/c#` link to Lumenia's `/c/near#` as it is written. */
+/** A receipt store that re-paths the package's `/c#` link to Lumenia's `/claim#` as it is written. */
 export function nearClaimStore(base: NearStore, webOrigin: string): NearStore {
   const origin = webOrigin.replace(/\/+$/, "");
   const packaged = `${origin}/c#`;
