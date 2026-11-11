@@ -3,7 +3,7 @@
 Built at NEAR HACKATHON 2026 (window 1 to 14 November 2026; this work: 11 to 14 November). Tracks: Real-World Money, Agent Economy, Open Innovation. This document lives in Lumenia's product repository (https://github.com/getlumenia/lumenia); only the NEAR rail described here is the submission.
 
 - Hosted demo (NEAR testnet, online through 30 November 2026): https://getlumenia.com/near (mirror for automated clients: https://lumenia-near.avakit.workers.dev)
-- Demo video (60 seconds, one live take on testnet: a link is sent, claimed into the new account ayse-m48q.testnet, paid forward through the relayer, then the public ledger): https://lumenia-near.avakit.workers.dev/demo.mp4 (16:9 copy: /demo-720p.mp4)
+- Demo video (60 seconds, one live take on the product screens: a link is sent, claimed into the new account ayse-bzht.testnet, paid forward through the relayer, then the public ledger): https://lumenia-near.avakit.workers.dev/demo.mp4 (16:9 copy: /demo-720p.mp4; the first take on an earlier interface is /demo-first-take.mp4)
 - Escrow contract on NEAR testnet: `lumenia-near.testnet` (https://testnet.nearblocks.io/address/lumenia-near.testnet)
 - One command checks everything (tests, builds, live testnet reads): `pnpm near:verify` from the repository root. See "Run it yourself".
 - Hackathon tags: `pre-hackathon` (the last commit before the NEAR work) and `hackathon-submission` (the submitted state); diff https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission
@@ -91,9 +91,10 @@ Every path below was exercised against the deployed contract `lumenia-near.testn
 | Agent (MCP CLI) pays three people in one transaction | EpJn7vmaAvqexTf3JDBoGsjMbYKsyHmgs2NbFvTcAJtW | 3 links (1.00, 1.50, 1.10 USDC), one receipt each |
 | Pay forward through the relayer (sender signs, relayer pays the fee) | DgHQfQaxWMWzKmkwfcswBWV8NfqWyt5FvVKGAe3e3pBL | 0.10 USDC link created; relayer outcome "success" |
 | The same through the relayer inside Lumenia's sponsor service (`/near/relay`, 2026-11-11 02:45 UTC) | A3jr4UJWjrNeahjYJNvX6CRbfWYw7BZTwc8Yweh2QiSm | 0.10 USDC link created; an immediate second request was refused with 429 (10-second cooldown) |
+| Demo video take on the product screens: send, claim into ayse-bzht.testnet, pay forward through the sponsor relayer (2026-11-11 06:35 UTC) | AcYDkG9vYvzZLTtqTtFE3FvtFAi6hUn6NjhSNaew2ouV, 5mXtmnogZmQEP2HajYS4QWbGbg8QMUSzj9oC4pb8B3FA, 8YhoQMg6QCiTjhfrPs9b8eRGQ49XiW5CuYfvkBjMe4Ri | the named account exists and holds 1 USDC and 0.05 NEAR; the pay-forward link was created with the relayer paying the fee |
 | Demo video take: send, claim into ayse-m48q.testnet, pay forward (2026-11-11 04:20 UTC) | 3Uv9rHsKn57RkMLcWLntjUh9cN86Na7WFPmXGGWm4cm6, 5MR6FCqGTGRoGugQNyNEf8W9NfUb7PPnxnHPiQn8srYZ, 2gbd1yNWTmsSSgPhHL4U4bK8tM1bPP59srRib4X6NthR | the named account exists and holds 1 USDC; the pay-forward link was created with the relayer paying the fee |
 
-After these runs `get_stats` on the contract read 10 links created, 3 claimed, 0 returned (`pnpm near:verify:live` prints the current numbers). The unclaimed proof links return to the sender after their 24-hour or 7-day expiry.
+After these runs `get_stats` on the contract read 18 links created, 6 claimed, 0 returned (`pnpm near:verify:live` prints the current numbers). The unclaimed proof links return to the sender after their 24-hour or 7-day expiry.
 
 ## What is real and what is not
 
