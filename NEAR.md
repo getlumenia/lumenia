@@ -1,140 +1,147 @@
 # Lumenia on NEAR: the NEAR rail, for judges and reviewers
 
-Built at NEAR HACKATHON 2026 (window 1 to 14 November 2026; this work: 11 to 14 November). Tracks: Real-World Money, Agent Economy, Open Innovation. This document lives in Lumenia's product repository (https://github.com/getlumenia/lumenia); only the NEAR rail described here is the submission.
+- **What:** a dollar link for someone who has nothing. At the claim the escrow creates the recipient's NEAR account, funds it with USDC and pays the fee, so the recipient pays no gas; the sender can take unclaimed money back after expiry (one tap). Built at NEAR HACKATHON 2026 (window 1 to 14 November 2026; this work: 11 to 14 November) inside [Lumenia's product repository](https://github.com/getlumenia/lumenia); only this NEAR rail is the submission.
+- **Try:** https://getlumenia.com/try/send, practice money, online through 30 November 2026; links open on [/claim](https://getlumenia.com/claim), the public ledger is [/ledger](https://getlumenia.com/ledger), the per-network table [/developers](https://getlumenia.com/developers). [Demo video](https://lumenia-media.avakit.workers.dev/demo.mp4), 60 seconds ([16:9 copy](https://lumenia-media.avakit.workers.dev/demo-720p.mp4)).
+- **Check:** `pnpm install --frozen-lockfile && pnpm near:verify`, no key needed (see "Run it yourself").
+- **Real:** the escrow [`lumenia-near.testnet`](https://testnet.nearblocks.io/address/lumenia-near.testnet), the screens, the relayer, the agent tools and one delivered Agent Market test job; hashes under "Proof".
+- **Testnet:** all of that, with Circle's testnet USDC; the owner's mainnet run is under "Mainnet proof". No audit is claimed.
+- **Tracks and tags:** Real-World Money, Agent Economy, Open Innovation; tags `pre-hackathon` and `hackathon-submission` ([diff](https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission)).
 
-- Hosted demo (NEAR testnet, online through 30 November 2026): https://getlumenia.com/try/send (send), https://getlumenia.com/claim (a link opens here), https://getlumenia.com/ledger (public ledger), https://getlumenia.com/developers (the per-network table)
-- Demo video (60 seconds, one live take on the product screens: a link is sent, claimed into the new account ayse-bzht.testnet, paid forward through the relayer, then the public ledger): https://lumenia-media.avakit.workers.dev/demo.mp4 (16:9 copy: /demo-720p.mp4; the first take on an earlier interface is /demo-first-take.mp4)
-- Escrow contract on NEAR testnet: `lumenia-near.testnet` (https://testnet.nearblocks.io/address/lumenia-near.testnet)
-- One command checks everything (tests, builds, live testnet reads): `pnpm near:verify` from the repository root. See "Run it yourself".
-- Hackathon tags: `pre-hackathon` (the last commit before the NEAR work) and `hackathon-submission` (the submitted state); diff https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission
+<details>
+<summary>Try it in three minutes, click by click (no wallet, no faucet click)</summary>
+
+1. Open https://getlumenia.com/try/send and press "Use the shared practice balance" (a testnet account that already holds test USDC; anyone may use it). Type an amount such as 1.00, choose "10 minutes (demo)" as the expiry if you want to try "Take the money back" later, and press Send.
+2. You get a link and a QR code. Open the link in a private window or on your phone: that is the recipient.
+3. Type a name, for example your first name, and press "Create my account and claim $1.00". After a few seconds the screen says the money is in your new account, with the account name and the balance read back from the token contract.
+4. Back on the sender screen, under "Your links", the link reads "Claimed", and its Details link to the transaction and the recipient on the explorer. The "Public ledger" page lists the same link.
+5. Optional: on the recipient's done screen, "Pay it forward" sends part of the money onward as a new link without spending any NEAR (a relayer pays the fee, and it only pays for calls to this contract).
+
+Every step can be repeated from the command line; see "Run it yourself".
+
+</details>
 
 ## Why this and not the others
 
-Payment-link products pay someone who already has a wallet. Coinbase Wallet links need the Coinbase app on both sides. Peanut (EVM) and the invoice-link entries in this hackathon (Paylink, Invoice Link, Payday, Dues and others) settle to an existing address and use NEAR Intents to let the payer choose a chain. NEAR's own linkdrop pattern, productised by Keypom, handed out pre-funded wallets and went quiet in December 2024. Lumenia pays the person who has nothing: the account is created at the moment of the claim, the escrow funds it and covers the fee, and unclaimed money returns to the sender. Nothing else in the 495-entry directory does recipient-side onboarding, and this one ships inside a product that already moves real money on Stellar (109 transfers, about $4.4 in total, a capped pilot).
+Payment links pay someone who already has a wallet. Coinbase Wallet links need the Coinbase app on both sides ([The Block](https://www.theblock.co/post/266175/coinbase-rolls-out-money-transfers-via-links-sent-on-whatsapp-tiktok-and-instagram)); Peanut (EVM, [supported chains](https://peanutprotocol.notion.site/Supported-Chains-and-Tokens-12f838117579817d926cfe352a71f5c1)) and this hackathon's invoice-link entries (Paylink, Invoice Link, Payday, Dues and others, which use NEAR Intents to let the payer choose a chain) settle to an existing address. NEAR's own linkdrop (`create_account_and_claim`, since 2020) and [Keypom](https://github.com/keypom/keypom) already created an account at claim time for NEAR drops; Keypom went quiet in December 2024. Lumenia's edge is a maintained consumer product for dollars: USDC with sender reclaim, the payout chosen at claim, pay-forward with zero NEAR, batch payouts and an agent that pays people, inside a product with a live Stellar pilot (109 transfers, about $4.4 in total). In the public directory, about 500 entries when we read it on 2026-11-11 ([source](https://nearhackathon.com/api/projects)), no other entry did recipient-side onboarding.
 
-## What it is, in one minute
-
-You want to send someone ten dollars. They have no crypto wallet, no NEAR, no app. You send them a link instead. They open it in any browser, see the money, pick a name, tap once, and the money is theirs: a NEAR account with that name is created at that moment, funded with USDC, and they paid nothing for it. If they already have a NEAR account they can take the money there, and if they would rather have it on another chain they can choose that too. If nobody opens the link, the money comes back to you after it expires.
-
-The same thing works when the sender is a program. An AI agent that owes a person money (a bounty, a survey reward, a refund) calls one tool and gets back a link and a receipt. The person on the other end never needs a wallet. Agents and people can also hire this service on NEAR Agent Market.
-
-Lumenia exists on Stellar as a capped pilot (109 transfers moving about $4.4 in total, see "Where this comes from"). This repository is the NEAR version, written from scratch during the hackathon; only the NEAR work is submitted.
-
-## Try it in three minutes (no wallet, no faucet click)
-
-1. Open https://getlumenia.com/try/send and press "Use the shared practice balance" (a testnet account that already holds test USDC; anyone may use it). Type an amount such as 1.00, choose "10 minutes (demo)" as the expiry if you want to watch a reclaim later, press Send.
-2. You get a link and a QR code. Open the link in a private window or on your phone. That is the recipient.
-3. Type a name, for example your first name, and press "Create <name>.testnet and claim $1.00". After a few seconds the screen says the money is in your new account, with the account name and the balance read back from the token contract.
-4. Back on the sender screen, the link's state line reads "Claimed" with a small "View on explorer" link to the transaction. The "Public ledger" page lists the same link.
-5. Optional: on the recipient's done screen, "Pay it forward" sends part of the money onward as a new link while the recipient holds no NEAR at all (a relayer pays the fee, and it only pays for calls to this contract).
-
-Judges can repeat every step from the command line; see "Run it yourself".
-
-## How NEAR is used, in plain words
+## How NEAR is used
 
 > One product: the person sending or claiming never sees a network name in a path, a heading or a button. Lumenia picks the rail; the network shows up only in each payment's Details (with the explorer link), on receipts, and on the developer page.
 
-- The money sits in a small contract on NEAR, an escrow. The sender moves USDC into it with one transaction; the contract remembers which link the money belongs to.
-- The link holds a key. On NEAR a key can be limited to one contract, a few methods and a gas allowance. The link key can only call "claim" on the escrow, and the escrow's own balance pays the gas. That is why the recipient pays nothing and needs no NEAR.
-- At claim time the contract creates the recipient's named account through NEAR's own account-creation contract (an account can exist with zero balance), registers it with the USDC token, pays that small registration deposit, transfers the USDC, and adds 0.05 NEAR so the account can make its first ordinary transactions. Four steps, one tap.
-- The recipient can instead name an existing account, or ask for the money on another chain: the claim then pays a NEAR Intents deposit address and Intents delivers the dollars to the chosen chain. Intents has no testnet, so the hosted demo shows the live quote and stops there; the code path is the same on mainnet.
-- A meta-transaction relayer (NEP-366) lets a freshly created account pay forward with zero NEAR. It is scoped: it relays only link creation into this escrow and the sender's reclaim, nothing else, with per-account and daily caps.
-- Unclaimed money returns to the sender after the expiry the sender chose (ten minutes to seven days). The escrow owner can pause new links but can never block a claim or a reclaim, and can never move anyone's money.
+- **Escrow:** one transaction moves the sender's USDC into a small contract, which records the link it belongs to and emits NEP-297 events.
+- **Practice money:** the shared practice balance lives on the sponsor's relayer account, and the sponsor service creates practice links itself (`POST /near/practice-link`: 0.10 to 5.00 test USDC, one link per 30 seconds and 10 a day per IP, 300 a day in total, fail-closed). The browser sends only the link's public key; no key of the practice balance ever reaches a page.
+- **The link is a key** that NEAR limits to one contract, two methods (`claim`, `claim_to_new_account`) and a 1 NEAR gas allowance; the escrow's own balance pays the gas, so the recipient pays no gas and needs no NEAR.
+- **Account at the claim:** the contract creates the recipient's named account through NEAR's account-creation contract (an account can exist with zero balance), registers it with the USDC token and pays that deposit, transfers the USDC and, on testnet, adds a 0.05 NEAR starter. Four steps, one tap. An existing account or a fresh address works too.
+- **Another chain:** the claim can pay a NEAR Intents deposit address, and Intents delivers the dollars to the chosen chain. Intents has no testnet, so the hosted demo stops at the live quote (the code path is the same on mainnet).
+- **Pay forward with zero NEAR:** a NEP-366 meta-transaction relayer relays only link creation into this escrow and the sender's reclaim, capped at 20 per sender a day, 500 a day in all and one per 10 seconds (`/near/health` reports them).
+- **Exits:** the sender can take unclaimed money back after the expiry they chose (ten minutes to seven days). No contract method lets the owner move a drop, and pause blocks only new links; the open risk is the escrow's full-access key (see "What is real and what is not").
+- **Gas** (sandbox, whole transaction): one link 7.5 Tgas, a batch of 30 links 43.1 Tgas, a claim into a new named account 24.1 Tgas, a reclaim 7.4 Tgas.
 
-## For AI agents
+## Run it yourself
 
-Lumenia's agent MCP server (apps/web/lib/agent-mcp.ts) gains the NEAR tools, backed by the `@lumenia/near` library. One call to `near_pay_link` returns a link plus a receipt (what, to whom, how much, transaction hash, status, claimed or returned). `near_pay_many` pays up to 30 people in one transaction from a list of names and amounts. The agent's key can only move its own USDC into the escrow, within a daily budget; it cannot touch claimed money or the escrow pool. `agent-market/` is the same service listed on NEAR Agent Market as "Lumenia Payout Agent", so a person or another agent can hire it from Claude Code with one sentence. The listing is live at https://market.near.ai/a/lumenia-payout (registered through the marketplace API on 2026-11-11; it appears in the Discover catalogue once the maintainer adopts it into their account; the public page and the A2A/x402 card work already). To hire it from Claude Code: `claude mcp add --transport http agent-market https://market.near.ai/mcp`, then ask Claude to hire "Lumenia Payout Agent" to pay, for example, Ayse 1 USDC and Ali 2 USDC. The worker code, the listing text and the ops files are in agent-market/.
+```sh
+pnpm install --frozen-lockfile && pnpm near:verify
+```
 
-## What was built (all inside the window)
+It runs the steps below, then the live read-only checks, which also look up every hash in this document's proof tables on chain; it prints PASS or FAIL per line and ends with `ALL GREEN`. The first run on a fresh clone takes about 3 minutes, because cargo compiles the Rust test dependencies and downloads the nearcore sandbox (about 2 GB on disk in all); later runs take about 1 minute. `pnpm near:verify:offline` skips the network; `pnpm near:verify:live` runs only the live checks (a few seconds). Prerequisites: Node 22+, pnpm 9.12 (`corepack enable` or `npx -y pnpm@9.12.0`), Rust 1.95 (pinned by `contracts/lumen-drop-near/rust-toolchain.toml`), [cargo-near 0.23](https://github.com/near/cargo-near/releases), and near-cli-rs 0.31 only for the optional live `near contract` command. No private key; nothing is signed or spent.
 
-| Part | What it is | Tests |
+<details>
+<summary>Step by step, with what each step prints (measured 2026-11-11 UTC)</summary>
+
+| Part | Step | Expect |
 |---|---|---|
-| contracts/lumen-drop-near/ | The escrow, in Rust (near-sdk-rs). Single and batch links, claim to a new named account, to a fresh address or to any account, sender reclaim after expiry, pause that never blocks exits, public ledger views, NEP-297 events. | 43 unit + 21 sandbox tests |
-| apps/web/app/(site)/try/send, app/claim, app/(site)/ledger, components/near/ | The sender and recipient screens: send one or many, claim, pay forward, take back, public ledger, CSV export an accountant can open. | 70 tests |
-| apps/sponsor (/near/* routes) | The scoped NEP-366 relayer (Cloudflare Worker and a local server), live inside Lumenia's sponsor Worker at https://lumenia-sponsor.avakit.workers.dev/near/health | 60 tests |
-| apps/web/lib/agent-mcp.ts (near_* tools) + packages/near | MCP server and CLI for agents: pay one, pay many, status, reclaim, balances, cross-chain quote, receipts. | 78 tests |
-| apps/agent-market/ | The Agent Market worker: takes a job, creates the links in one transaction, delivers a table, a receipt and a CSV. | 69 tests |
+| The escrow, `contracts/lumen-drop-near/` (near-sdk-rs): single and batch links, claim to a new named account, a fresh address or any account, sender reclaim after expiry, pause that never blocks exits, public ledger views | `cd contracts/lumen-drop-near/contract && cargo test` | 43 unit and 21 sandbox tests ok |
+| `@lumenia/near`, `packages/near/`: links, receipts, batch payouts, relayer policy and client, NEAR Intents quotes | `pnpm --filter @lumenia/near test` | 120 tests pass |
+| The screens: `apps/web/app/(site)/try/send`, `apps/web/app/claim`, `apps/web/app/(site)/ledger`, `apps/web/components/near/` (send one or many, claim, pay forward, take back, public ledger, a CSV an accountant can open) | `pnpm --filter @lumenia/web test:near` | 297/297 |
+| The agent MCP server and CLI, `apps/web/lib/agent-mcp.ts` (`near_*` tools) | `pnpm --filter @lumenia/web test:agentmcp` | 128/128, the Stellar and NEAR tools |
+| The scoped NEP-366 relayer, `apps/sponsor` (`/near/*` routes): live in Lumenia's sponsor Worker, also runs as a local server | `pnpm --filter @lumenia/sponsor test:near-relay` | 238/238, the relayer and the practice-link route |
+| The Agent Market worker, `apps/agent-market/`: takes a job, creates the links in one transaction, delivers a table, a receipt and a CSV | `pnpm --filter @lumenia/agent-market test && pnpm --filter @lumenia/agent-market build` | 70 tests pass, then a clean build |
+| Live, read-only (NEAR testnet, no key) | `near contract call-function as-read-only lumenia-near.testnet get_stats json-args '{}' network-config testnet now` and `curl -s https://lumenia-sponsor.avakit.workers.dev/near/health` | the escrow's counters (created, claimed, returned, open, pool); `"ok":true` for the relayer `lumenia-relayer.testnet` serving `lumenia-near.testnet` |
 
-Measured on the sandbox (whole transaction): creating one link 7.5 Tgas, a batch of 30 links 43.1 Tgas, a claim into a new named account 24.1 Tgas, a reclaim 7.4 Tgas. The pool pays about 0.057 NEAR per claim at the current testnet settings (storage, USDC registration, 0.05 NEAR starter, gas), so 10 NEAR covers about 170 claims; the contract's `get_stats` shows the live numbers.
-
-## Run it yourself (judges, reviewers, coding agents)
-
-Everything runs on a clean machine with Rust 1.95 (pinned by contracts/lumen-drop-near/rust-toolchain.toml), Node 24 and pnpm 9.12 (`corepack enable` or `npx -y pnpm@9.12.0`). No private key is needed for any step below.
-
-```sh
-pnpm install --frozen-lockfile
-pnpm near:verify            # contract tests, the NEAR package, the web and sponsor NEAR suites, the Agent Market worker, then live read-only checks
-pnpm near:verify:offline    # the same without network
-pnpm near:verify:live       # only the live checks (about 2 seconds)
-```
-
-Step by step, if you prefer:
-
-```sh
-cd contracts/lumen-drop-near/contract && cargo test        # see: 43 unit tests and 21 sandbox tests, all ok
-pnpm --filter @lumenia/near test                            # see: 120 tests pass
-pnpm --filter @lumenia/web test:near                        # the web rail's self-tests
-pnpm --filter @lumenia/web test:agentmcp                    # the agent MCP, Stellar and NEAR tools
-pnpm --filter @lumenia/sponsor test:near-relay              # the relayer routes through worker.fetch
-pnpm --filter @lumenia/agent-market test && pnpm --filter @lumenia/agent-market build
-
-# Live, read-only (NEAR testnet, no key)
-near contract call-function as-read-only lumenia-near.testnet get_stats json-args '{}' network-config testnet now
-curl -s https://lumenia-sponsor.avakit.workers.dev/near/health
-```
+</details>
 
 ## Proof: live transactions on NEAR testnet (2026-11-11)
 
-Every path below was exercised against the deployed contract `lumenia-near.testnet` with Circle's testnet USDC. Open any hash on https://testnet.nearblocks.io/txns/<hash>.
+Every path ran against `lumenia-near.testnet` with Circle's testnet USDC; open any hash at https://testnet.nearblocks.io/txns/<hash>, or let `pnpm near:verify:live` look them all up.
 
 | What | Transaction | Result |
 |---|---|---|
-| Sender creates a 1 USDC link (contract script) | 4pV1q11f7UXLooG9cA3t1HBSFm9B4pYnUWYxr3gEgZAD | drop Open for link key ed25519:FTbxAZN3... |
-| Recipient claims that link with the link key into a fresh account (contract script) | FhL77xssNU1P57uCcuC4DiDSaU17BFNUPfcceLn3dEgu | account 880115ec...93a1 created, holds 1 USDC and 0.05 NEAR; drop Claimed |
+| The demo video's take on the product screens: send, claim into the new account ayse-bzht.testnet, pay 0.25 USDC forward through the sponsor relayer (03:35 UTC) | AcYDkG9vYvzZLTtqTtFE3FvtFAi6hUn6NjhSNaew2ouV, 5mXtmnogZmQEP2HajYS4QWbGbg8QMUSzj9oC4pb8B3FA, 8YhoQMg6QCiTjhfrPs9b8eRGQ49XiW5CuYfvkBjMe4Ri | created with 1 USDC and 0.05 NEAR; after paying forward it holds 0.75 USDC and still 0.05 NEAR |
+| Contract script: create a 1 USDC link, then claim it with the link key into a fresh account | 4pV1q11f7UXLooG9cA3t1HBSFm9B4pYnUWYxr3gEgZAD, FhL77xssNU1P57uCcuC4DiDSaU17BFNUPfcceLn3dEgu | drop Open for link key ed25519:FTbxAZN3..., then account 880115ec...93a1 created with 1 USDC and 0.05 NEAR; drop Claimed |
+| Agent (MCP CLI) pays three people in one transaction | EpJn7vmaAvqexTf3JDBoGsjMbYKsyHmgs2NbFvTcAJtW | 3 links (1.00, 1.50, 1.10 USDC), one receipt each |
+| NEAR Agent Market test job 94912e5d ("For agents") | 8NXQ2YXWNTyihMueGHvbJ6ceR1Qjft8M51Ce4u2MCaHf | two Open 0.25 USDC links, funded in one transaction |
+| The relayer inside Lumenia's sponsor service, `/near/relay` (02:42 UTC) | A3jr4UJWjrNeahjYJNvX6CRbfWYw7BZTwc8Yweh2QiSm | 0.10 USDC link created; an immediate second request was refused with 429 (10-second cooldown) |
+
+<details>
+<summary>Five more rows: the web client's create and claim, an agent paying one person, the first relayed pay-forward, an earlier take of the demo video</summary>
+
+| What | Transaction | Result |
+|---|---|---|
 | Web script: create a 1 USDC link | 2cjvJqmgHpybmBwQNfwdginmdRZAgzUE7uvRr9FTtSYf | drop Open |
 | Web script: claim it into a fresh account | BJEij829uNAZtaUAqa31Jc2yc7vq3oDjqaVizmnHckBH | account 2315f930...9cb7 holds 1 USDC; drop Claimed |
 | Agent (MCP CLI) pays one person, receipt written | 2bszj9H4dfsX6igqqHzgK6sPRChUXUwVkoqEiiZfDc8K | 1 USDC link, receipt rcpt_2fd21205... |
-| Agent (MCP CLI) pays three people in one transaction | EpJn7vmaAvqexTf3JDBoGsjMbYKsyHmgs2NbFvTcAJtW | 3 links (1.00, 1.50, 1.10 USDC), one receipt each |
 | Pay forward through the relayer (sender signs, relayer pays the fee) | DgHQfQaxWMWzKmkwfcswBWV8NfqWyt5FvVKGAe3e3pBL | 0.10 USDC link created; relayer outcome "success" |
-| The same through the relayer inside Lumenia's sponsor service (`/near/relay`, 2026-11-11 02:45 UTC) | A3jr4UJWjrNeahjYJNvX6CRbfWYw7BZTwc8Yweh2QiSm | 0.10 USDC link created; an immediate second request was refused with 429 (10-second cooldown) |
-| NEAR Agent Market: the owner hired the Lumenia Payout Agent (free test run, job 94912e5d), the worker started within seconds, funded two 0.25 USDC links in ONE transaction and delivered a table, a JSON receipt and receipt.csv 12 seconds after the start (2026-11-11 21:14 UTC) | 8NXQ2YXWNTyihMueGHvbJ6ceR1Qjft8M51Ce4u2MCaHf | two Open links on the escrow; the delivery is visible to the buyer on market.near.ai (job 94912e5d-7719-4abb-8243-1b7919d06bcf) |
-| Demo video take on the product screens: send, claim into ayse-bzht.testnet, pay forward through the sponsor relayer (2026-11-11 06:35 UTC) | AcYDkG9vYvzZLTtqTtFE3FvtFAi6hUn6NjhSNaew2ouV, 5mXtmnogZmQEP2HajYS4QWbGbg8QMUSzj9oC4pb8B3FA, 8YhoQMg6QCiTjhfrPs9b8eRGQ49XiW5CuYfvkBjMe4Ri | the named account exists and holds 1 USDC and 0.05 NEAR; the pay-forward link was created with the relayer paying the fee |
-| Demo video take: send, claim into ayse-m48q.testnet, pay forward (2026-11-11 04:20 UTC) | 3Uv9rHsKn57RkMLcWLntjUh9cN86Na7WFPmXGGWm4cm6, 5MR6FCqGTGRoGugQNyNEf8W9NfUb7PPnxnHPiQn8srYZ, 2gbd1yNWTmsSSgPhHL4U4bK8tM1bPP59srRib4X6NthR | the named account exists and holds 1 USDC; the pay-forward link was created with the relayer paying the fee |
+| An earlier take of the demo video: send, claim into ayse-m48q.testnet, pay 0.25 USDC forward (01:20 UTC) | 3Uv9rHsKn57RkMLcWLntjUh9cN86Na7WFPmXGGWm4cm6, 5MR6FCqGTGRoGugQNyNEf8W9NfUb7PPnxnHPiQn8srYZ, 2gbd1yNWTmsSSgPhHL4U4bK8tM1bPP59srRib4X6NthR | created with 1 USDC; the pay-forward link was created with the relayer paying the fee, and the account holds 0.75 USDC and 0.05 NEAR |
 
-After these runs `get_stats` on the contract read 18 links created, 6 claimed, 0 returned (`pnpm near:verify:live` prints the current numbers). The unclaimed proof links return to the sender after their 24-hour or 7-day expiry.
+</details>
 
-## What is real and what is not
+`get_stats` read 18 links created, 6 claimed, 0 returned by 03:46 UTC and 22 created, 8 claimed, 0 returned at 22:30 UTC (`pnpm near:verify:live` prints the current numbers). The sender can take the unclaimed proof links back after their 24-hour or 7-day expiry.
 
-- Real: the contract on NEAR testnet, Circle's testnet USDC, the hosted demo, the relayer inside the sponsor service, the MCP server, the sandbox tests, the Agent Market listing with one completed job (a free owner test run; paid hires from other accounts are still zero).
-- Testnet only: nothing here touches mainnet money. NEAR Intents has no testnet, so the cross-chain payout is shown as a live quote, not executed.
-- Not done: no security audit (none is claimed). The escrow owner is a single key that can also redeploy the contract; the production design is a multisig with a time-locked upgrade, as Lumenia runs on Stellar. The relayer key is a hot key on a Worker. Named accounts are created under `.testnet` here and would be `.near` on mainnet.
+## Mainnet proof (2026-11-12)
 
-## Attacks the system refuses (with evidence)
+Pending: the owner is running the mainnet proof; this section is filled with the transaction hashes once it completes.
+
+## Attacks the system refuses
 
 | Attempt | What happens | Evidence |
 |---|---|---|
-| A relayed message that is not a Lumenia link creation or reclaim (wrong receiver, wrong method, a deposit of 2 yoctoNEAR, 150 Tgas, two actions, a payout to another account) | The relayer answers 403 with the reason before paying anything | 139 assertions in apps/sponsor/src/test-near-relay.ts; a live 403 and a live 429 against the deployed Worker on 2026-11-11 (tx A3jr4UJWjrNeahjYJNvX6CRbfWYw7BZTwc8Yweh2QiSm was the allowed one, the immediate repeat was refused) |
-| A forged sender id on a relayed message | Refused by an offline signature check, so it cannot burn the sender's daily cap | test-near-relay.ts, "forged sender burns no cap" |
-| A claim signed with a key that is not a link key, a second claim on the same link, a claim after expiry, a reclaim by a stranger or before expiry | The contract panics; the USDC never leaves the escrow | contracts/lumen-drop-near/contract/tests/sandbox.rs (21 tests) |
-| A batch whose amounts do not sum to the transfer, a reused key, a dust amount | The whole deposit is refunded, no record is written | sandbox tests "batch refused" |
-| The store behind the caps is down | The relayer fails closed (503), it does not relay blind | test-near-relay.ts, store-down cases |
-| The escrow owner tries to move a drop | There is no such method; pause only blocks new links, claims and reclaims keep working | contract README, "pause never blocks an exit" test |
+| A relayed message that is not a Lumenia link creation or reclaim (wrong receiver or method, a 2 yoctoNEAR deposit, 150 Tgas, two actions, a payout to another account) | 403 with the reason, before anything is paid | `apps/sponsor/src/test-near-relay.ts` (238 assertions); a live 403 and 429 on the deployed Worker on 2026-11-11 (the allowed call is the `/near/relay` row under "Proof") |
+| A forged sender id on a relayed message | Refused by an offline signature check, so it cannot burn the sender's daily cap | `test-near-relay.ts`, "FORGED SENDER" |
+| A claim with a key that is not a link key, a second claim, a claim after expiry; a reclaim by a stranger or before expiry | The contract panics; the USDC never leaves the escrow | `tests/sandbox.rs` (21 tests); unit tests `claim_with_a_foreign_key_panics`, `double_claim_panics`, `claim_after_expiry_panics`, `reclaim_by_a_stranger_panics`, `reclaim_before_expiry_panics` |
+| A batch whose amounts do not sum to the transfer, a reused key, a dust amount | The whole deposit is refunded; no record is written | `a_batch_whose_amounts_do_not_sum_to_the_transfer_is_refunded`, `a_batch_with_one_reused_key_is_refunded_entirely` (sandbox), `a_batch_with_a_reused_or_repeated_key_or_dust_is_returned_entirely` (unit) |
+| The store behind the caps is down | Fails closed (503 `store_unavailable`); nothing is relayed blind | `test-near-relay.ts`, "[store down] fail closed" |
+| The escrow owner tries to move a drop | No method does that; pause blocks only new links (the full-access key is under "What is real and what is not") | `pause_never_blocks_claim_or_reclaim` (unit), `pause_blocks_new_drops_but_a_pending_claim_and_a_reclaim_still_work` (sandbox) |
+
+Live run: [evidence/near/attacks.md](evidence/near/attacks.md) (re-run with `npx tsx ops/near-attack-demo.ts`).
+
+## For agents
+
+The agent MCP server (`apps/web/lib/agent-mcp.ts`) has NEAR tools backed by `@lumenia/near`: pay one, pay many, status, reclaim, balances, cross-chain quote, receipts. `near_pay_link` returns a link and a receipt (what, to whom, how much, transaction hash, status, claimed or returned); `near_pay_many` pays up to 30 people in one transaction. The agent signs with its funder account's full-access key: the daily budget and per-link limits are enforced by the MCP server software, not by the key, which has no power over claimed money or the escrow pool. A function-call key scoped to the USDC contract cannot attach the 1 yoctoNEAR that `ft_transfer_call` needs, so the production design goes through the relayer or an on-chain allowance.
+
+The same service is registered on NEAR Agent Market as "Lumenia Payout Agent", with its public page at https://market.near.ai/a/lumenia-payout (code, listing text and ops files in `apps/agent-market/`). Its one delivered job was the owner's free test run (job 94912e5d-7719-4abb-8243-1b7919d06bcf, 2026-11-11 21:14 UTC): the worker started within seconds, funded two 0.25 USDC links in one transaction (8NXQ2YXWNTyihMueGHvbJ6ceR1Qjft8M51Ce4u2MCaHf), delivered a table, a JSON receipt and receipt.csv in 12 seconds, and the delivery was accepted. Test runs do not count in the public job stats, which still read 0.
+
+<details>
+<summary>Hiring it from Claude Code, and where the listing stands</summary>
+
+`claude mcp add --transport http agent-market https://market.near.ai/mcp`, then ask Claude to hire "Lumenia Payout Agent" to pay, for example, Ayse 1 USDC and Ali 2 USDC. The listing was registered through the marketplace API on 2026-11-11; it appears in the Discover catalogue once the maintainer adopts it into their account, and the public page and the A2A/x402 card work already.
+
+</details>
 
 ## How this earns and what is beyond testnet
 
-- Agent Market: the Lumenia Payout Agent charges a flat service fee per job (0.50 USDC today, the market median); payouts are funded from a treasury the agent owns.
-- Product: Lumenia's model on Stellar is a flat fee per link on real money (the mainnet pilot runs with caps and no fee today); the NEAR rail inherits it. The sponsor's cost per claim on NEAR is about 0.057 NEAR (storage, USDC registration, 0.05 NEAR starter, gas), roughly a fifth of the Stellar reserve per claim.
-- Beyond testnet: the Stellar rail is live on mainnet as a capped pilot with real people; the NEAR rail is testnet-only in this submission, and the contract, relayer and screens are mainnet-ready behind configuration (contract id, token id, root account, relayer account).
+- Agent Market: a flat service fee per job (0.50 USDC today, the market median); payouts come from a treasury the agent owns.
+- Product: Lumenia's model on Stellar is a flat fee per link on real money (the mainnet pilot runs with caps and no fee today); the NEAR rail inherits it.
+- Cost per claim to the pool: about 0.011 NEAR without the starter (account creation 0.007 burned, USDC registration 0.00125, the record's storage, gas), about 0.06 NEAR with the 0.05 NEAR testnet starter. The mainnet escrow is to run with the starter at 0, because self-claims could farm it. Stellar locks 1.5 XLM per new account.
+- Beyond testnet: the NEAR contract, relayer and screens are mainnet-ready behind configuration (contract id, token id, root account, relayer account); the Stellar rail already runs a capped mainnet pilot with real people.
+
+## What is real and what is not
+
+- Real: every row under "Proof", the hosted demo, the relayer inside the sponsor service, the MCP server, the sandbox tests, and the Agent Market listing with its one delivered job (the owner's free test run; the public job stats still read 0).
+- Testnet only: all of that, with Circle's testnet USDC and no mainnet money; the cross-chain payout is a live NEAR Intents quote, not executed (Intents has no testnet).
+- Not done: no audit is claimed. No contract method lets the owner move a drop and pause only blocks new links, but the escrow account `lumenia-near.testnet` still holds one full-access key, which can redeploy the code (it did during development, on 2026-11-10 at 23:43 UTC), and new code could move the money. The production step is to remove that key or hand it to a multisig behind a time-locked upgrade. On Stellar, Lumenia's escrow owner is already a 2-of-3 multisig; its seven-day upgrade timelock is written (LumenDrop 0.3.0) but installed on neither network. The relayer and the agent's funder sign with hot full-access keys. Named accounts are `.testnet` here and would be `.near` on mainnet.
 
 ## Arguing against this idea
 
-A link is a bearer secret: whoever holds it can claim the money, so a forwarded or screenshotted link is a lost payment, and only the expiry and the sender's reclaim limit the damage. Most people who already use crypto do not need this; they have an address. NEAR has had claim links since 2020 (the linkdrop standard, later Keypom) and they did not become a consumer habit, which suggests the hard part is not the mechanic but the reason to send money this way at all. Lumenia's answer is that the recipient who has nothing is the whole point (a relative abroad, a contractor an agent must pay, a first-time user), that the escrow funds only on claim and returns on expiry instead of handing out pre-funded wallets, and that distribution, not technology, decides it. That answer is a bet, not a proof: the Stellar pilot moved about $4.4 in 109 transfers.
+A link is a bearer secret: whoever holds it can claim the money, so a forwarded or screenshotted link is a lost payment, limited only by the expiry and the sender's reclaim. Most people who already use crypto have an address and do not need this. NEAR has had claim links since 2020 (the linkdrop standard, later Keypom) and they did not become a consumer habit, which suggests the hard part is the reason to send money this way, not the mechanic. Lumenia's answer: the recipient who has nothing is the whole point (a relative abroad, a contractor an agent must pay, a first-time user); the escrow pays only on claim and the sender can take back what nobody claims, instead of pre-funded wallets; and distribution, not technology, decides it. That answer is a bet, not a proof: the Stellar pilot moved about $4.4 in 109 transfers.
 
 ## Failure cases
 
+<details>
+<summary>Seven cases: an unopened link, a link opened twice, a claim that fails half-way, the RPC down, a lost link, the relayer down, a paused escrow</summary>
+
 | What happens | Outcome |
 |---|---|
-| Nobody opens the link | The sender takes the money back after expiry (one tap on /send, or `reclaim` from the command line). |
+| Nobody opens the link | The sender takes the money back after expiry (one tap on "Take the money back" under "Your links", or `reclaim` from the command line). It does not come back by itself. |
 | The link is opened twice | The first claim marks the drop as being claimed; the second is refused by the contract. |
 | The claim fails half-way (for example the chosen name is taken) | The contract reopens the drop and refunds the starter to its pool; the recipient can try again with another name. The USDC never leaves the escrow until the transfer succeeds. |
 | The RPC is down | The screens say so and retry; nothing is signed or spent until the chain answers. |
@@ -142,22 +149,22 @@ A link is a bearer secret: whoever holds it can claim the money, so a forwarded 
 | The relayer refuses or is down | The recipient still holds 0.05 NEAR and can pay their own fee from any wallet that imports the key. |
 | The escrow is paused | New links are refused; claims and reclaims keep working. |
 
+</details>
+
 ## Where this comes from
 
-Lumenia (https://getlumenia.com) sends and requests USDC by link on Stellar, with a sponsor backend and a Soroban escrow; that is the rest of this repository. It predates the hackathon and is not part of this submission; the NEAR rail reuses its design (the link as the bearer of money, escrow with reclaim, pause that never blocks an exit, receipts) and its frontend, not its chain code. Pilot numbers, counted from the Stellar ledger: 109 transfers moving about $4.4 in total on mainnet, median payment $0.002.
+Lumenia (https://getlumenia.com) sends and requests USDC by link on Stellar, with a sponsor backend and a Soroban escrow: the rest of this repository, a capped mainnet pilot (from the Stellar ledger: 109 transfers moving about $4.4 in total, median payment $0.002) that predates the hackathon and is not submitted. The NEAR rail is built on it: its design (the link as the bearer of money, escrow with reclaim, pause that never blocks an exit, receipts), its React components and mascot, the sponsor Worker and the agent MCP server, never its chain code; the new code is exactly the diff between the tags. The founder built the rail on 2026-11-11 and 2026-11-12, Istanbul time (the escrow account dates from 2026-11-10 22:39 UTC), directing coding agents (Claude Code): first as a prototype in a scratch repository, then integrated and committed here in logical commits after the test gate was green.
 
 ## Libraries and tools
 
-near-sdk-rs 5.x and near-contract-standards, near-sandbox and near-api (Rust) for tests, cargo-near 0.23, near-cli-rs 0.31, near-api-js 7.4, Vite 7, React 18, TypeScript 5.9, @modelcontextprotocol/server 2.4, zod, vitest, wrangler 4, qrcode-generator. The code was written with coding agents (Claude Code) directed by the founder, inside the window; nothing is reused from the Stellar codebase except ideas.
+near-sdk-rs 5 and near-contract-standards, near-sandbox and near-api (Rust) for tests, cargo-near 0.23, near-cli-rs 0.31, near-api-js 7.4, React 19, Next.js 16, TypeScript 6, @modelcontextprotocol/sdk 1.30, react-qr-code, zod, vitest, wrangler 4.
 
 ## Hackathon tags and diff
 
-- `pre-hackathon`: the last commit of this repository before the NEAR work began (2026-11-10). Everything the diff adds was written inside the hackathon window.
+- `pre-hackathon`: the last commit before the NEAR work began (2026-11-10). Everything the diff adds was written inside the hackathon window.
 - `hackathon-submission`: the state submitted to NEAR HACKATHON 2026 before 2026-11-14 23:59 UTC.
 - Diff: https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission
 
-The rest of this repository is Lumenia's Stellar product (live as a capped mainnet pilot); it predates the hackathon and is not part of the submission.
-
 ## License
 
-MIT, see LICENSE.
+MIT, see [LICENSE](LICENSE).
