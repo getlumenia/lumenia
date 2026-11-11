@@ -66,7 +66,7 @@ print(','.join(fa)); print(','.join(odd)); print(len(fc))" "$1"
 }
 units() { python3 -c "import sys,decimal;print(int(decimal.Decimal(sys.argv[1])*1000000))" "$1"; }
 keyfield() { python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
-genkey() { mkdir -p "$1"; chmod 700 "$1"; "$NEAR" account create-account fund-later use-auto-generation save-to-folder "$1" >/dev/null 2>&1; ls -t "$1"/*.json | head -1; }
+genkey() { mkdir -p "$1"; chmod 700 "$1"; "$NEAR" account create-account fund-later use-auto-generation save-to-folder "$1" </dev/null >/dev/null 2>&1; ls -t "$1"/*.json | head -1; }
 STEP=${1:-status}
 case "$STEP" in
   status)
@@ -86,7 +86,7 @@ case "$STEP" in
     ;;
   create)
     echo "== create $CONTRACT with 4 NEAR from $DEPLOYER (its new full-access key is saved under ~/.near-credentials/mainnet/)"
-    "$NEAR" account create-account fund-myself "$CONTRACT" '4 NEAR' autogenerate-new-keypair save-to-legacy-keychain sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
+    "$NEAR" account create-account fund-myself "$CONTRACT" '4 NEAR' autogenerate-new-keypair --signature-scheme ed25519 save-to-legacy-keychain sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
     ;;
   deploy)
     # owner_id signs pause / unpause / set_config and is fixed at init: the contract has no ownership transfer.
