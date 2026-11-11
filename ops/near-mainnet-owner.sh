@@ -1,8 +1,8 @@
 #!/bin/bash
 # Owner-run only: REAL MONEY on NEAR mainnet. A coding agent prepares these commands; the owner runs them.
 # Purpose: prove Lumenia's escrow on mainnet with a few dollars: one link claimed into a brand-new named
-# .near account, and one link claimed straight into a NEAR Intents deposit address so the dollars land on
-# Stellar (claim to another network). Every step prints what it does and the explorer link.
+# .near account and one claimed to an existing account (claim-to also takes a NEAR Intents deposit address,
+# which sends the dollars to another network). Every step prints what it does and the transaction id.
 #
 # Prerequisite: the deployer (implicit account below; its key is in ~/.near-credentials/mainnet/) holds
 # about 6 NEAR and, after `register`, about 5 USDC (Circle native USDC on NEAR).
@@ -22,7 +22,15 @@
 #   bash ops/near-mainnet-owner.sh quote-dry <usdc> <stellarG>  the same quote without a deposit address (read-only)
 #   bash ops/near-mainnet-owner.sh claim-to <label> <account>   claim link <label> to an existing NEAR account (e.g. the Intents deposit address)
 #   bash ops/near-mainnet-owner.sh intents-status <depositAddress>
-#   bash ops/near-mainnet-owner.sh swap-usdc <near>             swap <near> NEAR into USDC on NEAR through NEAR Intents (same-chain, about 20 s)
+#   bash ops/near-mainnet-owner.sh swap-usdc <near>             swap <near> NEAR into USDC on NEAR through NEAR Intents (same-chain, usually under
+#                                                               a minute); waits until the swap is final and stops unless it succeeded
+#   bash ops/near-mainnet-owner.sh wait-swap [depositAddress]   wait for the newest (or the given) swap to be final; succeeds only on SUCCESS
+#   bash ops/near-mainnet-owner.sh swap-rhea <near>             fallback when NEAR Intents is stuck: swap <near> NEAR into USDC on Rhea (the Ref
+#                                                               exchange v2.ref-finance.near, pool RHEA_POOL, default 5515), 1% slippage; a failed
+#                                                               swap refunds the wNEAR to the deployer. Stop a waiting `rest` before running it
+#   bash ops/near-mainnet-owner.sh rest <name> <to>             resume `all` after its swap step: wait for the swap if needed, then the two proof
+#                                                               links, the deployer's leftover USDC and the rest of its NEAR to <to> (run it once)
+#   bash ops/near-mainnet-owner.sh send-usdc-rest <to>          send all USDC left on the deployer to <to> (registers <to> on USDC first if needed)
 #   bash ops/near-mainnet-owner.sh send-rest <keep> <to>        send everything above <keep> NEAR from the deployer to <to>
 #   bash ops/near-mainnet-owner.sh lock                         IRREVERSIBLE: delete every full-access key of lumenia.near, so nobody can
 #                                                               ever redeploy the escrow; its pool NEAR is then spent only by claims.
@@ -30,8 +38,9 @@
 #                                                               (without it, prints the plan and sends nothing). Never part of `all`.
 #   bash ops/near-mainnet-owner.sh all <name> <to>              the whole proof in one go: create, deploy, register, swap 1.5 NEAR to USDC,
 #                                                               a 2 USDC link claimed into the NEW account <name>.near, a 1 USDC link claimed
-#                                                               to <to>, then the rest of the deployer's NEAR to <to> (stops at the first error;
-#                                                               OWNER_ID, when set, reaches its deploy step; it does not lock)
+#                                                               to <to>, then the deployer's leftover USDC and the rest of its NEAR to <to> (stops at the first error;
+#                                                               OWNER_ID, when set, reaches its deploy step; it does not lock). If it stopped
+#                                                               after the swap step, finish with `rest <name> <to>` instead of running `all` again
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$HOME/.nvm/versions/node/v24.21.0/bin:/opt/homebrew/bin:$PATH"
 NEAR=${NEAR_BIN:-$HOME/.cargo/bin/near}
@@ -66,7 +75,52 @@ print(','.join(fa)); print(','.join(odd)); print(len(fc))" "$1"
 }
 units() { python3 -c "import sys,decimal;print(int(decimal.Decimal(sys.argv[1])*1000000))" "$1"; }
 keyfield() { python3 -c "import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])" "$1" "$2"; }
-genkey() { mkdir -p "$1"; chmod 700 "$1"; "$NEAR" account create-account fund-later use-auto-generation save-to-folder "$1" </dev/null >/dev/null 2>&1; ls -t "$1"/*.json | head -1; }
+genkey() { local f; mkdir -p "$1"; chmod 700 "$1"; "$NEAR" account create-account fund-later use-auto-generation save-to-folder "$1" </dev/null >/dev/null 2>&1; f=$(ls -t "$1"/*.json | head -1); chmod 600 "$f"; echo "$f"; }
+# Base64 of a JSON argument object for a read-only call (one line on macOS and Linux).
+b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+# Prints the USDC units an account holds on mainnet (read-only); prints nothing when the RPC did not answer.
+usdc_units() {
+  rpcq "{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$USDC\",\"method_name\":\"ft_balance_of\",\"args_base64\":\"$(b64 "{\"account_id\":\"$1\"}")\"}" 2>/dev/null | python3 -c "import json,sys
+r=json.load(sys.stdin).get('result') or {}
+print(json.loads(bytes(r['result']).decode()) if 'result' in r else '')" 2>/dev/null || true
+}
+# Prints yes / no: whether an account is registered on USDC (read-only); prints nothing when the RPC did not answer.
+usdc_registered() {
+  rpcq "{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$USDC\",\"method_name\":\"storage_balance_of\",\"args_base64\":\"$(b64 "{\"account_id\":\"$1\"}")\"}" 2>/dev/null | python3 -c "import json,sys
+r=json.load(sys.stdin).get('result') or {}
+print(('no' if json.loads(bytes(r['result']).decode()) is None else 'yes') if 'result' in r else '')" 2>/dev/null || true
+}
+# Prints the newest key file of link <label> whose drop is Open on the escrow (read-only); prints nothing when none is.
+# A key whose lock transaction failed never has a drop, so a claim step can never pick it.
+live_link_key() {
+  local f pk st
+  for f in $(ls -t "$LINKS/$1"/link/*.json 2>/dev/null); do
+    pk=$(keyfield "$f" public_key)
+    st=$(rpcq "{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\",\"method_name\":\"get_drop\",\"args_base64\":\"$(b64 "{\"public_key\":\"$pk\"}")\"}" 2>/dev/null | python3 -c "import json,sys
+r=json.load(sys.stdin).get('result') or {}
+v=json.loads(bytes(r['result']).decode()) if 'result' in r else None
+print(v.get('status','') if isinstance(v,dict) else '')" 2>/dev/null || true)
+    if [ "$st" = Open ]; then echo "$f"; return 0; fi
+  done
+  return 0
+}
+# Polls NEAR Intents until the swap behind deposit address $1 is final, for at most 75 minutes (the quote deadline is
+# one hour). Returns 0 only on SUCCESS; a refund comes back to the deployer as wNEAR.
+wait_swap() {
+  local st="" i
+  for i in $(seq 1 450); do
+    st=$(curl -sS -m 20 -A "Mozilla/5.0 (lumenia-ops)" "https://1click.chaindefuser.com/v0/status?depositAddress=$1" 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin).get('status',''))" 2>/dev/null || true)
+    case "$st" in
+      SUCCESS) echo "  status: SUCCESS"; return 0;;
+      REFUNDED|FAILED) echo "  status: $st: the wNEAR goes back to $DEPLOYER; turn it into NEAR with: bash $0 unwrap <near>"; return 1;;
+    esac
+    if [ $((i % 6)) -eq 1 ]; then echo "  status: ${st:-no answer} at $(date -u +%H:%M:%SZ), waiting"; fi
+    sleep 10
+  done
+  echo "  still ${st:-unknown} after 75 minutes; nothing else was sent. Check again with: bash $0 wait-swap $1"
+  return 1
+}
+{ # bash reads the whole block before it runs it, so editing this file can never change a run that is already going
 STEP=${1:-status}
 case "$STEP" in
   status)
@@ -122,16 +176,23 @@ case "$STEP" in
     done
     ;;
   link)
-    AMOUNT=$(units "$2"); LABEL=$3; D="$LINKS/$LABEL"; KF=$(genkey "$D/link")
+    AMOUNT=$(units "$2"); LABEL=$3; D="$LINKS/$LABEL"
+    HAVE=$(usdc_units "$DEPLOYER")
+    if ! [[ "$HAVE" =~ ^[0-9]+$ ]]; then echo "REFUSED: could not read the deployer's USDC balance ($RPC_MAINNET); nothing was sent"; exit 1; fi
+    if [ "$HAVE" -lt "$AMOUNT" ]; then echo "REFUSED: the deployer holds $HAVE USDC units and this link needs $AMOUNT; nothing was sent (a swap still running? bash $0 wait-swap)"; exit 1; fi
+    KF=$(genkey "$D/link")
     PK=$(keyfield "$KF" public_key)
     MSG="{\"public_key\":\"$PK\",\"expires_in_s\":604800,\"memo\":\"Lumenia mainnet proof ($LABEL)\"}"
     echo "== lock $2 USDC behind link $LABEL (public key $PK); the secret stays in $KF (0600)"
     ARGS=$(python3 -c "import json,sys;print(json.dumps({'receiver_id':sys.argv[1],'amount':sys.argv[2],'msg':sys.argv[3]}))" "$CONTRACT" "$AMOUNT" "$MSG")
     "$NEAR" contract call-function as-transaction "$USDC" ft_transfer_call json-args "$ARGS" prepaid-gas '100 Tgas' attached-deposit '1 yoctoNEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
-    "$NEAR" contract call-function as-read-only "$CONTRACT" get_drop json-args "{\"public_key\":\"$PK\"}" network-config mainnet now 2>&1 | grep -E '"status"|"amount"'
+    "$NEAR" contract call-function as-read-only "$CONTRACT" get_drop json-args "{\"public_key\":\"$PK\"}" network-config mainnet now 2>&1 | grep -E '"status"|"amount"' || true
+    OPEN=""; for i in 1 2 3 4 5 6; do if [ "$(live_link_key "$LABEL")" = "$KF" ]; then OPEN=1; break; fi; sleep 2; done
+    if [ -z "$OPEN" ]; then echo "!!! link $PK is not Open on $CONTRACT: check the transaction above before any claim step"; exit 1; fi
     ;;
   claim-named)
-    LABEL=$2; NAME=$3; D="$LINKS/$LABEL"; KF=$(ls -t "$D"/link/*.json | head -1)
+    LABEL=$2; NAME=$3; D="$LINKS/$LABEL"; KF=$(live_link_key "$LABEL")
+    if [ -z "$KF" ]; then echo "REFUSED: no Open link under $D/link (make one with: bash $0 link <usdc> $LABEL); nothing was sent"; exit 1; fi
     SK=$(keyfield "$KF" private_key); RF=$(genkey "$D/recipient"); RPK=$(keyfield "$RF" public_key)
     echo "== claim link $LABEL into the NEW account $NAME.near (its key: $RF)"
     "$NEAR" contract call-function as-transaction "$CONTRACT" claim_to_new_account json-args "{\"new_account_id\":\"$NAME.near\",\"new_public_key\":\"$RPK\"}" prepaid-gas '100 Tgas' attached-deposit '0 NEAR' sign-as "$CONTRACT" network-config mainnet sign-with-plaintext-private-key "$SK" send
@@ -148,7 +209,9 @@ case "$STEP" in
     echo "(full quote with its signature saved to $OUT; keep it until the swap completes)"
     ;;
   claim-to)
-    LABEL=$2; TO=$3; D="$LINKS/$LABEL"; KF=$(ls -t "$D"/link/*.json | head -1); SK=$(keyfield "$KF" private_key)
+    LABEL=$2; TO=$3; D="$LINKS/$LABEL"; KF=$(live_link_key "$LABEL")
+    if [ -z "$KF" ]; then echo "REFUSED: no Open link under $D/link (make one with: bash $0 link <usdc> $LABEL); nothing was sent"; exit 1; fi
+    SK=$(keyfield "$KF" private_key)
     echo "== claim link $LABEL to the existing account $TO"
     "$NEAR" contract call-function as-transaction "$CONTRACT" claim json-args "{\"account_id\":\"$TO\"}" prepaid-gas '100 Tgas' attached-deposit '0 NEAR' sign-as "$CONTRACT" network-config mainnet sign-with-plaintext-private-key "$SK" send
     ;;
@@ -157,7 +220,7 @@ case "$STEP" in
     ;;
   swap-usdc)
     AMT=$(python3 -c "import sys,decimal;print(int(decimal.Decimal(sys.argv[1])*10**24))" "$2")
-    if ! "$NEAR" contract call-function as-read-only wrap.near storage_balance_of json-args "{\"account_id\":\"$DEPLOYER\"}" network-config mainnet now 2>&1 | grep -q '"total"'; then
+    if ! "$NEAR" contract call-function as-read-only wrap.near storage_balance_of json-args "{\"account_id\":\"$DEPLOYER\"}" network-config mainnet now 2>&1 | grep '"total"' >/dev/null; then
       echo "== register the deployer on wNEAR (0.00125 NEAR)"
       "$NEAR" contract call-function as-transaction wrap.near storage_deposit json-args "{\"account_id\":\"$DEPLOYER\",\"registration_only\":true}" prepaid-gas '30 Tgas' attached-deposit '0.00125 NEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
     fi
@@ -174,11 +237,73 @@ case "$STEP" in
     "$NEAR" contract call-function as-transaction wrap.near storage_deposit json-args "{\"account_id\":\"$DEP\",\"registration_only\":true}" prepaid-gas '30 Tgas' attached-deposit '0.00125 NEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
     echo "== send $2 wNEAR to the NEAR Intents deposit address $DEP"
     "$NEAR" contract call-function as-transaction wrap.near ft_transfer json-args "{\"receiver_id\":\"$DEP\",\"amount\":\"$AMT\"}" prepaid-gas '30 Tgas' attached-deposit '1 yoctoNEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
-    for i in $(seq 1 36); do
-      ST=$(curl -sS -A "Mozilla/5.0 (lumenia-ops)" "https://1click.chaindefuser.com/v0/status?depositAddress=$DEP" | python3 -c "import json,sys;print(json.load(sys.stdin).get('status'))")
-      echo "  status: $ST"; case "$ST" in SUCCESS|REFUNDED|FAILED) break;; esac; sleep 5
+    wait_swap "$DEP" || exit 1
+    echo "USDC units now: $(usdc_units "$DEPLOYER")"
+    ;;
+  swap-rhea)
+    # Ref's instant swap, as @ref-finance/ref-sdk 1.5.0 builds it: ft_transfer_call of wNEAR to v2.ref-finance.near
+    # with {"force":0,"actions":[{pool_id, token_in, token_out, amount_in, min_amount_out}]}, 300 Tgas, 1 yoctoNEAR.
+    REF=v2.ref-finance.near; POOL=${RHEA_POOL:-5515}
+    AMT=$(python3 -c "import sys,decimal;print(int(decimal.Decimal(sys.argv[1])*10**24))" "$2")
+    # Build the arguments in plain variables: a multi-key JSON nested inside $( "$( )" ) loses its quotes in
+    # macOS /bin/bash 3.2 and gets brace-expanded into pieces.
+    QARGS="{\"pool_id\":$POOL,\"token_in\":\"wrap.near\",\"amount_in\":\"$AMT\",\"token_out\":\"$USDC\"}"
+    QB64=$(b64 "$QARGS")
+    QPARAMS="{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$REF\",\"method_name\":\"get_return\",\"args_base64\":\"$QB64\"}"
+    OUT=""
+    for i in 1 2 3 4 5; do
+      OUT=$(rpcq "$QPARAMS" 2>/dev/null | python3 -c "import json,sys
+r=json.load(sys.stdin).get('result') or {}
+print(json.loads(bytes(r['result']).decode()) if 'result' in r else '')" 2>/dev/null || true)
+      if [[ "$OUT" =~ ^[0-9]+$ ]]; then break; fi
+      sleep 2
     done
-    printf "USDC units now: "; "$NEAR" contract call-function as-read-only "$USDC" ft_balance_of json-args "{\"account_id\":\"$DEPLOYER\"}" network-config mainnet now 2>&1 | grep -E '^"'
+    if ! [[ "$OUT" =~ ^[0-9]+$ ]] || [ "$OUT" -le 0 ]; then echo "REFUSED: no quote from $REF pool $POOL ($RPC_MAINNET); nothing was sent"; exit 1; fi
+    MIN=$((OUT * 99 / 100))
+    BEFORE=$(usdc_units "$DEPLOYER")
+    if ! [[ "$BEFORE" =~ ^[0-9]+$ ]]; then echo "REFUSED: could not read the deployer's USDC balance ($RPC_MAINNET); nothing was sent"; exit 1; fi
+    if [ "$(usdc_registered "$DEPLOYER")" != yes ]; then echo "REFUSED: the deployer is not registered on USDC (bash $0 register); nothing was sent"; exit 1; fi
+    echo "== quote: $2 wNEAR gives $OUT USDC units on $REF pool $POOL; the swap accepts no less than $MIN"
+    if ! "$NEAR" contract call-function as-read-only wrap.near storage_balance_of json-args "{\"account_id\":\"$DEPLOYER\"}" network-config mainnet now 2>&1 | grep '"total"' >/dev/null; then
+      echo "== register the deployer on wNEAR (0.00125 NEAR)"
+      "$NEAR" contract call-function as-transaction wrap.near storage_deposit json-args "{\"account_id\":\"$DEPLOYER\",\"registration_only\":true}" prepaid-gas '30 Tgas' attached-deposit '0.00125 NEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
+    fi
+    echo "== wrap $2 NEAR into wNEAR"
+    "$NEAR" contract call-function as-transaction wrap.near near_deposit json-args '{}' prepaid-gas '30 Tgas' attached-deposit "$2 NEAR" sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
+    MSG=$(python3 -c "import json,sys;print(json.dumps({'force':0,'actions':[{'pool_id':int(sys.argv[1]),'token_in':'wrap.near','token_out':sys.argv[2],'amount_in':sys.argv[3],'min_amount_out':sys.argv[4]}]}))" "$POOL" "$USDC" "$AMT" "$MIN")
+    ARGS=$(python3 -c "import json,sys;print(json.dumps({'receiver_id':sys.argv[1],'amount':sys.argv[2],'msg':sys.argv[3]}))" "$REF" "$AMT" "$MSG")
+    echo "== swap $2 wNEAR to USDC on $REF pool $POOL"
+    "$NEAR" contract call-function as-transaction wrap.near ft_transfer_call json-args "$ARGS" prepaid-gas '300 Tgas' attached-deposit '1 yoctoNEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
+    AFTER=""; for i in 1 2 3 4 5 6; do AFTER=$(usdc_units "$DEPLOYER"); if [[ "$AFTER" =~ ^[0-9]+$ ]] && [ "$AFTER" -gt "$BEFORE" ]; then break; fi; sleep 2; done
+    echo "USDC units: $BEFORE before, ${AFTER:-unknown} now"
+    if ! [[ "$AFTER" =~ ^[0-9]+$ ]] || [ "$AFTER" -le "$BEFORE" ]; then echo "!!! no USDC arrived: check the transaction above. A failed swap refunds the wNEAR to the deployer (bash $0 status, then bash $0 unwrap <near>)"; exit 1; fi
+    ;;
+  wait-swap)
+    DA=${2:-}
+    if [ -z "$DA" ]; then
+      SF=$(ls -t "$LINKS"/swap-*.json 2>/dev/null | head -1 || true)
+      if [ -n "$SF" ]; then DA=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('quote',{}).get('depositAddress',''))" "$SF"); fi
+    fi
+    if [ -z "$DA" ]; then echo "no swap quote under $LINKS; run swap-usdc first"; exit 1; fi
+    echo "== wait for the NEAR Intents swap behind deposit address $DA"
+    wait_swap "$DA" || exit 1
+    echo "USDC units now: $(usdc_units "$DEPLOYER")"
+    ;;
+  send-usdc-rest)
+    TO=$2
+    HAVE=$(usdc_units "$DEPLOYER")
+    if ! [[ "$HAVE" =~ ^[0-9]+$ ]]; then echo "REFUSED: could not read the deployer's USDC balance ($RPC_MAINNET); nothing was sent"; exit 1; fi
+    if [ "$HAVE" -eq 0 ]; then echo "no USDC left on $DEPLOYER"; exit 0; fi
+    case "$(usdc_registered "$TO")" in
+      yes) ;;
+      no)
+        echo "== register $TO on USDC (0.00125 NEAR paid by the deployer)"
+        "$NEAR" contract call-function as-transaction "$USDC" storage_deposit json-args "{\"account_id\":\"$TO\",\"registration_only\":true}" prepaid-gas '30 Tgas' attached-deposit '0.00125 NEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
+        ;;
+      *) echo "REFUSED: could not read whether $TO is registered on USDC ($RPC_MAINNET); nothing was sent"; exit 1;;
+    esac
+    echo "== send the deployer's remaining $HAVE USDC units to $TO"
+    "$NEAR" contract call-function as-transaction "$USDC" ft_transfer json-args "{\"receiver_id\":\"$TO\",\"amount\":\"$HAVE\"}" prepaid-gas '30 Tgas' attached-deposit '1 yoctoNEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
     ;;
   send-rest)
     KEEP=$2; TO=$3
@@ -244,7 +369,17 @@ print(s if s>0 else 0)" "$KEEP")
     "$0" create && "$0" deploy && "$0" register && "$0" swap-usdc 1.5 \
       && "$0" link 2 proof-a && "$0" claim-named proof-a "$NAME" \
       && "$0" link 1 proof-b && "$0" claim-to proof-b "$TO" \
-      && "$0" send-rest 0.3 "$TO" && "$0" status
+      && "$0" send-usdc-rest "$TO" && "$0" send-rest 0.3 "$TO" && "$0" status
+    ;;
+  rest)
+    NAME=$2; TO=$3
+    HAVE=$(usdc_units "$DEPLOYER")
+    if ! [[ "$HAVE" =~ ^[0-9]+$ ]] || [ "$HAVE" -lt 3000000 ]; then "$0" wait-swap || exit 1; fi
+    "$0" link 2 proof-a && "$0" claim-named proof-a "$NAME" \
+      && "$0" link 1 proof-b && "$0" claim-to proof-b "$TO" \
+      && "$0" send-usdc-rest "$TO" && "$0" send-rest 0.3 "$TO" && "$0" status
     ;;
   *) echo "unknown step $STEP"; exit 2;;
 esac
+exit
+}
