@@ -38,6 +38,7 @@ import {
   type NearHealthReport,
   type NearRelayDeps,
 } from "./lib/near-relay.js";
+import { practiceConfigFromEnv, practiceLinkHandler } from "./lib/near-practice.js";
 import { kvConfigFromEnv } from "./lib/rate-limit.js";
 import { withSubrequestMeter } from "./lib/subrequests.js";
 import { faucetHandler } from "./lib/faucet.js";
@@ -295,6 +296,8 @@ const VALUE_ROUTES = new Set([
   "/cctp-relay",
   // The NEAR rail's relayer spends the relayer account's NEAR on gas (lib/near-relay.ts).
   "/near/relay",
+  // ...and its practice links spend the relayer account's own USDC and gas (lib/near-practice.ts).
+  "/near/practice-link",
 ]);
 
 /**
@@ -722,12 +725,15 @@ const handlers = {
        * NEAR gas for exactly two calls, creating a Lumenia link (the sender's own USDC
        * ft_transfer_call into the escrow) and a funder's reclaim, and refuses everything else with
        * a reason (lib/near-relay.ts; the allowlist is `@lumenia/near/relayer/policy`, GET
-       * /near/policy says it in words). Served by the TESTNET Worker only: the mainnet Worker has
-       * no NEAR variables (wrangler.toml) and answers 503 near_not_configured on all three routes,
-       * and the network check below holds even if someone sets them there. /near/relay is a VALUE
-       * route (the relayer spends NEAR), so the kill switch above halts it with the others.
+       * /near/policy says it in words). Beside it, /near/practice-link: the shared practice
+       * balance of /try/send, a link made from the relayer account's own USDC for a public key the
+       * browser generated (lib/near-practice.ts). Served by the TESTNET Worker only: the mainnet
+       * Worker has no NEAR variables (wrangler.toml) and answers 503 near_not_configured on all
+       * four routes, and the network check below holds even if someone sets them there.
+       * /near/relay and /near/practice-link are VALUE routes (they spend the relayer's NEAR, and
+       * the practice link its USDC), so the kill switch above halts them with the others.
        * ---------------------------------------------------------------------------- */
-      if (url === "/near/relay" || url === "/near/health" || url === "/near/policy") {
+      if (url === "/near/relay" || url === "/near/health" || url === "/near/policy" || url === "/near/practice-link") {
         if (config.network !== "testnet") return json(503, { error: "near_not_configured", reason: "the NEAR rail is served by the testnet Worker only" });
         const near = nearConfigFromEnv();
         if (!near.configured) return json(503, { error: "near_not_configured", reason: near.reason });
@@ -771,7 +777,32 @@ const handlers = {
             throw e;
           }
         }
-        return json(405, { error: url === "/near/relay" ? "use POST with a JSON body" : "use GET" });
+
+        /* The shared practice balance (lib/near-practice.ts): the body is {publicKey, amountUsdc,
+         * expiresInS, memo?}, the PUBLIC key of a link the browser made; its secret never comes
+         * here. The caps are per caller address and in total, in the store, fail closed. */
+        if (method === "POST" && url === "/near/practice-link") {
+          if (!near.secret) {
+            return json(503, { error: "near_not_configured", reason: "NEAR_RELAYER_PRIVATE_KEY is not set on this Worker", code: "near_not_configured" });
+          }
+          const practice = practiceConfigFromEnv();
+          if (!practice.ok) return json(503, { error: practice.code, reason: practice.reason, code: practice.code });
+          let body: unknown;
+          try {
+            const text = await readCapped(request);
+            body = text ? (JSON.parse(text) as unknown) : undefined;
+          } catch (e) {
+            if (e instanceof BodyTooLarge) throw e;
+            body = undefined; // not JSON: the handler answers 400 bad_request and logs it
+          }
+          try {
+            return json(200, await practiceLinkHandler(body, clientIp(request), { ...nearDeps(near, near.secret), limits: practice.limits }));
+          } catch (e) {
+            if (e instanceof NearRelayRefusal) return nearRefusal(e);
+            throw e;
+          }
+        }
+        return json(405, { error: url === "/near/relay" || url === "/near/practice-link" ? "use POST with a JSON body" : "use GET" });
       }
 
       if (method === "POST" && url === "/v2-claim") {

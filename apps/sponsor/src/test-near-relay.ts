@@ -1,6 +1,7 @@
 /**
  * ============================================================================
- *  TEST: the NEAR rail's relayer (/near/relay, /near/health, /near/policy), offline
+ *  TEST: the NEAR rail's relayer (/near/relay, /near/health, /near/policy) and its practice
+ *  links (/near/practice-link), offline
  * ============================================================================
  *
  *  Everything runs through `worker.fetch` with a fake Upstash store (an in-process pipeline
@@ -18,7 +19,13 @@
  *    - the allowed shapes relay as ONE signedDelegate action from the relayer's key and report the
  *      escrow's outcome, a refund included;
  *    - the kill switch halts /near/relay; a store that is down or slow refuses (fail closed); the
- *      in-process store serves only when no store is configured.
+ *      in-process store serves only when no store is configured;
+ *    - /near/practice-link: unconfigured, off-network, switched-off and keyless 503s; every body
+ *      rule (400) refused offline with no store or RPC call; the one transaction it signs (the
+ *      relayer's ft_transfer_call into the escrow, 1 yocto, 100 Tgas, the msg built from the
+ *      public key only); the caps per caller address (cooldown, day, IPv6 /64) and in total, in
+ *      their own namespace; an empty practice balance refused before any cap is spent; the store
+ *      down (fail closed), the kill switch, a failed send; no log line carries the caller address.
  *
  *  RUN: pnpm --filter @lumenia/sponsor test:near-relay
  * ============================================================================
@@ -38,6 +45,13 @@ import {
 } from "near-api-js";
 import { secondsToDayEnd } from "@lumenia/near/relayer/caps";
 import { resetHaltCache } from "./lib/kill-switch.js";
+import {
+  DEFAULT_PRACTICE_CAPS,
+  PRACTICE_MAX_MEMO_BYTES,
+  parsePracticeRequest,
+  practiceConfigFromEnv,
+  practiceMsg,
+} from "./lib/near-practice.js";
 import {
   checkNearCaps,
   formatNear,
@@ -205,6 +219,8 @@ interface Plan {
   senderKey: { nonce: bigint; permission: unknown } | { error: string };
   relayerNonce: bigint;
   relayerAccount: bigint | { error: string };
+  /** The relayer's USDC (the practice balance), in units. */
+  relayerUsdc: bigint | { error: string };
   send: SendMode[];
   response: unknown;
   txStatus: unknown[];
@@ -214,6 +230,7 @@ const plan: Plan = {
   senderKey: { nonce: 41n, permission: "FullAccess" },
   relayerNonce: 7n,
   relayerAccount: 10n * 10n ** 24n,
+  relayerUsdc: 100_000_000n,
   send: [],
   response: successResponse(),
   txStatus: [],
@@ -256,6 +273,11 @@ function fakeRpc(url: string): NearRpc {
       if (plan.txStatus.length === 0) throw new Error("tx not found yet");
       return plan.txStatus.shift();
     },
+    async viewFtBalance(tokenId, accountId) {
+      rpcCalls.push(`ftbalance:${tokenId === USDC ? "usdc" : tokenId}:${accountId}`);
+      if (typeof plan.relayerUsdc === "object") throw new Error(plan.relayerUsdc.error);
+      return plan.relayerUsdc;
+    },
   };
 }
 
@@ -294,7 +316,7 @@ console.log = (...args: unknown[]) => {
   if (typeof first === "string" && first.startsWith("{")) {
     try {
       const parsed = JSON.parse(first) as Record<string, unknown>;
-      if (parsed.route === "near/relay") {
+      if (parsed.route === "near/relay" || parsed.route === "near/practice-link") {
         decisions.push(parsed);
         return;
       }
@@ -362,6 +384,7 @@ function fresh(): void {
   plan.senderKey = { nonce: 41n, permission: "FullAccess" };
   plan.relayerNonce = 7n;
   plan.relayerAccount = 10n * 10n ** 24n;
+  plan.relayerUsdc = 100_000_000n;
   plan.send = [];
   plan.response = successResponse();
   plan.txStatus = [];
@@ -787,6 +810,242 @@ async function main(): Promise<void> {
     }
     check("an RPC error about the account throws (the run pages 'check failed'), unretried", /does not exist/.test(thrown), thrown);
     delete process.env.WATCHDOG_RETRY_BASE_MS;
+  }
+
+
+  /* ============================ /near/practice-link ============================ */
+
+  const practice = (body: unknown, ip = "203.0.113.7", extra: { rawBody?: string; method?: string } = {}) =>
+    call("/near/practice-link", {
+      ...(extra.rawBody !== undefined ? { rawBody: extra.rawBody } : { body }),
+      ...(extra.method ? { method: extra.method } : {}),
+      headers: { "cf-connecting-ip": ip },
+    });
+  const goodBody = (o: Record<string, unknown> = {}) => ({ publicKey: linkKey(), amountUsdc: "1.00", expiresInS: 3600, memo: "coffee", ...o });
+  const practiceKeys = () => [...kv.keys()].filter((k) => k.startsWith("near:testnet:practice:"));
+  const relayKeys = () => nearKeys().filter((k) => !k.startsWith("near:testnet:practice:"));
+  const today = () => new Date().toISOString().slice(0, 10);
+  /** The FunctionCall the fake RPC saw, decoded. */
+  const sentCall = (i = 0) => {
+    const tx = sent[i]?.transaction;
+    const fc = tx?.actions[0]?.functionCall;
+    return {
+      tx,
+      fc,
+      args: fc ? (JSON.parse(Buffer.from(fc.args).toString("utf8")) as { receiver_id?: string; amount?: string; msg?: string }) : null,
+    };
+  };
+
+  console.log("\n[practice: config] practiceConfigFromEnv");
+  {
+    const d = practiceConfigFromEnv({});
+    check("defaults: 10 per caller per day, 300 per day, 30 s cooldown", d.ok && JSON.stringify(d.limits) === JSON.stringify({ perSenderPerDay: 10, globalPerDay: 300, senderCooldownS: 30 }) && JSON.stringify(DEFAULT_PRACTICE_CAPS) === JSON.stringify(d.limits));
+    const set = practiceConfigFromEnv({ NEAR_PRACTICE_PER_IP_PER_DAY: "3", NEAR_PRACTICE_PER_DAY: "40", NEAR_PRACTICE_COOLDOWN_S: "5" });
+    check("the three variables override them", set.ok && set.limits.perSenderPerDay === 3 && set.limits.globalPerDay === 40 && set.limits.senderCooldownS === 5);
+    const bad = practiceConfigFromEnv({ NEAR_PRACTICE_PER_DAY: "lots" });
+    check("a cap that is not a non-negative integer is a configuration error naming it", !bad.ok && bad.code === "near_not_configured" && /NEAR_PRACTICE_PER_DAY/.test(bad.reason));
+    const off = practiceConfigFromEnv({ NEAR_PRACTICE_PER_DAY: "0" });
+    check("NEAR_PRACTICE_PER_DAY=0 switches the route off", !off.ok && off.code === "practice_off");
+  }
+
+  console.log("\n[practice: parse] the body rules, offline");
+  {
+    const key = linkKey();
+    const okReq = parsePracticeRequest({ publicKey: key, amountUsdc: "1.5", expiresInS: 600, memo: "  hi  " });
+    check("a good body parses: units, the amount normalised, the memo trimmed", okReq.ok && okReq.request.amountUnits === "1500000" && okReq.request.amountUsdc === "1.50" && okReq.request.memo === "hi" && okReq.request.publicKey === key);
+    check("the msg is the escrow's single-link shape, built from the public key only", okReq.ok && practiceMsg(okReq.request) === JSON.stringify({ public_key: key, expires_in_s: 600, memo: "hi" }));
+    const noMemo = parsePracticeRequest({ publicKey: key, amountUsdc: "0.10", expiresInS: 604_800, memo: "   " });
+    check("a blank memo is dropped; 0.10 and 7 days are the edges, accepted", noMemo.ok && noMemo.request.memo === undefined && practiceMsg(noMemo.request) === JSON.stringify({ public_key: key, expires_in_s: 604_800 }));
+    check("5.00 and 6 decimals inside the range are accepted", parsePracticeRequest({ publicKey: key, amountUsdc: "5", expiresInS: 600 }).ok && parsePracticeRequest({ publicKey: key, amountUsdc: "0.123456", expiresInS: 600 }).ok);
+    check(`a memo of exactly ${PRACTICE_MAX_MEMO_BYTES} bytes is accepted`, parsePracticeRequest({ publicKey: key, amountUsdc: "1", expiresInS: 600, memo: "m".repeat(PRACTICE_MAX_MEMO_BYTES) }).ok);
+  }
+
+  console.log("\n[practice: unconfigured] the 503s, before the store or the RPC");
+  {
+    fresh();
+    const saved = process.env.NEAR_ESCROW_ID;
+    delete process.env.NEAR_ESCROW_ID;
+    const r = await practice(goodBody());
+    check("without the NEAR variables: 503 near_not_configured", r.status === 503 && r.json.error === "near_not_configured", JSON.stringify(r.json));
+    process.env.NEAR_ESCROW_ID = saved;
+    const savedKey = process.env.NEAR_RELAYER_PRIVATE_KEY;
+    delete process.env.NEAR_RELAYER_PRIVATE_KEY;
+    const noKey = await practice(goodBody());
+    check("without the relayer key: 503 near_not_configured naming NEAR_RELAYER_PRIVATE_KEY", noKey.status === 503 && noKey.json.code === "near_not_configured" && /NEAR_RELAYER_PRIVATE_KEY/.test(String(noKey.json.reason)));
+    process.env.NEAR_RELAYER_PRIVATE_KEY = savedKey;
+    process.env.NEAR_PRACTICE_PER_DAY = "0";
+    const off = await practice(goodBody());
+    check("switched off (NEAR_PRACTICE_PER_DAY=0): 503 practice_off", off.status === 503 && off.json.code === "practice_off", JSON.stringify(off.json));
+    process.env.NEAR_PRACTICE_PER_DAY = "many";
+    const badCap = await practice(goodBody());
+    check("a malformed cap: 503 near_not_configured naming the variable", badCap.status === 503 && badCap.json.code === "near_not_configured" && /NEAR_PRACTICE_PER_DAY/.test(String(badCap.json.reason)));
+    delete process.env.NEAR_PRACTICE_PER_DAY;
+    process.env.STELLAR_NETWORK = "mainnet";
+    resetServiceCache();
+    const onMainnet = await practice(goodBody());
+    check("on the mainnet Worker: 503 near_not_configured, even with the NEAR variables set", onMainnet.status === 503 && /testnet Worker only/.test(String(onMainnet.json.reason)), JSON.stringify(onMainnet.json));
+    process.env.STELLAR_NETWORK = "testnet";
+    resetServiceCache();
+    check("...and none of those reached the RPC, the store's caps or the network", rpcCalls.length === 0 && nearKeys().length === 0 && sent.length === 0);
+    check("GET /near/practice-link is 405", (await call("/near/practice-link")).status === 405);
+  }
+
+  console.log("\n[practice: 400] every body rule, refused offline with a code and one log line");
+  {
+    fresh();
+    const secretInstead = KeyPair.fromRandom("ed25519").toString();
+    const cases: Array<{ name: string; code: string; body?: unknown; raw?: string }> = [
+      { name: "a body that is not JSON", code: "bad_request", raw: "{not json" },
+      { name: "an empty body", code: "bad_request", raw: "" },
+      { name: "a JSON array", code: "bad_request", body: [goodBody()] },
+      { name: "an unknown field", code: "bad_request", body: goodBody({ receiver: "mallory.testnet" }) },
+      { name: "no publicKey", code: "public_key", body: goodBody({ publicKey: undefined }) },
+      { name: "a link SECRET where the public key belongs", code: "public_key", body: goodBody({ publicKey: secretInstead }) },
+      { name: "a secp256k1 key", code: "public_key", body: goodBody({ publicKey: "secp256k1:" + "1".repeat(88) }) },
+      { name: "an amount as a JSON number", code: "amount", body: goodBody({ amountUsdc: 1 }) },
+      { name: "an amount below 0.10", code: "amount", body: goodBody({ amountUsdc: "0.09" }) },
+      { name: "an amount above 5.00", code: "amount", body: goodBody({ amountUsdc: "5.01" }) },
+      { name: "an amount with 7 decimals", code: "amount", body: goodBody({ amountUsdc: "1.0000001" }) },
+      { name: "an amount in words", code: "amount", body: goodBody({ amountUsdc: "one" }) },
+      { name: "a negative amount", code: "amount", body: goodBody({ amountUsdc: "-1.00" }) },
+      { name: "a life of 599 s", code: "expiry", body: goodBody({ expiresInS: 599 }) },
+      { name: "a life of 7 days and 1 s", code: "expiry", body: goodBody({ expiresInS: 604_801 }) },
+      { name: "a fractional life", code: "expiry", body: goodBody({ expiresInS: 3600.5 }) },
+      { name: "a life as a string", code: "expiry", body: goodBody({ expiresInS: "3600" }) },
+      { name: `a memo over ${PRACTICE_MAX_MEMO_BYTES} bytes`, code: "memo", body: goodBody({ memo: "\u00e7".repeat(33) }) },
+      { name: "a memo with a control character", code: "memo", body: goodBody({ memo: "line\nbreak" }) },
+      { name: "a memo that is not a string", code: "memo", body: goodBody({ memo: 7 }) },
+    ];
+    for (const c of cases) {
+      const before = decisions.length;
+      const r = c.raw !== undefined ? await practice(undefined, "203.0.113.7", { rawBody: c.raw }) : await practice(c.body);
+      check(`${c.name}: 400 ${c.code}`, r.status === 400 && r.json.code === c.code && typeof r.json.reason === "string" && r.json.error === r.json.reason, `${r.status} ${JSON.stringify(r.json)}`);
+      check(`${c.name}: one refused log line`, decisions.length === before + 1 && lastDecision().decision === "refused" && lastDecision().code === c.code && lastDecision().route === "near/practice-link", JSON.stringify(lastDecision()));
+    }
+    // The one store read a value route always makes is the Worker's kill-switch verdict (cached 5 s); no cap key is read.
+    const capReads = pipelines.filter((p) => p.some((c) => String(c[1] ?? "").startsWith("near:")));
+    check("not one of them read a cap or reached the RPC", capReads.length === 0 && rpcCalls.length === 0 && sent.length === 0, `${JSON.stringify(capReads)} ${rpcCalls.join(",")}`);
+    check("...the only store read was the kill switch's", pipelines.every((p) => p.every((c) => String(c[1] ?? "").startsWith("sponsor:halt"))), JSON.stringify(pipelines));
+    check("the secret sent by mistake appears in no log line and no answer", decisions.every((d) => !JSON.stringify(d).includes(secretInstead)));
+    check("no log line carries the caller's address", decisions.every((d) => !JSON.stringify(d).includes("203.0.113.7")));
+  }
+
+  console.log("\n[practice: 200] the one transaction it signs");
+  {
+    fresh();
+    plan.response = successResponse({ successValue: '"1000000"', logs: ['EVENT_JSON:{"standard":"lumenia_drop","version":"1.0.0","event":"drop_created","data":[{"amount":"1000000"}]}'] });
+    const body = goodBody();
+    const r = await practice(body);
+    const outcome = r.json.outcome as Record<string, unknown>;
+    check("200 with txHash, explorerUrl, the funder (the relayer) and the outcome", r.status === 200 && /^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(String(r.json.txHash)) && r.json.explorerUrl === `https://testnet.nearblocks.io/txns/${r.json.txHash}` && r.json.funderId === RELAYER, JSON.stringify(r.json));
+    check("outcome: success, create_link, the link created, the amount the escrow kept", outcome.status === "success" && outcome.kind === "create_link" && outcome.linkCreated === true && outcome.usedAmount === "1000000");
+    const { tx, fc, args } = sentCall();
+    check("ONE transaction, from the relayer's own key, to the USDC contract", sent.length === 1 && tx?.signerId === RELAYER && tx?.receiverId === USDC && tx?.publicKey.toString() === relayerKey.getPublicKey().toString() && tx?.actions.length === 1);
+    check("one ft_transfer_call with exactly 1 yoctoNEAR and 100 Tgas", fc?.methodName === "ft_transfer_call" && BigInt(String(fc?.deposit)) === 1n && BigInt(String(fc?.gas)) === 100n * 10n ** 12n);
+    check("into the escrow, for the amount asked, with the msg built from the PUBLIC key", args?.receiver_id === ESCROW && args?.amount === "1000000" && args?.msg === JSON.stringify({ public_key: body.publicKey, expires_in_s: 3600, memo: "coffee" }), JSON.stringify(args));
+    check("the practice balance was read first, then the relayer's key and block, then the send", rpcCalls.join(",") === `ftbalance:usdc:${RELAYER},key:${RELAYER},block,send`, rpcCalls.join(","));
+    const day = today();
+    check("the caps were recorded in the practice namespace: cooldown, the caller's day, the day's total", kvGet(`near:testnet:practice:cool:203.0.113.7`) !== null && kvGet(`near:testnet:practice:day:${day}:sender:203.0.113.7`) === "1" && kvGet(`near:testnet:practice:day:${day}:global`) === "1");
+    check("...and nothing in the relay's own counters", relayKeys().length === 0, relayKeys().join(","));
+    const d = lastDecision();
+    check("one allowed log line with the link key, amount, life, txHash, status and ms", d.decision === "allowed" && d.route === "near/practice-link" && d.publicKey === body.publicKey && d.amount === "1.00" && d.expiresInS === 3600 && d.txHash === r.json.txHash && d.status === "success" && typeof d.ms === "number", JSON.stringify(d));
+    check("no log line or answer carries the caller's address or the relayer's secret", !JSON.stringify(decisions).includes("203.0.113.7") && !JSON.stringify(decisions).includes(relayerKey.toString()) && !JSON.stringify(r.json).includes(relayerKey.toString()));
+
+    plan.response = successResponse({ successValue: '"0"', receiptFailure: "Smart contract panicked: drop refused: the escrow is paused" });
+    const refused = await practice(goodBody(), "203.0.113.8");
+    const ro = refused.json.outcome as Record<string, unknown>;
+    check("an escrow refusal is 200 with outcome failure, its reason surfaced and the hash kept (the USDC was refunded)", refused.status === 200 && ro.status === "failure" && ro.linkCreated === false && String((ro.failures as string[])[0]).includes("paused") && typeof refused.json.txHash === "string", JSON.stringify(refused.json));
+    check("...logged as allowed with status failure and the summary", lastDecision().status === "failure" && /escrow/.test(String(lastDecision().reason)));
+  }
+
+  console.log("\n[practice: 429] one every 30 s per caller, 10 a day per caller, 300 a day in total");
+  {
+    fresh();
+    check("the first link of a caller passes", (await practice(goodBody(), "198.51.100.1")).status === 200);
+    const second = await practice(goodBody(), "198.51.100.1");
+    check("a second one inside 30 s: 429 cooldown with retryAfterS and Retry-After", second.status === 429 && second.json.code === "cooldown" && Number(second.json.retryAfterS) >= 1 && Number(second.json.retryAfterS) <= 30 && second.headers.get("retry-after") === String(second.json.retryAfterS) && /every 30 s/.test(String(second.json.reason)), JSON.stringify(second.json));
+    check("...logged as refused cooldown, nothing more sent", lastDecision().code === "cooldown" && sent.length === 1);
+    check("...and its reason does not echo the caller's address", !JSON.stringify(second.json).includes("198.51.100.1"));
+    check("another caller passes meanwhile", (await practice(goodBody(), "198.51.100.2")).status === 200);
+    const v6a = await practice(goodBody(), "2001:db8:aa:1::1");
+    const v6b = await practice(goodBody(), "2001:db8:aa:1:ffff::2");
+    check("two addresses in one IPv6 /64 are one caller: the second is 429 cooldown", v6a.status === 200 && v6b.status === 429 && v6b.json.code === "cooldown");
+    kvSet(`near:testnet:practice:cool:198.51.100.1`, String(Date.now() - 31_000), 60_000);
+    check("31 s later the first caller passes again", (await practice(goodBody(), "198.51.100.1")).status === 200);
+    const day = today();
+    kvSet(`near:testnet:practice:day:${day}:sender:198.51.100.3`, "10");
+    const daily = await practice(goodBody(), "198.51.100.3");
+    check("10 links today from one caller: 429 ip_daily, retryAfterS to UTC midnight", daily.status === 429 && daily.json.code === "ip_daily" && Math.abs(Number(daily.json.retryAfterS) - secondsToDayEnd(Date.now())) <= 2 && /10 practice links/.test(String(daily.json.reason)), JSON.stringify(daily.json));
+    check("...and the count did not move", kvGet(`near:testnet:practice:day:${day}:sender:198.51.100.3`) === "10");
+    kvSet(`near:testnet:practice:day:${day}:global`, "300");
+    const global = await practice(goodBody(), "198.51.100.4");
+    check("300 links today in total: 429 global_daily", global.status === 429 && global.json.code === "global_daily" && /300 links/.test(String(global.json.reason)), JSON.stringify(global.json));
+    check("none of the refusals sent anything", sent.length === 4, String(sent.length));
+    kv.delete(`near:testnet:practice:day:${day}:global`);
+    // A lost race at the record step (the read said yes, another request took the slot first).
+    const keyNow = `near:testnet:practice:cool:198.51.100.5`;
+    const raced = await Promise.all([practice(goodBody(), "198.51.100.5"), practice(goodBody(), "198.51.100.5")]);
+    const statuses = raced.map((x) => x.status).sort();
+    check("two links of one caller in the same instant: one 200, one 429 cooldown", statuses[0] === 200 && statuses[1] === 429 && raced.some((x) => x.json.code === "cooldown"), statuses.join(","));
+    check("...and the caller's day count is 1, not 2 (the loser gave its count back)", kvGet(`near:testnet:practice:day:${day}:sender:198.51.100.5`) === "1" && kvGet(keyNow) !== null);
+  }
+
+  console.log("\n[practice: balance] an empty practice balance is refused before any cap is spent");
+  {
+    fresh();
+    plan.relayerUsdc = 999_999n;
+    const empty = await practice(goodBody());
+    check("a balance under the amount: 503 practice_empty, saying what it holds", empty.status === 503 && empty.json.code === "practice_empty" && /0\.999999 USDC/.test(String(empty.json.reason)), JSON.stringify(empty.json));
+    check("...nothing recorded, nothing sent", practiceKeys().length === 0 && sent.length === 0);
+    plan.relayerUsdc = { error: "fetch failed" };
+    const unread = await practice(goodBody());
+    check("a balance that cannot be read: 502 rpc, nothing recorded, nothing sent", unread.status === 502 && unread.json.code === "rpc" && practiceKeys().length === 0 && sent.length === 0, JSON.stringify(unread.json));
+    plan.relayerUsdc = 1_000_000n;
+    check("exactly enough passes", (await practice(goodBody())).status === 200);
+  }
+
+  console.log("\n[practice: fail closed] the store down, the kill switch, a failed send");
+  {
+    fresh();
+    storeMode = "http500";
+    const down = await practice(goodBody());
+    check("a store answering 500: 503 store_unavailable, nothing sent", down.status === 503 && down.json.code === "store_unavailable" && sent.length === 0 && rpcCalls.length === 0, JSON.stringify(down.json));
+    check("...logged as refused store_unavailable", lastDecision().code === "store_unavailable" && lastDecision().route === "near/practice-link");
+    storeMode = "throw";
+    const gone = await practice(goodBody());
+    check("a store that cannot be reached: the same 503", gone.status === 503 && gone.json.code === "store_unavailable" && sent.length === 0);
+    storeMode = "ok";
+    kvSet("sponsor:halt:testnet", "1");
+    resetHaltCache();
+    const halted = await practice(goodBody());
+    check("under the sponsor halt: 503 'sponsor temporarily halted', nothing sent", halted.status === 503 && halted.json.error === "sponsor temporarily halted" && sent.length === 0);
+    kv.delete("sponsor:halt:testnet");
+    resetHaltCache();
+    plan.send = ["throw"];
+    const failed = await practice(goodBody(), "192.0.2.9");
+    check("a send that fails outright: 502 submit_failed, logged allowed / not_sent", failed.status === 502 && failed.json.code === "submit_failed" && lastDecision().decision === "allowed" && lastDecision().status === "not_sent", JSON.stringify(failed.json));
+    const retry = await practice(goodBody(), "192.0.2.9");
+    check("...and it still counted: a retry inside 30 s is 429 cooldown (the transaction may be on the network)", retry.status === 429 && retry.json.code === "cooldown");
+    plan.send = ["invalid-nonce", "ok"];
+    rpcCalls.length = 0;
+    const nonce = await practice(goodBody(), "192.0.2.10");
+    check("an InvalidNonce is retried with a fresh nonce: two sends, one 200", nonce.status === 200 && rpcCalls.filter((c) => c === "send").length === 2);
+  }
+
+  console.log("\n[practice: memory] the in-process store serves only when no store is configured");
+  {
+    fresh();
+    const savedUrl = process.env.KV_REST_API_URL;
+    const savedToken = process.env.KV_REST_API_TOKEN;
+    delete process.env.KV_REST_API_URL;
+    delete process.env.KV_REST_API_TOKEN;
+    resetNearMemoryStoreForTests();
+    check("a practice link passes on it", (await practice(goodBody(), "192.0.2.20")).status === 200);
+    const again = await practice(goodBody(), "192.0.2.20");
+    check("and the cooldown holds in it", again.status === 429 && again.json.code === "cooldown");
+    check("no pipeline went to the (unconfigured) store", pipelines.length === 0);
+    process.env.KV_REST_API_URL = savedUrl;
+    process.env.KV_REST_API_TOKEN = savedToken;
   }
 
   globalThis.fetch = realFetch;

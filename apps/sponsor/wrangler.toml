@@ -127,6 +127,14 @@ NEAR_RELAY_COOLDOWN_S = "10"
 # Watchdog: page when the relayer account holds fewer NEAR than this (it was funded with 10 NEAR
 # from the testnet faucet; a relayed call costs well under 0.01 NEAR).
 NEAR_RELAYER_MIN_NEAR = "1"
+# Practice links (POST /near/practice-link, lib/near-practice.ts): the shared practice balance of
+# /try/send. The Worker makes the link from the RELAYER account's own test USDC for a public key the
+# browser generated, so no practice key ships to a browser any more. Caps: links per caller address
+# per UTC day, links per UTC day in total, and the per-caller cooldown in seconds; the same store,
+# FAIL CLOSED. NEAR_PRACTICE_PER_DAY = "0" switches the route off (503 practice_off).
+NEAR_PRACTICE_PER_IP_PER_DAY = "10"
+NEAR_PRACTICE_PER_DAY = "300"
+NEAR_PRACTICE_COOLDOWN_S = "30"
 
 # /health names the deployed version (worker.ts): Cloudflare's version metadata binding gives the
 # version id, its tag and when it was created, with nothing to pass on each deploy. Match the id

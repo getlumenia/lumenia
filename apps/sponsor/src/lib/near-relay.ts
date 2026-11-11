@@ -56,6 +56,7 @@ import {
   baseDecode,
   baseEncode,
   createTransaction,
+  type Action,
   type DelegateAction,
   type KeyPairString,
   type Signature,
@@ -182,8 +183,8 @@ export function describeNearPolicy(config: NearRelayerConfig): PolicyDescription
 /* ------------------------------------ the NEAR RPC ------------------------------------ */
 
 /**
- * The five RPC calls the relayer makes, as an interface, so the suites drive the Worker route with
- * a fake chain (test-near-relay.ts) and the live code wraps near-api-js's JsonRpcProvider.
+ * The RPC calls the relayer makes, as an interface, so the suites drive the Worker route with a fake
+ * chain (test-near-relay.ts) and the live code wraps near-api-js's JsonRpcProvider.
  */
 export interface NearRpc {
   readonly url: string;
@@ -194,6 +195,12 @@ export interface NearRpc {
   sendUntilFinal(signed: SignedTransaction): Promise<unknown>;
   /** `tx` with wait_until FINAL: the fallback when the send timed out while the transaction was in flight. */
   txStatus(txHash: string, accountId: string): Promise<unknown>;
+  /**
+   * `ft_balance_of` on a NEP-141 contract, in the token's smallest units. Used by the practice route
+   * (lib/near-practice.ts) to answer "the practice balance is empty" before it signs anything. Optional
+   * so a fake chain that never reaches that route need not implement it; the live RPC always does.
+   */
+  viewFtBalance?(tokenId: string, accountId: string): Promise<bigint>;
 }
 
 /**
@@ -222,6 +229,16 @@ export function jsonRpcNearRpc(url: string): NearRpc {
     },
     sendUntilFinal: (signed) => provider.sendTransactionUntil(signed, "FINAL"),
     txStatus: (txHash, accountId) => provider.viewTransactionStatus({ txHash, accountId, waitUntil: "FINAL" }),
+    async viewFtBalance(tokenId, accountId) {
+      const balance = await provider.callFunction<string>({
+        contractId: tokenId,
+        method: "ft_balance_of",
+        args: { account_id: accountId },
+        blockQuery: { finality: "optimistic" },
+      });
+      if (typeof balance !== "string" || !/^\d+$/.test(balance)) throw new Error(`${tokenId}.ft_balance_of answered no balance for ${accountId}`);
+      return BigInt(balance);
+    },
   };
 }
 
@@ -373,13 +390,18 @@ export function nearCapStoreFromEnv(): NearCapStore {
 
 export type NearCapDecision = { ok: true } | { ok: false; code: CapCode; reason: string; retryAfterS: number };
 
-/** Namespaced by rail and network, like every counter in lib/caps.ts, so the two Workers never share a day. */
-function capKeys(network: string, senderId: string, nowMs: number): { cool: string; sender: string; global: string } {
+/**
+ * Namespaced by rail and network, like every counter in lib/caps.ts, so the two Workers never share a
+ * day. A `scope` gives another route its own counters on the same machinery: the practice links
+ * (lib/near-practice.ts) count under `near:<network>:practice:`, never in the relay's buckets.
+ */
+function capKeys(network: string, senderId: string, nowMs: number, scope?: string): { cool: string; sender: string; global: string } {
   const day = dayKey(nowMs);
+  const ns = scope ? `near:${network}:${scope}` : `near:${network}`;
   return {
-    cool: `near:${network}:cool:${senderId}`,
-    sender: `near:${network}:day:${day}:sender:${senderId}`,
-    global: `near:${network}:day:${day}:global`,
+    cool: `${ns}:cool:${senderId}`,
+    sender: `${ns}:day:${day}:sender:${senderId}`,
+    global: `${ns}:day:${day}:global`,
   };
 }
 
@@ -406,8 +428,15 @@ function dayRefusal(code: "sender_daily" | "global_daily", limits: CapLimits, se
 }
 
 /** Read-only: would a relay for this sender pass right now? One pipeline, three GETs. Throws NearStoreError. */
-export async function checkNearCaps(store: NearCapStore, limits: CapLimits, network: string, senderId: string, nowMs: number): Promise<NearCapDecision> {
-  const k = capKeys(network, senderId, nowMs);
+export async function checkNearCaps(
+  store: NearCapStore,
+  limits: CapLimits,
+  network: string,
+  senderId: string,
+  nowMs: number,
+  scope?: string,
+): Promise<NearCapDecision> {
+  const k = capKeys(network, senderId, nowMs, scope);
   const [cool, sender, global] = await store.pipeline([
     ["GET", k.cool],
     ["GET", k.sender],
@@ -429,8 +458,15 @@ export async function checkNearCaps(store: NearCapStore, limits: CapLimits, netw
  * concurrency without a lock. Called after the pre-check and before the send, so a send that fails
  * still counts (the transaction may be on the network). Throws NearStoreError.
  */
-export async function recordNearCap(store: NearCapStore, limits: CapLimits, network: string, senderId: string, nowMs: number): Promise<NearCapDecision> {
-  const k = capKeys(network, senderId, nowMs);
+export async function recordNearCap(
+  store: NearCapStore,
+  limits: CapLimits,
+  network: string,
+  senderId: string,
+  nowMs: number,
+  scope?: string,
+): Promise<NearCapDecision> {
+  const k = capKeys(network, senderId, nowMs, scope);
   const dayTtl = secondsToDayEnd(nowMs) + 60;
   const withCooldown = limits.senderCooldownS > 0;
   const rows = await store.pipeline([
@@ -482,8 +518,8 @@ export interface NearCapSnapshot {
 }
 
 /** Today's global count and the limits (GET /near/health). Throws NearStoreError. */
-export async function nearCapSnapshot(store: NearCapStore, limits: CapLimits, network: string, nowMs: number): Promise<NearCapSnapshot> {
-  const k = capKeys(network, "-", nowMs);
+export async function nearCapSnapshot(store: NearCapStore, limits: CapLimits, network: string, nowMs: number, scope?: string): Promise<NearCapSnapshot> {
+  const k = capKeys(network, "-", nowMs, scope);
   const [global] = await store.pipeline([["GET", k.global]]);
   return { day: dayKey(nowMs), globalToday: toCount(global), limits, resetsInS: secondsToDayEnd(nowMs) };
 }
@@ -605,7 +641,8 @@ async function blockHeight(rpc: NearRpc, now: number, fresh = false): Promise<nu
   return height;
 }
 
-function messageOf(e: unknown): string {
+/** One readable sentence for whatever near-api-js, fetch or the RPC threw. */
+export function messageOf(e: unknown): string {
   if (e instanceof Error) {
     const type = (e as { type?: unknown }).type;
     return typeof type === "string" && !e.message.includes(type) ? `${e.message} (${type})` : e.message;
@@ -671,25 +708,23 @@ function isTimeout(e: unknown): boolean {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** What the relayer's own transactions need: who signs, with which key, through which RPC. */
+export type NearSendDeps = Pick<NearRelayDeps, "config" | "secret" | "rpc" | "pollMs" | "maxPolls">;
+
 /**
- * Build, sign and send the relayer's transaction: one `signedDelegate` action addressed to the
- * delegate's sender, from the relayer's own key and nonce. An InvalidNonce (two isolates relaying
- * at once) is retried twice with a fresh nonce. The delegate bytes go out exactly as they came in
- * (decodeSignedDelegate insisted on the canonical encoding).
+ * Build, sign and send ONE transaction from the relayer's own account, key and nonce: the given
+ * actions, addressed to `receiverId`, waited on until FINAL. An InvalidNonce (two isolates sending at
+ * once) is retried twice with a fresh nonce. The relay (one signedDelegate action, below) and the
+ * practice links (one ft_transfer_call, lib/near-practice.ts) both go through here.
  */
-async function signAndSend(deps: NearRelayDeps, sd: DecodedSignedDelegate): Promise<{ txHash: string; response: unknown }> {
+export async function signAndSendActions(deps: NearSendDeps, receiverId: string, actionList: Action[]): Promise<{ txHash: string; response: unknown }> {
   const signer = KeyPairSigner.fromSecretKey(deps.secret as KeyPairString);
   const publicKey = await signer.getPublicKey();
-  const action = actions.signedDelegate({
-    delegateAction: sd.delegateAction as unknown as DelegateAction,
-    signature: sd.signature as unknown as Signature,
-  });
-  const receiverId = sd.delegateAction.senderId;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     const [accessKey, block] = await Promise.all([deps.rpc.viewAccessKey(deps.config.relayerAccountId, publicKey.toString()), deps.rpc.viewBlock()]);
     const nonce = accessKey.nonce + 1n;
-    const tx = createTransaction(deps.config.relayerAccountId, publicKey, receiverId, nonce, [action], baseDecode(block.hash));
+    const tx = createTransaction(deps.config.relayerAccountId, publicKey, receiverId, nonce, actionList, baseDecode(block.hash));
     const { txHash: hashBytes, signedTransaction } = await signer.signTransaction(tx);
     const txHash = baseEncode(hashBytes);
     try {
@@ -704,7 +739,20 @@ async function signAndSend(deps: NearRelayDeps, sd: DecodedSignedDelegate): Prom
   throw new Error(messageOf(lastError));
 }
 
-async function sendFinal(deps: NearRelayDeps, signed: SignedTransaction, txHash: string): Promise<unknown> {
+/**
+ * The relay's transaction: one `signedDelegate` action addressed to the delegate's sender. The
+ * delegate bytes go out exactly as they came in (decodeSignedDelegate insisted on the canonical
+ * encoding).
+ */
+function signAndSend(deps: NearRelayDeps, sd: DecodedSignedDelegate): Promise<{ txHash: string; response: unknown }> {
+  const action = actions.signedDelegate({
+    delegateAction: sd.delegateAction as unknown as DelegateAction,
+    signature: sd.signature as unknown as Signature,
+  });
+  return signAndSendActions(deps, sd.delegateAction.senderId, [action]);
+}
+
+async function sendFinal(deps: NearSendDeps, signed: SignedTransaction, txHash: string): Promise<unknown> {
   try {
     return await deps.rpc.sendUntilFinal(signed);
   } catch (e) {
@@ -921,12 +969,15 @@ function hashOf(response: unknown): string | null {
   return typeof h === "string" ? h : null;
 }
 
+/** What the outcome parser needs to know about the call it reads: a relay verdict, or a practice link's own facts. */
+export type NearOutcomeContext = Pick<Allowed, "kind" | "senderId" | "amountUnits" | "linkPublicKeys">;
+
 /**
  * What happened on chain, from the final execution outcome. The transaction itself can succeed
  * while the escrow refuses the transfer (the token contract then refunds the USDC); that is a
  * failure here, with the receipt's reason, so the client never reads a refund as a link.
  */
-export function parseNearOutcome(response: unknown, verdict: Allowed): NearRelayOutcome {
+export function parseNearOutcome(response: unknown, verdict: NearOutcomeContext): NearRelayOutcome {
   const r = (response ?? {}) as OutcomeLike;
   const logs: string[] = [];
   const failures: string[] = [];
