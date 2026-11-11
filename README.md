@@ -2,13 +2,13 @@
 
 **Send dollars by link; the recipient needs no wallet, no app and no gas, and the sender can take back what nobody claims. On Stellar since 2026, and now on NEAR.**
 
-Built during the Rise In x Stellar Pro Hackathon (Scale Track, Istanbul, 19-20 Sept 2026). **Submitted at `5e73e3d`** (20 Sept 2026, 11:55 Istanbul); the event commits run from `af0aa8b` to it, and everything up to and including `abf1c3e` was written before the event and pushed during it. See [What was built here](#what-was-built-here-19-20-sept-2026). Work that landed after the submission deadline is listed on its own, under [After the submission](#after-the-submission-20-24-sept-2026), and was not part of what was judged. The work since then, the Instawards follow-on with the browser extension, private links and the open-mainnet hardening, is under [Since the event](#since-the-event-the-instawards-follow-on-sow-2-2026-09-17-to-2026-10-16).
-
-Status: testnet complete; mainnet is a capped pilot, not a launch. Not audited.
-
-Who this is for: someone in Turkey with nothing installed, receiving dollars from family or a client in Europe, and the sender who today has to talk them through installing a wallet, writing down twelve words and buying XLM before the first dollar can arrive. The recipient never pays; the sender is the leg we would eventually charge, below the channel they use now.
+[![CI](https://github.com/getlumenia/lumenia/actions/workflows/ci.yml/badge.svg)](https://github.com/getlumenia/lumenia/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## NEAR HACKATHON 2026: the NEAR rail (built 11 to 14 November 2026)
+
+<img src="evidence/near/claim-done.png" alt="A claimed link on Lumenia: one dollar in a brand-new account, created at the moment of the claim" width="720">
+
+**For judges and coding agents, three lines:** `pnpm install --frozen-lockfile && pnpm near:verify` runs the contract tests, the NEAR packages and the live read-only checks and prints PASS/FAIL per step (about one minute; `pnpm near:verify:offline` needs no network). Try it without installing anything at https://getlumenia.com/near. Everything else you need is in [NEAR.md](NEAR.md).
 
 > For the judges and the coding agents that pre-screen: this section and [NEAR.md](NEAR.md) are the submission. Everything else in this README describes Lumenia's Stellar product, which predates the hackathon and is not part of what is judged (rule Q-002). Tags: `pre-hackathon` marks the last commit before the NEAR work, `hackathon-submission` the submitted state; diff: https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission
 
@@ -35,6 +35,12 @@ Who this is for: someone in Turkey with nothing installed, receiving dollars fro
 **How NEAR is used, in plain words:** the money sits in an escrow contract; the link holds a key that NEAR lets us restrict to one contract and one method with a gas allowance, so the escrow pays for the claim; at claim time the contract creates the recipient's named account (NEAR accounts can exist with zero balance), pays the USDC registration and adds 0.05 NEAR for first transactions; a scoped NEP-366 relayer lets a fresh account pay forward with zero NEAR; NEAR Intents quotes a payout to another chain (no testnet exists for it, so the hosted demo stops at the live quote).
 
 **Proof:** seven live testnet transactions (create, claim into a fresh account, the same from the web client, an agent paying one and three people, a relayed pay-forward) are listed with hashes in [NEAR.md](NEAR.md). Testnet only; no audit is claimed; the escrow owner is a single key here, while the production design is the multisig with a time-locked upgrade that Lumenia runs on Stellar.
+
+Built during the Rise In x Stellar Pro Hackathon (Scale Track, Istanbul, 19-20 Sept 2026). **Submitted at `5e73e3d`** (20 Sept 2026, 11:55 Istanbul); the event commits run from `af0aa8b` to it, and everything up to and including `abf1c3e` was written before the event and pushed during it. See [What was built here](#what-was-built-here-19-20-sept-2026). Work that landed after the submission deadline is listed on its own, under [After the submission](#after-the-submission-20-24-sept-2026), and was not part of what was judged. The work since then, the Instawards follow-on with the browser extension, private links and the open-mainnet hardening, is under [Since the event](#since-the-event-the-instawards-follow-on-sow-2-2026-09-17-to-2026-10-16).
+
+Status: testnet complete; mainnet is a capped pilot, not a launch. Not audited.
+
+Who this is for: someone in Turkey with nothing installed, receiving dollars from family or a client in Europe, and the sender who today has to talk them through installing a wallet, writing down twelve words and buying XLM before the first dollar can arrive. The recipient never pays; the sender is the leg we would eventually charge, below the channel they use now.
 
 ## Demo
 

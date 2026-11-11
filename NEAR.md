@@ -95,6 +95,7 @@ Every path below was exercised against the deployed contract `lumenia-near.testn
 | Agent (MCP CLI) pays three people in one transaction | EpJn7vmaAvqexTf3JDBoGsjMbYKsyHmgs2NbFvTcAJtW | 3 links (1.00, 1.50, 1.10 USDC), one receipt each |
 | Pay forward through the relayer (sender signs, relayer pays the fee) | DgHQfQaxWMWzKmkwfcswBWV8NfqWyt5FvVKGAe3e3pBL | 0.10 USDC link created; relayer outcome "success" |
 | The same through the relayer inside Lumenia's sponsor service (`/near/relay`, 2026-11-11 02:45 UTC) | A3jr4UJWjrNeahjYJNvX6CRbfWYw7BZTwc8Yweh2QiSm | 0.10 USDC link created; an immediate second request was refused with 429 (10-second cooldown) |
+| NEAR Agent Market: the owner hired the Lumenia Payout Agent (free test run, job 94912e5d), the worker started within seconds, funded two 0.25 USDC links in ONE transaction and delivered a table, a JSON receipt and receipt.csv 12 seconds after the start (2026-11-11 21:14 UTC) | 8NXQ2YXWNTyihMueGHvbJ6ceR1Qjft8M51Ce4u2MCaHf | two Open links on the escrow; the delivery is visible to the buyer on market.near.ai (job 94912e5d-7719-4abb-8243-1b7919d06bcf) |
 | Demo video take on the product screens: send, claim into ayse-bzht.testnet, pay forward through the sponsor relayer (2026-11-11 06:35 UTC) | AcYDkG9vYvzZLTtqTtFE3FvtFAi6hUn6NjhSNaew2ouV, 5mXtmnogZmQEP2HajYS4QWbGbg8QMUSzj9oC4pb8B3FA, 8YhoQMg6QCiTjhfrPs9b8eRGQ49XiW5CuYfvkBjMe4Ri | the named account exists and holds 1 USDC and 0.05 NEAR; the pay-forward link was created with the relayer paying the fee |
 | Demo video take: send, claim into ayse-m48q.testnet, pay forward (2026-11-11 04:20 UTC) | 3Uv9rHsKn57RkMLcWLntjUh9cN86Na7WFPmXGGWm4cm6, 5MR6FCqGTGRoGugQNyNEf8W9NfUb7PPnxnHPiQn8srYZ, 2gbd1yNWTmsSSgPhHL4U4bK8tM1bPP59srRib4X6NthR | the named account exists and holds 1 USDC; the pay-forward link was created with the relayer paying the fee |
 
@@ -102,7 +103,7 @@ After these runs `get_stats` on the contract read 18 links created, 6 claimed, 0
 
 ## What is real and what is not
 
-- Real: the contract on NEAR testnet, Circle's testnet USDC, the hosted demo, the relayer, the MCP server, the sandbox tests, the Agent Market listing.
+- Real: the contract on NEAR testnet, Circle's testnet USDC, the hosted demo, the relayer inside the sponsor service, the MCP server, the sandbox tests, the Agent Market listing with one completed job (a free owner test run; paid hires from other accounts are still zero).
 - Testnet only: nothing here touches mainnet money. NEAR Intents has no testnet, so the cross-chain payout is shown as a live quote, not executed.
 - Not done: no security audit (none is claimed). The escrow owner is a single key that can also redeploy the contract; the production design is a multisig with a time-locked upgrade, as Lumenia runs on Stellar. The relayer key is a hot key on a Worker. Named accounts are created under `.testnet` here and would be `.near` on mainnet.
 
