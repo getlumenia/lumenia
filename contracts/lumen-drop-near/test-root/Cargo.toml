@@ -1,0 +1,18 @@
+[package]
+name = "test-root"
+description = "Mock of the root linkdrop account (testnet / near) create_account method for the lumenia-drop sandbox tests"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository = "https://github.com/mericcintosun/lumenia-near"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk.workspace = true
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(near)']

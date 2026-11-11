@@ -14,7 +14,11 @@
     "spike1b": "pnpm --filter @lumenia/sponsor spike1b",
     "spike1c": "pnpm --filter @lumenia/sponsor spike1c",
     "spike4": "pnpm --filter @lumenia/sponsor spike4",
-    "test:antidrain": "pnpm --filter @lumenia/sponsor test:antidrain"
+    "test:antidrain": "pnpm --filter @lumenia/sponsor test:antidrain",
+    "test:near": "pnpm --filter @lumenia/near test",
+    "near:verify": "node ops/near-verify.mjs",
+    "near:verify:offline": "node ops/near-verify.mjs --offline",
+    "near:verify:live": "node ops/near-verify.mjs --live-only"
   },
   "pnpm": {
     "overrides": {

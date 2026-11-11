@@ -11,7 +11,9 @@ name: CI
 # money / cctp-web / group / swap / extseam / walletkit / agentmcp / linkprivacy / claimmeta /
 # claimledger / claimhome / pilotaccess), a production web build, and the browser extension (typecheck, its
 # offline self-tests, the Chrome + Firefox build and the Firefox lint, with both zips kept as a
-# build artifact).
+# build artifact). The `near` job at the end checks the NEAR rail (packages/near, the NEAR suites of
+# web / sponsor / agent-market, and the escrow crate contracts/lumen-drop-near) beside all of this and is
+# deliberately not part of ci-passed.
 #
 # "Hardening suite (D3 a-k)" is the SOW 2 D3 evidence step: it re-runs, under the name the SOW
 # uses, exactly the suites that lock the open-mainnet hardening items (the item-to-suite table is
@@ -275,6 +277,76 @@ jobs:
           name: lumenia-extension-zips
           path: apps/extension/dist/*.zip
           if-no-files-found: error
+
+  # The NEAR rail (the 2026 NEAR hackathon work: packages/near, the NEAR suites of web + sponsor,
+  # apps/agent-market and the escrow crate contracts/lumen-drop-near). Deliberately independent: no
+  # `needs:` and NOT in ci-passed, so a NEAR failure never blocks the Stellar jobs and the other way
+  # round. Offline except for two pinned downloads the sandbox tests need on a cold cache: the cargo-near
+  # release (the tests build the three wasm files through `cargo near build`) and the near-sandbox binary
+  # (nearcore 2.14.0), which near-sandbox fetches once into its build-script OUT_DIR under the crate's
+  # target/, so rust-cache keeps it together with ~/.cargo. Locally the same set is `pnpm near:verify:offline`.
+  near:
+    name: "NEAR rail: near package + web/sponsor/agent-market suites + escrow crate (tests + clippy)"
+    runs-on: ubuntu-latest
+    env:
+      # Linux x86_64 tarball of https://github.com/near/cargo-near/releases/tag/cargo-near-v0.23.0
+      # (2026-11-05), the version the crate's README records; the sha256 is the release's own .sha256 file.
+      CARGO_NEAR_VERSION: "0.23.0"
+      CARGO_NEAR_SHA256: "94008b827a457750257eced4b571c33736062cc3bd1ffda3e7af70e2bc9a4073"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      # `pnpm -C <dir> run <script>`, not `--filter`: --filter exits 0 when the script does not exist (see
+      # the hardening step above), and two of these scripts live in packages the NEAR work only borrows.
+      - name: Typecheck - near package (the library, then its tests)
+        run: |
+          pnpm -C packages/near run typecheck
+          pnpm -C packages/near exec tsc --noEmit -p tsconfig.test.json
+      - name: Self-tests - near package (amount + base58 + batch + budget + link + lumenia + near + oneclick + payout-csv + receipts + store + relayer policy / caps / round trip)
+        run: pnpm -C packages/near run test
+      - name: NEAR suites - web (test:near) + sponsor (test:near-relay)
+        run: |
+          pnpm -C apps/web run test:near
+          pnpm -C apps/sponsor run test:near-relay
+      - name: Agent Market worker - tests + build
+        run: |
+          pnpm -C apps/agent-market run test
+          pnpm -C apps/agent-market run build
+      # The crate pins its toolchain in rust-toolchain.toml (1.95.0 + clippy + wasm32-unknown-unknown); the
+      # channel is read from that file so the two cannot drift.
+      - name: Read the escrow crate's pinned toolchain (rust-toolchain.toml)
+        id: near-toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' contracts/lumen-drop-near/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.near-toolchain.outputs.channel }}
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts/lumen-drop-near
+      - name: Install cargo-near (the release binary pinned in env, sha256-checked)
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -sSfL -o cargo-near.tar.gz "https://github.com/near/cargo-near/releases/download/cargo-near-v${CARGO_NEAR_VERSION}/cargo-near-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${CARGO_NEAR_SHA256}  cargo-near.tar.gz" | sha256sum -c -
+          mkdir -p cargo-near && tar -xzf cargo-near.tar.gz -C cargo-near --strip-components=1 cargo-near-x86_64-unknown-linux-gnu/cargo-near
+          echo "${RUNNER_TEMP}/cargo-near" >> "$GITHUB_PATH"
+          ./cargo-near/cargo-near near --version
+      - name: Escrow crate - clippy (deny warnings)
+        working-directory: contracts/lumen-drop-near/contract
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Escrow crate - unit + sandbox tests (43 + 21; near-sandbox downloads nearcore 2.14.0 on a cold cache)
+        working-directory: contracts/lumen-drop-near/contract
+        run: cargo test
 
   # A single required status to protect main against, if branch protection is ever turned on.
   ci-passed:

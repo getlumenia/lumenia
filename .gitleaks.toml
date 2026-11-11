@@ -19,6 +19,9 @@ regexes = [
   # name the testnet spike's evidence uses (evidence/spike11/visibility.json): the on-chain address
   # of a storage entry, readable by anyone through the RPC, not a credential.
   '''ledgerKeyXdr": "AAAABg[A-Za-z0-9+/]+=*''',
+  # Circle's native USDC contract account ids on NEAR (testnet and mainnet): public identifiers that
+  # appear in configs and docs next to the word token. A NEAR private key is base58 with an ed25519: prefix.
+  '''\b(3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af|17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1)\b''',
   # AWS KMS's public name for the Ed25519 key type (the KMS signer and its offline test use it as a
   # KeySpec value): a constant from the AWS documentation, not a credential.
   '''KeySpec: "ECC_NIST_EDWARDS25519"''',

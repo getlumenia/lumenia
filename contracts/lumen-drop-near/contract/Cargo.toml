@@ -1,0 +1,45 @@
+[package]
+name = "lumenia-drop"
+description = "Lumenia on NEAR: send USDC by link, claim walletless with a function-call key, no gas for the recipient"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# NEP-330 contract source metadata (contract_source_metadata view). Update when the repo is public.
+repository = "https://github.com/mericcintosun/lumenia-near"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Reproducible build descriptor (NEP-330). The build used for the hackathon is
+# `cargo near build non-reproducible-wasm`; this section lets a later
+# `cargo near build reproducible-wasm` run inside the pinned Docker image.
+[package.metadata.near.reproducible_build]
+image = "sourcescan/cargo-near:0.22.0-rust-1.99.1"
+image_digest = "sha256:c9655eaf7436b90c87ea8b25739f91063032c5c30ba24cfeafe72c142943b5bb"
+passed_env = []
+container_build_command = [
+    "cargo",
+    "near",
+    "build",
+    "non-reproducible-wasm",
+    "--locked",
+]
+
+[dependencies]
+near-sdk.workspace = true
+near-contract-standards.workspace = true
+
+[dev-dependencies]
+near-sdk = { workspace = true, features = ["unit-testing"] }
+near-sandbox = "0.4.0"
+near-api = "0.8"
+cargo-near-build = "0.11.0"
+tokio = { version = "1.12.0", features = ["full"] }
+testresult = "0.4.1"
+hex = "0.4"
+
+# `cfg(near)` was introduced in `near-sdk` v5.27.0, and is expected cfg now
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(near)']

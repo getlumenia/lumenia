@@ -1,0 +1,7 @@
+# Keys that scripts/live-round.sh generates for a testnet round. A link's secret key IS the money
+# in it: never commit this folder (the former standalone repository ignored it; the rule has to
+# travel with the crate).
+scripts/.keys/
+# cargo output. The monorepo's root .gitignore covers **/target/ as well; kept here so the crate
+# is safe when checked out or copied on its own.
+target/

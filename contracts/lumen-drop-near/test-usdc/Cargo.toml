@@ -1,0 +1,19 @@
+[package]
+name = "test-usdc"
+description = "Mock 6-decimal NEP-141 USDC for the lumenia-drop sandbox tests (never deployed to a public network)"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository = "https://github.com/mericcintosun/lumenia-near"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk.workspace = true
+near-contract-standards.workspace = true
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(near)']
