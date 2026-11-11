@@ -24,6 +24,21 @@ import { payoutHandler } from "./lib/payout.js";
 import { sweepHandler } from "./lib/sweep.js";
 import { relayClaimHandler, relayDepositHandler, relayReclaimHandler, isRelayBusy, oneLogLine } from "./lib/soroban-relay.js";
 import { relayCctpHandler } from "./lib/cctp-relay.js";
+import {
+  NearRelayRefusal,
+  decodeForRelay,
+  describeNearPolicy,
+  nearCapStoreFromEnv,
+  nearConfigFromEnv,
+  nearHealth,
+  nearRpc,
+  relayNearHandler,
+  type DecodedForRelay,
+  type NearConfigState,
+  type NearHealthReport,
+  type NearRelayDeps,
+} from "./lib/near-relay.js";
+import { kvConfigFromEnv } from "./lib/rate-limit.js";
 import { withSubrequestMeter } from "./lib/subrequests.js";
 import { faucetHandler } from "./lib/faucet.js";
 import { demoLinkHandler } from "./lib/demo-link.js";
@@ -278,6 +293,8 @@ const VALUE_ROUTES = new Set([
   "/faucet",
   "/demo-link",
   "/cctp-relay",
+  // The NEAR rail's relayer spends the relayer account's NEAR on gas (lib/near-relay.ts).
+  "/near/relay",
 ]);
 
 /**
@@ -356,6 +373,56 @@ function degradedService(): Service & { degraded: true } {
 /** Tests only: forget the cached /health readings so a suite can see a store change at once. */
 export function resetHealthCache(): void {
   healthCache = null;
+}
+
+/* ------------------------------- the NEAR rail's plumbing ------------------------------- */
+
+type NearConfigured = Extract<NearConfigState, { configured: true }>;
+
+/** The relay's dependencies for this request: the config, the secret, an RPC for its URL and the service's store. */
+function nearDeps(near: NearConfigured, secret: string): NearRelayDeps {
+  return { config: near.config, secret, rpc: nearRpc(near.config.rpcUrl), store: nearCapStoreFromEnv() };
+}
+
+/**
+ * /near/health's readings (two RPC reads and a store read), cached per isolate for a few seconds
+ * like /health's store readings, with the read IN FLIGHT shared, so an anonymous GET is not a free
+ * amplifier onto the NEAR RPC. Keyed on the configuration, so a changed variable is never served
+ * from the previous one's cache.
+ */
+const NEAR_HEALTH_CACHE_MS = 5_000;
+let nearHealthCache: { at: number; key: string; value: Promise<NearHealthReport> } | null = null;
+
+function nearHealthReadings(near: NearConfigured, now: number): Promise<NearHealthReport> {
+  const key = JSON.stringify([near.config, near.secret !== null, kvConfigFromEnv()?.url ?? null]);
+  if (nearHealthCache && nearHealthCache.key === key && now - nearHealthCache.at >= 0 && now - nearHealthCache.at < NEAR_HEALTH_CACHE_MS) {
+    return nearHealthCache.value;
+  }
+  const value = nearHealth({ ...nearDeps(near, near.secret ?? ""), secret: near.secret });
+  const entry = { at: now, key, value };
+  nearHealthCache = entry;
+  // A refresh that fails is not kept: the next request tries again.
+  value.catch(() => {
+    if (nearHealthCache === entry) nearHealthCache = null;
+  });
+  return value;
+}
+
+/** Tests only: forget the cached /near/health report. */
+export function resetNearHealthCache(): void {
+  nearHealthCache = null;
+}
+
+/**
+ * A refusal of the NEAR relay as the Worker answers it: {reason, code} and, for a cap, retryAfterS
+ * with a Retry-After header (the shape the `@lumenia/near/relayer/client` reads). `error` carries
+ * the same sentence, so the generic readers of this service's answers see it too.
+ */
+function nearRefusal(e: NearRelayRefusal): Response {
+  const headers: Record<string, string> = { "content-type": "application/json", ...corsHeaders() };
+  if (e.retryAfterS !== undefined) headers["retry-after"] = String(e.retryAfterS);
+  const body = { error: e.message, reason: e.message, code: e.code, ...(e.retryAfterS !== undefined ? { retryAfterS: e.retryAfterS } : {}) };
+  return new Response(JSON.stringify(body), { status: e.status, headers });
 }
 
 /**
@@ -648,6 +715,63 @@ const handlers = {
         // observed to land (the same "accepted, undecided" answer every relay gives, D3 item g).
         const undecided = r.status === "pending" || r.confirmed === false;
         return json(undecided ? 202 : 200, r);
+      }
+
+      /* ------------------------------------------------------------------------------
+       * THE NEAR RAIL (NEAR HACKATHON 2026, testnet): a NEP-366 meta-transaction relayer that pays
+       * NEAR gas for exactly two calls, creating a Lumenia link (the sender's own USDC
+       * ft_transfer_call into the escrow) and a funder's reclaim, and refuses everything else with
+       * a reason (lib/near-relay.ts; the allowlist is `@lumenia/near/relayer/policy`, GET
+       * /near/policy says it in words). Served by the TESTNET Worker only: the mainnet Worker has
+       * no NEAR variables (wrangler.toml) and answers 503 near_not_configured on all three routes,
+       * and the network check below holds even if someone sets them there. /near/relay is a VALUE
+       * route (the relayer spends NEAR), so the kill switch above halts it with the others.
+       * ---------------------------------------------------------------------------- */
+      if (url === "/near/relay" || url === "/near/health" || url === "/near/policy") {
+        if (config.network !== "testnet") return json(503, { error: "near_not_configured", reason: "the NEAR rail is served by the testnet Worker only" });
+        const near = nearConfigFromEnv();
+        if (!near.configured) return json(503, { error: "near_not_configured", reason: near.reason });
+
+        if (method === "GET" && url === "/near/policy") return json(200, describeNearPolicy(near.config));
+
+        if (method === "GET" && url === "/near/health") {
+          // Metered in its own bucket, and cached per isolate (nearHealthReadings): not an amplifier.
+          const rl = await enforceRateLimit(clientIp(request), undefined, { ipPrefix: "nearh:" });
+          if (rl.limited) return json(429, { error: rl.reason });
+          const now = Date.now();
+          const [halt, report] = await Promise.all([haltStatus(now), nearHealthReadings(near, now)]);
+          return json(report.ok ? 200 : 503, { ...report, halt });
+        }
+
+        if (method === "POST" && url === "/near/relay") {
+          if (!near.secret) return json(503, { error: "near_not_configured", reason: "NEAR_RELAYER_PRIVATE_KEY is not set on this Worker" });
+          const body = await readJson(request);
+          const raw = body.signedDelegate ?? body.signed_delegate;
+          if (typeof raw !== "string" || raw.trim() === "") {
+            return json(400, { error: 'body must be {"signedDelegate": "<base64 borsh SignedDelegate>"}', reason: "signedDelegate is required", code: "bad_request" });
+          }
+          /* Offline first (lib/near-relay.ts): canonical borsh and the delegate's own signature,
+           * before the limiter spends a bucket and before any store or RPC call. The per-account
+           * bucket is the signing KEY, not the sender id: a forger can mint keys but cannot spend a
+           * victim's bucket, and the caps themselves are recorded only after the RPC pre-check
+           * proves the key is on the sender's account. */
+          let decoded: DecodedForRelay;
+          try {
+            decoded = decodeForRelay(raw);
+          } catch (e) {
+            if (e instanceof NearRelayRefusal) return nearRefusal(e);
+            throw e;
+          }
+          const rl = await enforceRateLimit(clientIp(request), decoded.publicKey, { ipPrefix: "near:", accountPrefix: "near:" });
+          if (rl.limited) return json(429, { error: rl.reason, reason: rl.reason, code: "rate_limited" });
+          try {
+            return json(200, await relayNearHandler(decoded, nearDeps(near, near.secret)));
+          } catch (e) {
+            if (e instanceof NearRelayRefusal) return nearRefusal(e);
+            throw e;
+          }
+        }
+        return json(405, { error: url === "/near/relay" ? "use POST with a JSON body" : "use GET" });
       }
 
       if (method === "POST" && url === "/v2-claim") {

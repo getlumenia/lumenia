@@ -108,6 +108,25 @@ EVENTS_EXCLUDE_AIDS = ""
 # Deliberately absent from [env.mainnet.vars] (vars do not inherit), so the mainnet route stays 403.
 CCTP_FORWARDER = "CA66Q2WFBND6V4UEB7RD4SAXSVIWMD6RA4X3U32ELVFGXV5PJK4T4VSZ"
 CCTP_IRIS_URL = "https://iris-api-sandbox.circle.com"
+# The NEAR rail (NEAR HACKATHON 2026; lib/near-relay.ts; routes /near/relay, /near/health and
+# /near/policy): a NEP-366 meta-transaction relayer that pays NEAR gas ONLY for creating a Lumenia
+# link (the sender's own USDC, ft_transfer_call into the escrow) and for a funder's reclaim. TESTNET
+# ONLY, and deliberately absent from [env.mainnet.vars] (vars do not inherit), so the mainnet Worker
+# answers 503 near_not_configured on all three routes. The relayer's key is a SECRET, never a var:
+#   npx wrangler secret put NEAR_RELAYER_PRIVATE_KEY        (the default env is this testnet Worker)
+NEAR_NETWORK = "testnet"
+NEAR_RPC_URL = "https://test.rpc.fastnear.com"
+NEAR_ESCROW_ID = "lumenia-near.testnet"
+NEAR_USDC_ID = "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af"
+NEAR_RELAYER_ACCOUNT_ID = "lumenia-relayer.testnet"
+# Caps: relays per sender per UTC day, relays per UTC day in total, and the per-sender cooldown in
+# seconds. Counted in the same Upstash store as every other cap, and FAIL CLOSED when it is down.
+NEAR_RELAY_PER_SENDER_PER_DAY = "20"
+NEAR_RELAY_PER_DAY = "500"
+NEAR_RELAY_COOLDOWN_S = "10"
+# Watchdog: page when the relayer account holds fewer NEAR than this (it was funded with 10 NEAR
+# from the testnet faucet; a relayed call costs well under 0.01 NEAR).
+NEAR_RELAYER_MIN_NEAR = "1"
 
 # /health names the deployed version (worker.ts): Cloudflare's version metadata binding gives the
 # version id, its tag and when it was created, with nothing to pass on each deploy. Match the id

@@ -36,6 +36,7 @@ import { kvConfigFromEnv } from "./rate-limit.js";
 import { feeBudgetFromEnv, readSponsorFeeDay, stroopsToXlm } from "./caps.js";
 import { CCTP_FORWARDERS } from "./cctp-relay.js";
 import { haltKey, haltReasonKey, setHalt, storeHaltIsSet } from "./kill-switch.js";
+import { formatNear, minNearYocto, nearConfigFromEnv } from "./near-relay.js";
 import { storeFetch } from "./store-fetch.js";
 
 /**
@@ -313,8 +314,11 @@ export const WASM_CONFIRM_DELAY_MS = 2_000;
 /** getEvents page size of the governance scan. */
 export const EVENTS_PAGE_SIZE = 200;
 
-/** Every check a run makes; `watchdog:<net>:lastfull` is written only when all of them completed. */
-const CHECKS = ["sponsor-account", "escrow-governance", "escrow-wasm", "escrow-ttl", "fee-budget"] as const;
+/**
+ * Every check a run makes; `watchdog:<net>:lastfull` is written only when all of them completed.
+ * `near-relayer` completes trivially on a Worker whose environment names no NEAR rail (mainnet).
+ */
+const CHECKS = ["sponsor-account", "escrow-governance", "escrow-wasm", "escrow-ttl", "fee-budget", "near-relayer"] as const;
 
 function networkOf(config: SponsorConfig): StellarNetwork {
   return config.networkPassphrase.includes("Public") ? "mainnet" : "testnet";
@@ -1209,6 +1213,52 @@ async function checkFeeBudget(alerts: Alert[], run: Run): Promise<boolean> {
   return true;
 }
 
+/** The NEAR relayer's float is under NEAR_RELAYER_MIN_NEAR. The number stays out of the title (the cooldown keys off it). */
+export const NEAR_RELAYER_LOW_TITLE = "NEAR relayer balance below the floor";
+
+/**
+ * The NEAR rail's relayer float (lib/near-relay.ts): the account that pays NEAR gas for relayed link
+ * creations and reclaims, read through the NEAR JSON-RPC with the same retry and busy-source rules
+ * as the Soroban reads (rpcCall). Only a Worker whose environment names the NEAR rail has anything
+ * to check: the mainnet Worker has none, and this completes with nothing to do, so the full-run
+ * stamp never waits on a rail that is not there. A page, never a halt: a relayer that cannot pay
+ * refuses on its own, and a halt here would also stop the Stellar exits.
+ */
+export async function checkNearRelayer(alerts: Alert[]): Promise<boolean> {
+  const near = nearConfigFromEnv();
+  if (!near.configured) return true;
+  const { rpcUrl, relayerAccountId, minNear } = near.config;
+  const view = await rpcCall<{ amount?: unknown }>(rpcUrl, "query", {
+    request_type: "view_account",
+    finality: "final",
+    account_id: relayerAccountId,
+  });
+  const amount = view.amount;
+  if (typeof amount !== "string" && typeof amount !== "number") {
+    throw new Error(`view_account ${relayerAccountId}: the RPC answered without an amount`);
+  }
+  let yocto: bigint;
+  try {
+    yocto = typeof amount === "number" ? BigInt(Math.trunc(amount)) : BigInt(amount);
+  } catch {
+    throw new Error(`view_account ${relayerAccountId}: the amount is not an integer (${String(amount).slice(0, 40)})`);
+  }
+  const held = formatNear(yocto);
+  if (yocto < minNearYocto(minNear)) {
+    alerts.push({
+      severity: "page",
+      title: NEAR_RELAYER_LOW_TITLE,
+      detail:
+        `${relayerAccountId} holds ${held} NEAR (floor ${minNear}, NEAR_RELAYER_MIN_NEAR). Top it up from the testnet ` +
+        `faucet or a funded account, or /near/relay starts failing on the relayer's own balance; the caps ` +
+        `(NEAR_RELAY_PER_DAY, NEAR_RELAY_PER_SENDER_PER_DAY) bound how fast it drains.`,
+    });
+  } else {
+    alerts.push({ severity: "info", title: "NEAR relayer balance", detail: `${relayerAccountId} holds ${held} NEAR (floor ${minNear}).` });
+  }
+  return true;
+}
+
 /* ---------------------------------- alerting ---------------------------------- */
 
 /**
@@ -1538,6 +1588,12 @@ export async function runWatchdog(
     if (await checkFeeBudget(alerts, run)) checked.push("fee-budget");
   } catch (e) {
     checkFailed("Watchdog check failed: fee budget", "The day's fee spend is unobserved until this clears", e);
+  }
+
+  try {
+    if (await checkNearRelayer(alerts)) checked.push("near-relayer");
+  } catch (e) {
+    checkFailed("Watchdog check failed: NEAR relayer", "The NEAR relayer's float is unobserved until this clears", e);
   }
 
   /* THE STORE OUTAGE, as one line. A store that cannot be read is the blind source every check
