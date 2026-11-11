@@ -4,7 +4,8 @@
 - **Try:** https://getlumenia.com/try/send, practice money, online through 30 November 2026; links open on [/claim](https://getlumenia.com/claim), the public ledger is [/ledger](https://getlumenia.com/ledger), the per-network table [/developers](https://getlumenia.com/developers). [Demo video](https://lumenia-media.avakit.workers.dev/demo.mp4), 60 seconds ([16:9 copy](https://lumenia-media.avakit.workers.dev/demo-720p.mp4)).
 - **Check:** `pnpm install --frozen-lockfile && pnpm near:verify`, no key needed (see "Run it yourself").
 - **Real:** the escrow [`lumenia-near.testnet`](https://testnet.nearblocks.io/address/lumenia-near.testnet), the screens, the relayer, the agent tools and one delivered Agent Market test job; hashes under "Proof".
-- **Testnet:** all of that, with Circle's testnet USDC; the owner's mainnet run is under "Mainnet proof". No audit is claimed.
+- **Testnet:** all of that, with Circle's testnet USDC. No audit is claimed.
+- **Mainnet:** the same escrow code as [`lumenia.near`](https://nearblocks.io/address/lumenia.near), proven with 3 real USDC on 2026-11-11: one link claimed into the brand-new account `lumenia-first.near`, one to an existing account; hashes under "Mainnet proof".
 - **Tracks and tags:** Real-World Money, Agent Economy, Open Innovation; tags `pre-hackathon` and `hackathon-submission` ([diff](https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission)).
 
 <details>
@@ -87,9 +88,24 @@ Every path ran against `lumenia-near.testnet` with Circle's testnet USDC; open a
 
 `get_stats` read 18 links created, 6 claimed, 0 returned by 03:46 UTC and 22 created, 8 claimed, 0 returned at 22:30 UTC (`pnpm near:verify:live` prints the current numbers). The sender can take the unclaimed proof links back after their 24-hour or 7-day expiry.
 
-## Mainnet proof (2026-11-12)
+## Mainnet proof (2026-11-11, 23:08 to 23:42 UTC)
 
-Pending: the owner is running the mainnet proof; this section is filled with the transaction hashes once it completes.
+The owner ran `ops/near-mainnet-owner.sh` (an agent prepared it; the owner signed every transaction). The escrow is [`lumenia.near`](https://nearblocks.io/address/lumenia.near): the testnet code (code hash GDKwUNKV1mvWVr48y77m9FEWkodcvCignc4GzJNAAcYv), Circle's native USDC on NEAR (`17208628...36133a1`), the starter at 0 NEAR, 0.25 NEAR of allowance per link key, and the deployer account `06627280...e202e6c` as `owner_id`. Open any hash at https://nearblocks.io/txns/<hash>, or let `pnpm near:verify:live` look them up on mainnet.
+
+| What | Transaction | Result |
+|---|---|---|
+| Create the escrow account `lumenia.near` with 4 NEAR | 83XLWxtTqdDZCQVSDSY3xop38ioeHUYeyNMPcfqh8xJv | account created |
+| Deploy and initialise the escrow | 6oSU4Dcmk6jUZkBJmhR23qUiqXy13Pf6Z56VHuxzYhtR | code hash GDKwUNKV..., the configuration above |
+| Register the escrow on USDC | Ds78Gdv832DULuijXQT6nVxuF7t3sbKfkw5ctjHz8LsS | registered (0.00125 NEAR) |
+| Buy the USDC: 1.5 NEAR swapped on Rhea (Ref pool 5515) | BunQnSHCMbkxdzmgXb1ojgD9YpwZ7ozLHcpWu7EsvuqW | 5.329535 USDC to the deployer |
+| Lock 2 USDC behind a link | G5PbQx4TCrHGLjC5EQCsVuir9owr43qYdSuBfdEfwQpU | drop Open |
+| Claim it with the link key into the NEW account `lumenia-first.near` | 53idJThzBJomNkdLZqvuopMRWTaDXfzKHduD1paSTCTk | `lumenia-first.near` created holding 2 USDC and 0 NEAR; the escrow paid the gas and the USDC registration; drop Claimed |
+| Lock 1 USDC behind a second link | H8t8FutLP6FLhK6pV6KvRE1YcNcpdZbWToMHGTaHmWT3 | drop Open |
+| Claim it to the existing account `0xmeric.near` | 52bd4V9nUbPvXuHQkM4qceErSUd4Y3Y8Hwy9BHzSethH | 1 USDC to `0xmeric.near`; drop Claimed |
+
+After the run `get_stats` read 2 links created, 2 claimed, 0 returned, 3 USDC in and 3 USDC out, and no function-call key was left on `lumenia.near` (each claim deletes its link key). The two claims cost the escrow pool 0.0124 NEAR in all: gas, one new account, two USDC registrations and the records' storage. The leftover 2.33 USDC and 11.44 NEAR went back to the owner (EC4WqpF4jV1mkX6NV532fNHbcRb52G8WUnQF3aM6kUGS, 7hVgYwpnmnpamrodJv1rX2Sydsypsvdcp277JLhoQoDS).
+
+The first attempt to buy the USDC went through NEAR Intents 1Click (same chain, wNEAR to USDC, deposit transaction BsQjnKmAXe12F46proXPePfBT6aWa2QD1sU9X5TZqPQq at 23:09 UTC). It was quoted at 22 seconds and still read PROCESSING more than 30 minutes later, and the quote's own refund deadline is 2026-11-15 00:09 UTC. The script now waits for a final status and refuses a lock it cannot fund; one lock tried before that fix failed on a 0 USDC balance and cost only its fee. The USDC came from the Rhea swap instead, and the 1.5 wNEAR in the Intents swap returns to the deployer as USDC or as a refund. A claim straight into a NEAR Intents deposit address for another chain was not run on mainnet: cross-chain quotes failed for hours that day.
 
 ## Attacks the system refuses
 
@@ -121,14 +137,14 @@ The same service is registered on NEAR Agent Market as "Lumenia Payout Agent", w
 
 - Agent Market: a flat service fee per job (0.50 USDC today, the market median); payouts come from a treasury the agent owns.
 - Product: Lumenia's model on Stellar is a flat fee per link on real money (the mainnet pilot runs with caps and no fee today); the NEAR rail inherits it.
-- Cost per claim to the pool: about 0.011 NEAR without the starter (account creation 0.007 burned, USDC registration 0.00125, the record's storage, gas), about 0.06 NEAR with the 0.05 NEAR testnet starter. The mainnet escrow is to run with the starter at 0, because self-claims could farm it. Stellar locks 1.5 XLM per new account.
-- Beyond testnet: the NEAR contract, relayer and screens are mainnet-ready behind configuration (contract id, token id, root account, relayer account); the Stellar rail already runs a capped mainnet pilot with real people.
+- Cost per claim to the pool: about 0.011 NEAR without the starter (account creation 0.007 burned, USDC registration 0.00125, the record's storage, gas), about 0.06 NEAR with the 0.05 NEAR testnet starter. The mainnet escrow runs with the starter at 0, because self-claims could farm it; its two proof claims cost the pool 0.0124 NEAR together. Stellar locks 1.5 XLM per new account.
+- Beyond testnet: the escrow runs on mainnet as `lumenia.near` (see "Mainnet proof"); the relayer and screens are mainnet-ready behind configuration (contract id, token id, root account, relayer account); the Stellar rail already runs a capped mainnet pilot with real people.
 
 ## What is real and what is not
 
 - Real: every row under "Proof", the hosted demo, the relayer inside the sponsor service, the MCP server, the sandbox tests, and the Agent Market listing with its one delivered job (the owner's free test run; the public job stats still read 0).
-- Testnet only: all of that, with Circle's testnet USDC and no mainnet money; the cross-chain payout is a live NEAR Intents quote, not executed (Intents has no testnet).
-- Not done: no audit is claimed. No contract method lets the owner move a drop and pause only blocks new links, but the escrow account `lumenia-near.testnet` still holds one full-access key, which can redeploy the code (it did during development, on 2026-11-10 at 23:43 UTC), and new code could move the money. The production step is to remove that key or hand it to a multisig behind a time-locked upgrade. On Stellar, Lumenia's escrow owner is already a 2-of-3 multisig; its seven-day upgrade timelock is written (LumenDrop 0.3.0) but installed on neither network. The relayer and the agent's funder sign with hot full-access keys. Named accounts are `.testnet` here and would be `.near` on mainnet.
+- Testnet only: all of that, with Circle's testnet USDC; the cross-chain payout is a live NEAR Intents quote, not executed (Intents has no testnet). On mainnet only the escrow has run: two links and 3 USDC, driven from the owner's script rather than the screens (see "Mainnet proof").
+- Not done: no audit is claimed. No contract method lets the owner move a drop and pause only blocks new links, but the escrow account `lumenia-near.testnet` still holds one full-access key, which can redeploy the code (it did during development, on 2026-11-10 at 23:43 UTC), and new code could move the money; so does `lumenia.near` on mainnet. The production step is to remove that key or hand it to a multisig behind a time-locked upgrade: `ops/near-mainnet-owner.sh lock` removes it on mainnet, irreversibly, and has not been run. On Stellar, Lumenia's escrow owner is already a 2-of-3 multisig; its seven-day upgrade timelock is written (LumenDrop 0.3.0) but installed on neither network. The relayer and the agent's funder sign with hot full-access keys. Named accounts are `.testnet` on the testnet escrow; the mainnet proof created `lumenia-first.near`.
 
 ## Arguing against this idea
 

@@ -12,7 +12,7 @@
 
 1. `pnpm install --frozen-lockfile && pnpm near:verify`: contract tests, NEAR packages and live read-only checks, PASS or FAIL per step; about 3 minutes on a fresh clone (about 2 GB of Rust build and sandbox files), then about 1 minute. Offline: `pnpm near:verify:offline`.
 2. Live: https://getlumenia.com/try/send (practice money on NEAR testnet, nothing to install).
-3. Everything else, from the transaction hashes to the limits: [NEAR.md](NEAR.md).
+3. Everything else, from the transaction hashes (testnet, plus a 3 USDC proof on mainnet) to the limits: [NEAR.md](NEAR.md).
 
 **Why this and not the others.** Payment links pay someone who already has a wallet: [Coinbase Wallet links](https://www.theblock.co/post/266175/coinbase-rolls-out-money-transfers-via-links-sent-on-whatsapp-tiktok-and-instagram) need the Coinbase app on both sides, and [Peanut](https://peanutprotocol.notion.site/Supported-Chains-and-Tokens-12f838117579817d926cfe352a71f5c1) and the fifteen-odd invoice-link entries in this hackathon settle to an existing address. NEAR's own linkdrop (`create_account_and_claim`, since 2020) and [Keypom](https://github.com/keypom/keypom) already created an account at claim time for NEAR drops; Keypom went quiet in December 2024. Lumenia's edge is a maintained consumer product for dollars: USDC with sender reclaim, the payout chosen at claim, pay-forward with zero NEAR, batch payouts and an agent that pays people, inside a product with a live Stellar pilot (109 transfers, about $4.4 in total). Of the [about 500 entries](https://nearhackathon.com/api/projects) we read on 2026-11-11, it is the only one where the recipient needs no wallet and pays no gas.
 
@@ -24,7 +24,7 @@
 
 | Folder | What it is |
 |---|---|
-| `contracts/lumen-drop-near/` | The escrow (Rust, near-sdk-rs), on testnet as `lumenia-near.testnet`: single and batch links, sender reclaim, pause that never blocks exits, public ledger views. |
+| `contracts/lumen-drop-near/` | The escrow (Rust, near-sdk-rs), on testnet as `lumenia-near.testnet` and on mainnet as `lumenia.near`: single and batch links, sender reclaim, pause that never blocks exits, public ledger views. |
 | `packages/near/` | `@lumenia/near`: links, receipts, batch payouts, the relayer's policy and client, NEAR Intents quotes. |
 | `apps/web/app/(site)/try/send`, `apps/web/app/claim`, `apps/web/app/(site)/ledger`, `apps/web/components/near/` | The screens: send one or many (CSV export), claim, pay it forward, the public ledger. |
 | `apps/sponsor` (`/near/relay`, `/near/health`, `/near/policy`) | The relayer inside Lumenia's sponsor service: pays the fee only to create or take back a Lumenia link, with caps. |
