@@ -4,14 +4,14 @@
  * /ledger: every link the escrow knows, newest first, 25 to a page, refreshed every 15 s. Amounts
  * and short account ids only. A memo belongs to the two people involved, so it is shown only on a
  * link THIS browser made (matched by the public key in local storage), and a link's secret never
- * appears anywhere here: the public key is what identifies a drop. The network is named in the
- * page's detail line and inside each row's Details, nowhere else.
+ * appears anywhere here: the public key is what identifies a drop. The network is named inside the
+ * Details disclosure under the footnote and inside each row's Details, nowhere else.
  */
 import { useEffect, useMemo, useState } from "react";
 import { StatusPill } from "../brand/StatusPill";
-import { Details, Notice, SmallButton, Spinner } from "./primitives";
+import { Details, Notice, SmallButton, Spinner, escrowExplorer, escrowRows } from "./primitives";
 import { useLoadable, useNow } from "../../lib/near/hooks";
-import { NEAR_CONTRACT_ID, explorerAccountUrl, explorerTxUrl } from "../../lib/near/config";
+import { explorerAccountUrl, explorerTxUrl } from "../../lib/near/config";
 import { formatUsd } from "../../lib/near/amount";
 import type { DropStatus, StatsView } from "../../lib/near/drops";
 import { formatLocal, isExpired, nsToMs } from "../../lib/near/expiry";
@@ -151,10 +151,14 @@ export function NearLedger({ initialStats }: { initialStats: StatsView | null })
           </SmallButton>
         </div>
       ) : null}
-      <p className="nr-meta">
-        Read from the escrow account {NEAR_CONTRACT_ID} every 15 seconds. Newest first. A link&apos;s secret never appears
-        here; only its public key identifies a drop. Memos are shown only for links made in this browser.
-      </p>
+      <div className="nr-meta">
+        <p>
+          Read from the escrow every 15 seconds. Newest first. A link&apos;s secret never appears here; only its public key
+          identifies a drop. Memos are shown only for links made in this browser.
+        </p>
+        {/* Where this ledger lives: the escrow account, what it holds, the network and the explorer. */}
+        <Details rows={escrowRows()} explorer={escrowExplorer()} />
+      </div>
     </>
   );
 }

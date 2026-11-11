@@ -42,13 +42,6 @@
 /* A shorter hero for the working pages: the task starts closer to the top. */
 .nr-hero--short { padding-top: clamp(96px, 13vh, 140px); padding-bottom: clamp(28px, 5vh, 48px) }
 .nr-hero--short .pg-lead { margin-top: 14px }
-/* The network detail under a lead (the ledger): one quiet line, the network named once. */
-.nr-badge {
-  display: inline-flex; align-items: center; gap: 8px; margin-top: 18px;
-  padding: 7px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--pw-muted);
-  border: 1px solid var(--pw-line); background: var(--pw-surface);
-}
-.nr-badge b { color: var(--pw-ink); font-weight: 600 }
 
 /* ---- Bodies -------------------------------------------------------------------------------- */
 .nr-body {
@@ -71,6 +64,8 @@
 
 /* ---- The ledger's footer line ------------------------------------------------------------- */
 .nr-meta { margin-top: 14px; font-size: 12.5px; color: var(--pw-muted) }
+/* The network is named only inside this disclosure (and each row's), never in the page's header. */
+.nr-meta > p + .nr-details { margin-top: 8px }
 .nr-meta a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
 .nr-meta a:hover { text-decoration: underline; text-underline-offset: 2px }
 

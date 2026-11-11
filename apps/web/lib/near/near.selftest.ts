@@ -14,16 +14,22 @@
  *   [9]  batch msg builder and row parser
  *   [10] ledger paging and privacy
  *   [11] pay-forward: POST /relay shape, relayer error mapping, record-before-sign order
- *   [12] the demo sender gate and per-link limits
+ *   [12] the practice balance gate and per-link limits
  *   [13] account id rules
  *   [14] the password-protected key file round-trips
  *   [15] the store never writes a secret into the plain record
  *   [16] the one-product rule, read from the source: no network name in a heading, a button, a tab,
- *        a toast or a page title; the network lives in the Details disclosures and the practice band
+ *        a toast or a page title; the network lives in the Details disclosures and the practice band;
+ *        the claim button never names an account; /ledger has no network badge; the old /near pages
+ *        redirect permanently
+ *   [17] practice links through the Worker: the request body (the public key only), the error
+ *        mapping (400 / 429 / 503 / 502 / unreachable), record-before-call, and a refusal that sent
+ *        nothing dropping its fresh record
+ *   [18] no key of the practice balance anywhere in the app's source
  *
  * RUN: pnpm --filter @lumenia/web test:near
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KeyPair, keyToImplicitAddress } from "near-api-js";
@@ -34,7 +40,7 @@ import { MAX_BATCH_DROPS, batchTotal, buildBatchMsg, parseBatchRows, splitCsvLin
 import { NEAR_CLAIM_PATH } from "./config";
 import { decryptWithPassword, encryptWithPassword } from "./crypto";
 import { LINK_CSV_COLUMNS, csvField, csvLine, csvTextField, linkCsvLine, linksCsv } from "./csv";
-import { DEMO_MAX_LINK_UNITS, demoSenderAvailable, linkLimits } from "./demo";
+import { DEMO_MAX_LINK_UNITS, DEMO_MAX_MEMO_BYTES, DEMO_MIN_LINK_UNITS, linkLimits, practiceAvailable } from "./demo";
 import { buildDropMsg, isConfigView, isDropView, isStatsView, isTerminal, memoBytes, reclaimable } from "./drops";
 import { EXPIRY_OPTIONS, expiresAtMs, formatRemaining, isExpired, nsToMs, toIso } from "./expiry";
 import {
@@ -53,6 +59,18 @@ import { NAME_RULES, availabilityFromLookup, checkName } from "./names";
 import { chainResult, ftTransferCallUsedAmount, receiptFailure, refusalReason, successValue, txFailure } from "./outcome";
 import type { RpcTransactionResponse } from "./chain";
 import { describeRelayError, interpretOutcome, isRelayerExpiry, runPayForward } from "./pay-forward";
+import { linkStatusLine } from "./link-state";
+import {
+  PracticeRequestError,
+  describePracticeError,
+  nothingWasSent,
+  practiceLinkBody,
+  practiceLinkUrl,
+  requestPracticeLink,
+  runPracticeLink,
+  type PracticeLinkBody,
+  type PracticeLinkOk,
+} from "./practice";
 import { rpcUrls } from "./rpc";
 import type { StoredLink } from "./store";
 
@@ -532,15 +550,16 @@ async function main() {
     ok("a zero usedAmount is not created", !interpretOutcome({ ...okOutcome, usedAmount: "0" }, "500000").created);
   }
 
-  section(12, "the demo sender gate");
+  section(12, "the practice balance gate");
   {
-    const KEY = "ed25519:" + "2".repeat(88);
-    ok("offered when the id and a well-formed key are both set", demoSenderAvailable("lumenia-demo.testnet", KEY));
-    ok("not without an id", !demoSenderAvailable("", KEY));
-    ok("not without a key", !demoSenderAvailable("lumenia-demo.testnet", ""));
-    ok("not when both are undefined", !demoSenderAvailable(undefined, undefined));
-    ok("not with a malformed key", !demoSenderAvailable("lumenia-demo.testnet", "not-a-key"));
-    ok("not with a PUBLIC key (too short)", !demoSenderAvailable("lumenia-demo.testnet", "ed25519:5bC2PGuJRnH2GGjQtHai5pujyVoUGpYpfFz4R7RgffjD"));
+    const RELAYER = "https://lumenia-sponsor.avakit.workers.dev/near";
+    ok("offered when the practice account is named and a relayer makes its links", practiceAvailable("lumenia-relayer.testnet", RELAYER));
+    ok("not without an account", !practiceAvailable("", RELAYER));
+    ok("not without a relayer", !practiceAvailable("lumenia-relayer.testnet", ""));
+    ok("not when both are undefined", !practiceAvailable(undefined, undefined));
+    ok("not with a malformed account id", !practiceAvailable("Not..Valid", RELAYER));
+    ok("not with a relayer that is not an http(s) URL", !practiceAvailable("lumenia-relayer.testnet", "javascript:alert(1)"));
+    eq("a practice link is $0.10 to $5.00, its memo at most 64 bytes (the Worker's own lines)", [DEMO_MIN_LINK_UNITS, DEMO_MAX_LINK_UNITS, DEMO_MAX_MEMO_BYTES], ["100000", "5000000", 64]);
     eq("demo: $5.00 cap, 1.00 default", linkLimits(true, "100000000"), { maxUnits: DEMO_MAX_LINK_UNITS, defaultAmount: "1.00" });
     eq("otherwise: the testnet cap, 1 default", linkLimits(false, "100000000"), { maxUnits: "100000000", defaultAmount: "1" });
     ok("5 passes the demo cap, 5.01 does not", parseUsdcAmount("5", { maxUnits: linkLimits(true, "100000000").maxUnits }).ok && !parseUsdcAmount("5.01", { maxUnits: linkLimits(true, "100000000").maxUnits }).ok);
@@ -603,6 +622,27 @@ async function main() {
     ok("upsertLink strips a secret too", !(mem.get("lumenia.near.links.v1") ?? "").includes("leak"));
     eq("the secret is still recallable this session", await store.linkSecret("ed25519:pub"), link.secret);
     eq("a claim record is kept, its key separately", (store.upsertClaim({ accountId: "a.testnet", publicKey: "pk", dropPublicKey: "ed25519:pub", kind: "named", createdAt: "x" }), store.claimForDrop("ed25519:pub")?.accountId), "a.testnet");
+
+    const sessionMem = new Map<string, string>();
+    (globalThis as unknown as { sessionStorage: Storage }).sessionStorage = {
+      getItem: (k: string) => sessionMem.get(k) ?? null,
+      setItem: (k: string, v: string) => void sessionMem.set(k, v),
+      removeItem: (k: string) => void sessionMem.delete(k),
+      clear: () => sessionMem.clear(),
+      key: (i: number) => [...sessionMem.keys()][i] ?? null,
+      get length() {
+        return sessionMem.size;
+      },
+    } as Storage;
+    const FUNDER = "lumenia.near.funder.v1";
+    store.saveFunder({ accountId: "lumenia-relayer.testnet", demo: true, secret: "ed25519:leak" });
+    ok("a practice session is written as a choice, never with a key", (sessionMem.get(FUNDER) ?? "").includes('"demo":true') && !(sessionMem.get(FUNDER) ?? "").includes("leak"));
+    sessionMem.set(FUNDER, JSON.stringify({ accountId: "lumenia-demo.testnet", secret: "ed25519:" + "4".repeat(88), demo: true }));
+    eq("an older practice session that held the shared key loads WITHOUT it", store.loadFunder(), { accountId: "lumenia-demo.testnet", demo: true });
+    sessionMem.set(FUNDER, JSON.stringify({ accountId: "a.testnet", secret: "ed25519:own" }));
+    eq("an own-key session keeps its key", store.loadFunder(), { accountId: "a.testnet", secret: "ed25519:own" });
+    sessionMem.set(FUNDER, JSON.stringify({ accountId: "a.testnet" }));
+    eq("a session with neither a key nor the practice flag is nothing", store.loadFunder(), null);
   }
 
   section(16, "the one-product rule, read from the source");
@@ -668,6 +708,195 @@ async function main() {
     ok("the nav and the footer carry no network item", !/\/near"/.test(nav) && !/NEAR/.test(footer) && /\["Public ledger", "\/ledger"\]/.test(footer));
     const forward = src("app", "c", "near", "Forward.tsx");
     ok("the old /c/near path forwards to /claim with the fragment intact, in the browser", /window\.location\.replace\(`\$\{NEAR_CLAIM_PATH\}\$\{window\.location\.search\}\$\{window\.location\.hash\}`\)/.test(forward));
+
+    ok(
+      "the claim button always reads \"Create my account and claim $X\": never an account id, never a network",
+      /const claimLabel = \(amount: string\) => `Create my account and claim \$\{amount\}`/.test(claim) && (claim.match(/\{claimLabel\(amount\)\}/g) ?? []).length === 2 && !/`Create \$\{status\.accountId\}/.test(claim),
+    );
+    ok(
+      "the new account's address is said once, quietly, under the name field (not in the status line)",
+      (claim.match(/Your account address:/g) ?? []).length === 1 && !/\$\{status\.accountId\} is (free|already taken)/.test(claim) && !/Checking \{status\.accountId\}/.test(claim),
+    );
+    ok("the claim button may wrap evenly instead of spilling out of the pill on a narrow screen", /const CLAIM_CTA = "[^"]*whitespace-normal[^"]*text-balance/.test(claim));
+    ok("a practice link's recipient reads \"Sent from the shared practice balance\", the account id kept for Details", /drop\.funder === NEAR_DEMO_FUNDER_ID \? \(\s*<>Sent from the shared practice balance\.<\/>/.test(claim) && /\["Sent by", <span key="from" className="nc-mono">\{drop\.funder\}<\/span>\]/.test(claim));
+    const sender = src("components", "near", "NearSend.tsx");
+    ok(
+      "a practice link never promises a take-back this browser cannot do",
+      /footnote=\{link\.practice \? PRACTICE_NOTE : TAKE_BACK_NOTE\}/.test(sender) && /hint=\{practice \? "After that, nobody can claim it\." :/.test(sender) && /canReclaim = mine && expiredNow && !l\.practice && !!funder\?\.secret/.test(sender),
+    );
+    const ledgerPage = src("app", "(site)", "ledger", "page.tsx");
+    ok("/ledger: no network badge in the header", !/nr-badge/.test(ledgerPage) && !/NEAR_NETWORK|NEAR_CONTRACT_ID/.test(ledgerPage));
+    ok("/ledger: the network is in the Details under the footnote", /<Details rows=\{escrowRows\(\)\} explorer=\{escrowExplorer\(\)\} \/>/.test(src("components", "near", "NearLedger.tsx")));
+    const nextConfig = (await import("../../next.config")).default;
+    const redirects = (await nextConfig.redirects?.()) ?? [];
+    for (const [from, to] of [
+      ["/near", "/try"],
+      ["/near/send", "/try/send"],
+      ["/near/ledger", "/ledger"],
+    ] as const) {
+      ok(`${from} redirects permanently to ${to}`, redirects.some((r) => r.source === from && r.destination === to && "permanent" in r && r.permanent === true));
+    }
+  }
+
+
+  section(17, "practice links through the Worker");
+  {
+    const key = newLinkKey();
+    const BASE = "https://lumenia-sponsor.example/near";
+    const body = practiceLinkBody({ publicKey: key.publicKey, amountUnits: "1000000", expiresInS: 3600, memo: " coffee " });
+    eq("the body: the public key, the amount as a decimal string, the life, the trimmed memo", body, { publicKey: key.publicKey, amountUsdc: "1.00", expiresInS: 3600, memo: "coffee" });
+    ok("  and never the link's secret", !JSON.stringify(body).includes(key.secret.slice("ed25519:".length)) && !("secret" in body));
+    eq("a blank memo is left out; 0.10 is written 0.10", practiceLinkBody({ publicKey: "ed25519:x", amountUnits: "100000", expiresInS: 600, memo: "  " }), { publicKey: "ed25519:x", amountUsdc: "0.10", expiresInS: 600 });
+    eq("the route is <base>/practice-link", practiceLinkUrl(`${BASE}/`), `${BASE}/practice-link`);
+
+    const linkOutcome: PracticeLinkOk["outcome"] = { ...okOutcome, usedAmount: "1000000" };
+    const okAnswer: PracticeLinkOk = { txHash: "tx1", explorerUrl: "https://testnet.nearblocks.io/txns/tx1", funderId: "lumenia-relayer.testnet", outcome: linkOutcome };
+    let seen: { url: string; init: RequestInit } | null = null;
+    const r = await requestPracticeLink(BASE, body, async (url, init) => {
+      seen = { url: String(url), init: init ?? {} };
+      return new Response(JSON.stringify(okAnswer), { status: 200 });
+    });
+    const s = seen as { url: string; init: RequestInit } | null;
+    eq("POST goes to <base>/practice-link", s?.url, `${BASE}/practice-link`);
+    eq("  as POST with JSON", [s?.init.method, new Headers(s?.init.headers).get("content-type")], ["POST", "application/json"]);
+    eq("  carrying exactly the body", JSON.parse(String(s?.init.body)), body);
+    eq("  and the answer is parsed: hash and funder", [r.txHash, r.funderId], ["tx1", "lumenia-relayer.testnet"]);
+
+    const answer = (status: number, b: unknown, headers: Record<string, string> = {}) => async () => new Response(typeof b === "string" ? b : JSON.stringify(b), { status, headers });
+    const fail = (status: number, b: unknown, headers?: Record<string, string>) => requestPracticeLink(BASE, body, answer(status, b, headers)).then(() => null, (e: unknown) => e);
+    const e400 = await fail(400, { error: "a practice link is 0.10 to 5.00 USDC", reason: "a practice link is 0.10 to 5.00 USDC", code: "amount" });
+    ok("400 is a PracticeRequestError with its code", e400 instanceof PracticeRequestError && (e400 as PracticeRequestError).status === 400 && (e400 as PracticeRequestError).code === "amount");
+    eq("  described with the Worker's reason", describePracticeError(e400), "The practice balance could not take this link: a practice link is 0.10 to 5.00 USDC.");
+    ok("  and nothing was sent", nothingWasSent(e400));
+    const e429 = await fail(429, { reason: "one practice link every 30 s from one connection: try again in 17 s", code: "cooldown", retryAfterS: 17 });
+    eq("429 cooldown says how long to wait", describePracticeError(e429), "One practice link every 30 seconds. Try again in 17 s.");
+    ok("  and nothing was sent", nothingWasSent(e429));
+    const e429h = await fail(429, { reason: "wait", code: "cooldown" }, { "retry-after": "9" });
+    eq("  the wait read from Retry-After when the body has none", (e429h as PracticeRequestError).retryAfterS, 9);
+    eq("429 ip_daily", describePracticeError(await fail(429, { reason: "x", code: "ip_daily", retryAfterS: 3600 })), "This connection has made today's practice links. Try again tomorrow, or use your own account key.");
+    eq("429 global_daily", describePracticeError(await fail(429, { reason: "x", code: "global_daily", retryAfterS: 3600 })), "The shared practice balance has made all of today's links. Try again tomorrow, or use your own account key.");
+    const empty = await fail(503, { reason: "the practice balance holds 0.50 USDC", code: "practice_empty" });
+    eq("503 practice_empty", describePracticeError(empty), "The shared practice balance is too low for this amount right now. Nothing was sent. Try a smaller amount, or use your own account key.");
+    ok("  nothing was sent", nothingWasSent(empty));
+    eq("503 store_unavailable", describePracticeError(await fail(503, { reason: "x", code: "store_unavailable" })), "Practice links are briefly unavailable. Nothing was sent. Try again in a minute.");
+    const halted = await fail(503, { error: "sponsor temporarily halted" });
+    ok("503 under the kill switch reads as a pause, and nothing was sent", (halted as PracticeRequestError).code === "halted" && /paused right now/.test(describePracticeError(halted)) && nothingWasSent(halted));
+    const notConfigured = await fail(503, { error: "near_not_configured", reason: "the NEAR rail is served by the testnet Worker only" });
+    ok("503 near_not_configured (no code field) reads as a pause, and nothing was sent", (notConfigured as PracticeRequestError).code === "near_not_configured" && /paused right now/.test(describePracticeError(notConfigured)) && nothingWasSent(notConfigured));
+    const e502 = await fail(502, { reason: "the practice link could not be submitted: rpc down", code: "submit_failed" });
+    ok("502 after the caps: may have been sent, said so", !nothingWasSent(e502) && /may still appear/.test(describePracticeError(e502)));
+    const edge = await fail(503, "<html>worker exceeded resources</html>");
+    ok("a 503 that is not the Worker's own answer is NOT read as nothing sent", (edge as PracticeRequestError).code === "http_error" && !nothingWasSent(edge));
+    const missing = await fail(404, { error: "not found" });
+    ok("404 (a Worker without the route): nothing sent, own key offered", nothingWasSent(missing) && /not available here yet/.test(describePracticeError(missing)));
+    const garbled = await requestPracticeLink(BASE, body, async () => new Response(JSON.stringify({ ok: true }), { status: 200 })).then(() => null, (e: unknown) => e);
+    ok("a 200 that is not a link is an error that may have sent (502 bad_answer)", garbled instanceof PracticeRequestError && garbled.code === "bad_answer" && !nothingWasSent(garbled));
+    const offline = new TypeError("Failed to fetch");
+    eq("an unreachable Worker", describePracticeError(offline), "Could not reach the practice balance (Failed to fetch). Check your connection and try again.");
+    ok("  may have sent nothing or something: not a refusal", !nothingWasSent(offline));
+    ok("no sentence names a network", [e400, e429, empty, halted, e502, missing, offline].every((e) => !/\bNEAR\b|\bStellar\b|testnet/.test(describePracticeError(e))));
+
+    const link: StoredLink = {
+      publicKey: key.publicKey,
+      secret: key.secret,
+      amountUnits: "1000000",
+      memo: "coffee",
+      expiresInS: 3600,
+      createdAt: "2026-11-12T10:00:00.000Z",
+      funder: "lumenia-relayer.testnet",
+      network: "testnet",
+    };
+    function fakes(reply: () => Promise<PracticeLinkOk>) {
+      const order: string[] = [];
+      const store = new Map<string, StoredLink>();
+      const bodies: PracticeLinkBody[] = [];
+      const deps = {
+        saveLink: async (l: StoredLink) => {
+          order.push("save");
+          store.set(l.publicKey, { ...l });
+          return true;
+        },
+        updateLink: (p: Partial<StoredLink> & { publicKey: string }) => {
+          order.push("update");
+          store.set(p.publicKey, { ...(store.get(p.publicKey) as StoredLink), ...p });
+        },
+        removeLink: async (publicKey: string) => {
+          order.push("remove");
+          store.delete(publicKey);
+        },
+        request: async (b: PracticeLinkBody) => {
+          order.push("request");
+          bodies.push(b);
+          return reply();
+        },
+      };
+      return { order, store, bodies, deps };
+    }
+    const happy = fakes(async () => okAnswer);
+    const made = await runPracticeLink(link, happy.deps);
+    eq("the record and its key are kept BEFORE the request leaves", happy.order, ["save", "request", "update"]);
+    matches("the record: practice, the hash and the funder the Worker named", happy.store.get(key.publicKey), { practice: true, createTxHash: "tx1", funder: "lumenia-relayer.testnet", secret: key.secret });
+    ok("the request carried the public key and never the secret", happy.bodies.length === 1 && happy.bodies[0]?.publicKey === key.publicKey && !JSON.stringify(happy.bodies).includes(key.secret.slice("ed25519:".length)));
+    ok("the link was created", made.kind === "created" && made.txHash === "tx1" && made.kept);
+
+    const refundedOutcome = { ...okOutcome, linkCreated: false, usedAmount: "0", logs: ["drop refused: the escrow is paused; tokens returned"] };
+    const sad = fakes(async () => ({ ...okAnswer, txHash: "tx2", outcome: refundedOutcome }));
+    const back = await runPracticeLink(link, sad.deps);
+    ok("an escrow refund is reported with its reason, the record kept with the error", back.kind === "refunded" && back.reason === "drop refused: the escrow is paused" && /refunded: drop refused/.test(sad.store.get(key.publicKey)?.createError ?? ""));
+
+    const cool = fakes(async () => {
+      throw new PracticeRequestError(429, "cooldown", "wait", 12);
+    });
+    const coolR = await runPracticeLink(link, cool.deps);
+    eq("a refusal that sent nothing drops the FRESH record again", cool.order, ["save", "request", "remove"]);
+    ok("  so no ghost link is left behind, and the reason is said", coolR.kind === "refused" && coolR.removed && !cool.store.has(key.publicKey) && coolR.message === "One practice link every 30 seconds. Try again in 12 s.");
+    const coolRetry = fakes(async () => {
+      throw new PracticeRequestError(429, "cooldown", "wait", 5);
+    });
+    const coolRetryR = await runPracticeLink(link, coolRetry.deps, { retry: true });
+    ok("on a RETRY the record is never dropped (an earlier attempt may have landed)", coolRetryR.kind === "refused" && !coolRetryR.removed && coolRetry.store.has(key.publicKey) && coolRetry.order.join(",") === "save,request,update");
+    const lost = fakes(async () => {
+      throw new PracticeRequestError(502, "submit_failed", "rpc down");
+    });
+    const lostR = await runPracticeLink(link, lost.deps);
+    ok("a 502 keeps the record with its error, for a retry that asks the chain first", lostR.kind === "unknown" && lost.store.has(key.publicKey) && /may still appear/.test(lost.store.get(key.publicKey)?.createError ?? ""));
+    const gone = fakes(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const goneR = await runPracticeLink(link, gone.deps);
+    ok("an unreachable Worker keeps the record too", goneR.kind === "unknown" && gone.store.has(key.publicKey));
+
+    const at = Date.parse("2026-11-12T10:00:00.000Z");
+    const expiredOpen = { ...link, practice: true, lastStatus: "Open" as const, expiresAtNs: String(BigInt(at) * 1_000_000n) };
+    eq("an expired practice link says nobody can claim it, never that you can take it back", linkStatusLine(expiredOpen, at + 1000), "Expired. Nobody can claim it now.");
+    eq("  while an own-key link still offers the take-back", linkStatusLine({ ...expiredOpen, practice: undefined }, at + 1000), "Expired. You can take the money back.");
+    eq("a returned practice link went back to the practice balance", linkStatusLine({ ...expiredOpen, lastStatus: "Reclaimed" }, at + 1000), "Returned to the practice balance.");
+  }
+
+  section(18, "no key of the practice balance anywhere in the app");
+  {
+    const WEB_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+    const NEEDLE = ["NEXT_PUBLIC", "NEAR", "DEMO", "FUNDER", "KEY"].join("_");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === "node_modules" || name.startsWith(".")) continue;
+        const p = join(dir, name);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx|mjs|js)$/.test(name)) files.push(p);
+      }
+    };
+    for (const d of ["app", "components", "lib"]) walk(join(WEB_ROOT, d));
+    files.push(join(WEB_ROOT, "next.config.ts"));
+    // Both names are built at run time and this file is skipped, so the scan can never match itself.
+    const IDENT = new RegExp(`\\b${["NEAR", "DEMO", "FUNDER", "KEY"].join("_")}\\b`);
+    const self = fileURLToPath(import.meta.url);
+    const readers = files.filter((f) => f !== self && (readFileSync(f, "utf8").includes(NEEDLE) || IDENT.test(readFileSync(f, "utf8"))));
+    ok(`no source file reads the practice balance's key (${files.length} files)`, files.length > 100 && readers.length === 0, readers.join(", "));
+    const send = readFileSync(join(WEB_ROOT, "components", "near", "NearSend.tsx"), "utf8");
+    ok("the practice path asks the Worker for a link and signs nothing itself", /requestPracticeLink\(relayerBase\(\), body\)/.test(send) && /const PRACTICE_SESSION: FunderSession = \{ accountId: NEAR_DEMO_FUNDER_ID, demo: true \}/.test(send));
+    const many = readFileSync(join(WEB_ROOT, "components", "near", "NearSendMany.tsx"), "utf8");
+    ok("send to many is own-key only: practice mode shows the explanation", /if \(funder\.demo \|\| !funder\.secret\) return <PracticeManyNote/.test(many));
   }
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"} NEAR SELF-TEST ${passed}/${passed + failed}`);

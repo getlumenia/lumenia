@@ -590,7 +590,7 @@ async function sectionC() {
       // that pays a pay-forward link's gas, and the 1Click quote service the claim screen asks for a
       // dry cross-chain quote. Derived from the same env next.config.ts reads, defaults included.
       ...(process.env.NEXT_PUBLIC_NEAR_RPC ?? "https://test.rpc.fastnear.com").split(",").map((u) => u.trim()).filter(Boolean).map((u) => new URL(u).origin),
-      new URL(process.env.NEXT_PUBLIC_NEAR_RELAYER_URL ?? "https://lumenia-near-relayer.avakit.workers.dev").origin,
+      new URL(process.env.NEXT_PUBLIC_NEAR_RELAYER_URL ?? "https://lumenia-sponsor.avakit.workers.dev/near").origin,
       "https://1click.chaindefuser.com",
       // A deployment that repoints a backend through the same env vars lib/network.ts reads.
       ...["NEXT_PUBLIC_SPONSOR_URL", "NEXT_PUBLIC_SPONSOR_URL_MAINNET", "NEXT_PUBLIC_HORIZON", "NEXT_PUBLIC_HORIZON_MAINNET", "NEXT_PUBLIC_SOROBAN_RPC", "NEXT_PUBLIC_SOROBAN_RPC_MAINNET"]

@@ -32,8 +32,16 @@ const nextConfig: NextConfig = {
   // the explorer, or any third party. Cover the page and its /og sub-path.
   // The public try-it surface moved from /demo to /try. Keep any old /demo link
   // (shared chats, QR codes, indexed URLs) alive with a permanent redirect.
+  // The NEAR hackathon build's chain-named pages moved too (one product: a network never names a
+  // path). The old video's end card and earlier posts still point at them, so each keeps a permanent
+  // redirect to the page that replaced it. A browser carries the #fragment across a redirect.
   async redirects() {
-    return [{ source: "/demo", destination: "/try", permanent: true }];
+    return [
+      { source: "/demo", destination: "/try", permanent: true },
+      { source: "/near", destination: "/try", permanent: true },
+      { source: "/near/send", destination: "/try/send", permanent: true },
+      { source: "/near/ledger", destination: "/ledger", permanent: true },
+    ];
   },
 
   /**
@@ -82,10 +90,11 @@ const nextConfig: NextConfig = {
       // Only reachable from the spike harness, which is build-gated off in production.
       ...(dev ? ["https://friendbot.stellar.org"] : []),
       // The NEAR rail (lib/near/config.ts): its RPC (one URL or several, comma-separated), the
-      // relayer that pays a pay-forward link's gas, and the 1Click quote service the claim page
-      // asks for a dry cross-chain quote. Same rule as above: derived from the env the code reads.
+      // relayer that pays a pay-forward link's gas and makes the practice balance's links (the
+      // sponsor's /near mount by default, so its origin is the sponsor's own), and the 1Click quote
+      // service the claim page asks for a dry cross-chain quote. Derived from the env the code reads.
       ...(process.env.NEXT_PUBLIC_NEAR_RPC ?? "https://test.rpc.fastnear.com").split(",").flatMap((u) => origin(u.trim())),
-      ...origin(process.env.NEXT_PUBLIC_NEAR_RELAYER_URL ?? "https://lumenia-near-relayer.avakit.workers.dev"),
+      ...origin(process.env.NEXT_PUBLIC_NEAR_RELAYER_URL ?? "https://lumenia-sponsor.avakit.workers.dev/near"),
       "https://1click.chaindefuser.com",
     ];
     // /brand-kit pulls Fontshare + Google Fonts, and 404s in production — so those hosts are

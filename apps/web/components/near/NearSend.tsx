@@ -3,9 +3,11 @@
 /**
  * /try/send, the practice-money sender. The shape is /send's: an amount, a link to share, a list of
  * what you sent with its live state. What differs is who signs: there is no Lumenia account on this
- * network yet, so the sender is a test account whose key lives in this tab's session only: the
- * shared practice balance (its key is public by design and set by the deployment), or an account
- * key the person pastes.
+ * network yet, so the sender is either
+ *   - the shared practice balance: the sponsor Worker signs the link itself (lib/near/practice.ts,
+ *     POST <relayer>/practice-link) and this tab sends only the link's PUBLIC key. No key of the
+ *     practice balance is ever part of this app; the tab reads the balance and nothing more;
+ *   - or an account key the person pastes, kept in this tab's session only, which signs here.
  *
  * ONE PRODUCT. Headings, buttons and notices say "account", "balance" and "network fee"; the
  * network itself is named only inside the Details disclosures (primitives.tsx) and on receipts.
@@ -29,7 +31,6 @@ import { useInterval, useLoadable, useNow } from "../../lib/near/hooks";
 import {
   NEAR_CONTRACT_ID,
   NEAR_DEMO_FUNDER_ID,
-  NEAR_DEMO_FUNDER_KEY,
   NEAR_MAX_LINK_UNITS,
   NEAR_NETWORK,
   NEAR_USDC_ID,
@@ -37,7 +38,8 @@ import {
   explorerTxUrl,
   nearLinkOrigin,
 } from "../../lib/near/config";
-import { demoSenderAvailable, linkLimits } from "../../lib/near/demo";
+import { DEMO_MAX_MEMO_BYTES, DEMO_MIN_LINK_UNITS, linkLimits, practiceAvailable } from "../../lib/near/demo";
+import { PRACTICE_COOLDOWN_S, PRACTICE_PER_DAY_PER_CONNECTION, requestPracticeLink, runPracticeLink } from "../../lib/near/practice";
 import { formatNear, formatUsd, formatUsdc, parseUsdcAmount } from "../../lib/near/amount";
 import { isValidAccountId } from "../../lib/near/account-id";
 import { MAX_MEMO_BYTES, buildDropMsg, isTerminal, memoBytes, type DropView } from "../../lib/near/drops";
@@ -50,7 +52,7 @@ import { chainResult, ftTransferCallUsedAmount, receiptFailure, txFailure } from
 import { canTakeBack, linkExpiresAt, linkStateOf, linkStatusLine, recordDrop, type LinkState } from "../../lib/near/link-state";
 import { CSV_BOM, linksCsv, type LinkCsvRow } from "../../lib/near/csv";
 import { describeRelayError } from "../../lib/near/pay-forward";
-import { buildSignedDelegateForReclaim, relay } from "../../lib/near/relayer";
+import { buildSignedDelegateForReclaim, relay, relayerBase } from "../../lib/near/relayer";
 import { sharedProvider } from "../../lib/near/chain";
 import {
   accountKey,
@@ -72,19 +74,46 @@ import "../site/app-theme.css";
 /** What LinkReadyCard says under the buttons here: the rail's own take-back rule. */
 const TAKE_BACK_NOTE =
   "Whoever holds the link can claim it, like cash in an envelope. If nobody claims it before it expires, take it back from Your links below. It does not come back by itself.";
+/** The same card for a practice link: its funder is the practice balance, so this browser cannot take it back. */
+const PRACTICE_NOTE =
+  "Whoever holds the link can claim it, like cash in an envelope. After it expires, nobody can claim it, and only the practice balance can take the money back.";
+
+/** The practice balance as a session: the configured account, and never a key. */
+const PRACTICE_SESSION: FunderSession = { accountId: NEAR_DEMO_FUNDER_ID, demo: true };
 
 export function NearSend() {
   const [funder, setFunder] = useState<FunderSession | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [version, setVersion] = useState(0);
   const [mode, setMode] = useState<"one" | "many">("one");
+  const [startOwn, setStartOwn] = useState(false);
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
-  // The session lives in sessionStorage, which the server render cannot see: read after mount.
+  // The session lives in sessionStorage, which the server render cannot see: read after mount. A
+  // practice session is re-saved as the configured account with no key, which also scrubs the shared
+  // key an older build kept in this tab's session.
   useEffect(() => {
-    setFunder(loadFunder());
+    const f = loadFunder();
+    if (f?.demo) {
+      if (practiceAvailable(NEAR_DEMO_FUNDER_ID, relayerBase())) {
+        saveFunder(PRACTICE_SESSION);
+        setFunder(PRACTICE_SESSION);
+      } else {
+        clearFunder();
+        setFunder(null);
+      }
+    } else {
+      setFunder(f);
+    }
     setHydrated(true);
   }, []);
+
+  const useOwnKey = () => {
+    clearFunder();
+    setFunder(null);
+    setStartOwn(true);
+    setMode("one");
+  };
 
   return (
     <div className="nr-column">
@@ -99,7 +128,7 @@ export function NearSend() {
           }}
         />
       ) : (
-        <FunderForm onReady={setFunder} />
+        <FunderForm onReady={setFunder} startOwn={startOwn} />
       )}
       {funder ? (
         <div className="nr-tabs" role="tablist" aria-label="What to send">
@@ -112,7 +141,7 @@ export function NearSend() {
         </div>
       ) : null}
       {funder && mode === "one" ? <CreateLink funder={funder} onChange={bump} /> : null}
-      {funder && mode === "many" ? <NearSendMany funder={funder} onChange={bump} /> : null}
+      {funder && mode === "many" ? <NearSendMany funder={funder} onChange={bump} onUseOwnKey={useOwnKey} /> : null}
       {hydrated ? <YourLinks funder={funder} version={version} onChange={bump} /> : null}
       <p className="nr-foot">
         Ready for an account of your own? <Link href="/start">Get started</Link>.
@@ -142,36 +171,20 @@ function ContractStatus() {
   return null;
 }
 
-function FunderForm({ onReady }: { onReady: (f: FunderSession) => void }) {
+function FunderForm({ onReady, startOwn = false }: { onReady: (f: FunderSession) => void; startOwn?: boolean }) {
   const [accountId, setAccountId] = useState("");
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
-  const [demoBusy, setDemoBusy] = useState(false);
-  const [own, setOwn] = useState(false);
+  const [own, setOwn] = useState(startOwn);
   const [err, setErr] = useState<string | null>(null);
-  const demoAvailable = demoSenderAvailable(NEAR_DEMO_FUNDER_ID, NEAR_DEMO_FUNDER_KEY);
+  const demoAvailable = practiceAvailable(NEAR_DEMO_FUNDER_ID, relayerBase());
 
-  const pickDemo = async () => {
+  /* Nothing to check and no key to hold: the Worker signs practice links, and this tab only reads the
+     balance. A browser that blocks session storage still gets the practice balance for this visit. */
+  const pickDemo = () => {
     setErr(null);
-    setDemoBusy(true);
-    try {
-      const kp = KeyPair.fromString(NEAR_DEMO_FUNDER_KEY as KeyPairString);
-      const ok = await keyBelongsToAccount(NEAR_DEMO_FUNDER_ID, kp.getPublicKey().toString());
-      if (!ok) {
-        setErr(`The practice balance ${NEAR_DEMO_FUNDER_ID} does not carry the configured key on this network. Use your own account key below.`);
-        return;
-      }
-      const f: FunderSession = { accountId: NEAR_DEMO_FUNDER_ID, secret: kp.toString(), demo: true };
-      if (!saveFunder(f)) {
-        setErr("This browser blocks session storage, so the sender cannot be kept for this tab.");
-        return;
-      }
-      onReady(f);
-    } catch (e) {
-      setErr(describeError(e));
-    } finally {
-      setDemoBusy(false);
-    }
+    saveFunder(PRACTICE_SESSION);
+    onReady(PRACTICE_SESSION);
   };
 
   const submit = async (e: FormEvent) => {
@@ -222,11 +235,10 @@ function FunderForm({ onReady }: { onReady: (f: FunderSession) => void }) {
       </div>
       {demoAvailable && !own ? (
         <>
-          <PrimaryButton onClick={() => void pickDemo()} loading={demoBusy} loadingLabel="Checking the practice balance...">
-            Use the shared practice balance
-          </PrimaryButton>
+          <PrimaryButton onClick={pickDemo}>Use the shared practice balance</PrimaryButton>
           <p className="text-xs text-ink-soft">
-            Up to $5.00 a link. The balance is shared with everyone trying this, so treat it as a playground.
+            $0.10 to $5.00 a link, one every {PRACTICE_COOLDOWN_S} seconds. The balance is shared with everyone trying this, so treat
+            it as a playground.
           </p>
           <button type="button" className="nr-link self-start" onClick={() => setOwn(true)}>
             Use your own account key instead
@@ -287,21 +299,23 @@ function FunderPanel({ funder, onForget }: { funder: FunderSession; onForget: ()
     [funder.accountId],
     15_000,
   );
-  const near = useLoadable(() => nearBalance(funder.accountId), [funder.accountId], 15_000);
+  // The fee balance is the person's own business on their own key; the practice balance's fee is Lumenia's.
+  const near = useLoadable(() => (funder.demo ? Promise.resolve(0n) : nearBalance(funder.accountId)), [funder.accountId, funder.demo], 15_000);
 
   return (
     <MoneyCard className="flex flex-col gap-3 p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-semibold text-ink">Sending from</p>
-          <p className="nr-mono mt-1 text-ink-soft">{funder.accountId}</p>
+          {funder.demo ? <p className="mt-1 text-ink-soft">The shared practice balance</p> : <p className="nr-mono mt-1 text-ink-soft">{funder.accountId}</p>}
         </div>
         <SmallButton onClick={onForget}>{funder.demo ? "Switch" : "Forget key"}</SmallButton>
       </div>
       {funder.demo ? (
         <Notice kind="warn">
-          Shared practice balance: anyone can use it and it may run low (refill at faucet.circle.com for {funder.accountId}).
-          Links are capped at $5.00 each here.
+          Shared practice balance: anyone can use it, so it may run low. Links are $0.10 to $5.00 each, one every{" "}
+          {PRACTICE_COOLDOWN_S} seconds and up to {PRACTICE_PER_DAY_PER_CONNECTION} a day from one connection. Lumenia makes the link and
+          covers the network fee; the link&apos;s key is made in this browser and stays here.
         </Notice>
       ) : null}
       <dl className="nr-kv">
@@ -328,7 +342,10 @@ function FunderPanel({ funder, onForget }: { funder: FunderSession; onForget: ()
       <Details
         rows={[
           ["Account", <span key="id" className="nr-mono">{funder.accountId}</span>],
-          [
+          funder.demo ? ["Network fee", "covered by Lumenia"] : null,
+          funder.demo
+            ? null
+            : [
             "Network fee balance",
             near.value.state === "loading" ? (
               "reading..."
@@ -382,6 +399,9 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
 
   useEffect(() => setCanStore(storageAvailable()), []);
 
+  const practice = !!funder.demo;
+  const memoLimit = practice ? DEMO_MAX_MEMO_BYTES : MAX_MEMO_BYTES;
+
   const run = async (existing?: StoredLink) => {
     setFormErr(null);
     let link: StoredLink;
@@ -390,11 +410,19 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
     } else {
       const parsed = parseUsdcAmount(amount, { maxUnits: limits.maxUnits });
       if (!parsed.ok) {
-        setFormErr(funder.demo && /limit here/.test(parsed.reason) ? "The shared practice balance is capped at $5.00 a link. Use your own account key for more." : parsed.reason);
+        setFormErr(practice && /limit here/.test(parsed.reason) ? "The shared practice balance is capped at $5.00 a link. Use your own account key for more." : parsed.reason);
         return;
       }
-      if (memoBytes(memo) > MAX_MEMO_BYTES) {
-        setFormErr(`The memo is too long for the contract (${memoBytes(memo)} of ${MAX_MEMO_BYTES} bytes).`);
+      if (practice && BigInt(parsed.units) < BigInt(DEMO_MIN_LINK_UNITS)) {
+        setFormErr("A practice link is at least $0.10.");
+        return;
+      }
+      if (memoBytes(memo) > memoLimit) {
+        setFormErr(
+          practice
+            ? `Practice links keep the memo to ${memoLimit} bytes (this one is ${memoBytes(memo)}).`
+            : `The memo is too long for the contract (${memoBytes(memo)} of ${memoLimit} bytes).`,
+        );
         return;
       }
       if (expiry > maxExpiry) {
@@ -411,10 +439,15 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
         createdAt: toIso(Date.now()),
         funder: funder.accountId,
         network: NEAR_NETWORK,
+        ...(practice ? { practice: true } : {}),
       };
     }
     setBusy(true);
     setResult(null);
+    if (practice) {
+      await runPractice(link, !!existing);
+      return;
+    }
     // The record and the key are kept BEFORE anything is signed: a crash mid-flight must never lose a funded link.
     setStep("Keeping the link safe");
     const kept = await saveLink(link);
@@ -430,6 +463,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
           return;
         }
       }
+      if (!funder.secret) throw new Error("This tab holds no account key to sign with. Choose who is sending again.");
       setStep("Signing and sending");
       const sent = await sendFunctionCall({
         signerId: funder.accountId,
@@ -490,13 +524,66 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
     }
   };
 
+  /**
+   * The shared practice balance: the Worker makes the link and this tab sends only its public key
+   * (lib/near/practice.ts). The record and the key are kept BEFORE the request leaves; a refusal the
+   * Worker gives before signing drops a fresh record again, and anything else keeps it for a retry
+   * that asks the chain first.
+   */
+  const runPractice = async (link: StoredLink, retry: boolean) => {
+    try {
+      if (retry) {
+        setStep("Checking the chain");
+        const already = await getDrop(link.publicKey);
+        if (already) {
+          recordDrop(link.publicKey, already);
+          setResult({ kind: "created", link: { ...link, lastStatus: already.status }, txHash: link.createTxHash ?? null, kept: true });
+          return;
+        }
+      }
+      setStep("Making the link");
+      const r = await runPracticeLink(
+        link,
+        { saveLink, updateLink: upsertLink, removeLink, request: (body) => requestPracticeLink(relayerBase(), body) },
+        { retry },
+      );
+      onChange();
+      if (r.kind === "created") {
+        setStep("Confirming the link");
+        const drop = await pollDrop(link.publicKey, 20_000);
+        if (drop) recordDrop(link.publicKey, drop);
+        setResult({ kind: "created", link: { ...r.link, lastStatus: drop?.status }, txHash: r.txHash, kept: r.kept });
+      } else if (r.kind === "refunded") {
+        // The escrow refuses a key it already holds: on a retry, an earlier attempt may be the one that made the link.
+        const already = await getDrop(link.publicKey).catch(() => null);
+        if (already) {
+          recordDrop(link.publicKey, already);
+          setResult({ kind: "created", link: { ...r.link, lastStatus: already.status }, txHash: r.txHash, kept: true });
+        } else {
+          setResult({ kind: "failed", link: r.link, txHash: r.txHash, retryable: false, message: `The escrow did not keep the money, so it went back to the practice balance: ${r.reason}` });
+        }
+      } else {
+        // A kept record (an unknown outcome, or a refused retry of one) can be retried with the same key; a dropped one cannot.
+        setResult({ kind: "failed", link: r.link, txHash: null, retryable: r.kind === "unknown" || !r.removed, message: r.message });
+      }
+    } catch (e) {
+      const message = describeError(e);
+      upsertLink({ publicKey: link.publicKey, createError: message });
+      setResult({ kind: "failed", link, txHash: link.createTxHash ?? null, message, retryable: true });
+    } finally {
+      setBusy(false);
+      setStep("");
+      onChange();
+    }
+  };
+
   if (result?.kind === "created") {
     return (
       <LinkCreated
         link={result.link}
         txHash={result.txHash}
         kept={result.kept}
-        feeNote={funder.demo ? "paid by the practice balance" : "paid by your account"}
+        feeNote={practice ? "covered by Lumenia" : "paid by your account"}
         onAnother={() => {
           setResult(null);
           setMemo("");
@@ -521,7 +608,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
             <input id="nr-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1.00" autoComplete="off" />
           </div>
         </Field>
-        <Field label="The link expires in" htmlFor="nr-expiry" hint="After that, the money can be taken back by you.">
+        <Field label="The link expires in" htmlFor="nr-expiry" hint={practice ? "After that, nobody can claim it." : "After that, the money can be taken back by you."}>
           <select id="nr-expiry" className="nr-select" value={expiry} onChange={(e) => setExpiry(Number(e.target.value))}>
             {expiryOptions.map((o) => (
               <option key={o.seconds} value={o.seconds}>
@@ -531,7 +618,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
           </select>
         </Field>
         <Field label="Memo (optional)" htmlFor="nr-memo" hint="Stored on the public ledger with the link, shown to the person who opens it.">
-          <input id="nr-memo" className="nr-input" value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="For the concert tickets" maxLength={MAX_MEMO_BYTES} />
+          <input id="nr-memo" className="nr-input" value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="For the concert tickets" maxLength={memoLimit} />
         </Field>
         {formErr ? <Notice kind="error">{formErr}</Notice> : null}
         {paused ? <Notice kind="warn">The escrow is paused for new links right now. Existing links can still be claimed.</Notice> : null}
@@ -541,7 +628,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
             {result.message}
             {result.txHash ? (
               <div className="mt-2">
-                <Details rows={[["Status", "not created"], ["Network fee", funder.demo ? "paid by the practice balance" : "paid by your account"]]} explorer={[["View the transaction on explorer", explorerTxUrl(result.txHash)]]} />
+                <Details rows={[["Status", "not created"], ["Network fee", practice ? "covered by Lumenia" : "paid by your account"]]} explorer={[["View the transaction on explorer", explorerTxUrl(result.txHash)]]} />
               </div>
             ) : null}
           </Notice>
@@ -582,7 +669,7 @@ function LinkCreated({ link, txHash, kept, feeNote, onAnother }: { link: StoredL
   return (
     <div className="flex flex-col gap-3">
       <p className="text-center text-3xl font-bold tabular-nums text-ink">{formatUsd(link.amountUnits)}</p>
-      <LinkReadyCard link={url} balanceId={link.publicKey} title="Your link is ready" trackHref={null} footnote={TAKE_BACK_NOTE} beacon={false} />
+      <LinkReadyCard link={url} balanceId={link.publicKey} title="Your link is ready" trackHref={null} footnote={link.practice ? PRACTICE_NOTE : TAKE_BACK_NOTE} beacon={false} />
       <MoneyCard className="flex flex-col gap-2 p-4">
         <StateLine state={state} />
         <p className="text-sm text-ink-soft">{linkStatusLine(live, now)}</p>
@@ -719,7 +806,8 @@ function YourLinks({ funder, version, onChange }: { funder: FunderSession | null
   };
 
   const reclaim = async (l: StoredLink) => {
-    if (!funder) return;
+    // Only a pasted account key signs a take-back here; a practice link's funder key is never in a browser.
+    if (!funder?.secret || l.practice) return;
     setBusyKey(l.publicKey);
     setRowErr((m) => ({ ...m, [l.publicKey]: "" }));
     try {
@@ -770,7 +858,7 @@ function YourLinks({ funder, version, onChange }: { funder: FunderSession | null
             const expiredNow = canTakeBack(l, now);
             const mine = !!funder && funder.accountId === l.funder;
             const owner = relayedOwner(l);
-            const canReclaim = mine && expiredNow;
+            const canReclaim = mine && expiredNow && !l.practice && !!funder?.secret;
             const canReclaimViaRelayer = !canReclaim && expiredNow && owner !== undefined;
             const url = urls[l.publicKey];
             const err = rowErr[l.publicKey];
@@ -797,9 +885,9 @@ function YourLinks({ funder, version, onChange }: { funder: FunderSession | null
                     ["Made", formatLocal(Date.parse(l.createdAt))],
                     ["Status", linkStatusLine(l, now)],
                     ["Amount", formatUsd(l.amountUnits)],
-                    ["Network fee", l.relayed ? "covered by Lumenia" : mine ? (funder?.demo ? "paid by the practice balance" : "paid by your account") : `paid by ${l.funder}`],
+                    ["Network fee", l.relayed || l.practice ? "covered by Lumenia" : mine ? "paid by your account" : `paid by ${l.funder}`],
                     ["Expires", formatLocal(linkExpiresAt(l))],
-                    !mine ? ["Sent from", <span key="from" className="nr-mono">{l.funder}</span>] : null,
+                    l.practice ? ["Sent from", "the shared practice balance"] : !mine ? ["Sent from", <span key="from" className="nr-mono">{l.funder}</span>] : null,
                     l.lastStatus === "Claimed" && l.claimedTo ? ["Claimed by", <span key="to" className="nr-mono">{l.claimedTo}</span>] : null,
                   ]}
                   explorer={[

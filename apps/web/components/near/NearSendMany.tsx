@@ -5,6 +5,10 @@
  * the sender's own bookkeeping and never leaves this browser (it travels into the CSV export, not
  * into the chain). Every key is generated and kept BEFORE the transfer is signed, the same rule the
  * single link follows; the escrow refunds the whole batch if any row is off, so nothing half-lands.
+ *
+ * Own account key only. The shared practice balance makes one link per request, one request every
+ * 30 seconds (lib/near/practice.ts), so a batch from it would be a slow loop pretending to be one
+ * transaction: in practice mode this tab says so and offers the own-key path instead.
  */
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import type { KeyPairString } from "near-api-js";
@@ -14,7 +18,6 @@ import { PrimaryButton } from "../brand/PrimaryButton";
 import { CopyButton, Details, ExplorerLink, Field, Notice, SmallButton, StateLine } from "./primitives";
 import { useInterval, useLoadable, useNow } from "../../lib/near/hooks";
 import { NEAR_CONTRACT_ID, NEAR_MAX_LINK_UNITS, NEAR_NETWORK, NEAR_USDC_ID, explorerTxUrl, nearLinkOrigin } from "../../lib/near/config";
-import { linkLimits } from "../../lib/near/demo";
 import { formatUsd } from "../../lib/near/amount";
 import { DEFAULT_MIN_AMOUNT_UNITS, MAX_BATCH_DROPS, buildBatchMsg, parseBatchRows, type BatchRow } from "../../lib/near/batch";
 import { describeError } from "../../lib/near/errors";
@@ -32,7 +35,29 @@ type Outcome =
   | { kind: "created"; batchId: string; txHash: string; confirmed: number; expected: number; links: StoredLink[] }
   | { kind: "failed"; batchId: string; txHash: string | null; message: string };
 
-export function NearSendMany({ funder, onChange }: { funder: FunderSession; onChange: () => void }) {
+export function NearSendMany({ funder, onChange, onUseOwnKey }: { funder: FunderSession; onChange: () => void; onUseOwnKey?: () => void }) {
+  if (funder.demo || !funder.secret) return <PracticeManyNote onUseOwnKey={onUseOwnKey} />;
+  return <SendManyForm funder={{ accountId: funder.accountId, secret: funder.secret }} onChange={onChange} />;
+}
+
+function PracticeManyNote({ onUseOwnKey }: { onUseOwnKey?: () => void }) {
+  return (
+    <MoneyCard className="flex flex-col gap-3 p-5">
+      <p className="font-semibold text-ink">Send to many</p>
+      <p className="text-sm text-ink-soft">
+        The shared practice balance makes one link at a time. Send to many puts every link in one transaction from your own
+        account, so it needs your own account key.
+      </p>
+      {onUseOwnKey ? (
+        <SmallButton className="self-start" onClick={onUseOwnKey}>
+          Use your own account key
+        </SmallButton>
+      ) : null}
+    </MoneyCard>
+  );
+}
+
+function SendManyForm({ funder, onChange }: { funder: { accountId: string; secret: string }; onChange: () => void }) {
   const [text, setText] = useState("");
   const [expiry, setExpiry] = useState<number>(DEFAULT_EXPIRY_S);
   const [busy, setBusy] = useState(false);
@@ -42,7 +67,7 @@ export function NearSendMany({ funder, onChange }: { funder: FunderSession; onCh
   const balance = useLoadable(() => usdcBalance(funder.accountId), [funder.accountId], 15_000);
   const minUnits = config.value.state === "ready" ? (config.value.value.min_amount ?? DEFAULT_MIN_AMOUNT_UNITS) : DEFAULT_MIN_AMOUNT_UNITS;
   const maxExpiry = config.value.state === "ready" ? config.value.value.max_expiry_s : Number.MAX_SAFE_INTEGER;
-  const maxUnitsPerRow = linkLimits(!!funder.demo, NEAR_MAX_LINK_UNITS).maxUnits;
+  const maxUnitsPerRow = NEAR_MAX_LINK_UNITS;
   const parsed = useMemo(() => parseBatchRows(text, { minUnits, maxUnitsPerRow }), [text, minUnits, maxUnitsPerRow]);
   const balanceUnits = balance.value.state === "ready" ? BigInt(balance.value.value) : null;
   const overBalance = balanceUnits !== null && BigInt(parsed.totalUnits) > balanceUnits;
@@ -132,7 +157,7 @@ export function NearSendMany({ funder, onChange }: { funder: FunderSession; onCh
   };
 
   if (outcome?.kind === "created") {
-    return <BatchCreated outcome={outcome} feeNote={funder.demo ? "paid by the practice balance" : "paid by your account"} onAnother={() => setOutcome(null)} />;
+    return <BatchCreated outcome={outcome} feeNote="paid by your account" onAnother={() => setOutcome(null)} />;
   }
 
   return (

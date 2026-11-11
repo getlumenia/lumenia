@@ -55,6 +55,12 @@ export interface StoredLink {
   /** created through the relayer by an account whose key lives in this browser's claims; take-back goes the same way */
   relayed?: boolean;
   relayerExplorerUrl?: string;
+  /**
+   * Made from the shared practice balance: the sponsor Worker funded it (its `funder` is the account
+   * the Worker answered with), so this browser holds the link's key but no key of the funder, and
+   * cannot take it back.
+   */
+  practice?: boolean;
 }
 
 export interface ClaimedAccount {
@@ -69,8 +75,12 @@ export interface ClaimedAccount {
 
 export interface FunderSession {
   accountId: string;
-  secret: string;
-  /** signed in through "Use the demo sender" (shared testnet account, tighter caps) */
+  /**
+   * The pasted account key of "Use your own account key". Absent on a practice session: the
+   * sponsor Worker signs practice links itself and no key of the practice balance reaches a browser.
+   */
+  secret?: string;
+  /** the shared practice balance (links made by the Worker, tighter caps); carries no key */
   demo?: boolean;
 }
 
@@ -315,12 +325,16 @@ export function accountKey(accountId: string): Promise<string | null> {
 export function loadFunder(): FunderSession | null {
   const v = readJson<unknown>(session(), FUNDER_KEY, null);
   if (!v || typeof v !== "object") return null;
-  const f = v as FunderSession;
-  return typeof f.accountId === "string" && typeof f.secret === "string" ? f : null;
+  const f = v as Partial<FunderSession>;
+  if (typeof f.accountId !== "string") return null;
+  // A practice session is a choice, never a key. One saved before the Worker made practice links held
+  // the old shared key: it is dropped here and never used (the caller re-saves the session without it).
+  if (f.demo === true) return { accountId: f.accountId, demo: true };
+  return typeof f.secret === "string" && f.secret !== "" ? { accountId: f.accountId, secret: f.secret } : null;
 }
 
 export function saveFunder(f: FunderSession): boolean {
-  return writeJson(session(), FUNDER_KEY, f);
+  return writeJson(session(), FUNDER_KEY, f.demo ? { accountId: f.accountId, demo: true } : { accountId: f.accountId, secret: f.secret });
 }
 
 export function clearFunder(): void {

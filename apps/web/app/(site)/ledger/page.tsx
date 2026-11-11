@@ -3,14 +3,14 @@
  * The first totals come from the server (revalidated each minute); the island re-reads every 15 s.
  * Amounts and short account ids only: memos are private to the two people involved.
  *
- * ONE PRODUCT. The network is a detail line under the lead (and the explorer links on each row);
+ * ONE PRODUCT. No network badge in the header: the network is named only inside the Details
+ * disclosure under the ledger's footnote and inside each row's Details (with the explorer links);
  * the title, the eyebrow and the copy speak of the ledger, the escrow and the links.
  */
 import type { Metadata } from "next";
 import { Footer } from "../../../components/site/sections/Footer";
 import { Mascot } from "../../../components/brand/Mascot";
 import { NearLedger } from "../../../components/near/NearLedger";
-import { NEAR_CONTRACT_ID, NEAR_NETWORK } from "../../../lib/near/config";
 import { getStats } from "../../../lib/near/rpc";
 import "../../../components/site/page.css";
 import "../../../components/near/near.css";
@@ -53,13 +53,6 @@ export default async function LedgerPage() {
             <p className="pg-lead">
               Every link made with practice money through Lumenia&apos;s escrow, newest first, read from
               the ledger itself and refreshed every 15 seconds. Amounts and short account ids only.
-            </p>
-            {/* One span inside the flex badge, so the sentence flows as a sentence (each bare text node
-                would otherwise become its own flex item and the gaps would split it). */}
-            <p className="nr-badge">
-              <span>
-                Network: <b>NEAR {NEAR_NETWORK}</b>, escrow account <b>{NEAR_CONTRACT_ID}</b>
-              </span>
             </p>
           </div>
           <div className="nr-hero-figure nr-ledger-mascot">

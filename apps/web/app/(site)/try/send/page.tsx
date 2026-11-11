@@ -1,7 +1,9 @@
 /**
  * /try/send: send a link with practice money. Server shell, client island (components/near/
- * NearSend.tsx); the island holds a session key and signs, so nothing about a send is rendered on
- * the server. Not indexed: a money surface, like /send.
+ * NearSend.tsx): the island either asks the sponsor Worker to make a link from the shared practice
+ * balance (only the link's public key leaves the tab) or signs with an account key pasted for this
+ * tab's session, so nothing about a send is rendered on the server. Not indexed: a money surface,
+ * like /send.
  *
  * ONE PRODUCT. The network this practice balance lives on is an implementation detail: it is named
  * only in the "Details" line under the form (components/near/primitives.tsx NetworkDetails), on

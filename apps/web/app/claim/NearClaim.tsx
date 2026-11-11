@@ -33,7 +33,7 @@ import { MoneyCard } from "../../components/brand/MoneyCard";
 import { PrimaryButton } from "../../components/brand/PrimaryButton";
 import { CopyButton, Details, ExplorerLink, Field, Notice, PracticeBand, SmallButton, Spinner, StateLine, downloadText, escrowExplorer, escrowRows } from "../../components/near/primitives";
 import { useInterval, useLoadable, useNow } from "../../lib/near/hooks";
-import { NEAR_CONTRACT_ID, NEAR_IS_TESTNET, NEAR_NETWORK, explorerAccountUrl, explorerTxUrl } from "../../lib/near/config";
+import { NEAR_CONTRACT_ID, NEAR_DEMO_FUNDER_ID, NEAR_IS_TESTNET, NEAR_NETWORK, explorerAccountUrl, explorerTxUrl } from "../../lib/near/config";
 import { formatNear, formatUsd } from "../../lib/near/amount";
 import { isImplicitAccountId, isValidAccountId } from "../../lib/near/account-id";
 import { NAME_RULES, availabilityFromLookup, checkName, type Availability } from "../../lib/near/names";
@@ -56,6 +56,14 @@ import { sendFunctionCall } from "../../lib/near/chain";
 import { chainResult, receiptFailure, txFailure } from "../../lib/near/outcome";
 import { accountKey, claimForDrop, saveClaim, secretStoreReady, upsertClaim, type ClaimedAccount } from "../../lib/near/store";
 import { PayForwardCard } from "./NearPayForward";
+
+/**
+ * The claim button's label never changes and never names an account or a network: "Create my account
+ * and claim $1.00". One line at 375 px (the padding narrows and the size steps down a notch on a phone);
+ * a long amount on a narrower screen wraps into two even lines instead of spilling out of the pill.
+ */
+const CLAIM_CTA = "h-auto min-h-14 px-4 py-2 text-[15px] leading-tight whitespace-normal text-balance sm:px-8 sm:text-base";
+const claimLabel = (amount: string) => `Create my account and claim ${amount}`;
 
 type ClaimState =
   | { kind: "idle" }
@@ -518,8 +526,15 @@ function Claim({ secret }: { secret: KeyPairString }) {
           refundAccount={async () => (await ensureRecipientAccount()).accountId}
         />
         <p className="nc-foot">
-          Sent by <span className="nc-mono">{drop.funder}</span>. Nothing moves until you choose. The link&apos;s key stays in your browser;
-          it never reaches a server.
+          {/* A practice link is funded by the sponsor's own account: say what it is, not its technical name (that is in Details). */}
+          {NEAR_DEMO_FUNDER_ID && drop.funder === NEAR_DEMO_FUNDER_ID ? (
+            <>Sent from the shared practice balance.</>
+          ) : (
+            <>
+              Sent by <span className="nc-mono">{drop.funder}</span>.
+            </>
+          )}{" "}
+          Nothing moves until you choose. The link&apos;s key stays in your browser; it never reaches a server.
         </p>
         <Details
           rows={[
@@ -528,6 +543,7 @@ function Claim({ secret }: { secret: KeyPairString }) {
             ["Status", "Waiting for you"],
             ["Amount", amount],
             ["Network fee", "covered by Lumenia"],
+            ["Sent by", <span key="from" className="nc-mono">{drop.funder}</span>],
             ...escrowRows(),
           ]}
           explorer={escrowExplorer()}
@@ -580,8 +596,8 @@ function Choices({
                 this browser; you save it right after.
                 {mine?.kind === "implicit" ? ` This browser already prepared an address (${mine.accountId.slice(0, 8)}...); the same one will be used.` : ""}
               </p>
-              <PrimaryButton onClick={onNew} loading={busy || canKeep === null} loadingLabel="One moment...">
-                Create my account and claim {amount}
+              <PrimaryButton className={CLAIM_CTA} onClick={onNew} loading={busy || canKeep === null} loadingLabel="One moment...">
+                {claimLabel(amount)}
               </PrimaryButton>
               <button type="button" className="nr-link self-start" onClick={() => setUseName(true)}>
                 Prefer a name? Pick one instead
@@ -702,17 +718,17 @@ function NamedForm({ busy, amount, onSubmit, onSkip }: { busy: boolean; amount: 
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
       <p className="text-sm text-ink-soft">Pick a name for your new account. The money lands in it and the key stays with you.</p>
+      {/* The address is said ONCE, quietly, under the field: never in the button, never in the status line. */}
       <Field
         label="Your name"
         htmlFor="nc-name"
         hint={
-          <>
-            {NAME_RULES}. Your account address will be{" "}
+          <span className="nc-address">
+            Your account address:{" "}
             <span className="nc-mono">
               {name.trim().toLowerCase() || "yourname"}.{root ?? NEAR_NETWORK}
             </span>
-            .
-          </>
+          </span>
         }
       >
         <div className="nr-suffix">
@@ -741,25 +757,25 @@ function NamedForm({ busy, amount, onSubmit, onSkip }: { busy: boolean; amount: 
           status.reason
         ) : status.kind === "checking" ? (
           <>
-            <Spinner /> Checking {status.accountId}...
+            <Spinner /> Checking the name...
           </>
         ) : status.kind === "checked" && status.availability === "free" ? (
-          `${status.accountId} is free`
+          "That name is free"
         ) : status.kind === "checked" && status.availability === "taken" ? (
-          `${status.accountId} is already taken, try another`
+          "That name is already taken, try another"
         ) : status.kind === "checked" ? (
           <>
-            Could not check {status.accountId}: {status.message}{" "}
+            Could not check the name: {status.message}{" "}
             <button type="button" className="nr-link" onClick={recheck}>
               retry
             </button>
           </>
         ) : (
-          "We check whether the name is free as you type."
+          `${NAME_RULES}. We check whether it is free as you type.`
         )}
       </div>
-      <PrimaryButton type="submit" loading={busy} loadingLabel="One moment..." disabled={!free}>
-        {free ? `Create ${status.accountId} and claim ${amount}` : `Create my account and claim ${amount}`}
+      <PrimaryButton className={CLAIM_CTA} type="submit" loading={busy} loadingLabel="One moment..." disabled={!free}>
+        {claimLabel(amount)}
       </PrimaryButton>
       <button type="button" className="nr-link nr-link--quiet self-start" onClick={onSkip}>
         Skip the name, use an address instead

@@ -61,8 +61,15 @@ export function linkStatusLine(l: StoredLink, now: number): string {
   const expiresAt = linkExpiresAt(l);
   const expired = isExpired(expiresAt, now);
   if (!status) return l.createError ? `Not confirmed yet (${l.createError})` : "Not confirmed yet";
-  if (status === "Open") return expired ? "Expired. You can take the money back." : `Waiting. Expires in ${formatRemaining(expiresAt - now)}.`;
-  if (status === "Claiming") return canTakeBack(l, now) ? "A claim got stuck. You can take the money back." : "Being claimed right now.";
+  // A practice link's money belongs to the shared practice balance: this browser cannot take it back.
+  if (status === "Open") {
+    if (!expired) return `Waiting. Expires in ${formatRemaining(expiresAt - now)}.`;
+    return l.practice ? "Expired. Nobody can claim it now." : "Expired. You can take the money back.";
+  }
+  if (status === "Claiming") {
+    if (!canTakeBack(l, now)) return "Being claimed right now.";
+    return l.practice ? "A claim got stuck." : "A claim got stuck. You can take the money back.";
+  }
   if (status === "Claimed") return l.claimedTo ? `Claimed by ${l.claimedTo}.` : "Claimed.";
-  return "Returned to you.";
+  return l.practice ? "Returned to the practice balance." : "Returned to you.";
 }

@@ -29,21 +29,26 @@ export const NEAR_USDC_ID =
 export const NEAR_RPC = trimmed(process.env.NEXT_PUBLIC_NEAR_RPC) || "https://test.rpc.fastnear.com";
 
 /**
- * The relayer that pays the gas of a pay-forward link or a relayed take-back. A BASE url: the client
- * posts to `${base}/relay` and reads `${base}/health` and `${base}/policy`, so the same code serves
- * the standalone Worker of the hackathon build and the sponsor's `/near` mount that replaces it.
+ * The sponsor's NEAR mount: it pays the gas of a pay-forward link or a relayed take-back, and makes
+ * the shared practice balance's links. A BASE url: the client posts to `${base}/relay` and
+ * `${base}/practice-link`, and reads `${base}/health` and `${base}/policy`. The default is the testnet
+ * sponsor Worker's mount, the only relayer that serves practice links.
  */
 export const NEAR_RELAYER_URL = (
-  trimmed(process.env.NEXT_PUBLIC_NEAR_RELAYER_URL) || "https://lumenia-near-relayer.avakit.workers.dev"
+  trimmed(process.env.NEXT_PUBLIC_NEAR_RELAYER_URL) || "https://lumenia-sponsor.avakit.workers.dev/near"
 ).replace(/\/+$/, "");
 
 /**
- * The shared demo sender: a throwaway testnet account whose key is public by design, so a judge
- * can make a link without owning a NEAR account. Both values come from the deployment; the button
- * appears only when both are set (lib/near/demo.ts demoSenderAvailable).
+ * The shared practice balance: the account whose test USDC funds a practice link. The sponsor
+ * Worker signs those links itself (POST `${NEAR_RELAYER_URL}/practice-link`), so the browser never
+ * holds a key of this account: the id is here only to read its balance (ft_balance_of). It must name
+ * the account the Worker funds practice links from (the relayer account, NEAR_RELAYER_ACCOUNT_ID on
+ * the Worker). The button appears only when it is set (lib/near/demo.ts practiceAvailable).
  */
-export const NEAR_DEMO_FUNDER_ID = trimmed(process.env.NEXT_PUBLIC_NEAR_DEMO_FUNDER_ID);
-export const NEAR_DEMO_FUNDER_KEY = trimmed(process.env.NEXT_PUBLIC_NEAR_DEMO_FUNDER_KEY);
+// The practice balance lives on the sponsor's relayer account, which creates practice links server-side
+// (POST /near/practice-link); the browser only reads its balance. A new variable name on purpose: the old
+// NEXT_PUBLIC_NEAR_DEMO_FUNDER_ID / _KEY pair (a browser-held key) is no longer read anywhere.
+export const NEAR_DEMO_FUNDER_ID = trimmed(process.env.NEXT_PUBLIC_NEAR_PRACTICE_ACCOUNT_ID) || "lumenia-relayer.testnet";
 
 export const NEAR_EXPLORER = NEAR_NETWORK === "mainnet" ? "https://nearblocks.io" : "https://testnet.nearblocks.io";
 
