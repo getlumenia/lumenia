@@ -586,6 +586,12 @@ async function sectionC() {
       "https://horizon.stellar.org",
       "https://soroban-testnet.stellar.org",
       "https://mainnet.sorobanrpc.com",
+      // The NEAR rail (lib/near/config.ts): its RPC (one URL or a comma-separated list), the relayer
+      // that pays a pay-forward link's gas, and the 1Click quote service the claim screen asks for a
+      // dry cross-chain quote. Derived from the same env next.config.ts reads, defaults included.
+      ...(process.env.NEXT_PUBLIC_NEAR_RPC ?? "https://test.rpc.fastnear.com").split(",").map((u) => u.trim()).filter(Boolean).map((u) => new URL(u).origin),
+      new URL(process.env.NEXT_PUBLIC_NEAR_RELAYER_URL ?? "https://lumenia-near-relayer.avakit.workers.dev").origin,
+      "https://1click.chaindefuser.com",
       // A deployment that repoints a backend through the same env vars lib/network.ts reads.
       ...["NEXT_PUBLIC_SPONSOR_URL", "NEXT_PUBLIC_SPONSOR_URL_MAINNET", "NEXT_PUBLIC_HORIZON", "NEXT_PUBLIC_HORIZON_MAINNET", "NEXT_PUBLIC_SOROBAN_RPC", "NEXT_PUBLIC_SOROBAN_RPC_MAINNET"]
         .map((k) => process.env[k])
@@ -606,7 +612,7 @@ async function sectionC() {
     ok(`${mode}: script-src is exactly 'self' 'unsafe-inline' 'wasm-unsafe-eval' (no remote script origin, no eval)`, script.join(" ") === "'self' 'unsafe-inline' 'wasm-unsafe-eval'", script.join(" "));
     const connect = dir("connect-src") ?? [];
     const extra = connect.filter((t) => !allowedConnect.has(t) && !(mode === "development" && t === "https://friendbot.stellar.org"));
-    ok(`${mode}: connect-src is only our two Workers and the public Stellar servers (Horizon and RPC, both networks)`, connect.length > 1 && extra.length === 0, extra.join(" ") || connect.join(" "));
+    ok(`${mode}: connect-src is only our two Workers, the public Stellar servers (Horizon and RPC, both networks) and the NEAR rail's RPC, relayer and 1Click`, connect.length > 1 && extra.length === 0, extra.join(" ") || connect.join(" "));
     ok(`${mode}: img-src names no remote host ('self', data: and blob: only)`, (dir("img-src") ?? []).every((t) => ["'self'", "data:", "blob:"].includes(t)) && (dir("img-src") ?? []).length > 0);
     ok(
       `${mode}: default-src 'self'; object-src, base-uri and frame-ancestors 'none'; no 'unsafe-eval' anywhere`,

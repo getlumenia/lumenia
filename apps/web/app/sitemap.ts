@@ -26,6 +26,8 @@ const MODIFIED: Record<string, string> = {
   "/developers": "2026-07-16",
   "/roadmap": "2026-10-09", // the take-back line
   "/stats": "2026-07-18",
+  "/near": "2026-11-11", // the NEAR rail, built at NEAR HACKATHON 2026
+  "/near/ledger": "2026-11-11",
   "/tools": "2026-07-16",
   "/tools/verify": "2026-07-16",
   "/tools/link-check": "2026-10-09", // the take-back line
@@ -62,6 +64,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
     page("/developers", 0.6, "monthly"),
     page("/roadmap", 0.5, "monthly"),
     page("/stats", 0.5, "monthly"),
+    page("/near", 0.7, "weekly"),
+    page("/near/ledger", 0.5, "weekly"),
     page("/tools", 0.5, "monthly"),
     page("/tools/verify", 0.4, "monthly"),
     page("/tools/link-check", 0.4, "monthly"),

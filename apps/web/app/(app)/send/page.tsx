@@ -1042,6 +1042,14 @@ export default function SendPage() {
               Paying for a group? One link, many people.
             </Link>
           )}
+          {/* The second rail (NEAR HACKATHON 2026), one line and out of the way: the same product on
+              NEAR testnet, with its own sender. prefetch={false}: a prefetched route hoists its own
+              images into this document (docs/SITE_REDESIGN.md section 5). */}
+          {!paying && (
+            <Link href="/near/send" prefetch={false} className="text-sm text-ink-soft underline-offset-2 hover:text-ink hover:underline">
+              Also available: send on NEAR (testnet).
+            </Link>
+          )}
           {/* THE SECOND WAY IN (Stellar Wallets Kit, D7): a link paid for by a wallet the person
               already has. Behind NEXT_PUBLIC_WALLETS_KIT so a deployment advertises it only once
               it has been walked through a real wallet on a real device. Links only. */}

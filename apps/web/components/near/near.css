@@ -1,0 +1,266 @@
+/*
+ * The NEAR rail's pages on the (site) group: /near (the rail, explained), /near/send (the sender)
+ * and /near/ledger (the public ledger). Sits on page.css (ground, hero, buttons) and is written
+ * against the --pw-* tokens, so both themes come for free.
+ *
+ * The money screens reuse the (app) group's brand components (MoneyCard, PrimaryButton,
+ * LinkReadyCard, StatusPill), which are written in the Tailwind brand utilities (bg-money,
+ * text-ink, border-line ...). Those resolve to var(--money), var(--ink), var(--line) ..., which at
+ * :root are the light palette only. The first block below re-points them at the --pw-* tokens
+ * inside the rail's root, the same trick app-theme.css plays for the app group: one scope class,
+ * both themes, no component rewritten. The token scope and the page root are the SAME class
+ * (`.pg.nr`), for the reason docs/SITE_REDESIGN.md section 5 gives: one class cannot be half-applied.
+ */
+.pg.nr {
+  --paper: var(--pw-paper);
+  --surface: var(--pw-surface);
+  --ink: var(--pw-ink);
+  --ink-soft: var(--pw-muted);
+  --line: var(--pw-line);
+  --money: var(--pw-accent);
+  --money-pressed: var(--pw-accent-hover);
+  --joy: var(--pw-accent);
+  --danger: var(--pw-danger);
+  --primary-foreground: var(--pw-on-accent);
+  --secondary: color-mix(in srgb, var(--pw-accent) 14%, var(--pw-surface));
+  --secondary-foreground: var(--pw-ink);
+  --muted: color-mix(in srgb, var(--pw-accent) 10%, var(--pw-surface));
+  --accent: color-mix(in srgb, var(--pw-accent) 14%, var(--pw-surface));
+  --ring: var(--pw-accent);
+  --background: var(--pw-paper);
+  --foreground: var(--pw-ink);
+  --primary: var(--pw-accent);
+}
+
+/* ---- Hero: copy left, the messenger right; stacked on a phone ------------------------------ */
+.nr-hero-inner { display: grid; grid-template-columns: 1fr; gap: clamp(28px, 4vw, 56px); align-items: center }
+.nr-hero-figure { order: -1; display: flex; justify-content: center }
+@media (min-width: 900px) {
+  .nr-hero-inner { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr) }
+  .nr-hero-figure { order: 0 }
+}
+/* A shorter hero for the working pages: the task starts closer to the top. */
+.nr-hero--short { padding-top: clamp(96px, 13vh, 140px); padding-bottom: clamp(28px, 5vh, 48px) }
+.nr-hero--short .pg-lead { margin-top: 14px }
+.nr-badge {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 18px;
+  padding: 7px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--pw-muted);
+  border: 1px solid var(--pw-line); background: var(--pw-surface);
+}
+.nr-badge b { color: var(--pw-ink); font-weight: 600 }
+
+/* ---- Bodies -------------------------------------------------------------------------------- */
+.nr-body {
+  position: relative; z-index: 2; background: var(--pw-paper);
+  padding: 0 clamp(20px, 6vw, 64px) clamp(72px, 11vh, 130px);
+}
+.nr-inner { max-width: 940px; margin: 0 auto }
+.nr-column { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px }
+.nr-section + .nr-section { margin-top: clamp(56px, 9vh, 96px) }
+.nr-h2 {
+  font-family: "Sentient", Georgia, serif; font-weight: 600;
+  font-size: clamp(26px, 3vw, 40px); line-height: 1.08; letter-spacing: -.02em; color: var(--pw-ink); text-wrap: balance;
+}
+.nr-sub { margin-top: 12px; font-size: clamp(15.5px, 1.6vw, 17.5px); line-height: 1.6; color: var(--pw-muted); max-width: 58ch }
+.nr-sub strong, .nr-p strong { color: var(--pw-ink); font-weight: 600 }
+.nr-p { font-size: 15.5px; line-height: 1.6; color: var(--pw-muted) }
+.nr-p a, .nr-sub a, .nr-foot a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
+.nr-p a:hover, .nr-sub a:hover, .nr-foot a:hover { text-decoration: underline; text-underline-offset: 3px }
+.nr-foot { font-size: 13.5px; line-height: 1.55; color: var(--pw-muted) }
+
+/* ---- The three doors: one leads, two follow (never three equal cards in a row) --------------- */
+.nr-ways { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 28px }
+@media (min-width: 760px) {
+  .nr-ways { grid-template-columns: 1.25fr 1fr; grid-auto-rows: 1fr }
+  .nr-way--lead { grid-row: span 2 }
+}
+.nr-way {
+  position: relative; display: flex; flex-direction: column; gap: 8px; text-decoration: none;
+  padding: clamp(20px, 2.6vw, 28px); border-radius: 20px;
+  border: 1px solid var(--pw-line); background: var(--pw-surface); color: var(--pw-ink);
+  transition: transform .2s, border-color .2s, box-shadow .2s;
+}
+.nr-way:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--pw-accent) 40%, var(--pw-line));
+  box-shadow: 0 18px 36px -22px color-mix(in srgb, var(--pw-accent) 55%, transparent);
+}
+.nr-way--lead {
+  background:
+    radial-gradient(90% 70% at 100% 0%, color-mix(in srgb, var(--pw-accent) 18%, transparent), transparent 60%),
+    var(--pw-surface);
+  justify-content: flex-end; min-height: 240px;
+}
+.nr-way-k { font-size: 12.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--pw-accent) }
+.nr-way-t { font-family: "Sentient", Georgia, serif; font-weight: 600; font-size: clamp(20px, 2.2vw, 28px); line-height: 1.12; letter-spacing: -.015em }
+.nr-way--lead .nr-way-t { font-size: clamp(24px, 2.8vw, 34px) }
+.nr-way-s { font-size: 15px; line-height: 1.55; color: var(--pw-muted) }
+.nr-way-go { margin-top: auto; padding-top: 6px; font-size: 14px; font-weight: 600; color: var(--pw-accent); display: inline-flex; gap: 6px; align-items: center }
+.nr-way-go svg { transition: transform .2s }
+.nr-way:hover .nr-way-go svg { transform: translateX(3px) }
+
+/* ---- How NEAR is used: a list of plain sentences, not a numbered rail ----------------------- */
+.nr-how { margin-top: 28px; display: grid; grid-template-columns: 1fr; gap: 10px }
+@media (min-width: 760px) { .nr-how { grid-template-columns: 1fr 1fr } }
+.nr-how-item {
+  display: grid; grid-template-columns: 40px 1fr; gap: 14px; align-items: start;
+  padding: 18px 18px 18px 16px; border-radius: 16px; border: 1px solid var(--pw-line); background: var(--pw-surface);
+}
+.nr-how-icon {
+  width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px;
+  background: color-mix(in srgb, var(--pw-accent) 12%, var(--pw-surface)); color: var(--pw-accent);
+}
+.nr-how-icon svg { width: 20px; height: 20px }
+.nr-how-t { font-size: 16px; font-weight: 600; color: var(--pw-ink); line-height: 1.3 }
+.nr-how-s { margin-top: 4px; font-size: 14.5px; line-height: 1.55; color: var(--pw-muted) }
+.nr-how-s code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--pw-ink) }
+
+/* ---- Live numbers ---------------------------------------------------------------------------- */
+.nr-tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 24px }
+@media (min-width: 640px) { .nr-tiles { grid-template-columns: repeat(4, 1fr) } }
+.nr-tile {
+  display: flex; flex-direction: column; gap: 6px; min-height: 112px;
+  padding: 20px 18px; border-radius: 16px; border: 1px solid var(--pw-line); background: var(--pw-surface);
+}
+.nr-tile-n {
+  font-family: "Sentient", Georgia, serif; font-weight: 500; font-size: clamp(1.9rem, 4.6vw, 2.6rem);
+  line-height: 1; letter-spacing: -.02em; color: var(--pw-ink); font-variant-numeric: tabular-nums;
+}
+.nr-tile-n--accent { color: var(--pw-accent) }
+.nr-tile-l { font-size: 13.5px; font-weight: 600; color: var(--pw-ink) }
+.nr-tile-s { font-size: 12.5px; line-height: 1.4; color: var(--pw-muted) }
+.nr-empty {
+  margin-top: 24px; padding: 24px; border-radius: 16px; border: 1px solid var(--pw-line);
+  background: var(--pw-surface); font-size: 15px; line-height: 1.55; color: var(--pw-muted);
+}
+.nr-meta { margin-top: 14px; font-size: 12.5px; color: var(--pw-muted) }
+.nr-meta a { color: var(--pw-accent); font-weight: 600; text-decoration: none }
+.nr-meta a:hover { text-decoration: underline; text-underline-offset: 2px }
+
+/* ---- Form pieces shared by the sender and the claim's pay-forward --------------------------- */
+.nr-field { display: flex; flex-direction: column; gap: 6px }
+.nr-label { font-size: 13.5px; font-weight: 600; color: var(--ink) }
+.nr-hint { font-size: 12.5px; line-height: 1.45; color: var(--ink-soft) }
+.nr-input, .nr-select, .nr-textarea {
+  width: 100%; padding: 12px 14px; border-radius: 14px; font-family: inherit; font-size: 16px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); outline: none;
+  transition: border-color .18s, box-shadow .18s;
+}
+.nr-input:focus, .nr-select:focus, .nr-textarea:focus {
+  border-color: var(--money); box-shadow: 0 0 0 3px color-mix(in srgb, var(--money) 22%, transparent);
+}
+.nr-input::placeholder, .nr-textarea::placeholder { color: var(--ink-soft) }
+.nr-input--mono, .nr-textarea--mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px }
+.nr-textarea { min-height: 132px; resize: vertical; line-height: 1.5 }
+.nr-select { appearance: none; -webkit-appearance: none; padding-right: 40px; background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%), linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%); background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat }
+.nr-amount { display: flex; align-items: center; padding: 0 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface) }
+.nr-amount:focus-within { border-color: var(--money); box-shadow: 0 0 0 3px color-mix(in srgb, var(--money) 22%, transparent) }
+.nr-amount span { font-size: 20px; color: var(--ink-soft) }
+.nr-amount input { width: 100%; padding: 12px 8px; border: 0; background: transparent; font: inherit; font-size: 20px; color: var(--ink); outline: none; font-variant-numeric: tabular-nums }
+.nr-suffix { display: flex; align-items: center; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); overflow: hidden }
+.nr-suffix:focus-within { border-color: var(--money); box-shadow: 0 0 0 3px color-mix(in srgb, var(--money) 22%, transparent) }
+.nr-suffix input { flex: 1; min-width: 0; padding: 12px 14px; border: 0; background: transparent; font: inherit; font-size: 16px; color: var(--ink); outline: none }
+.nr-suffix span { padding: 0 14px 0 4px; font-size: 15px; color: var(--ink-soft); white-space: nowrap }
+
+/* ---- Buttons that are not the primary ------------------------------------------------------- */
+.nr-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 44px; padding: 0 18px; border-radius: 999px; font: inherit; font-size: 14px; font-weight: 600;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer;
+  transition: border-color .18s, background .18s, color .18s;
+}
+.nr-btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--money) 45%, var(--line)) }
+.nr-btn:disabled { opacity: .5; cursor: default }
+.nr-btn--sm { height: 36px; padding: 0 14px; font-size: 13px }
+.nr-btn--accent { border-color: var(--money); color: var(--money) }
+.nr-btn--quiet { border-color: transparent; background: transparent; color: var(--ink-soft) }
+.nr-btn--quiet:hover:not(:disabled) { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); border-color: transparent }
+.nr-link { font: inherit; font-size: 14px; font-weight: 600; color: var(--money); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: none }
+.nr-link:hover { text-decoration: underline; text-underline-offset: 3px }
+.nr-link--quiet { font-weight: 500; color: var(--ink-soft) }
+.nr-btn:focus-visible, .nr-link:focus-visible, .nr-tab:focus-visible { outline: 2px solid var(--money); outline-offset: 2px }
+
+/* ---- Tabs ------------------------------------------------------------------------------------ */
+.nr-tabs { display: flex; gap: 4px; padding: 4px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface) }
+.nr-tab {
+  flex: 1; min-width: 0; min-height: 40px; padding: 6px 8px; border: 0; border-radius: 11px; background: transparent;
+  font: inherit; font-size: 14px; font-weight: 600; line-height: 1.15; color: var(--ink-soft); cursor: pointer;
+  transition: background .18s, color .18s;
+}
+.nr-tab:hover { color: var(--ink) }
+.nr-tab[aria-selected="true"] { background: color-mix(in srgb, var(--money) 14%, var(--surface)); color: var(--money) }
+
+/* ---- Notices --------------------------------------------------------------------------------- */
+.nr-notice {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--surface); font-size: 14px; line-height: 1.5; color: var(--ink);
+}
+.nr-notice--error { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); color: var(--danger) }
+.nr-notice--warn { border-color: color-mix(in srgb, #d98a2b 50%, var(--line)); background: color-mix(in srgb, #d98a2b 7%, var(--surface)) }
+.nr-notice--soft { border-color: color-mix(in srgb, var(--money) 30%, var(--line)); background: color-mix(in srgb, var(--money) 6%, var(--surface)); color: var(--ink-soft) }
+.nr-notice a { color: inherit; font-weight: 600 }
+
+/* ---- The state line: Waiting -> Claimed | Expired -> Returned ------------------------------- */
+.nr-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12.5px; color: var(--ink-soft) }
+.nr-state-step { padding: 3px 8px; border-radius: 999px; border: 1px solid transparent }
+.nr-state-step[aria-current="step"] { color: var(--money); font-weight: 600; border-color: color-mix(in srgb, var(--money) 35%, transparent); background: color-mix(in srgb, var(--money) 10%, transparent) }
+.nr-state-sep { opacity: .55 }
+.nr-state-note { font-weight: 500; color: var(--ink-soft) }
+
+/* ---- Rows in a list of links ---------------------------------------------------------------- */
+.nr-rows { display: flex; flex-direction: column }
+.nr-row { display: flex; flex-direction: column; gap: 8px; padding: 16px 0; border-top: 1px solid var(--line) }
+.nr-row:first-child { border-top: 0; padding-top: 4px }
+.nr-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px }
+.nr-row-amt { font-size: 18px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums }
+.nr-row-amt small { font-size: 13px; font-weight: 500; color: var(--ink-soft); margin-left: 6px }
+.nr-row-when { font-size: 12.5px; color: var(--ink-soft); white-space: nowrap }
+.nr-row-memo { font-size: 14px; color: var(--ink) }
+.nr-row-sub { font-size: 12.5px; line-height: 1.45; color: var(--ink-soft) }
+.nr-row-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 2px }
+.nr-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all }
+
+/* ---- Tables (the batch preview) ------------------------------------------------------------- */
+.nr-table { width: 100%; border-collapse: collapse; font-size: 14px }
+.nr-table th, .nr-table td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top }
+.nr-table th { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft) }
+.nr-table tfoot th { font-size: 14px; letter-spacing: 0; text-transform: none; color: var(--ink); border-bottom: 0 }
+.nr-table td.nr-num, .nr-table th.nr-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap }
+
+/* ---- Key/value pairs (a sender's balances) ------------------------------------------------- */
+.nr-kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 14px }
+.nr-kv dt { color: var(--ink-soft) }
+.nr-kv dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere }
+
+/* ---- The ledger ----------------------------------------------------------------------------- */
+.nr-ledger-totals { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 22px; font-size: 15px; color: var(--pw-muted) }
+.nr-ledger-totals b { color: var(--pw-ink); font-weight: 600; font-variant-numeric: tabular-nums }
+.nr-ledger { margin-top: 20px; border-radius: 18px; border: 1px solid var(--pw-line); background: var(--pw-surface); overflow: hidden }
+.nr-ledger-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 14px 18px; border-top: 1px solid var(--pw-line);
+}
+.nr-ledger-row:first-child { border-top: 0 }
+@media (min-width: 720px) {
+  .nr-ledger-row { grid-template-columns: 110px 1fr auto; align-items: center }
+  .nr-ledger-who { grid-column: 2 }
+  .nr-ledger-status { grid-column: 3; grid-row: 1 / span 2; justify-self: end }
+}
+.nr-ledger-amt { font-size: 17px; font-weight: 700; color: var(--pw-ink); font-variant-numeric: tabular-nums }
+.nr-ledger-who { font-size: 13px; line-height: 1.5; color: var(--pw-muted); min-width: 0; overflow-wrap: anywhere }
+.nr-ledger-who b { color: var(--pw-ink); font-weight: 500 }
+.nr-ledger-status { display: flex; align-items: center; gap: 8px; justify-self: end }
+.nr-ledger-memo { grid-column: 1 / -1; font-size: 13.5px; color: var(--pw-ink) }
+.nr-yours { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 3px 7px; border-radius: 6px; color: var(--pw-accent); background: color-mix(in srgb, var(--pw-accent) 12%, transparent) }
+.nr-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; font-size: 13.5px; color: var(--pw-muted) }
+.nr-ledger-mascot { display: none }
+@media (min-width: 900px) { .nr-ledger-mascot { display: block } }
+
+/* ---- QR, spinner --------------------------------------------------------------------------- */
+.nr-qr { display: flex; justify-content: center; padding: 12px; border-radius: 14px; background: #fff; width: -moz-fit-content; width: fit-content; margin: 0 auto }
+.nr-spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--ink-soft) 40%, transparent); border-top-color: var(--money); animation: nr-spin .8s linear infinite; vertical-align: -2px; margin-right: 6px }
+@keyframes nr-spin { to { transform: rotate(360deg) } }
+@media (prefers-reduced-motion: reduce) {
+  .nr-way, .nr-way-go svg, .nr-btn, .nr-tab, .nr-input, .nr-select, .nr-textarea { transition: none }
+  .nr-way:hover { transform: none }
+  .nr-spin { animation: none }
+}

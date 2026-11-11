@@ -18,7 +18,7 @@
  * already shows the sender's name and the amount read from the ledger to the person who opens it.
  * The message arrives from the sender's own chat account anyway, so "I" is already a name.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Copy, Check, QrCode } from "lucide-react";
 import QRCode from "react-qr-code";
@@ -35,6 +35,10 @@ export function LinkReadyCard({
   account,
   seeded = false,
   group = false,
+  title,
+  trackHref,
+  footnote,
+  beacon = true,
 }: {
   link: string;
   balanceId: string;
@@ -48,6 +52,14 @@ export function LinkReadyCard({
   seeded?: boolean;
   /** a group link (a pot of shares): it closes at its own time, not after 7 days. */
   group?: boolean;
+  /** The heading. Default "Your money link is ready" (an ask keeps its own). */
+  title?: string;
+  /** Where "Track this link" goes; null hides it. Default: the Stellar record page /sent/<id>. */
+  trackHref?: string | null;
+  /** Replaces the take-back sentence under the buttons: a rail whose expiry is not seven days says its own. */
+  footnote?: ReactNode;
+  /** Whether copy and share beacon `link_shared` to the Stellar sponsor. Off for a rail it does not count. */
+  beacon?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [fellBack, setFellBack] = useState(false);
@@ -60,7 +72,10 @@ export function LinkReadyCard({
 
   /* Fired once per gesture, never with the link itself: the beacon carries the hashed link id and
      the hashed account, and nothing that could rebuild the URL (owner caveat C2). */
-  const shared = () => void sendEvent("link_shared", balanceId, account);
+  const shared = () => {
+    if (beacon) void sendEvent("link_shared", balanceId, account);
+  };
+  const track = trackHref === undefined ? `/sent/${sentId}` : trackHref;
 
   async function copy() {
     try {
@@ -89,7 +104,7 @@ export function LinkReadyCard({
   return (
     <MoneyCard className="flex flex-col gap-3 p-5">
       <p className="font-semibold text-ink">
-        {requestName ? uiCopy.pay.sendBackTitle(requestName) : "Your money link is ready"}
+        {requestName ? uiCopy.pay.sendBackTitle(requestName) : (title ?? "Your money link is ready")}
       </p>
       {seeded ? (
         <p className="text-xs text-ink-soft">
@@ -146,7 +161,9 @@ export function LinkReadyCard({
 
       {/* Nothing comes back by itself: the take-back is the sender's to do, from where they sent it,
           and until then the link still pays out (lib/copy.ts `link`). */}
-      {locked ? (
+      {footnote !== undefined ? (
+        <p className="text-xs text-ink-soft">{footnote}</p>
+      ) : locked ? (
         <p className="text-xs text-ink-soft">
           Now send them the password a different way: a call, or another app. In the same chat as
           the link, it protects nothing. {group ? uiCopy.link.groupTakeBack : uiCopy.link.takeBack}
@@ -157,9 +174,11 @@ export function LinkReadyCard({
           envelope. {group ? uiCopy.link.groupTakeBack : uiCopy.link.takeBack}
         </p>
       )}
-      <Link href={`/sent/${sentId}`} className="text-sm font-semibold text-money underline-offset-2 hover:underline">
-        Track this link →
-      </Link>
+      {track ? (
+        <Link href={track} className="text-sm font-semibold text-money underline-offset-2 hover:underline">
+          Track this link →
+        </Link>
+      ) : null}
     </MoneyCard>
   );
 }

@@ -14,6 +14,7 @@
 import type { Metadata } from "next";
 import { Footer } from "../../../components/site/sections/Footer";
 import { loadStats } from "../../../lib/stats";
+import { getStats as loadNearStats } from "../../../lib/near/rpc";
 import "../../../components/site/page.css";
 import "./stats.css";
 
@@ -56,7 +57,10 @@ function ago(iso: string | null): string {
 
 export default async function StatsPage() {
   const { real, practice } = await loadStats();
-  const nothingYet = real === null && practice === null;
+  // The NEAR rail's escrow, asked directly (lib/near/rpc.ts, no SDK). A failed read is null, and
+  // null is shown as "refreshing", never as zeros: the same rule the two Stellar sets live by.
+  const near = await loadNearStats({ finality: "final", init: { next: { revalidate: 300 } } }).catch(() => null);
+  const nothingYet = real === null && practice === null && near === null;
 
   return (
     <div className="pg">
@@ -138,6 +142,37 @@ export default async function StatsPage() {
                   </div>
                 </div>
               )}
+
+              <h2 className="stat-section-h">On NEAR</h2>
+              <p className="stat-section-sub">
+                The same product on a second network, NEAR testnet, built at NEAR HACKATHON 2026.
+                Test money only, read from the escrow contract itself. Every link, amount and
+                outcome is on its public ledger.
+              </p>
+              {near === null ? (
+                <p className="stat-refreshing">Refreshing the NEAR numbers.</p>
+              ) : (
+                <div className="stat-grid">
+                  <div className="stat-tile">
+                    <span className="stat-num">{nf.format(near.drops_created)}</span>
+                    <span className="stat-label">Links created</span>
+                    <span className="stat-sub">each one an escrow on NEAR, waiting for a tap</span>
+                  </div>
+                  <div className="stat-tile">
+                    <span className="stat-num">{nf.format(near.drops_claimed)}</span>
+                    <span className="stat-label">Claimed</span>
+                    <span className="stat-sub">into an account made at the moment of the claim</span>
+                  </div>
+                  <div className="stat-tile">
+                    <span className="stat-num">{nf.format(near.drops_reclaimed)}</span>
+                    <span className="stat-label">Returned</span>
+                    <span className="stat-sub">taken back by the sender after the link expired</span>
+                  </div>
+                </div>
+              )}
+              <p className="stat-meta">
+                <a href="/near/ledger">Open the NEAR ledger &rarr;</a>
+              </p>
 
               <p className="stat-note">
                 {/* explicit {" "} at each </strong> boundary — JSX eats the trailing space (SITE_REDESIGN §5) */}

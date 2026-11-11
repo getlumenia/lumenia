@@ -12,6 +12,10 @@ const nextConfig: NextConfig = {
     ? {}
     : { turbopack: { root: path.resolve(import.meta.dirname, "..", "..") } }),
 
+  // The NEAR rail's library is a workspace package shipped as TypeScript source (packages/near,
+  // `main: src/index.ts`); the browser imports its relayer client, so Next has to compile it.
+  transpilePackages: ["@lumenia/near"],
+
   // NOT inlining CSS (experimental.inlineCss). Lighthouse flags the three stylesheets as ~900 ms of
   // render-blocking, but inlining them was measured WORSE — Performance 94 → 88, LCP 2.94 s → 3.77 s.
   // The 18 KB moves into the document, so the HTML itself lands later and every metric waits on it.
@@ -77,6 +81,12 @@ const nextConfig: NextConfig = {
       ...origin(process.env.NEXT_PUBLIC_SOROBAN_RPC_MAINNET ?? "https://mainnet.sorobanrpc.com"),
       // Only reachable from the spike harness, which is build-gated off in production.
       ...(dev ? ["https://friendbot.stellar.org"] : []),
+      // The NEAR rail (lib/near/config.ts): its RPC (one URL or several, comma-separated), the
+      // relayer that pays a pay-forward link's gas, and the 1Click quote service the claim page
+      // asks for a dry cross-chain quote. Same rule as above: derived from the env the code reads.
+      ...(process.env.NEXT_PUBLIC_NEAR_RPC ?? "https://test.rpc.fastnear.com").split(",").flatMap((u) => origin(u.trim())),
+      ...origin(process.env.NEXT_PUBLIC_NEAR_RELAYER_URL ?? "https://lumenia-near-relayer.avakit.workers.dev"),
+      "https://1click.chaindefuser.com",
     ];
     // /brand-kit pulls Fontshare + Google Fonts, and 404s in production — so those hosts are
     // allowed in development only, and the shipped policy never mentions them.
@@ -135,6 +145,15 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/c/:id/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+      {
+        // The NEAR claim route is a static segment under /c, so the two entries above already cover
+        // it; this one is written out so the rule survives if those patterns ever narrow.
+        source: "/c/near",
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Robots-Tag", value: "noindex, nofollow" },

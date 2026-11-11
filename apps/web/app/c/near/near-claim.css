@@ -1,0 +1,59 @@
+/*
+ * /c/near, the NEAR claim screen. Light-only Periwinkle through the `.claim-pw` scope (globals.css),
+ * like the v2 claim route, with the product's type: a person opening a money link should meet the
+ * same Lumenia the sender saw. Layout only; the form pieces come from components/near/near.css,
+ * whose field, button, notice and state-line classes are written against the same brand variables.
+ */
+.nc {
+  position: relative; isolation: isolate; overflow: hidden;
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; flex-direction: column; align-items: center;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(32px, env(safe-area-inset-bottom));
+  background: var(--paper); color: var(--ink);
+  font-family: "Switzer", ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+}
+.nc :where(h1, h2, h3, p) { margin: 0 }
+.nc :where(h1, h2, h3) { font-family: "Sentient", Georgia, serif; letter-spacing: -.015em }
+/* One soft bloom of the accent behind the character, the first run's own light. */
+.nc-glow {
+  position: absolute; z-index: -1; left: 50%; top: 38%; width: min(820px, 150vw); aspect-ratio: 1;
+  transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--money) 14%, transparent), transparent 62%);
+}
+.nc-top { width: 100%; max-width: 460px; height: 48px; display: flex; align-items: center; justify-content: center }
+.nc-top img { height: 22px; width: auto }
+.nc-main {
+  flex: 1; width: 100%; max-width: 460px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 14px; padding: 8px 0; text-align: center;
+  animation: nc-in .45s cubic-bezier(.2, .75, .2, 1) both;
+}
+.nc-eyebrow { font-size: 14px; font-weight: 500; color: var(--ink-soft) }
+.nc-amount {
+  font-size: clamp(46px, 13vw, 64px); line-height: 1; font-weight: 700; letter-spacing: -.025em;
+  color: var(--money); font-variant-numeric: tabular-nums;
+}
+.nc-title { font-size: clamp(26px, 7vw, 34px); line-height: 1.1; font-weight: 600; color: var(--ink); text-wrap: balance; max-width: 15em }
+.nc-lead { font-size: 16px; line-height: 1.55; color: var(--ink-soft); text-wrap: pretty; max-width: 32em }
+.nc-lead strong, .nc-lead b { color: var(--ink); font-weight: 600 }
+.nc-memo { font-size: 17px; line-height: 1.45; color: var(--ink); max-width: 30em }
+.nc-memo::before, .nc-memo::after { content: '"' }
+.nc-card { width: 100%; text-align: left }
+.nc-stack { display: flex; flex-direction: column; gap: 14px; width: 100% }
+.nc-foot { font-size: 12.5px; line-height: 1.5; color: var(--ink-soft); max-width: 34em }
+.nc-foot a { color: var(--money); font-weight: 600; text-decoration: none }
+.nc-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all }
+.nc-idbox {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 10px 10px 14px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--surface);
+}
+.nc-idbox code { flex: 1; min-width: 0; text-align: left; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; color: var(--ink); overflow-wrap: anywhere }
+.nc-availability { min-height: 20px; font-size: 13px; line-height: 1.45; color: var(--ink-soft) }
+.nc-availability[data-tone="ok"] { color: var(--money); font-weight: 600 }
+.nc-availability[data-tone="bad"] { color: var(--danger) }
+.nc-pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--ink-soft); border: 1px solid var(--line); background: var(--surface);
+}
+.nc [tabindex="-1"]:focus { outline: none }
+@keyframes nc-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+@media (prefers-reduced-motion: reduce) { .nc-main { animation: none } }

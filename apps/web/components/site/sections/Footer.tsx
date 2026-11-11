@@ -18,8 +18,8 @@ import { realMoneyOpen, waitlistCta } from "../../../lib/real-money";
 const WAITLIST: [string, string] = [realMoneyOpen() ? "Get started" : "Waitlist", waitlistCta().href];
 
 const COLS = [
-  { title: "Product", links: [["How it works", "/how-it-works"], ["See it work", "/try"], ["Browser extension", "/extension"], ["Tools", "/tools"], WAITLIST, ["Cash-out", "/cash-out"]] },
-  { title: "Company", links: [["About", "/about"], ["Roadmap", "/roadmap"], ["Live numbers", "/stats"], ["Developers", "/developers"], ["Brand", "/brand"]] },
+  { title: "Product", links: [["How it works", "/how-it-works"], ["See it work", "/try"], ["Lumenia on NEAR", "/near"], ["Browser extension", "/extension"], ["Tools", "/tools"], WAITLIST, ["Cash-out", "/cash-out"]] },
+  { title: "Company", links: [["About", "/about"], ["Roadmap", "/roadmap"], ["Live numbers", "/stats"], ["NEAR ledger", "/near/ledger"], ["Developers", "/developers"], ["Brand", "/brand"]] },
   { title: "Legal", links: [["Privacy", "/privacy"], ["Terms", "/terms"]] },
 ];
 
