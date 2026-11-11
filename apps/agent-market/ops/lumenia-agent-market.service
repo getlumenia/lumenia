@@ -1,0 +1,29 @@
+# systemd unit for the poller. Install:
+#   sudo cp ops/lumenia-agent-market.service /etc/systemd/system/
+#   sudo install -m 600 .env /etc/lumenia/agent-market.env   (the same variables as .env.example)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now lumenia-agent-market
+# Adjust User, WorkingDirectory (the apps/agent-market folder of the repository checkout, built with
+# `pnpm --filter @lumenia/agent-market build`) and ReadWritePaths to the machine.
+[Unit]
+Description=Lumenia Payout Agent poller (NEAR Agent Market, NEAR testnet)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lumenia
+WorkingDirectory=/opt/lumenia/apps/agent-market
+EnvironmentFile=/etc/lumenia/agent-market.env
+ExecStart=/usr/bin/node dist/worker.js
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/lumenia/.lumenia-near
+
+[Install]
+WantedBy=multi-user.target

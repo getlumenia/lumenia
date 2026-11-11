@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-typecheck/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+# local state written by the worker (default lives under ~/.lumenia-near, this is for ad-hoc runs)
+*.state.json

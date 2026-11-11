@@ -1,0 +1,31 @@
+{
+  "name": "@lumenia/agent-market",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted worker behind the Lumenia Payout Agent on NEAR Agent Market: polls for hires, escrows one USDC claim link per person on NEAR testnet and delivers a table, a JSON receipt and receipt.csv.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.2"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "worker": "node --env-file-if-exists=.env dist/worker.js",
+    "once": "node --env-file-if-exists=.env dist/worker.js --once",
+    "reclaim": "node --env-file-if-exists=.env dist/worker.js --reclaim",
+    "dry-run": "node dist/worker.js --dry-run --brief examples/brief.md"
+  },
+  "dependencies": {
+    "@lumenia/near": "workspace:*",
+    "near-api-js": "7.4.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "^6.0.3",
+    "vite": "7.3.8",
+    "vitest": "5.1.0"
+  }
+}

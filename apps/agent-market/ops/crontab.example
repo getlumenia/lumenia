@@ -1,0 +1,6 @@
+# cron alternative to launchd/pm2/systemd: one poll per minute, one reclaim pass per hour.
+# flock keeps two polls from overlapping (the state file and the receipt log assume one writer).
+# Paths and the .env location are examples: the repository checkout is /opt/lumenia, built once with
+# `pnpm --filter @lumenia/agent-market build`; the worker writes its log lines to stderr.
+* * * * *  cd /opt/lumenia/apps/agent-market && flock -n /tmp/lumenia-agent-market.lock node --env-file=.env dist/worker.js --once >> /var/log/lumenia-agent-market.log 2>&1
+15 * * * * cd /opt/lumenia/apps/agent-market && flock -n /tmp/lumenia-agent-market.lock node --env-file=.env dist/worker.js --reclaim >> /var/log/lumenia-agent-market.log 2>&1

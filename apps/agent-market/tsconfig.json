@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    // tsc only checks. The runnable file is the vite bundle (vite.config.ts -> dist/worker.js):
+    // @lumenia/near is imported as TypeScript source through the workspace link, which Node
+    // cannot run on its own, so the bundle inlines it and keeps near-api-js and zod external.
+    "noEmit": true
+  },
+  "include": ["src"]
+}
