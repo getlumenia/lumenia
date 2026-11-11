@@ -8,6 +8,10 @@ Built at NEAR HACKATHON 2026 (window 1 to 14 November 2026; this work: 11 to 14 
 - One command checks everything (tests, builds, live testnet reads): `pnpm near:verify` from the repository root. See "Run it yourself".
 - Hackathon tags: `pre-hackathon` (the last commit before the NEAR work) and `hackathon-submission` (the submitted state); diff https://github.com/getlumenia/lumenia/compare/pre-hackathon...hackathon-submission
 
+## Why this and not the others
+
+Payment-link products pay someone who already has a wallet. Coinbase Wallet links need the Coinbase app on both sides. Peanut (EVM) and the invoice-link entries in this hackathon (Paylink, Invoice Link, Payday, Dues and others) settle to an existing address and use NEAR Intents to let the payer choose a chain. NEAR's own linkdrop pattern, productised by Keypom, handed out pre-funded wallets and went quiet in December 2024. Lumenia pays the person who has nothing: the account is created at the moment of the claim, the escrow funds it and covers the fee, and unclaimed money returns to the sender. Nothing else in the 495-entry directory does recipient-side onboarding, and this one ships inside a product that already moves real money on Stellar (109 transfers, about $4.4 in total, a capped pilot).
+
 ## What it is, in one minute
 
 You want to send someone ten dollars. They have no crypto wallet, no NEAR, no app. You send them a link instead. They open it in any browser, see the money, pick a name, tap once, and the money is theirs: a NEAR account with that name is created at that moment, funded with USDC, and they paid nothing for it. If they already have a NEAR account they can take the money there, and if they would rather have it on another chain they can choose that too. If nobody opens the link, the money comes back to you after it expires.
@@ -101,6 +105,23 @@ After these runs `get_stats` on the contract read 18 links created, 6 claimed, 0
 - Real: the contract on NEAR testnet, Circle's testnet USDC, the hosted demo, the relayer, the MCP server, the sandbox tests, the Agent Market listing.
 - Testnet only: nothing here touches mainnet money. NEAR Intents has no testnet, so the cross-chain payout is shown as a live quote, not executed.
 - Not done: no security audit (none is claimed). The escrow owner is a single key that can also redeploy the contract; the production design is a multisig with a time-locked upgrade, as Lumenia runs on Stellar. The relayer key is a hot key on a Worker. Named accounts are created under `.testnet` here and would be `.near` on mainnet.
+
+## Attacks the system refuses (with evidence)
+
+| Attempt | What happens | Evidence |
+|---|---|---|
+| A relayed message that is not a Lumenia link creation or reclaim (wrong receiver, wrong method, a deposit of 2 yoctoNEAR, 150 Tgas, two actions, a payout to another account) | The relayer answers 403 with the reason before paying anything | 139 assertions in apps/sponsor/src/test-near-relay.ts; a live 403 and a live 429 against the deployed Worker on 2026-11-11 (tx A3jr4UJWjrNeahjYJNvX6CRbfWYw7BZTwc8Yweh2QiSm was the allowed one, the immediate repeat was refused) |
+| A forged sender id on a relayed message | Refused by an offline signature check, so it cannot burn the sender's daily cap | test-near-relay.ts, "forged sender burns no cap" |
+| A claim signed with a key that is not a link key, a second claim on the same link, a claim after expiry, a reclaim by a stranger or before expiry | The contract panics; the USDC never leaves the escrow | contracts/lumen-drop-near/contract/tests/sandbox.rs (21 tests) |
+| A batch whose amounts do not sum to the transfer, a reused key, a dust amount | The whole deposit is refunded, no record is written | sandbox tests "batch refused" |
+| The store behind the caps is down | The relayer fails closed (503), it does not relay blind | test-near-relay.ts, store-down cases |
+| The escrow owner tries to move a drop | There is no such method; pause only blocks new links, claims and reclaims keep working | contract README, "pause never blocks an exit" test |
+
+## How this earns and what is beyond testnet
+
+- Agent Market: the Lumenia Payout Agent charges a flat service fee per job (0.50 USDC today, the market median); payouts are funded from a treasury the agent owns.
+- Product: Lumenia's model on Stellar is a flat fee per link on real money (the mainnet pilot runs with caps and no fee today); the NEAR rail inherits it. The sponsor's cost per claim on NEAR is about 0.057 NEAR (storage, USDC registration, 0.05 NEAR starter, gas), roughly a fifth of the Stellar reserve per claim.
+- Beyond testnet: the Stellar rail is live on mainnet as a capped pilot with real people; the NEAR rail is testnet-only in this submission, and the contract, relayer and screens are mainnet-ready behind configuration (contract id, token id, root account, relayer account).
 
 ## Arguing against this idea
 
