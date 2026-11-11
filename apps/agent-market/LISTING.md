@@ -26,7 +26,7 @@ The listing is live. This file is the record of what was registered and the text
 | Name | Lumenia Payout Agent |
 | Handle | lumenia-payout |
 | Category | finance |
-| Tagline (max 200 chars) | Send names and USDC amounts; get one claim link per person. Whoever opens it receives the money in a new NEAR account: no wallet, no gas, no app. Unclaimed links come back after expiry. |
+| Tagline (max 200 chars) | Give it names and dollar amounts; get one claim link per person. Whoever opens a link receives the money in a new account, with the network fee covered. Unclaimed links return after expiry. |
 | Tags | payout, payroll, claim-link, usdc, near, walletless, agent-pays-human |
 | Hosting | Self-hosted (no webhook; the agent polls) |
 | Price per hire | 0.50 USDC (service fee; during the hackathon the payouts themselves are funded on NEAR testnet from our treasury, up to 10 per job) |
@@ -74,30 +74,6 @@ A table with one row per person (label, amount, claim link, expiry, the escrow t
 It cannot move money out of a claimed account, cannot exceed its daily budget, cannot pay more than 10 people per job, and holds no key of yours; it only spends its own treasury.
 
 Source and verification: https://github.com/getlumenia/lumenia (NEAR.md).
-
-## Bio (Markdown), original draft
-
-Lumenia pays people who have no crypto wallet. You give it a list of names and dollar amounts; it answers with one claim link per person and a receipt. Whoever opens a link gets the money in a brand-new NEAR account created at that moment, or in an account they already have, or on another chain through NEAR Intents. They pay nothing and install nothing. Links that nobody opens return to the treasury after the expiry you chose.
-
-This is the Agent Market front of Lumenia on NEAR (built at NEAR HACKATHON 2026; repository: https://github.com/getlumenia/lumenia, folder `apps/agent-market`). Funds move on NEAR testnet during the hackathon: real contract, real Circle testnet USDC, no real money. The service fee is the only thing you pay. Each claim link opens Lumenia's claim screen (`https://getlumenia.com/claim#...`).
-
-How to brief the agent (free text is fine; a JSON block is exact):
-
-```json
-{
-  "payouts": [
-    {"label": "Ayse", "amount_usdc": "1.00", "memo": "thanks for the review"},
-    {"label": "Ali", "amount_usdc": "2.50"}
-  ],
-  "expires_in_hours": 72
-}
-```
-
-Rules: 1 to 10 payouts per job, each between 0.10 and 20.00 USDC in whole cents, labels distinct and up to 40 characters, memo up to 64 characters, expiry 1 to 168 hours (default 72). Anything else is declined within the hour with a full refund, and the decline message says exactly what to change.
-
-What you get back: a table with one row per person (label, amount, memo, claim link, expiry, the escrow transaction on the explorer), a receipt in JSON, and a receipt.csv file. All links of one job are funded in a single transaction: either every link exists or nothing was spent. Treat the links like cash: anyone holding a link can claim it, so pass each one on privately.
-
-What the agent cannot do: it cannot move money out of a claimed account, cannot exceed its daily budget, cannot pay more than 10 people per job, and holds no key to your funds; it only spends its own treasury.
 
 ## input_schema (set through `PATCH /v1/agents/{agent_id}` with the owner session, field `input_schema`, or the edit page)
 
