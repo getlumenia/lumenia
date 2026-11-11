@@ -2,11 +2,9 @@
  * Footer — the Periwinkle footer closing every page in the (site) group, over the living bg-footer
  * glow. The brand-kit messenger (avatar-heart, bg-removed + watermark cleaned) stands on a soft
  * ground-glow as a warm sign-off. Per the owner logo rule, no text "Lumenia" — the link mark stands
- * in for it. The SCF seal is a shadcn <Badge>.
  */
 import "./footer.css";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
 import { AvatarReveal } from "./AvatarReveal";
 import { AmbientVideo } from "../AmbientVideo";
 import { FeedbackDialog } from "../../FeedbackDialog";
@@ -67,10 +65,6 @@ export function Footer() {
 
       <div className="foot-bottom">
         <span>Your money is never ours. That&rsquo;s the point.</span>
-        <Badge variant="secondary" className="foot-seal">
-          <span className="foot-seal-star" aria-hidden="true" />
-          Funded by Stellar Instawards, via the Stellar Türkiye chapter
-        </Badge>
       </div>
     </footer>
   );

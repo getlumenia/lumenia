@@ -136,13 +136,9 @@ export default function HowItWorks() {
 
               <div className="hw-proof-foot">
                 <p className="hw-proof-note">
-                  These are <strong>real, publicly verifiable Stellar transfers</strong>. Open either
+                  These are <strong>real transfers on a public ledger</strong>. Open either
                   one and check it yourself. This is exactly the mechanism that moves your money.
                 </p>
-                <span className="hw-seal">
-                  <span className="hw-seal-star" aria-hidden="true" />
-                  Funded by Stellar Instawards, via the Stellar Türkiye chapter
-                </span>
               </div>
             </div>
           </section>

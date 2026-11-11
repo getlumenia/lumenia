@@ -397,9 +397,6 @@ export const SLIDES: PitchSlide[] = [
           <p className="pk-body">
             <b>Open on testnet</b> Anyone can run the whole loop: send, claim, group links, request money, take-back.
           </p>
-          <p className="pk-body">
-            <b>Funded by Stellar Instawards</b> Two awards in 2026, via the Stellar T&uuml;rkiye chapter.
-          </p>
         </div>
         <p className="pk-next pk-in" style={d(6)}>
           What we measure next: <b>how many people who receive a link go on to send one.</b>
@@ -545,8 +542,7 @@ export const SLIDES: PitchSlide[] = [
         </div>
         <p className="pk-foot">
           <a href="https://getlumenia.com" target="_blank" rel="noreferrer">getlumenia.com</a> &middot;{" "}
-          <a href="https://github.com/getlumenia/lumenia" target="_blank" rel="noreferrer">github.com/getlumenia/lumenia</a> &middot; Funded by Stellar
-          Instawards, via the Stellar T&uuml;rkiye chapter
+          <a href="https://github.com/getlumenia/lumenia" target="_blank" rel="noreferrer">github.com/getlumenia/lumenia</a>
         </p>
       </>
     ),
