@@ -20,7 +20,7 @@
   "dependencies": {
     "@lumenia/near": "workspace:*",
     "near-api-js": "7.4.0",
-    "zod": "3.25.76"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
