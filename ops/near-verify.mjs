@@ -628,7 +628,7 @@ async function liveChecks() {
   const name = `relayer health ${RELAYER_HEALTH}`;
   const primary = await probe(RELAYER_HEALTH);
   const healthy = (p) => p.status === 200 && p.json && p.json.ok === true;
-  const summary = (p) => `${p.json?.relayer?.accountId ?? "?"}, ${p.json?.relayer?.balanceNear ?? "?"} NEAR, storage ${p.json?.storage ?? "?"}, version ${p.json?.version ?? "?"}`;
+  const summary = (p) => `${p.json?.relayer?.accountId ?? "?"}, ${p.json?.relayer?.balanceNear ?? "?"} NEAR, storage ${p.json?.storage ?? "?"}, version ${p.json?.version?.id ?? p.json?.version ?? "?"}`;
   if (healthy(primary)) {
     const escrow = primary.json.escrowId;
     if (escrow && escrow !== CONTRACT_ID) record(name, false, `relayer serves escrow ${escrow}, expected ${CONTRACT_ID}`);

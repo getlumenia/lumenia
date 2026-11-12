@@ -747,7 +747,8 @@ const handlers = {
           if (rl.limited) return json(429, { error: rl.reason });
           const now = Date.now();
           const [halt, report] = await Promise.all([haltStatus(now), nearHealthReadings(near, now)]);
-          return json(report.ok ? 200 : 503, { ...report, halt });
+          // The deployed version ties the live relayer to a commit (absent in a local run or a suite).
+          return json(report.ok ? 200 : 503, { ...report, halt, version: deployedVersion(env) });
         }
 
         if (method === "POST" && url === "/near/relay") {
