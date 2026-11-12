@@ -30,14 +30,15 @@ const BEATS = [
     h: "The money sits on a public ledger, not with us.",
     body: (
       <>
-        Lumenia is built on <strong>Stellar</strong>, a fast, low-cost public ledger, and the money is{" "}
+        Lumenia runs on fast, low-cost public ledgers, <strong>Stellar</strong> and, since November 2026,{" "}
+        <strong>NEAR</strong>, and the money is{" "}
         <strong>USDC</strong>, a dollar-denominated asset. Lumenia never takes custody. There is no
         Lumenia account holding your money on your behalf; it sits on the ledger, in a balance we
         have no power to move.
       </>
     ),
     chips: [
-      ["network", "Stellar"],
+      ["network", "Stellar or NEAR"],
       ["asset", "USDC"],
     ],
   },

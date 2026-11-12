@@ -144,7 +144,7 @@ export function NearSend() {
       {funder && mode === "many" ? <NearSendMany funder={funder} onChange={bump} onUseOwnKey={useOwnKey} /> : null}
       {hydrated ? <YourLinks funder={funder} version={version} onChange={bump} /> : null}
       <p className="nr-foot">
-        Ready for an account of your own? <Link href="/start">Get started</Link>.
+        Want an account of your own? Send a link to yourself above and open it: the account is made the moment you claim.
       </p>
       <ToastHost />
     </div>
