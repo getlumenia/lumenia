@@ -43,6 +43,8 @@ const TEAM = new Set([
 // The demo video's takes name their recipient ayse-xxxx.testnet.
 const TEAM_PATTERNS = [/^ayse-[a-z0-9]{4}\.testnet$/];
 const isTeam = (account) => TEAM.has(account) || TEAM_PATTERNS.some((re) => re.test(account));
+// Links the attack run makes carry this memo (ops/near-attack-demo.ts); their claims are the team's.
+const TEAM_MEMOS = new Set(["near-attack-demo", "sweep probe"]);
 
 const NETWORKS = [
   { name: "testnet", rpc: process.env.NEAR_RPC_URL || "https://test.rpc.fastnear.com", escrow: "lumenia-near.testnet", practice: "lumenia-relayer.testnet" },
@@ -87,7 +89,7 @@ for (const net of NETWORKS) {
       if (d.status !== "Claimed" || !d.claimed_to) continue;
       const claimedMs = nsToMs(d.status_changed_at_ns);
       if (claimedMs < sinceMs) continue;
-      if (isTeam(d.claimed_to)) {
+      if (isTeam(d.claimed_to) || TEAM_MEMOS.has(d.memo ?? "")) {
         teamAfter++;
         continue;
       }

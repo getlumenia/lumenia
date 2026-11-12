@@ -27,8 +27,14 @@
  *   7. Rate limit: burst the SAME signed-but-refused delegate until the relayer's per-signing-key
  *      limiter answers 429. Spends no USDC.
  *
+ * No key needed (NO_KEYS=1 forces it; ATTACKS_OUT=<file> writes the report somewhere other than the
+ * recorded evidence): without ~/.near-credentials/testnet/lumenia-funder.testnet.json the script runs
+ * attack 1 with a random key (the relayer refuses the method whoever signs it) and creates attack 6's
+ * link through the public practice route (POST /near/practice-link, 0.10 practice USDC), so anyone
+ * can re-run all seven. With the key file it uses the funder, as in the recorded run.
+ *
  * Safety: testnet only (the relayer refuses mainnet, and this script hard-codes testnet ids). It
- * spends at most 0.10 testnet USDC (attack 6). It reads two testnet key files at runtime and NEVER
+ * spends at most 0.10 testnet USDC (attack 6). It reads at most two testnet key files at runtime and NEVER
  * prints a secret (a redactor strips any secret-length ed25519 token from all output as well). It
  * never touches lumenia-demo.testnet's funds. It writes exactly one file: evidence/near/attacks.md.
  */
@@ -191,11 +197,17 @@ async function main() {
 
   const provider = new JsonRpcProvider({ url: RPC_URL }, { retries: 3, wait: 500, backoff: 2 });
 
-  // The funder's testnet key, read at runtime, never printed.
+  // The funder's testnet key, read at runtime, never printed. Optional: without it the script needs no key at all.
   const funderFile = join(homedir(), ".near-credentials/testnet", `${FUNDER_ID}.json`);
-  const funderJson = JSON.parse(readFileSync(funderFile, "utf8"));
-  const funderKp = KeyPair.fromString((funderJson.private_key || funderJson.secret_key).trim());
-  const funderPub = funderKp.getPublicKey().toString();
+  let funderKp: any = null;
+  try {
+    if (process.env.NO_KEYS === "1") throw new Error("NO_KEYS=1: run without any key file");
+    const funderJson = JSON.parse(readFileSync(funderFile, "utf8"));
+    funderKp = KeyPair.fromString((funderJson.private_key || funderJson.secret_key).trim());
+  } catch {
+    funderKp = null;
+  }
+  const funderPub = funderKp ? funderKp.getPublicKey().toString() : "";
 
   const startedUtc = nowIso();
   emit("================================================================================");
@@ -205,6 +217,7 @@ async function main() {
   emit(`rpc:      ${RPC_URL}`);
   emit(`escrow:   ${ESCROW_ID}   usdc: ${USDC_ID}`);
   emit("budget:   at most 0.10 testnet USDC (attack 6). No mainnet. No secret keys printed.");
+  emit(funderKp ? `keys:     ${FUNDER_ID}'s key file (attacks 1 and 6)` : "keys:     none (attack 1 signs with a random key; attack 6's link comes from the public practice route)");
   emit("================================================================================");
   emit();
 
@@ -229,16 +242,18 @@ async function main() {
   try {
     const h = await currentHeight();
     const action = actions.functionCall("ft_transfer", { receiver_id: ATTACKER_ID, amount: LINK_AMOUNT_UNITS.toString() }, teraToGas(100), 1n);
-    const da = delegate(FUNDER_ID, USDC_ID, action, funderKp.getPublicKey(), h + 300n, h);
-    const b64 = await signB64(da, funderKp);
+    const signerKp = funderKp ?? KeyPair.fromRandom("ed25519");
+    const signerId = funderKp ? FUNDER_ID : keyToImplicitAddress(signerKp.getPublicKey());
+    const da = delegate(signerId, USDC_ID, action, signerKp.getPublicKey(), h + 300n, h);
+    const b64 = await signB64(da, signerKp);
     const started = nowIso();
     const r = await postRelay(b64);
     const refused = r.status === 403;
     record({
       n: "1",
-      attack: "Drain via relayer: funder-signed USDC ft_transfer to an attacker account",
+      attack: "Drain via relayer: a signed delegate asking the relayer to pay for a USDC ft_transfer to an attacker account",
       expected: "403 (only ft_transfer_call into the escrow is paid for)",
-      request: `POST /near/relay  signer=${FUNDER_ID}  USDC.ft_transfer -> {receiver_id:${ATTACKER_ID}, amount:${LINK_AMOUNT_UNITS}}  1 yocto`,
+      request: `POST /near/relay  signer=${funderKp ? FUNDER_ID : "a random implicit account"}  USDC.ft_transfer -> {receiver_id:${ATTACKER_ID}, amount:${LINK_AMOUNT_UNITS}}  1 yocto`,
       answer: relayAnswer(r),
       verdict: refused ? "REFUSED" : "ALLOWED",
       evidence: `HTTP ${r.status} @ ${r.at}`,
@@ -381,7 +396,8 @@ async function main() {
   try {
     const linkKp = KeyPair.fromRandom("ed25519");
     const linkPub = linkKp.getPublicKey().toString();
-    const linkMsg = { public_key: linkPub, expires_in_s: 3600 };
+    // The memo marks the link as the attack run's own, so ops/near-outside-claims.mjs never counts its claim as an outside user.
+    const linkMsg = { public_key: linkPub, expires_in_s: 3600, memo: "near-attack-demo" };
     const notes: string[] = [];
 
     // (a) create ONE 0.10 USDC link. First via the relayer (the gasless product path, which also
@@ -389,6 +405,25 @@ async function main() {
     let createHash = "";
     let created = false;
     let createVia = "relayer";
+    if (!funderKp) {
+      // No key: the public practice route makes the 0.10 USDC link from the shared practice balance; this script
+      // sends only the link's PUBLIC key and keeps the secret, which is all a claim needs.
+      createVia = "public practice route";
+      const res = await fetch(`${RELAYER_BASE}/practice-link`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ publicKey: linkPub, amountUsdc: "0.10", expiresInS: 3600, memo: "near-attack-demo" }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      const j: any = await res.json().catch(() => ({}));
+      if (res.status === 200 && j?.outcome?.status === "success") {
+        created = true;
+        createHash = String(j.txHash);
+        notes.push(`link created via the public practice route: tx ${createHash}`);
+      } else {
+        throw new Error(`the practice route did not make the link: HTTP ${res.status} ${String(j?.reason ?? j?.error ?? "").slice(0, 160)}`);
+      }
+    }
     for (let attempt = 0; attempt < 2 && !created; attempt++) {
       const built = await client.buildSignedDelegateForPayForward({
         senderId: FUNDER_ID,
@@ -561,7 +596,8 @@ function cell(s: string): string {
 }
 
 function writeEvidence(REPO: string, startedUtc: string, endedUtc: string) {
-  const outPath = join(REPO, "evidence/near/attacks.md");
+  // ATTACKS_OUT writes the report elsewhere (a trial run that must not replace the recorded evidence).
+  const outPath = process.env.ATTACKS_OUT ? resolve(process.env.ATTACKS_OUT) : join(REPO, "evidence/near/attacks.md");
   mkdirSync(dirname(outPath), { recursive: true });
   const day = startedUtc.slice(0, 10);
   const refusedCount = rows.filter((r) => r.verdict === "REFUSED").length;
