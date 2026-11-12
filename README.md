@@ -18,7 +18,7 @@
 
 **What it is, in one minute.** You send ten dollars as a link to someone with no wallet, no NEAR and no app. They open it in any browser, pick a name and tap once: a NEAR account with that name is created, funded with USDC, and they pay nothing. They can take the money to an account they already have, or to another chain, instead. If nobody opens it, you take the money back after expiry with one tap. An AI agent can be the sender too: one tool call returns a link and a receipt, and people or other agents can hire that service on NEAR Agent Market.
 
-**Try it** (practice money on NEAR testnet, nothing to install): https://getlumenia.com/try/send -> "Use the shared practice balance" -> Send -> open the link in a private window -> type a name -> "Create my account and claim $1.00". The money lands in a brand-new account; the network appears only under Details. [Demo video](https://lumenia-media.avakit.workers.dev/demo.mp4), 60 seconds, one live take on these screens ([16:9 copy](https://lumenia-media.avakit.workers.dev/demo-720p.mp4)).
+**Try it** (practice money on NEAR testnet, nothing to install): https://getlumenia.com/try/send -> "Use the shared practice balance" -> Send -> open the link in a private window -> type a name -> "Create my account and claim $1.00". The money lands in a brand-new account; the network appears only under Details. [Demo video](https://lumenia-media.avakit.workers.dev/demo.mp4), 80 seconds: one live take on these screens, then the attack log and the mainnet proof ([16:9 copy](https://lumenia-media.avakit.workers.dev/demo-1080p.mp4)).
 
 **Where the NEAR work lives:**
 

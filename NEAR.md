@@ -1,7 +1,7 @@
 # Lumenia on NEAR: the NEAR rail, for judges and reviewers
 
 - **What:** a dollar link for someone who has nothing. At the claim the escrow creates the recipient's NEAR account, funds it with USDC and pays the fee, so the recipient pays no gas; the sender can take unclaimed money back after expiry (one tap). Built at NEAR HACKATHON 2026 (window 1 to 14 November 2026; this work: 11 to 14 November) inside [Lumenia's product repository](https://github.com/getlumenia/lumenia); only this NEAR rail is the submission.
-- **Try:** https://getlumenia.com/try/send, practice money, online through 30 November 2026; links open on [/claim](https://getlumenia.com/claim), the public ledger is [/ledger](https://getlumenia.com/ledger), the per-network table [/developers](https://getlumenia.com/developers). [Demo video](https://lumenia-media.avakit.workers.dev/demo.mp4), 60 seconds ([16:9 copy](https://lumenia-media.avakit.workers.dev/demo-720p.mp4)).
+- **Try:** https://getlumenia.com/try/send, practice money, online through 30 November 2026; links open on [/claim](https://getlumenia.com/claim), the public ledger is [/ledger](https://getlumenia.com/ledger), the per-network table [/developers](https://getlumenia.com/developers). [Demo video](https://lumenia-media.avakit.workers.dev/demo.mp4), 80 seconds: one live take on these screens, then the attack log and the mainnet proof ([16:9 copy](https://lumenia-media.avakit.workers.dev/demo-1080p.mp4)).
 - **Check:** `pnpm install --frozen-lockfile && pnpm near:verify`, no key needed (see "Run it yourself").
 - **Real:** the escrow [`lumenia-near.testnet`](https://testnet.nearblocks.io/address/lumenia-near.testnet), the screens, the relayer, the agent tools and one delivered Agent Market test job; hashes under "Proof".
 - **Testnet:** all of that, with Circle's testnet USDC. No audit is claimed.
@@ -67,14 +67,14 @@ Every path ran against `lumenia-near.testnet` with Circle's testnet USDC; open a
 
 | What | Transaction | Result |
 |---|---|---|
-| The demo video's take on the product screens: send, claim into the new account ayse-bzht.testnet, pay 0.25 USDC forward through the sponsor relayer (03:35 UTC) | AcYDkG9vYvzZLTtqTtFE3FvtFAi6hUn6NjhSNaew2ouV, 5mXtmnogZmQEP2HajYS4QWbGbg8QMUSzj9oC4pb8B3FA, 8YhoQMg6QCiTjhfrPs9b8eRGQ49XiW5CuYfvkBjMe4Ri | created with 1 USDC and 0.05 NEAR; after paying forward it holds 0.75 USDC and still 0.05 NEAR |
+| The demo video's take on the live site: a practice link made by the sponsor, claimed into the new account ayse-ge57.testnet, 0.25 USDC paid forward through the relayer (23:59 UTC) | 7EeSYWuqB8XQCsD4XpkhnRVLfLLZMHM6ccrawTKQKjf7, 6SXoxCFjfMa2V1iGd6EjSQHAsz3MD4qeKsoAdVHKThLB, rXb8FRSVzKadTsQXWmzd1D9GffXsopfGXyf6xYzSKaK | created with 1 USDC and 0.05 NEAR; after paying forward it holds 0.75 USDC and still 0.05 NEAR |
 | Contract script: create a 1 USDC link, then claim it with the link key into a fresh account | 4pV1q11f7UXLooG9cA3t1HBSFm9B4pYnUWYxr3gEgZAD, FhL77xssNU1P57uCcuC4DiDSaU17BFNUPfcceLn3dEgu | drop Open for link key ed25519:FTbxAZN3..., then account 880115ec...93a1 created with 1 USDC and 0.05 NEAR; drop Claimed |
 | Agent (MCP CLI) pays three people in one transaction | EpJn7vmaAvqexTf3JDBoGsjMbYKsyHmgs2NbFvTcAJtW | 3 links (1.00, 1.50, 1.10 USDC), one receipt each |
 | NEAR Agent Market test job 94912e5d ("For agents") | 8NXQ2YXWNTyihMueGHvbJ6ceR1Qjft8M51Ce4u2MCaHf | two Open 0.25 USDC links, funded in one transaction |
 | The relayer inside Lumenia's sponsor service, `/near/relay` (02:42 UTC) | A3jr4UJWjrNeahjYJNvX6CRbfWYw7BZTwc8Yweh2QiSm | 0.10 USDC link created; an immediate second request was refused with 429 (10-second cooldown) |
 
 <details>
-<summary>Five more rows: the web client's create and claim, an agent paying one person, the first relayed pay-forward, an earlier take of the demo video</summary>
+<summary>Six more rows: the web client's create and claim, an agent paying one person, the first relayed pay-forward, two earlier takes of the demo video</summary>
 
 | What | Transaction | Result |
 |---|---|---|
@@ -82,6 +82,7 @@ Every path ran against `lumenia-near.testnet` with Circle's testnet USDC; open a
 | Web script: claim it into a fresh account | BJEij829uNAZtaUAqa31Jc2yc7vq3oDjqaVizmnHckBH | account 2315f930...9cb7 holds 1 USDC; drop Claimed |
 | Agent (MCP CLI) pays one person, receipt written | 2bszj9H4dfsX6igqqHzgK6sPRChUXUwVkoqEiiZfDc8K | 1 USDC link, receipt rcpt_2fd21205... |
 | Pay forward through the relayer (sender signs, relayer pays the fee) | DgHQfQaxWMWzKmkwfcswBWV8NfqWyt5FvVKGAe3e3pBL | 0.10 USDC link created; relayer outcome "success" |
+| An earlier take of the demo video, on the screens before the chain-neutral pass: send, claim into ayse-bzht.testnet, pay 0.25 USDC forward through the sponsor relayer (03:35 UTC) | AcYDkG9vYvzZLTtqTtFE3FvtFAi6hUn6NjhSNaew2ouV, 5mXtmnogZmQEP2HajYS4QWbGbg8QMUSzj9oC4pb8B3FA, 8YhoQMg6QCiTjhfrPs9b8eRGQ49XiW5CuYfvkBjMe4Ri | created with 1 USDC and 0.05 NEAR; after paying forward it holds 0.75 USDC and still 0.05 NEAR |
 | An earlier take of the demo video: send, claim into ayse-m48q.testnet, pay 0.25 USDC forward (01:20 UTC) | 3Uv9rHsKn57RkMLcWLntjUh9cN86Na7WFPmXGGWm4cm6, 5MR6FCqGTGRoGugQNyNEf8W9NfUb7PPnxnHPiQn8srYZ, 2gbd1yNWTmsSSgPhHL4U4bK8tM1bPP59srRib4X6NthR | created with 1 USDC; the pay-forward link was created with the relayer paying the fee, and the account holds 0.75 USDC and 0.05 NEAR |
 
 </details>
