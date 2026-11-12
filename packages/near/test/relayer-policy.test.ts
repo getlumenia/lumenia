@@ -136,8 +136,8 @@ describe("policy: refusals", () => {
     const k = linkKey();
     await refusedWith("msg", { actions: [ftTransferCall({ msg: JSON.stringify({ drops: [], expires_in_s: 3600 }) })] }, /non-empty/);
     await refusedWith("msg", { actions: [ftTransferCall({ msg: JSON.stringify({ drops: [k, k], expires_in_s: 3600 }) })] }, /repeats/);
-    const many = Array.from({ length: 101 }, () => linkKey());
-    await refusedWith("msg", { actions: [ftTransferCall({ msg: JSON.stringify({ drops: many, expires_in_s: 3600 }) })] }, /limit is 100/);
+    const many = Array.from({ length: 31 }, () => linkKey());
+    await refusedWith("msg", { actions: [ftTransferCall({ msg: JSON.stringify({ drops: many, expires_in_s: 3600 }) })] }, /limit is 30/);
     await refusedWith("msg", { actions: [ftTransferCall({ msg: JSON.stringify({ drops: [{ public_key: k, to: "x" }], expires_in_s: 3600 }) })] });
     await refusedWith("msg", { actions: [ftTransferCall({ msg: JSON.stringify({ drops: [{ public_key: k, amount: "0" }], expires_in_s: 3600 }) })] });
   });

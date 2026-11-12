@@ -40,8 +40,9 @@ export const MIN_EXPIRY_S = 3_600;
 export const MAX_EXPIRY_S = 604_800;
 /** The escrow stores at most this many memo bytes per drop. */
 export const MAX_MEMO_BYTES = 256;
-/** Largest batch msg the policy accepts. */
-export const MAX_DROPS_PER_MSG = 100;
+/** Largest batch msg the policy accepts: the escrow's own cap (MAX_BATCH_DROPS in lib.rs), so the relayer never pays gas
+ *  for a batch the contract would refuse. */
+export const MAX_DROPS_PER_MSG = 30;
 /** Function-call args larger than this are refused before parsing. */
 export const MAX_ARGS_BYTES = 16 * 1024;
 const U128_MAX = (1n << 128n) - 1n;
