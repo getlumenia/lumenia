@@ -728,9 +728,10 @@ function LinkCreated({ link, txHash, kept, feeNote, onAnother }: { link: StoredL
   );
 }
 
-function pillFor(state: LinkState | null): { status: "waiting" | "received" | "returned"; label: string } {
+function pillFor(state: LinkState | null, practice = false): { status: "waiting" | "received" | "returned"; label: string } {
   if (state === "claimed") return { status: "received", label: "Claimed" };
-  if (state === "returned") return { status: "returned", label: "Returned to you" };
+  // A practice link's money goes back to the shared practice balance, not to whoever made the link.
+  if (state === "returned") return { status: "returned", label: practice ? "Returned" : "Returned to you" };
   if (state === "expired") return { status: "returned", label: "Expired" };
   if (state === "waiting") return { status: "waiting", label: "Waiting" };
   return { status: "waiting", label: "Not confirmed yet" };
@@ -897,7 +898,7 @@ function YourLinks({ funder, version, onChange }: { funder: FunderSession | null
             const url = urls[l.publicKey];
             const err = rowErr[l.publicKey];
             const state = linkStateOf(l, now);
-            const pill = pillFor(state);
+            const pill = pillFor(state, !!l.practice);
             const terminal = l.lastStatus ? isTerminal(l.lastStatus) : false;
             return (
               <div className="nr-row" key={l.publicKey}>
