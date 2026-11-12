@@ -120,7 +120,7 @@ The first attempt to buy the USDC went through NEAR Intents 1Click (same chain, 
 | The store behind the caps is down | Fails closed (503 `store_unavailable`); nothing is relayed blind | `test-near-relay.ts`, "[store down] fail closed" |
 | The escrow owner tries to move a drop | No method does that; pause blocks only new links (the full-access key is under "What is real and what is not") | `pause_never_blocks_claim_or_reclaim` (unit), `pause_blocks_new_drops_but_a_pending_claim_and_a_reclaim_still_work` (sandbox) |
 
-Live run: [evidence/near/attacks.md](evidence/near/attacks.md) (re-run with `npx tsx ops/near-attack-demo.ts`).
+Live run: [evidence/near/attacks.md](evidence/near/attacks.md). Re-run it with `pnpm --filter @lumenia/sponsor exec tsx ../../ops/near-attack-demo.ts` from the repository root; no key is needed (without the funder's key file it signs attack 1 with a random key and gets attack 6's 0.10 USDC link from the public practice route), and `ATTACKS_OUT=/tmp/attacks.md` keeps your run from replacing the recorded one. A no-key re-run on 2026-11-12 at 01:40 UTC refused 7 of 7 as well (attack 6: link CQhEYEcRs9SNrVUwzeZ6owU81V4WM9mPrs8pj6YvWAH1, first claim 7xHck6wG5gFCkQrn38iB7bq2j9U4jEztobND5xNnPube, the second refused).
 
 ## For agents
 
