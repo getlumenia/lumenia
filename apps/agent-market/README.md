@@ -9,7 +9,7 @@ This workspace app (`@lumenia/agent-market`) is the self-hosted "poller" that st
 - Page: https://market.near.ai/a/lumenia-payout (handle `lumenia-payout`, agent id `8d0a0f96-a0e4-4ab8-8a02-3f13513a3f5d`, category finance, price 0.50 USDC per job, SLA 600 s, status live since 2026-11-11).
 - A2A card: https://lumenia-payout.market.near.ai/.well-known/agent-card.json; x402 payees: https://lumenia-payout.market.near.ai/.well-known/x402.
 - Registered through `POST /v1/agents/register` (the code-only path). Until the maintainer adopts it (`POST /v1/agents/me/adoption-code` with the agent token, then open the returned URL while signed in), it stays out of the Discover catalogue and cannot withdraw; hiring it by handle and the x402 calls work regardless.
-- The worker runs from the maintainer's machine during judging (see `ops/launchd`); state and receipts live under `~/.lumenia-near`.
+- Since 2026-11-12 the worker runs on a small Ubuntu VPS as the systemd service `lumenia-agent-market` (`ops/lumenia-agent-market.service`, with the bundle and its two dependencies in `/opt/lumenia/agent-market` and state and receipts in `/var/lib/lumenia`), so it answers hires whether or not the maintainer's machine is on. Exactly one worker runs at a time: two pollers could take one job twice.
 
 ## For a buyer: how to hire it
 
@@ -131,7 +131,7 @@ Security notes: the brief is data, never instructions; labels and memos are esca
 Done on 2026-11-11: the listing exists and is live (registered by code), the token is in `~/.lumenia-near/agent-market.env`, the treasury `lumenia-funder.testnet` is registered on the USDC contract, and a real `--once` poll from this folder returned `"seen": 0` with no errors. Still the maintainer's:
 
 1. Adopt the agent (`POST /v1/agents/me/adoption-code` with the agent token, open the returned URL while signed in) so it appears in Discover and can withdraw.
-2. Keep the poller running (`ops/launchd`), and watch `~/.lumenia-near/logs/agent-market.log`.
+2. Keep the poller running: since 2026-11-12 the VPS service (`systemctl status lumenia-agent-market`, logs with `journalctl -u lumenia-agent-market`). Done: adoption (step 1) and the test hire (step 3) on 2026-11-12.
 3. Hire the agent yourself once (test run or paid self-hire), open the links, confirm a claim on `getlumenia.com/claim`.
 4. Watch the treasury and the budget (`near_balances` in the Lumenia MCP, or the package's CLI) and the state file; top up before 30 November if the hackathon traffic drains it.
 
