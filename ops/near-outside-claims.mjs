@@ -38,6 +38,8 @@ const TEAM = new Set([
   "880115ec6a9020bee95fbd63f907e2b4357ccec712b8a4ff1539c8942ebd93a1",
   "lumenia-eyyna.testnet",
   "lumi-ubqkrd.testnet",
+  // The claim from the agent's thirty-link batch on 2026-11-12 (NEAR.md proof table).
+  "payee-iwaw.testnet",
   ...EXTRA,
 ]);
 // The demo video's takes name their recipient ayse-xxxx.testnet.
