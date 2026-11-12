@@ -16,7 +16,14 @@
 #                                                          owner_id is fixed at init (no transfer method), and `lock` refuses while it is
 #                                                          lumenia.near: pick another existing account here if you will ever lock
 #   bash ops/near-mainnet-owner.sh register                register lumenia.near and the deployer on USDC
-#   bash ops/near-mainnet-owner.sh link <usdc> <label>     lock <usdc> in a new link (key saved under ~/.lumenia-near/mainnet-links/<label>/)
+#   bash ops/near-mainnet-owner.sh link <usdc> <label> [s] lock <usdc> in a new link (key saved under ~/.lumenia-near/mainnet-links/<label>/);
+#                                                          [s] = its life in seconds (default 604800, the escrow's minimum is 60)
+#   bash ops/near-mainnet-owner.sh reclaim <label>         take back the newest Open link of <label> once it has expired (the deployer is its funder)
+#   bash ops/near-mainnet-owner.sh reclaim-proof           a sender reclaim on mainnet: swap 0.1 NEAR to USDC on Rhea, lock 0.10 USDC behind a
+#                                                          60-second link, wait for its expiry, take it back (about 2 minutes, about $0.40)
+#   bash ops/near-mainnet-owner.sh fund <account> <near>   send <near> NEAR from the deployer to an existing account (e.g. lumenia-first.near 0.02)
+#   bash ops/near-mainnet-owner.sh set-starter <near>      owner only: set the NEAR each new account gets at the claim (at most 0.05); a starter
+#                                                          above 0 can be farmed by self-claims, at the pool's expense
 #   bash ops/near-mainnet-owner.sh claim-named <label> <name>   claim link <label> into a NEW account <name>.near (the link key signs; the recipient pays nothing)
 #   bash ops/near-mainnet-owner.sh quote <usdc> <stellarG>      ask NEAR Intents (1Click) for a deposit address that delivers Stellar USDC to <stellarG> (needs a USDC trustline)
 #   bash ops/near-mainnet-owner.sh quote-dry <usdc> <stellarG>  the same quote without a deposit address (read-only)
@@ -182,7 +189,9 @@ case "$STEP" in
     if [ "$HAVE" -lt "$AMOUNT" ]; then echo "REFUSED: the deployer holds $HAVE USDC units and this link needs $AMOUNT; nothing was sent (a swap still running? bash $0 wait-swap)"; exit 1; fi
     KF=$(genkey "$D/link")
     PK=$(keyfield "$KF" public_key)
-    MSG="{\"public_key\":\"$PK\",\"expires_in_s\":604800,\"memo\":\"Lumenia mainnet proof ($LABEL)\"}"
+    LIFE=${4:-604800}
+    if ! [[ "$LIFE" =~ ^[0-9]+$ ]] || [ "$LIFE" -lt 60 ] || [ "$LIFE" -gt 604800 ]; then echo "REFUSED: the life must be 60 to 604800 seconds, got $LIFE; nothing was sent"; exit 1; fi
+    MSG="{\"public_key\":\"$PK\",\"expires_in_s\":$LIFE,\"memo\":\"Lumenia mainnet proof ($LABEL)\"}"
     echo "== lock $2 USDC behind link $LABEL (public key $PK); the secret stays in $KF (0600)"
     ARGS=$(python3 -c "import json,sys;print(json.dumps({'receiver_id':sys.argv[1],'amount':sys.argv[2],'msg':sys.argv[3]}))" "$CONTRACT" "$AMOUNT" "$MSG")
     "$NEAR" contract call-function as-transaction "$USDC" ft_transfer_call json-args "$ARGS" prepaid-gas '100 Tgas' attached-deposit '1 yoctoNEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
@@ -370,6 +379,48 @@ print(s if s>0 else 0)" "$KEEP")
       && "$0" link 2 proof-a && "$0" claim-named proof-a "$NAME" \
       && "$0" link 1 proof-b && "$0" claim-to proof-b "$TO" \
       && "$0" send-usdc-rest "$TO" && "$0" send-rest 0.3 "$TO" && "$0" status
+    ;;
+  reclaim)
+    LABEL=$2; D="$LINKS/$LABEL"; KF=$(live_link_key "$LABEL")
+    if [ -z "$KF" ]; then echo "REFUSED: no Open link under $D/link; nothing was sent"; exit 1; fi
+    PK=$(keyfield "$KF" public_key)
+    RARGS="{\"public_key\":\"$PK\"}"
+    RB64=$(b64 "$RARGS")
+    EXP=$(rpcq "{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\",\"method_name\":\"get_drop\",\"args_base64\":\"$RB64\"}" 2>/dev/null | python3 -c "import json,sys
+r=json.load(sys.stdin).get('result') or {}
+v=json.loads(bytes(r['result']).decode()) if 'result' in r else None
+print(v.get('expires_at_ns','') if isinstance(v,dict) else '')" 2>/dev/null || true)
+    if ! [[ "$EXP" =~ ^[0-9]+$ ]]; then echo "REFUSED: could not read the link's expiry ($RPC_MAINNET); nothing was sent"; exit 1; fi
+    LEFT=$(python3 -c "import sys,time;print(max(0, int(sys.argv[1])//10**9 - int(time.time()) + 2))" "$EXP")
+    if [ "$LEFT" -gt 0 ]; then echo "== link $LABEL expires in $LEFT s; waiting"; sleep "$LEFT"; fi
+    echo "== take back link $LABEL (public key $PK) as its funder $DEPLOYER"
+    "$NEAR" contract call-function as-transaction "$CONTRACT" reclaim json-args "$RARGS" prepaid-gas '50 Tgas' attached-deposit '0 NEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
+    "$NEAR" contract call-function as-read-only "$CONTRACT" get_drop json-args "$RARGS" network-config mainnet now 2>&1 | grep -E '"status"|"amount"' || true
+    echo "USDC units on the deployer now: $(usdc_units "$DEPLOYER")"
+    ;;
+  reclaim-proof)
+    "$0" swap-rhea 0.1 && "$0" link 0.10 proof-r 60 && "$0" reclaim proof-r && "$0" status
+    ;;
+  fund)
+    TO=$2; AMT_NEAR=$3
+    if ! python3 -c "import sys,decimal;d=decimal.Decimal(sys.argv[1]);sys.exit(0 if 0 < d <= 1 else 1)" "$AMT_NEAR" 2>/dev/null; then echo "REFUSED: fund takes 0 to 1 NEAR, got $AMT_NEAR; nothing was sent"; exit 1; fi
+    case "$(account_exists "$TO" || true)" in
+      yes) ;;
+      *) echo "REFUSED: $TO does not exist on mainnet (or the RPC did not answer); nothing was sent"; exit 1;;
+    esac
+    echo "== send $AMT_NEAR NEAR from $DEPLOYER to $TO"
+    "$NEAR" tokens "$DEPLOYER" send-near "$TO" "$AMT_NEAR NEAR" network-config mainnet sign-with-legacy-keychain send
+    ;;
+  set-starter)
+    AMT_NEAR=$2
+    YOCTO=$(python3 -c "import sys,decimal;d=decimal.Decimal(sys.argv[1]);print(int(d*10**24) if 0 <= d <= decimal.Decimal('0.05') else '')" "$AMT_NEAR" 2>/dev/null || true)
+    if ! [[ "$YOCTO" =~ ^[0-9]+$ ]]; then echo "REFUSED: the starter is 0 to 0.05 NEAR, got $AMT_NEAR; nothing was sent"; exit 1; fi
+    OWNER_NOW=$(rpcq "{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\",\"method_name\":\"get_config\",\"args_base64\":\"e30=\"}" | python3 -c "import json,sys;r=json.load(sys.stdin)['result'];print(json.loads(bytes(r['result']).decode())['owner_id'])" 2>/dev/null || true)
+    if [ "$OWNER_NOW" != "$DEPLOYER" ]; then echo "REFUSED: the escrow's owner_id is ${OWNER_NOW:-unknown}, not the deployer; nothing was sent"; exit 1; fi
+    echo "!!! a starter above 0 is paid by the escrow's pool on every claim into a new account, and self-claims can farm it."
+    echo "== set starter_yocto to $YOCTO ($AMT_NEAR NEAR) on $CONTRACT"
+    "$NEAR" contract call-function as-transaction "$CONTRACT" set_config json-args "{\"starter_yocto\":\"$YOCTO\"}" prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as "$DEPLOYER" network-config mainnet sign-with-legacy-keychain send
+    "$NEAR" contract call-function as-read-only "$CONTRACT" get_config json-args '{}' network-config mainnet now 2>&1 | grep -E 'starter' || true
     ;;
   rest)
     NAME=$2; TO=$3
