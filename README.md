@@ -28,9 +28,9 @@ On mainnet, `lumenia-first.near` did not exist until our 2 USDC test payout crea
 | Folder | What it is |
 |---|---|
 | `contracts/lumen-drop-near/` | The escrow (Rust, near-sdk-rs), on testnet as `lumenia-near.testnet` and on mainnet as `lumenia.near`: single and batch links, the return timer and `return_expired` (unclaimed money home with nobody acting), sender reclaim, pause that never blocks exits, public ledger views. |
-| `packages/near/` | `@lumenia/near`: links, receipts, batch payouts, the relayer's policy and client, NEAR Intents quotes. |
+| `packages/near/` | `@lumenia/near`: links, receipts, batch payouts, return timers, the relayer's policy and client, NEAR Intents quotes. |
 | `apps/web/app/(site)/try/send`, `apps/web/app/claim`, `apps/web/app/(site)/ledger`, `apps/web/components/near/` | The screens: send one or many (CSV export), claim, pay it forward, the public ledger. |
-| `apps/sponsor` (`/near/relay`, `/near/health`, `/near/policy`) | The relayer inside Lumenia's sponsor service: pays the fee only to create or take back a Lumenia link, with caps. |
+| `apps/sponsor` (`/near/relay`, `/near/health`, `/near/policy`, `/near/practice-link`) | The relayer inside Lumenia's sponsor service: pays the fee only to create or take back a Lumenia link, with caps; makes practice links and arms their return timers; sends expired links home every 15 minutes. |
 | `apps/web/lib/agent-mcp.ts` (`near_*` tools) | The agent tools: pay one, pay many, status, reclaim, balances, cross-chain quote, receipts. |
 | `apps/agent-market/` | The Lumenia Payout Agent on NEAR Agent Market: https://market.near.ai/a/lumenia-payout |
 | `ops/near-verify.mjs` | The verifier behind `pnpm near:verify`. |
