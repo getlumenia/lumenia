@@ -249,7 +249,7 @@ returns to Open and the funder can try again.
 |---|---|---|
 | create one drop: `ft_transfer_call` -> `ft_on_transfer` -> key added | 7.5 Tgas | 100 Tgas (50 is enough) |
 | create a batch of 3 | 10.0 Tgas | 100 Tgas |
-| create a batch of 30 (the cap) | 43.2 Tgas whole tx, heaviest receipt (`ft_on_transfer`) 24.8 Tgas | 300 Tgas |
+| create a batch of 30 (the cap) | about 43 Tgas whole tx, heaviest receipt (`ft_on_transfer`) 24.8 Tgas | 300 Tgas |
 | `claim` to a registered existing account | 13.1 Tgas | 100 Tgas |
 | `claim` to an unregistered existing account (pool pays registration) | 12.4 Tgas | 100 Tgas |
 | `claim` to a fresh implicit account (hero path, starter included) | 20.5 Tgas | 100 Tgas |
