@@ -202,6 +202,7 @@ print(o)" "$WASM")
     AFTER=$(rpcq "{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\"}" | python3 -c "import json,sys;print(json.load(sys.stdin).get('result',{}).get('code_hash',''))" 2>/dev/null || true)
     echo "code hash on chain now: $AFTER"
     "$NEAR" contract call-function as-read-only "$CONTRACT" get_stats json-args '{}' network-config mainnet now 2>&1 | grep -E 'drops_created|open_drops' || true
+    if [ "$AFTER" = "$NEW_HASH" ]; then echo "next: NEAR.md must say \"mainnet code hash $AFTER\" (near:verify compares it), then run: bash $0 return-proof"; fi
     ;;
   register)
     for A in "$CONTRACT" "$DEPLOYER"; do
