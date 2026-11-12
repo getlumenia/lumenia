@@ -16,6 +16,8 @@
 #                                                          owner_id is fixed at init (no transfer method), and `lock` refuses while it is
 #                                                          lumenia.near: pick another existing account here if you will ever lock
 #   bash ops/near-mainnet-owner.sh register                register lumenia.near and the deployer on USDC
+#   bash ops/near-mainnet-owner.sh redeploy                rebuild the escrow from this source and deploy it WITHOUT an init call (the
+#                                                          state and every open link stay); signed by lumenia.near's full-access key
 #   bash ops/near-mainnet-owner.sh link <usdc> <label> [s] lock <usdc> in a new link (key saved under ~/.lumenia-near/mainnet-links/<label>/);
 #                                                          [s] = its life in seconds (default 604800, the escrow's minimum is 60)
 #   bash ops/near-mainnet-owner.sh reclaim <label>         take back the newest Open link of <label> once it has expired (the deployer is its funder)
@@ -175,6 +177,23 @@ case "$STEP" in
     INIT="{\"owner_id\":\"$OWNER\",\"token_id\":\"$USDC\",\"root_account_id\":\"$ROOT\",\"key_allowance\":\"250000000000000000000000\",\"registration_deposit\":\"1250000000000000000000\",\"max_expiry_s\":604800,\"starter_yocto\":\"0\",\"min_amount\":\"100000\"}"
     echo "== deploy + init $CONTRACT: $INIT"
     "$NEAR" contract deploy "$CONTRACT" use-file "$WASM" with-init-call new json-args "$INIT" prepaid-gas '100 Tgas' attached-deposit '0 NEAR' network-config mainnet sign-with-legacy-keychain send
+    ;;
+  redeploy)
+    if [ "$(account_exists "$CONTRACT" || true)" != yes ]; then echo "REFUSED: $CONTRACT does not exist on mainnet (or the RPC did not answer); nothing was sent"; exit 1; fi
+    BEFORE=$(rpcq "{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\"}" | python3 -c "import json,sys;print(json.load(sys.stdin).get('result',{}).get('code_hash',''))" 2>/dev/null || true)
+    if [ -z "$BEFORE" ] || [ "$BEFORE" = 11111111111111111111111111111111 ]; then echo "REFUSED: $CONTRACT holds no contract code; use deploy, not redeploy; nothing was sent"; exit 1; fi
+    (cd "$CRATE/contract" && cargo near build non-reproducible-wasm >/dev/null)
+    NEW_HASH=$(python3 -c "import hashlib,sys
+A='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+n=int.from_bytes(hashlib.sha256(open(sys.argv[1],'rb').read()).digest(),'big'); o=''
+while n: n,r=divmod(n,58); o=A[r]+o
+print(o)" "$WASM")
+    echo "== redeploy $CONTRACT: code hash $BEFORE -> $NEW_HASH (no init call; state and open links stay)"
+    if [ "$BEFORE" = "$NEW_HASH" ]; then echo "already running this code; nothing was sent"; exit 0; fi
+    "$NEAR" contract deploy "$CONTRACT" use-file "$WASM" without-init-call network-config mainnet sign-with-legacy-keychain send
+    AFTER=$(rpcq "{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\"}" | python3 -c "import json,sys;print(json.load(sys.stdin).get('result',{}).get('code_hash',''))" 2>/dev/null || true)
+    echo "code hash on chain now: $AFTER"
+    "$NEAR" contract call-function as-read-only "$CONTRACT" get_stats json-args '{}' network-config mainnet now 2>&1 | grep -E 'drops_created|open_drops' || true
     ;;
   register)
     for A in "$CONTRACT" "$DEPLOYER"; do

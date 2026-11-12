@@ -601,21 +601,29 @@ async function liveChecks() {
   } catch (e) {
     record(`${CONTRACT_ID} get_drops (public ledger)`, false, errMsg(e));
   }
-  // The deployed code: the testnet and the mainnet escrow must both run the code hash NEAR.md documents.
+  // The deployed code: each escrow must run the code hash NEAR.md documents for its network ("testnet code hash X",
+  // "mainnet code hash Y"); the two differ while a new build waits for the owner's mainnet redeploy.
   try {
-    const documented = (readFileSync(NEAR_MD, "utf8").match(/code hash ([1-9A-HJ-NP-Za-km-z]{43,44})/) || [])[1];
+    const md = readFileSync(NEAR_MD, "utf8");
+    const documentedFor = (net) => (md.match(new RegExp(`${net} code hash \\x60?([1-9A-HJ-NP-Za-km-z]{43,44})`)) || [])[1];
+    const documented = documentedFor("testnet");
+    const documentedMainnet = documentedFor("mainnet");
     const codeHash = async (url, accountId) => {
       const j = await rpcCall(url, "query", { request_type: "view_account", finality: "final", account_id: accountId });
       if (j.error) throw new Error(`${accountId}: ${JSON.stringify(j.error).slice(0, 160)}`);
       return j.result.code_hash;
     };
     const [t, m] = await Promise.all([codeHash(RPC, CONTRACT_ID), codeHash(NETWORKS.mainnet.rpc, NETWORKS.mainnet.sender)]);
-    record(`deployed code: ${CONTRACT_ID} and ${NETWORKS.mainnet.sender} run the code hash NEAR.md documents`, !!documented && t === documented && m === documented, `testnet ${t}, mainnet ${m}, NEAR.md ${documented ?? "none found"}`);
+    record(
+      `deployed code: ${CONTRACT_ID} and ${NETWORKS.mainnet.sender} run the code hashes NEAR.md documents`,
+      !!documented && !!documentedMainnet && t === documented && m === documentedMainnet,
+      `testnet ${t} (NEAR.md ${documented ?? "none found"}), mainnet ${m} (NEAR.md ${documentedMainnet ?? "none found"})`,
+    );
     if (builtCodeHash) {
       note(
         builtCodeHash === documented
-          ? `this machine's build of the escrow reproduces the deployed code hash ${documented}`
-          : `this machine's build hashes to ${builtCodeHash}, the deployed code to ${documented}: a non-reproducible build can differ across toolchains (the deployed wasm was built with Rust 1.95 and cargo-near 0.23 on macOS)`,
+          ? `this machine's build of the escrow reproduces the testnet code hash ${documented}`
+          : `this machine's build hashes to ${builtCodeHash}, the testnet code to ${documented}: a non-reproducible build can differ across toolchains (the deployed wasm was built with Rust 1.95 and cargo-near 0.23 on macOS)`,
       );
     }
   } catch (e) {
