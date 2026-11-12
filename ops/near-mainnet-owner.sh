@@ -17,12 +17,20 @@
 #                                                          lumenia.near: pick another existing account here if you will ever lock
 #   bash ops/near-mainnet-owner.sh register                register lumenia.near and the deployer on USDC
 #   bash ops/near-mainnet-owner.sh redeploy                rebuild the escrow from this source and deploy it WITHOUT an init call (the
-#                                                          state and every open link stay); signed by lumenia.near's full-access key
+#                                                          state and every open link stay); signed by lumenia.near's full-access key.
+#                                                          It brings mainnet level with testnet: the pool-reserve guard and the return
+#                                                          timer (arm_return / return_expired). Run it before `return-proof` and before any `lock`
 #   bash ops/near-mainnet-owner.sh link <usdc> <label> [s] lock <usdc> in a new link (key saved under ~/.lumenia-near/mainnet-links/<label>/);
 #                                                          [s] = its life in seconds (default 604800, the escrow's minimum is 60)
 #   bash ops/near-mainnet-owner.sh reclaim <label>         take back the newest Open link of <label> once it has expired (the deployer is its funder)
 #   bash ops/near-mainnet-owner.sh reclaim-proof           a sender reclaim on mainnet: swap 0.1 NEAR to USDC on Rhea, lock 0.10 USDC behind a
 #                                                          60-second link, wait for its expiry, take it back (about 2 minutes, about $0.40)
+#   bash ops/near-mainnet-owner.sh arm <label>             arm the return timer of link <label> (ops/near-arm-return.mjs, gas sized to its life):
+#                                                          after the expiry its USDC comes back to the deployer with nobody signing anything
+#   bash ops/near-mainnet-owner.sh wait-home <label>       wait (at most 10 minutes) until link <label> is back with its funder; prints when
+#   bash ops/near-mainnet-owner.sh return-proof            the money comes home by itself on mainnet (needs `redeploy` first): swap 0.1 NEAR to
+#                                                          USDC on Rhea, lock 0.10 USDC behind a 60-second link, arm its timer, then sign NOTHING
+#                                                          while NEAR sends it back (about 4 minutes, about $0.40)
 #   bash ops/near-mainnet-owner.sh fund <account> <near>   send <near> NEAR from the deployer to an existing account (e.g. lumenia-first.near 0.02)
 #   bash ops/near-mainnet-owner.sh set-starter <near>      owner only: set the NEAR each new account gets at the claim (at most 0.05); a starter
 #                                                          above 0 can be farmed by self-claims, at the pool's expense
@@ -419,6 +427,42 @@ print(v.get('expires_at_ns','') if isinstance(v,dict) else '')" 2>/dev/null || t
     ;;
   reclaim-proof)
     "$0" swap-rhea 0.1 && "$0" link 0.10 proof-r 60 && "$0" reclaim proof-r && "$0" status
+    ;;
+  arm)
+    LABEL=$2; KF=$(live_link_key "$LABEL")
+    if [ -z "$KF" ]; then echo "REFUSED: no Open link under $LINKS/$LABEL/link; nothing was sent"; exit 1; fi
+    CODE=$(rpcq "{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\"}" | python3 -c "import json,sys;print(json.load(sys.stdin).get('result',{}).get('code_hash',''))" 2>/dev/null || true)
+    if [ "$CODE" = GDKwUNKV1mvWVr48y77m9FEWkodcvCignc4GzJNAAcYv ]; then echo "REFUSED: $CONTRACT still runs the build without the return timer; run \`bash $0 redeploy\` first; nothing was sent"; exit 1; fi
+    PK=$(keyfield "$KF" public_key)
+    EXP=$(rpcq "{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\",\"method_name\":\"get_drop\",\"args_base64\":\"$(b64 "{\"public_key\":\"$PK\"}")\"}" 2>/dev/null | python3 -c "import json,sys
+r=json.load(sys.stdin).get('result') or {}
+v=json.loads(bytes(r['result']).decode()) if 'result' in r else None
+print(v.get('expires_at_ns','') if isinstance(v,dict) else '')" 2>/dev/null || true)
+    if ! [[ "$EXP" =~ ^[0-9]+$ ]]; then echo "REFUSED: could not read the link's expiry ($RPC_MAINNET); nothing was sent"; exit 1; fi
+    # The gas of @lumenia/near/return-timer for one link: 45 Tgas, plus 3 a wake-up (one each 100 s, two spare), at most 1 PGas.
+    TGAS=$(python3 -c "import math,sys,time;left=max(0,int(sys.argv[1])//10**9-int(time.time()));t=45+(math.ceil(left/100)+2)*3;print(t if t<=1000 else '')" "$EXP")
+    if [ -z "$TGAS" ]; then echo "REFUSED: link $LABEL lives longer than one return timer lasts (about 8 hours); take it back with \`reclaim\` after its expiry; nothing was sent"; exit 1; fi
+    echo "== arm the return timer of link $LABEL ($PK): $TGAS Tgas from $DEPLOYER; after this, nobody signs anything"
+    node "$(dirname "$0")/near-arm-return.mjs" --network mainnet --signer "$DEPLOYER" --tgas "$TGAS" "$PK"
+    ;;
+  wait-home)
+    LABEL=$2; KF=$(ls -t "$LINKS/$LABEL"/link/*.json 2>/dev/null | head -1)
+    if [ -z "$KF" ]; then echo "REFUSED: no link under $LINKS/$LABEL/link"; exit 1; fi
+    PK=$(keyfield "$KF" public_key)
+    echo "== waiting for link $LABEL ($PK) to come home; nobody is signing anything"
+    for i in $(seq 1 60); do
+      LINE=$(rpcq "{\"request_type\":\"call_function\",\"finality\":\"final\",\"account_id\":\"$CONTRACT\",\"method_name\":\"get_drop\",\"args_base64\":\"$(b64 "{\"public_key\":\"$PK\"}")\"}" 2>/dev/null | python3 -c "import json,sys,time
+r=json.load(sys.stdin).get('result') or {}
+v=json.loads(bytes(r['result']).decode()) if 'result' in r else None
+if isinstance(v,dict): print(v['status'], time.strftime('%H:%M:%S', time.gmtime(int(v['expires_at_ns'])/1e9)), time.strftime('%H:%M:%S', time.gmtime(int(v['status_changed_at_ns'])/1e9)))" 2>/dev/null || true)
+      set -- $LINE
+      if [ "${1:-}" = Reclaimed ]; then echo "home: expired at $2 UTC, sent back at $3 UTC; USDC units on the deployer now: $(usdc_units "$DEPLOYER")"; exit 0; fi
+      sleep 10
+    done
+    echo "!!! link $LABEL is not home after 10 minutes (status ${1:-unknown}); check the arm transaction"; exit 1
+    ;;
+  return-proof)
+    "$0" swap-rhea 0.1 && "$0" link 0.10 proof-t 60 && "$0" arm proof-t && "$0" wait-home proof-t && "$0" status
     ;;
   fund)
     TO=$2; AMT_NEAR=$3

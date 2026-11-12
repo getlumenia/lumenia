@@ -1,22 +1,26 @@
 /**
- * The practice balance's sweep (NEAR HACKATHON 2026, testnet): the Worker's own scheduled run takes
- * expired, unclaimed practice links back to the shared practice balance.
+ * The Worker's sweep of expired links (NEAR HACKATHON 2026, testnet): its own scheduled run sends
+ * every expired, unclaimed link on the escrow back to the account that funded it.
  *
- * WHY. A practice link is funded by the relayer account (lib/near-practice.ts), so only that
- * account's key can call the escrow's `reclaim`. Without this job an unclaimed practice link keeps
- * its dollars locked in the escrow, and the shared balance runs dry while people try the demo.
+ * WHY. Most links come home by themselves: whoever makes a link can arm its return timer
+ * (`arm_return`, NEP-519 yield/resume), and the practice route arms every practice link it makes
+ * (lib/near-practice.ts). A timer lives as long as the gas it was armed with (a few hours), and a link
+ * can be made without one (another client, a link that outlives its timer). This job is the backstop:
+ * without it such a link keeps its dollars locked until its funder thinks of `reclaim`, and the
+ * shared practice balance runs dry while people try the demo.
  *
- * WHAT IT CAN DO, and nothing else: call `reclaim(public_key)` on the escrow from the relayer
- * account. The escrow itself refuses a reclaim before the link's expiry and from anyone but the
- * link's funder, so this job can only ever move practice dollars back to the practice balance.
+ * WHAT IT CAN DO, and nothing else: call the escrow's `return_expired(public_keys)` from the relayer
+ * account. The escrow lets anyone make that call because it can only ever pay a link's FUNDER, and it
+ * refuses a link that has not expired, is claimed, returned, or mid-claim. So this job can move money
+ * nowhere but home.
  *
- * WHAT IT DOES, per run: read the relayer's links from the escrow (`get_drops_by_funder`, pages of
- * SWEEP_PAGE), then send `reclaim` for at most `max` of them whose status is "Open" and whose expiry
- * has passed, oldest first, one transaction each (SWEEP_RECLAIM_TGAS, no deposit), waited on until
- * FINAL and logged as one JSON line. A link that is "Claiming" is NEVER touched, although the escrow
- * would accept a reclaim of a claim stuck for ten minutes: from a view one cannot tell whether that
- * claim's transfer already happened, and a second payout would come out of the shared pool. The
- * first failure stops the run; the next run tries again.
+ * WHAT IT DOES, per run: read the escrow's ledger (`get_drops`, all funders, pages of SWEEP_PAGE),
+ * pick the links that are "Open" and past their expiry, group them by funder (oldest expiry first,
+ * at most SWEEP_MAX_KEYS per call, the escrow's limit), and send one `return_expired` per group, at
+ * most `max` transactions per run, each waited on until FINAL and logged as one JSON line. A link that
+ * is "Claiming" is NEVER picked: from a view one cannot tell whether that claim's transfer already
+ * happened (only the funder's own `reclaim` may end a stuck claim). The first failure stops the run;
+ * the next run tries again.
  *
  * WHEN. Its own cron (PRACTICE_SWEEP_CRON in wrangler.toml, testnet only), so its subrequests never
  * share an invocation's budget with the watchdog. Skipped when the sponsor is halted.
@@ -26,10 +30,18 @@ import { messageOf, signAndSendActions, type NearSendDeps } from "./near-relay.j
 
 /** The sweep's cron: minutes 7, 22, 37 and 52, between the watchdog's quarter hours. Testnet Worker only. */
 export const PRACTICE_SWEEP_CRON = "7,22,37,52 * * * *";
-/** Gas for one reclaim; the escrow asks for at least 30 Tgas. */
-export const SWEEP_RECLAIM_TGAS = 50;
-/** Reclaims per run: three transactions stay far inside a Free-plan invocation's 50 subrequests. */
+/** Links per `return_expired` call: the escrow's limit (MAX_RETURN_DROPS). */
+export const SWEEP_MAX_KEYS = 30;
+/** Transactions per run: three stay far inside a Free-plan invocation's 50 subrequests. */
 export const SWEEP_MAX_PER_RUN = 3;
+
+/**
+ * Gas for a `return_expired` of `n` links: the escrow asks for 40 Tgas plus 2 per link (its own work,
+ * the transfer and the callback); 20 more is margin, and what is not used is refunded.
+ */
+export function sweepReturnTgas(n: number): number {
+  return 60 + 2 * n;
+}
 /** One ledger page; the escrow returns at most 100. */
 export const SWEEP_PAGE = 100;
 /** Pages read per run at most (1,000 links): a bound on views, whatever the ledger holds. */
@@ -47,11 +59,12 @@ export interface SweepDrop {
 export interface SweepResult {
   /** Links read from the ledger. */
   checked: number;
-  /** Expired, Open and funded by the practice balance: what the job may take back. */
+  /** Expired and Open: what the job may send home. */
   expired: number;
   /** Expired links that are Claiming: left alone on purpose. */
   skippedClaiming: number;
-  reclaimed: { publicKey: string; amountUnits: string; txHash: string }[];
+  /** Links sent home this run, with the transaction that carried each group. */
+  returned: { publicKey: string; funder: string; amountUnits: string; txHash: string }[];
   /** Why the run stopped early, when it did. */
   error?: string;
 }
@@ -65,18 +78,36 @@ function isSweepDrop(d: unknown): d is SweepDrop {
   return typeof r.public_key === "string" && typeof r.status === "string" && typeof r.funder === "string" && typeof r.amount === "string" && typeof r.expires_at_ns === "string" && /^\d+$/.test(r.expires_at_ns);
 }
 
-/** Expired Open links funded by `funderId`, oldest expiry first. Pure: the unit of the suite. */
-export function expiredOpenDrops(drops: SweepDrop[], funderId: string, nowMs: number): SweepDrop[] {
+/** Expired Open links, oldest expiry first. Pure: the unit of the suite. */
+export function expiredOpenDrops(drops: SweepDrop[], nowMs: number): SweepDrop[] {
   const nowNs = BigInt(Math.floor(nowMs)) * 1_000_000n;
   return drops
-    .filter((d) => d.funder === funderId && d.status === "Open" && BigInt(d.expires_at_ns) <= nowNs)
+    .filter((d) => d.status === "Open" && BigInt(d.expires_at_ns) <= nowNs)
     .sort((a, b) => (BigInt(a.expires_at_ns) < BigInt(b.expires_at_ns) ? -1 : BigInt(a.expires_at_ns) > BigInt(b.expires_at_ns) ? 1 : 0));
 }
 
-/** Expired links that are mid-claim: counted, never reclaimed. */
-function expiredClaiming(drops: SweepDrop[], funderId: string, nowMs: number): number {
+/**
+ * The calls one run would send: the due links grouped by funder, at most SWEEP_MAX_KEYS a call, in the
+ * order of each group's oldest expiry. Pure.
+ */
+export function returnGroups(due: SweepDrop[]): SweepDrop[][] {
+  const byFunder = new Map<string, SweepDrop[]>();
+  for (const d of due) {
+    const list = byFunder.get(d.funder) ?? [];
+    list.push(d);
+    byFunder.set(d.funder, list);
+  }
+  const groups: SweepDrop[][] = [];
+  for (const list of byFunder.values()) {
+    for (let i = 0; i < list.length; i += SWEEP_MAX_KEYS) groups.push(list.slice(i, i + SWEEP_MAX_KEYS));
+  }
+  return groups;
+}
+
+/** Expired links that are mid-claim: counted, never touched. */
+function expiredClaiming(drops: SweepDrop[], nowMs: number): number {
   const nowNs = BigInt(Math.floor(nowMs)) * 1_000_000n;
-  return drops.filter((d) => d.funder === funderId && d.status === "Claiming" && BigInt(d.expires_at_ns) <= nowNs).length;
+  return drops.filter((d) => d.status === "Claiming" && BigInt(d.expires_at_ns) <= nowNs).length;
 }
 
 /** True when the transaction and every receipt in it ended without a Failure. */
@@ -88,7 +119,7 @@ export function outcomeSucceeded(response: unknown): boolean {
 }
 
 /** One run of the sweep. Never throws: a failure is reported in the result and the log. */
-export async function sweepExpiredPracticeLinks(
+export async function sweepExpiredLinks(
   deps: SweepDeps,
   opts: { now?: () => number; max?: number; log?: (line: string) => void } = {},
 ): Promise<SweepResult> {
@@ -96,9 +127,8 @@ export async function sweepExpiredPracticeLinks(
   const max = opts.max ?? SWEEP_MAX_PER_RUN;
   const log = opts.log ?? ((line: string) => console.log(line));
   const { config, rpc } = deps;
-  const funder = config.relayerAccountId;
-  const result: SweepResult = { checked: 0, expired: 0, skippedClaiming: 0, reclaimed: [] };
-  const line = (fields: Record<string, unknown>) => log(JSON.stringify({ at: new Date(now()).toISOString(), job: "near/practice-sweep", ...fields }));
+  const result: SweepResult = { checked: 0, expired: 0, skippedClaiming: 0, returned: [] };
+  const line = (fields: Record<string, unknown>) => log(JSON.stringify({ at: new Date(now()).toISOString(), job: "near/sweep", ...fields }));
 
   if (!rpc.viewFunction) {
     result.error = "the RPC offers no contract views";
@@ -109,8 +139,8 @@ export async function sweepExpiredPracticeLinks(
   const drops: SweepDrop[] = [];
   try {
     for (let page = 0; page < SWEEP_MAX_PAGES; page++) {
-      const rows = await rpc.viewFunction(config.escrowId, "get_drops_by_funder", { funder, from_index: page * SWEEP_PAGE, limit: SWEEP_PAGE });
-      if (!Array.isArray(rows)) throw new Error("get_drops_by_funder answered no list");
+      const rows = await rpc.viewFunction(config.escrowId, "get_drops", { from_index: page * SWEEP_PAGE, limit: SWEEP_PAGE });
+      if (!Array.isArray(rows)) throw new Error("get_drops answered no list");
       drops.push(...rows.filter(isSweepDrop));
       if (rows.length < SWEEP_PAGE) break;
     }
@@ -120,27 +150,28 @@ export async function sweepExpiredPracticeLinks(
     return result;
   }
   result.checked = drops.length;
-  const due = expiredOpenDrops(drops, funder, now());
+  const due = expiredOpenDrops(drops, now());
   result.expired = due.length;
-  result.skippedClaiming = expiredClaiming(drops, funder, now());
+  result.skippedClaiming = expiredClaiming(drops, now());
 
-  for (const d of due.slice(0, Math.max(0, max))) {
-    const action = actions.functionCall("reclaim", { public_key: d.public_key }, teraToGas(SWEEP_RECLAIM_TGAS), 0n);
+  for (const group of returnGroups(due).slice(0, Math.max(0, max))) {
+    const keys = group.map((d) => d.public_key);
+    const action = actions.functionCall("return_expired", { public_keys: keys }, teraToGas(sweepReturnTgas(keys.length)), 0n);
     try {
       const { txHash, response } = await signAndSendActions(deps, config.escrowId, [action]);
       if (!outcomeSucceeded(response)) {
-        result.error = `the reclaim of ${d.public_key} ended in a failure (tx ${txHash})`;
-        line({ decision: "failed", publicKey: d.public_key, txHash });
+        result.error = `the return of ${keys.length} link(s) of ${group[0]!.funder} ended in a failure (tx ${txHash})`;
+        line({ decision: "failed", funder: group[0]!.funder, links: keys.length, txHash });
         break;
       }
-      result.reclaimed.push({ publicKey: d.public_key, amountUnits: d.amount, txHash });
-      line({ decision: "reclaimed", publicKey: d.public_key, amount: d.amount, txHash });
+      for (const d of group) result.returned.push({ publicKey: d.public_key, funder: d.funder, amountUnits: d.amount, txHash });
+      line({ decision: "returned", funder: group[0]!.funder, links: keys.length, txHash });
     } catch (e) {
-      result.error = `the reclaim of ${d.public_key} could not be sent: ${messageOf(e)}`;
-      line({ decision: "failed", publicKey: d.public_key, reason: messageOf(e) });
+      result.error = `the return of ${keys.length} link(s) of ${group[0]!.funder} could not be sent: ${messageOf(e)}`;
+      line({ decision: "failed", funder: group[0]!.funder, links: keys.length, reason: messageOf(e) });
       break;
     }
   }
-  line({ decision: "done", checked: result.checked, expired: result.expired, reclaimed: result.reclaimed.length, skippedClaiming: result.skippedClaiming });
+  line({ decision: "done", checked: result.checked, expired: result.expired, returned: result.returned.length, skippedClaiming: result.skippedClaiming });
   return result;
 }

@@ -50,6 +50,7 @@ import {
   DEFAULT_PRACTICE_CAPS,
   PRACTICE_MAX_MEMO_BYTES,
   parsePracticeRequest,
+  armReturnTgas,
   practiceConfigFromEnv,
   practiceMsg,
 } from "./lib/near-practice.js";
@@ -65,7 +66,7 @@ import {
   setNearRpcForTests,
   type NearRpc,
 } from "./lib/near-relay.js";
-import { PRACTICE_SWEEP_CRON, SWEEP_RECLAIM_TGAS, expiredOpenDrops, outcomeSucceeded, sweepExpiredPracticeLinks } from "./lib/near-practice-sweep.js";
+import { PRACTICE_SWEEP_CRON, SWEEP_MAX_KEYS, expiredOpenDrops, outcomeSucceeded, returnGroups, sweepExpiredLinks, sweepReturnTgas } from "./lib/near-practice-sweep.js";
 import { resetServiceCache } from "./lib/service.js";
 import { NEAR_RELAYER_LOW_TITLE, checkNearRelayer, type Alert } from "./lib/watchdog.js";
 import worker, { resetNearHealthCache } from "./worker.js";
@@ -226,6 +227,8 @@ interface Plan {
   send: SendMode[];
   response: unknown;
   txStatus: unknown[];
+  /** How the arm of a return timer (send until INCLUDED_FINAL) answers. */
+  include: "ok" | "throw";
 }
 const plan: Plan = {
   height: HEIGHT,
@@ -236,6 +239,7 @@ const plan: Plan = {
   send: [],
   response: successResponse(),
   txStatus: [],
+  include: "ok",
 };
 const rpcCalls: string[] = [];
 const sent: SignedTransaction[] = [];
@@ -274,6 +278,12 @@ function fakeRpc(url: string): NearRpc {
       rpcCalls.push("status");
       if (plan.txStatus.length === 0) throw new Error("tx not found yet");
       return plan.txStatus.shift();
+    },
+    async sendUntilIncluded(signed) {
+      rpcCalls.push("include");
+      sent.push(signed);
+      if (plan.include === "throw") throw new Error("RPC unreachable (fetch failed)");
+      return { final_execution_status: "INCLUDED_FINAL" };
     },
     async viewFtBalance(tokenId, accountId) {
       rpcCalls.push(`ftbalance:${tokenId === USDC ? "usdc" : tokenId}:${accountId}`);
@@ -390,6 +400,7 @@ function fresh(): void {
   plan.send = [];
   plan.response = successResponse();
   plan.txStatus = [];
+  plan.include = "ok";
   resetHaltCache();
   resetNearHealthCache();
   setNearRpcForTests(fakeRpc);
@@ -834,7 +845,7 @@ async function main(): Promise<void> {
     return {
       tx,
       fc,
-      args: fc ? (JSON.parse(Buffer.from(fc.args).toString("utf8")) as { receiver_id?: string; amount?: string; msg?: string }) : null,
+      args: fc ? (JSON.parse(Buffer.from(fc.args).toString("utf8")) as { receiver_id?: string; amount?: string; msg?: string; public_keys?: string[] }) : null,
     };
   };
 
@@ -856,9 +867,10 @@ async function main(): Promise<void> {
     const okReq = parsePracticeRequest({ publicKey: key, amountUsdc: "0.5", expiresInS: 600, memo: "  hi  " });
     check("a good body parses: units, the amount normalised, the memo trimmed", okReq.ok && okReq.request.amountUnits === "500000" && okReq.request.amountUsdc === "0.50" && okReq.request.memo === "hi" && okReq.request.publicKey === key);
     check("the msg is the escrow's single-link shape, built from the public key only", okReq.ok && practiceMsg(okReq.request) === JSON.stringify({ public_key: key, expires_in_s: 600, memo: "hi" }));
-    const noMemo = parsePracticeRequest({ publicKey: key, amountUsdc: "0.10", expiresInS: 86_400, memo: "   " });
-    check("a blank memo is dropped; 0.10 and 1 day are the edges, accepted", noMemo.ok && noMemo.request.memo === undefined && practiceMsg(noMemo.request) === JSON.stringify({ public_key: key, expires_in_s: 86_400 }));
+    const noMemo = parsePracticeRequest({ publicKey: key, amountUsdc: "0.10", expiresInS: 28_800, memo: "   " });
+    check("a blank memo is dropped; 0.10 and 8 hours are the edges, accepted", noMemo.ok && noMemo.request.memo === undefined && practiceMsg(noMemo.request) === JSON.stringify({ public_key: key, expires_in_s: 28_800 }));
     check("1.00 and 6 decimals inside the range are accepted", parsePracticeRequest({ publicKey: key, amountUsdc: "1", expiresInS: 600 }).ok && parsePracticeRequest({ publicKey: key, amountUsdc: "0.123456", expiresInS: 600 }).ok);
+    check("2 minutes is the shortest life, long enough to watch the money come home", parsePracticeRequest({ publicKey: key, amountUsdc: "0.5", expiresInS: 120 }).ok && !parsePracticeRequest({ publicKey: key, amountUsdc: "0.5", expiresInS: 119 }).ok);
     check(`a memo of exactly ${PRACTICE_MAX_MEMO_BYTES} bytes is accepted`, parsePracticeRequest({ publicKey: key, amountUsdc: "1", expiresInS: 600, memo: "m".repeat(PRACTICE_MAX_MEMO_BYTES) }).ok);
   }
 
@@ -910,8 +922,8 @@ async function main(): Promise<void> {
       { name: "an amount with 7 decimals", code: "amount", body: goodBody({ amountUsdc: "1.0000001" }) },
       { name: "an amount in words", code: "amount", body: goodBody({ amountUsdc: "one" }) },
       { name: "a negative amount", code: "amount", body: goodBody({ amountUsdc: "-1.00" }) },
-      { name: "a life of 599 s", code: "expiry", body: goodBody({ expiresInS: 599 }) },
-      { name: "a life of 1 day and 1 s", code: "expiry", body: goodBody({ expiresInS: 86_401 }) },
+      { name: "a life of 119 s", code: "expiry", body: goodBody({ expiresInS: 119 }) },
+      { name: "a life of 8 hours and 1 s", code: "expiry", body: goodBody({ expiresInS: 28_801 }) },
       { name: "a fractional life", code: "expiry", body: goodBody({ expiresInS: 3600.5 }) },
       { name: "a life as a string", code: "expiry", body: goodBody({ expiresInS: "3600" }) },
       { name: `a memo over ${PRACTICE_MAX_MEMO_BYTES} bytes`, code: "memo", body: goodBody({ memo: "\u00e7".repeat(33) }) },
@@ -942,22 +954,44 @@ async function main(): Promise<void> {
     check("200 with txHash, explorerUrl, the funder (the relayer) and the outcome", r.status === 200 && /^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(String(r.json.txHash)) && r.json.explorerUrl === `https://testnet.nearblocks.io/txns/${r.json.txHash}` && r.json.funderId === RELAYER, JSON.stringify(r.json));
     check("outcome: success, create_link, the link created, the amount the escrow kept", outcome.status === "success" && outcome.kind === "create_link" && outcome.linkCreated === true && outcome.usedAmount === "1000000");
     const { tx, fc, args } = sentCall();
-    check("ONE transaction, from the relayer's own key, to the USDC contract", sent.length === 1 && tx?.signerId === RELAYER && tx?.receiverId === USDC && tx?.publicKey.toString() === relayerKey.getPublicKey().toString() && tx?.actions.length === 1);
+    check("the link's transaction first, from the relayer's own key, to the USDC contract", sent.length === 2 && tx?.signerId === RELAYER && tx?.receiverId === USDC && tx?.publicKey.toString() === relayerKey.getPublicKey().toString() && tx?.actions.length === 1);
     check("one ft_transfer_call with exactly 1 yoctoNEAR and 100 Tgas", fc?.methodName === "ft_transfer_call" && BigInt(String(fc?.deposit)) === 1n && BigInt(String(fc?.gas)) === 100n * 10n ** 12n);
     check("into the escrow, for the amount asked, with the msg built from the PUBLIC key", args?.receiver_id === ESCROW && args?.amount === "1000000" && args?.msg === JSON.stringify({ public_key: body.publicKey, expires_in_s: 3600, memo: "coffee" }), JSON.stringify(args));
-    check("the practice balance was read first, then the relayer's key and block, then the send", rpcCalls.join(",") === `ftbalance:usdc:${RELAYER},key:${RELAYER},block,send`, rpcCalls.join(","));
+    const arm = sentCall(1);
+    check(
+      "then the return timer: arm_return([that public key]) on the escrow, no deposit, gas for the link's life",
+      arm.tx?.signerId === RELAYER && arm.tx?.receiverId === ESCROW && arm.tx?.actions.length === 1 && arm.fc?.methodName === "arm_return" && BigInt(String(arm.fc?.deposit)) === 0n && BigInt(String(arm.fc?.gas)) === BigInt(armReturnTgas(3600)) * 10n ** 12n && JSON.stringify(arm.args?.public_keys) === JSON.stringify([body.publicKey]),
+      JSON.stringify(arm.args),
+    );
+    check("the practice balance was read first, then the link was sent until FINAL, then the timer only until INCLUDED_FINAL", rpcCalls.join(",") === `ftbalance:usdc:${RELAYER},key:${RELAYER},block,send,key:${RELAYER},block,include`, rpcCalls.join(","));
+    const timer = r.json.returnTimer as Record<string, unknown>;
+    check("the answer carries the armed timer's transaction and gas", timer?.armed === true && /^[1-9A-HJ-NP-Za-km-z]{43,44}$/.test(String(timer.txHash)) && timer.explorerUrl === `https://testnet.nearblocks.io/txns/${timer.txHash}` && timer.gasTgas === armReturnTgas(3600), JSON.stringify(timer));
     const day = today();
     check("the caps were recorded in the practice namespace: cooldown, the caller's day, the day's total", kvGet(`near:testnet:practice:cool:203.0.113.7`) !== null && kvGet(`near:testnet:practice:day:${day}:sender:203.0.113.7`) === "1" && kvGet(`near:testnet:practice:day:${day}:global`) === "1");
     check("...and nothing in the relay's own counters", relayKeys().length === 0, relayKeys().join(","));
     const d = lastDecision();
-    check("one allowed log line with the link key, amount, life, txHash, status and ms", d.decision === "allowed" && d.route === "near/practice-link" && d.publicKey === body.publicKey && d.amount === "1.00" && d.expiresInS === 3600 && d.txHash === r.json.txHash && d.status === "success" && typeof d.ms === "number", JSON.stringify(d));
+    check("one allowed log line with the link key, amount, life, txHash, status, the timer's tx and ms", d.decision === "allowed" && d.route === "near/practice-link" && d.publicKey === body.publicKey && d.amount === "1.00" && d.expiresInS === 3600 && d.txHash === r.json.txHash && d.status === "success" && d.returnTimer === timer.txHash && typeof d.ms === "number", JSON.stringify(d));
     check("no log line or answer carries the caller's address or the relayer's secret", !JSON.stringify(decisions).includes("203.0.113.7") && !JSON.stringify(decisions).includes(relayerKey.toString()) && !JSON.stringify(r.json).includes(relayerKey.toString()));
 
     plan.response = successResponse({ successValue: '"0"', receiptFailure: "Smart contract panicked: drop refused: the escrow is paused" });
+    sent.length = 0;
     const refused = await practice(goodBody(), "203.0.113.8");
     const ro = refused.json.outcome as Record<string, unknown>;
     check("an escrow refusal is 200 with outcome failure, its reason surfaced and the hash kept (the USDC was refunded)", refused.status === 200 && ro.status === "failure" && ro.linkCreated === false && String((ro.failures as string[])[0]).includes("paused") && typeof refused.json.txHash === "string", JSON.stringify(refused.json));
     check("...logged as allowed with status failure and the summary", lastDecision().status === "failure" && /escrow/.test(String(lastDecision().reason)));
+    check("...and no timer is armed for a link that does not exist", sent.length === 1 && refused.json.returnTimer === undefined);
+
+    plan.response = successResponse({ successValue: '"1000000"' });
+    plan.include = "throw";
+    const unarmed = await practice(goodBody(), "203.0.113.9");
+    const ut = unarmed.json.returnTimer as Record<string, unknown>;
+    check("a timer that cannot be armed leaves the link standing: 200, success, the reason given", unarmed.status === 200 && (unarmed.json.outcome as Record<string, unknown>).status === "success" && ut?.armed === false && /could not be armed/.test(String(ut.reason)), JSON.stringify(unarmed.json));
+    plan.include = "ok";
+
+    check(
+      "the timer's gas: two wake-ups past the life, a 45 Tgas floor, 1 PGas at most, and the longest practice life fits",
+      armReturnTgas(120) === 45 + (2 + 2) * 3 && armReturnTgas(3600) === 45 + (36 + 2) * 3 && armReturnTgas(28_800) === 45 + (288 + 2) * 3 && armReturnTgas(28_800) < 1000 && armReturnTgas(604_800) === 1000,
+    );
   }
 
   console.log("\n[practice: 429] one every 30 s per caller, 10 a day per caller, 300 a day in total");
@@ -1050,7 +1084,7 @@ async function main(): Promise<void> {
     process.env.KV_REST_API_TOKEN = savedToken;
   }
 
-  console.log("\n[practice sweep] expired, unclaimed practice links go back to the practice balance");
+  console.log("\n[sweep] every expired, unclaimed link goes home to its funder (return_expired)");
   {
     const nowMs = Date.UTC(2026, 10, 12, 12, 0, 0);
     const ns = (ms: number) => (BigInt(ms) * 1_000_000n).toString();
@@ -1062,11 +1096,16 @@ async function main(): Promise<void> {
     const claiming = row("Claiming", nowMs - 3_600_000);
     const foreign = row("Open", nowMs - 60_000, { funder: "someone.testnet" });
     const ledger = [old, future, claimed, claiming, foreign, older];
-    const picked = expiredOpenDrops(ledger, RELAYER, nowMs);
-    check("only expired Open links of the practice balance are picked, oldest expiry first", picked.length === 2 && picked[0]!.public_key === older.public_key && picked[1]!.public_key === old.public_key);
-    check("an expiry exactly now counts as expired", expiredOpenDrops([row("Open", nowMs)], RELAYER, nowMs).length === 1);
+    const picked = expiredOpenDrops(ledger, nowMs);
+    check("every funder's expired Open links are picked, oldest expiry first", picked.map((d) => d.public_key).join() === [older, old, foreign].map((d) => d.public_key).join());
+    check("an expiry exactly now counts as expired", expiredOpenDrops([row("Open", nowMs)], nowMs).length === 1);
+    const groups = returnGroups(picked);
+    check("one call per funder", groups.length === 2 && groups[0]!.map((d) => d.public_key).join() === [older, old].map((d) => d.public_key).join() && groups[1]![0]!.public_key === foreign.public_key);
+    const many = Array.from({ length: 31 }, () => row("Open", nowMs - 1_000));
+    check(`at most ${SWEEP_MAX_KEYS} links in one call (the escrow's limit)`, returnGroups(many).map((g) => g.length).join() === "30,1");
+    check("the gas: 60 Tgas plus 2 per link", sweepReturnTgas(1) === 62 && sweepReturnTgas(30) === 120);
     check(
-      "a failed receipt or a failed transaction is a failed reclaim",
+      "a failed receipt or a failed transaction is a failed return",
       !outcomeSucceeded({ status: { SuccessValue: "" }, receipts_outcome: [{ outcome: { status: { Failure: {} } } }] }) &&
         outcomeSucceeded({ status: { SuccessValue: "" }, receipts_outcome: [{ outcome: { status: { SuccessValue: "" } } }] }) &&
         !outcomeSucceeded({ status: { Failure: {} } }) &&
@@ -1105,44 +1144,47 @@ async function main(): Promise<void> {
     const sweepConfig = { network: "testnet" as const, rpcUrl: RPC_URL, relayerAccountId: RELAYER, escrowId: ESCROW, usdcId: USDC, caps: { perSenderPerDay: 20, globalPerDay: 500, senderCooldownS: 10 }, minNear: 1 };
     const sweepDeps = { config: sweepConfig, secret: relayerKey.toString(), rpc: sweepRpc, pollMs: 0, maxPolls: 1 };
     const lines: string[] = [];
-    const r = await sweepExpiredPracticeLinks(sweepDeps, { now: () => nowMs, max: 3, log: (l) => lines.push(l) });
-    check("one ledger read: the escrow's get_drops_by_funder for the practice balance", views.length === 1 && views[0]!.contractId === ESCROW && views[0]!.method === "get_drops_by_funder" && views[0]!.funder === RELAYER);
+    const r = await sweepExpiredLinks(sweepDeps, { now: () => nowMs, max: 3, log: (l) => lines.push(l) });
+    check("one ledger read: the escrow's get_drops, every funder", views.length === 1 && views[0]!.contractId === ESCROW && views[0]!.method === "get_drops" && views[0]!.funder === undefined);
     const calls = sweepSent.map((s) => {
       const fc = s.transaction.actions[0]?.functionCall;
       return {
         receiver: s.transaction.receiverId,
         signer: s.transaction.signerId,
         method: fc?.methodName,
-        args: fc ? (JSON.parse(Buffer.from(fc.args).toString("utf8")) as { public_key?: string }) : {},
+        args: fc ? (JSON.parse(Buffer.from(fc.args).toString("utf8")) as { public_keys?: string[] }) : {},
         gas: fc ? BigInt(String(fc.gas)) : 0n,
         deposit: fc ? BigInt(String(fc.deposit)) : -1n,
         actions: s.transaction.actions.length,
       };
     });
-    check("two reclaims, one transaction each, from the practice balance to the escrow", calls.length === 2 && calls.every((c) => c.receiver === ESCROW && c.signer === RELAYER && c.actions === 1));
+    check("two returns, one transaction per funder, signed by the relayer, to the escrow", calls.length === 2 && calls.every((c) => c.receiver === ESCROW && c.signer === RELAYER && c.actions === 1));
     check(
-      "each is reclaim(public_key) of an expired link, 50 Tgas, no deposit, oldest first",
-      calls.every((c) => c.method === "reclaim" && c.gas === BigInt(teraToGas(SWEEP_RECLAIM_TGAS)) && c.deposit === 0n) && calls.map((c) => c.args.public_key).join() === [older.public_key, old.public_key].join(),
+      "each is return_expired(public_keys) with gas for its links and no deposit",
+      calls.every((c) => c.method === "return_expired" && c.deposit === 0n && c.gas === BigInt(sweepReturnTgas(c.args.public_keys?.length ?? 0)) * 10n ** 12n) &&
+        (calls[0]!.args.public_keys ?? []).join() === [older.public_key, old.public_key].join() &&
+        (calls[1]!.args.public_keys ?? []).join() === foreign.public_key,
     );
-    check("the Claiming link, the claimed one, the unexpired one and another funder's are never touched", !calls.some((c) => [claiming, claimed, future, foreign].some((d) => d.public_key === c.args.public_key)));
-    check("the result counts what it did and what it left alone", r.checked === 6 && r.expired === 2 && r.reclaimed.length === 2 && r.skippedClaiming === 1 && r.error === undefined, JSON.stringify(r));
-    check("one JSON line per reclaim and a summary, with no key in any", lines.length === 3 && lines.every((l) => !l.includes(relayerKey.toString())) && JSON.parse(lines[2]!).decision === "done");
+    const touched = calls.flatMap((c) => c.args.public_keys ?? []);
+    check("the Claiming link, the claimed one and the unexpired one are never touched", ![claiming, claimed, future].some((d) => touched.includes(d.public_key)));
+    check("the result counts what it did and what it left alone", r.checked === 6 && r.expired === 3 && r.returned.length === 3 && r.skippedClaiming === 1 && r.error === undefined, JSON.stringify(r));
+    check("one JSON line per return and a summary, with no key in any", lines.length === 3 && lines.every((l) => !l.includes(relayerKey.toString())) && JSON.parse(lines[2]!).decision === "done");
 
     sweepSent.length = 0;
-    const one = await sweepExpiredPracticeLinks(sweepDeps, { now: () => nowMs, max: 1, log: () => undefined });
-    check("the per-run maximum holds", sweepSent.length === 1 && one.reclaimed.length === 1);
+    const one = await sweepExpiredLinks(sweepDeps, { now: () => nowMs, max: 1, log: () => undefined });
+    check("the per-run maximum holds", sweepSent.length === 1 && one.returned.length === 2);
 
     sweepSent.length = 0;
     sendMode = "fail";
-    const failedRun = await sweepExpiredPracticeLinks(sweepDeps, { now: () => nowMs, log: () => undefined });
-    check("a failed reclaim stops the run and says so", sweepSent.length === 1 && failedRun.reclaimed.length === 0 && /ended in a failure/.test(failedRun.error ?? ""));
+    const failedRun = await sweepExpiredLinks(sweepDeps, { now: () => nowMs, log: () => undefined });
+    check("a failed return stops the run and says so", sweepSent.length === 1 && failedRun.returned.length === 0 && /ended in a failure/.test(failedRun.error ?? ""));
 
     sweepSent.length = 0;
     sendMode = "throw";
-    const thrown = await sweepExpiredPracticeLinks(sweepDeps, { now: () => nowMs, log: () => undefined });
-    check("an RPC that cannot send stops the run without throwing", thrown.reclaimed.length === 0 && /could not be sent/.test(thrown.error ?? ""));
+    const thrown = await sweepExpiredLinks(sweepDeps, { now: () => nowMs, log: () => undefined });
+    check("an RPC that cannot send stops the run without throwing", thrown.returned.length === 0 && /could not be sent/.test(thrown.error ?? ""));
 
-    const noView = await sweepExpiredPracticeLinks({ ...sweepDeps, rpc: { ...sweepRpc, viewFunction: undefined } }, { now: () => nowMs, log: () => undefined });
+    const noView = await sweepExpiredLinks({ ...sweepDeps, rpc: { ...sweepRpc, viewFunction: undefined } }, { now: () => nowMs, log: () => undefined });
     check("an RPC without contract views skips the run", noView.checked === 0 && /no contract views/.test(noView.error ?? ""));
 
     const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");

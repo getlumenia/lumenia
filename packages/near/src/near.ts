@@ -8,6 +8,8 @@ import {
   FailoverRpcProvider,
   JsonRpcProvider,
   KeyPairSigner,
+  actions,
+  baseEncode,
   teraToGas,
   type KeyPairString,
   type Provider,
@@ -43,6 +45,11 @@ export interface ChainPort {
   nearBalance(accountId: string): Promise<NearBalance | null>;
   ftTransferCall(p: { amountUnits: bigint; msg: string; gas?: bigint }): Promise<TxOutcome>;
   reclaim(publicKey: string): Promise<TxOutcome>;
+  /**
+   * Arm the escrow's return timer for links this funder made (`arm_return`). Waits only until
+   * INCLUDED_FINAL: a transaction whose timer is pending does not reach FINAL until the timer ends.
+   */
+  armReturn(publicKeys: string[], gasTgas: number): Promise<{ txHash: string }>;
   storageDeposit(): Promise<TxOutcome>;
 }
 
@@ -211,6 +218,26 @@ export class NearChain implements ChainPort {
         waitUntil: "FINAL",
       }),
     );
+  }
+
+  async armReturn(publicKeys: string[], gasTgas: number): Promise<{ txHash: string }> {
+    // Built, signed and sent in three steps so the hash is known: the RPC answers INCLUDED_FINAL with no outcome.
+    const signer = KeyPairSigner.fromSecretKey(this.keyResolver() as KeyPairString);
+    const account = new Account(this.config.funderAccountId, this.provider, signer);
+    let hash = "";
+    try {
+      const tx = await account.createTransaction({
+        receiverId: this.config.contractId,
+        actions: [actions.functionCall("arm_return", { public_keys: publicKeys }, teraToGas(gasTgas), 0n)],
+        publicKey: await signer.getPublicKey(),
+      });
+      const { txHash, signedTransaction } = await signer.signTransaction(tx);
+      hash = baseEncode(txHash);
+      await this.provider.sendTransactionUntil(signedTransaction, "INCLUDED_FINAL");
+      return { txHash: hash };
+    } catch (e) {
+      throw new ChainError(`arm_return failed${hash ? ` (tx ${hash})` : ""}: ${errorMessage(e)}`, "unknown");
+    }
   }
 
   storageDeposit(): Promise<TxOutcome> {

@@ -30,6 +30,8 @@ export interface PracticeLinkOk {
   /** The account that funded the link on chain (the practice balance). */
   funderId?: string;
   outcome: RelayOk["outcome"];
+  /** The link's return timer, armed by the Worker right after the link (absent from an older Worker). */
+  returnTimer?: { armed: boolean; txHash?: string; explorerUrl?: string; reason?: string };
 }
 
 /** Any non-2xx answer: 400 a bad request, 429 a cap, 503 paused or empty, 502 trouble after the caps. */
@@ -188,5 +190,14 @@ export async function runPracticeLink(link: StoredLink, deps: PracticeDeps, opts
     deps.updateLink({ publicKey: own.publicKey, createError: `refunded: ${verdict.reason}` });
     return { kind: "refunded", link: { ...own, funder }, txHash: answer.txHash, explorerUrl: answer.explorerUrl, reason: verdict.reason };
   }
-  return { kind: "created", link: { ...own, funder, createTxHash: answer.txHash }, txHash: answer.txHash, explorerUrl: answer.explorerUrl, kept };
+  // 4. The return timer the Worker armed, when it did: from here the money comes back by itself.
+  const timerTx = answer.returnTimer?.armed && typeof answer.returnTimer.txHash === "string" ? answer.returnTimer.txHash : undefined;
+  if (timerTx) deps.updateLink({ publicKey: own.publicKey, returnTimerTxHash: timerTx });
+  return {
+    kind: "created",
+    link: { ...own, funder, createTxHash: answer.txHash, ...(timerTx ? { returnTimerTxHash: timerTx } : {}) },
+    txHash: answer.txHash,
+    explorerUrl: answer.explorerUrl,
+    kept,
+  };
 }

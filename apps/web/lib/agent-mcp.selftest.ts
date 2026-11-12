@@ -216,7 +216,7 @@ async function main() {
   // ------------------------------------------------------------------ NEAR
 
   type NearReceipt = { receipt_id: string; amount_usdc: string; status: string; memo: string; label: string | null; batch_id: string | null; reference: string | null; create_tx_hash: string | null; explorer_url: string | null; funder_account: string; network: string; link?: string; created_at: string };
-  type PayLinkSc = { link: string; publicKey: string; txHash: string | null; expiresAt: string; instruction: string; receipt: NearReceipt; note?: string; network: string };
+  type PayLinkSc = { link: string; publicKey: string; txHash: string | null; expiresAt: string; instruction: string; receipt: NearReceipt; note?: string; network: string; returnTimer?: { armed: boolean; txHash?: string } };
   let firstLink: PayLinkSc | null = null;
 
   console.log("\n[near pay] one link on NEAR, through the package's fake chain");
@@ -229,8 +229,12 @@ async function main() {
     ok("  ...and its fragment is the secret whose public key the escrow knows the drop by", !!sc && parseLinkOrKey(sc.link).publicKey === sc.publicKey && sc.publicKey.startsWith("ed25519:"));
     ok("the receipt carries amount, memo, reference, funder, tx and explorer url, status Open, network testnet", sc?.receipt.amount_usdc === "2.50" && sc?.receipt.memo === "logo round 2" && sc?.receipt.reference === "inv-1" && sc?.receipt.funder_account === "lumenia-funder.testnet" && sc?.receipt.create_tx_hash === "FAKETX1" && sc?.receipt.explorer_url === "https://testnet.nearblocks.io/txns/FAKETX1" && sc?.receipt.status === "Open" && sc?.receipt.network === "testnet");
     ok("  ...and the receipt never holds the secret link", !!sc && !("link" in sc.receipt));
-    ok("expiry defaults to 24 hours from the rail's clock", sc?.expiresAt === new Date(T0 + 24 * 3_600_000).toISOString(), sc?.expiresAt);
-    ok("the deposit is one ft_transfer_call with the drop's public key, expiry and memo", transfers() === 1 && chain.lastMsg?.public_key === sc?.publicKey && chain.lastMsg?.expires_in_s === 86_400 && chain.lastMsg?.memo === "logo round 2");
+    ok("expiry defaults to 8 hours from the rail's clock, a life one return timer covers", sc?.expiresAt === new Date(T0 + 8 * 3_600_000).toISOString(), sc?.expiresAt);
+    ok("the deposit is one ft_transfer_call with the drop's public key, expiry and memo", transfers() === 1 && chain.lastMsg?.public_key === sc?.publicKey && chain.lastMsg?.expires_in_s === 8 * 3600 && chain.lastMsg?.memo === "logo round 2");
+    ok(
+      "then the link's return timer is armed, for that link: the result and the text say so",
+      chain.arms.length === 1 && chain.arms[0]?.publicKeys.join() === sc?.publicKey && sc?.returnTimer?.armed === true && /Return timer armed \(tx FAKETX\d+\)/.test(textOf(r)) && /comes back to this account by itself/.test(sc.instruction),
+    );
     ok("the USDC left the funder on the fake chain", chain.usdc === 97_500_000n);
     const text = textOf(r);
     ok("the text names NEAR testnet, carries the link and points at near_reclaim, never the package's own tool name", /NEAR testnet/.test(text) && !!sc && text.includes(sc.link) && /near_reclaim/.test(text) && !/lumenia_reclaim/.test(text) && !/lumenia_reclaim/.test(sc.instruction));

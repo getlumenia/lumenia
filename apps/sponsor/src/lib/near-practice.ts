@@ -13,7 +13,7 @@
  * {"public_key","expires_in_s"[,"memo"]}) from the relayer account (NEAR_RELAYER_ACCOUNT_ID, key
  * NEAR_RELAYER_PRIVATE_KEY), with 1 yoctoNEAR and 100 Tgas, waited on until FINAL. The receiver, the
  * method, the deposit and the gas are constants here: a request chooses only the link's public key,
- * the amount (0.10 to 1.00 USDC), the life (600 s to 1 day) and an optional memo (64 bytes).
+ * the amount (0.10 to 1.00 USDC), the life (2 minutes to 8 hours) and an optional memo (64 bytes).
  *
  * THE ORDER, cheapest refusal first, as in lib/near-relay.ts:
  *   the body, offline (400) -> the caps, READ ONLY (429) -> the practice balance, one view (503
@@ -32,13 +32,20 @@
  * CLOSED posture: a store that errors, stalls or answers nonsense refuses (503 store_unavailable).
  * The caller's address is a store key only: it is never logged and never echoed in an answer.
  *
- * WHAT IS NOT HERE. A practice link's funder on chain is the relayer account, so only the relayer's
- * key can take back one that expired unclaimed: the Worker's scheduled run does that
- * (lib/near-practice-sweep.ts), not a route. Testnet only, like
- * the rest of the rail: the Worker refuses the route off its testnet environment.
+ * THE MONEY COMES HOME BY ITSELF. Right after the link exists, the route arms its return timer: the
+ * escrow's `arm_return([public_key])`, signed by the relayer account with gas sized to the link's life
+ * (armReturnTgas), sent in a transaction of its own and waited on only until INCLUDED_FINAL (a
+ * transaction whose timer is pending does not reach FINAL until the timer ends). From then on nobody
+ * acts: NEAR wakes the escrow about every 200 blocks (NEP-519 yield/resume) and, at the first wake-up
+ * after the expiry, an unclaimed link goes back to the practice balance. Arming can fail without
+ * harm (the answer says so, the link stands): the Worker's scheduled sweep
+ * (lib/near-practice-sweep.ts) sends every expired link home with `return_expired` anyway.
+ *
+ * Testnet only, like the rest of the rail: the Worker refuses the route off its testnet environment.
  */
 import { actions, teraToGas } from "near-api-js";
 import { isEd25519PublicKey } from "@lumenia/near/relayer/policy";
+import { armReturnTgas } from "@lumenia/near/return-timer";
 import type { CapLimits } from "@lumenia/near/relayer/caps";
 import {
   NearRelayRefusal,
@@ -62,13 +69,19 @@ import { ipBucket } from "./rate-limit.js";
 export const PRACTICE_MIN_UNITS = 100_000n;
 /** The largest practice link: 1.00 USDC, so the shared balance lasts through judging. */
 export const PRACTICE_MAX_UNITS = 1_000_000n;
-/** A practice link lives from 10 minutes to 1 day; an expired one goes back to the balance (lib/near-practice-sweep.ts). */
-export const PRACTICE_MIN_EXPIRY_S = 600;
-export const PRACTICE_MAX_EXPIRY_S = 86_400;
+/**
+ * A practice link lives from 2 minutes (long enough to watch it come home) to 8 hours, a life its
+ * return timer covers whole (armReturnTgas stays under one transaction's 1 PGas).
+ */
+export const PRACTICE_MIN_EXPIRY_S = 120;
+export const PRACTICE_MAX_EXPIRY_S = 28_800;
 /** A memo is stored on the public ledger with the link: short, and plain text. */
 export const PRACTICE_MAX_MEMO_BYTES = 64;
 /** The gas attached to the ft_transfer_call, as the relay policy allows for a link. */
 export const PRACTICE_GAS_TGAS = 100;
+/** The return timer's gas, shared with the agent and the web client (@lumenia/near/return-timer). */
+export { armReturnTgas };
+
 /** The cap store namespace: near:<network>:practice:... */
 export const PRACTICE_SCOPE = "practice";
 
@@ -164,7 +177,7 @@ export function parsePracticeRequest(body: unknown): PracticeParse {
 
   const expiresInS = b.expiresInS;
   if (typeof expiresInS !== "number" || !Number.isInteger(expiresInS) || expiresInS < PRACTICE_MIN_EXPIRY_S || expiresInS > PRACTICE_MAX_EXPIRY_S) {
-    return { ok: false, code: "expiry", reason: `expiresInS must be a whole number of seconds from ${PRACTICE_MIN_EXPIRY_S} to ${PRACTICE_MAX_EXPIRY_S} (10 minutes to 1 day)` };
+    return { ok: false, code: "expiry", reason: `expiresInS must be a whole number of seconds from ${PRACTICE_MIN_EXPIRY_S} to ${PRACTICE_MAX_EXPIRY_S} (2 minutes to 8 hours)` };
   }
 
   let memo: string | undefined;
@@ -207,6 +220,28 @@ export interface PracticeLinkResult {
   /** The account that funded the link on chain (the relayer account): the drop's `funder`. */
   funderId: string;
   outcome: NearRelayOutcome;
+  /**
+   * The link's return timer: the arm transaction once it is included, or why it was not armed (the
+   * link stands either way, and the scheduled sweep sends it home after its expiry). Absent when the
+   * link itself was not made.
+   */
+  returnTimer?: { armed: true; txHash: string; explorerUrl: string; gasTgas: number } | { armed: false; reason: string };
+}
+
+/**
+ * Arms the escrow's return timer for links that exist (`arm_return`), from the relayer account, with
+ * gas for a life of `expiresInS`. Waits only until INCLUDED_FINAL. Never throws.
+ */
+export async function armReturnTimer(deps: PracticeDeps, publicKeys: string[], expiresInS: number): Promise<NonNullable<PracticeLinkResult["returnTimer"]>> {
+  const { config } = deps;
+  const gasTgas = armReturnTgas(expiresInS);
+  const action = actions.functionCall("arm_return", { public_keys: publicKeys }, teraToGas(gasTgas), 0n);
+  try {
+    const { txHash } = await signAndSendActions(deps, config.escrowId, [action], { until: "INCLUDED_FINAL" });
+    return { armed: true, txHash, explorerUrl: explorerTxUrl(config.network, txHash), gasTgas };
+  } catch (e) {
+    return { armed: false, reason: `the return timer could not be armed: ${messageOf(e)}` };
+  }
 }
 
 /** The one log line per decision: JSON, never the caller's address, the relayer's key or a body. */
@@ -304,6 +339,7 @@ export async function practiceLinkHandler(body: unknown, callerIp: string, deps:
     amountUnits: req.amountUnits,
     linkPublicKeys: [req.publicKey],
   });
+  const returnTimer = outcome.status === "success" ? await armReturnTimer(deps, [req.publicKey], req.expiresInS) : undefined;
   log(
     decisionLine(now(), {
       decision: "allowed",
@@ -311,8 +347,9 @@ export async function practiceLinkHandler(body: unknown, callerIp: string, deps:
       txHash,
       status: outcome.status,
       reason: outcome.status === "success" ? undefined : outcome.summary,
+      returnTimer: returnTimer ? (returnTimer.armed ? returnTimer.txHash : returnTimer.reason) : undefined,
       ms: now() - started,
     }),
   );
-  return { txHash, explorerUrl: explorerTxUrl(config.network, txHash), funderId: config.relayerAccountId, outcome };
+  return { txHash, explorerUrl: explorerTxUrl(config.network, txHash), funderId: config.relayerAccountId, outcome, ...(returnTimer ? { returnTimer } : {}) };
 }

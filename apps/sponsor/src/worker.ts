@@ -39,7 +39,7 @@ import {
   type NearRelayDeps,
 } from "./lib/near-relay.js";
 import { practiceConfigFromEnv, practiceLinkHandler } from "./lib/near-practice.js";
-import { PRACTICE_SWEEP_CRON, sweepExpiredPracticeLinks } from "./lib/near-practice-sweep.js";
+import { PRACTICE_SWEEP_CRON, sweepExpiredLinks } from "./lib/near-practice-sweep.js";
 import { kvConfigFromEnv } from "./lib/rate-limit.js";
 import { withSubrequestMeter } from "./lib/subrequests.js";
 import { faucetHandler } from "./lib/faucet.js";
@@ -1637,7 +1637,7 @@ const handlers = {
    */
   async scheduled(event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
     hydrateEnv(env);
-    /* The practice sweep has its own cron (testnet only, lib/near-practice-sweep.ts), so its
+    /* The sweep of expired links has its own cron (testnet only, lib/near-practice-sweep.ts), so its
        subrequests never share an invocation's budget with the watchdog. */
     if ((event as { cron?: unknown } | null)?.cron === PRACTICE_SWEEP_CRON) {
       const sweep = runPracticeSweep();
@@ -1661,8 +1661,9 @@ const handlers = {
 };
 
 /**
- * One run of the practice sweep: testnet Worker, NEAR configured with the relayer's key, sponsor not
- * halted. Logs one line per decision (lib/near-practice-sweep.ts) and never throws.
+ * One run of the sweep of expired links (every funder's, sent home with `return_expired`): testnet
+ * Worker, NEAR configured with the relayer's key, sponsor not halted. Logs one line per decision
+ * (lib/near-practice-sweep.ts) and never throws.
  */
 async function runPracticeSweep(): Promise<void> {
   try {
@@ -1677,7 +1678,7 @@ async function runPracticeSweep(): Promise<void> {
       console.log("[near-sweep] skipped: the sponsor is halted");
       return;
     }
-    await sweepExpiredPracticeLinks({ config: near.config, secret: near.secret, rpc: nearRpc(near.config.rpcUrl) });
+    await sweepExpiredLinks({ config: near.config, secret: near.secret, rpc: nearRpc(near.config.rpcUrl) });
   } catch (e) {
     console.error(`[near-sweep] ${e instanceof Error ? e.message : String(e)}`);
   }

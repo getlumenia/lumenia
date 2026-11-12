@@ -45,6 +45,7 @@ import { isValidAccountId } from "../../lib/near/account-id";
 import { MAX_MEMO_BYTES, buildDropMsg, isTerminal, memoBytes, type DropView } from "../../lib/near/drops";
 import { describeError } from "../../lib/near/errors";
 import { DEFAULT_EXPIRY_S, EXPIRY_OPTIONS, formatLocal, toIso } from "../../lib/near/expiry";
+import { armOwnReturn, returnTimerFits } from "../../lib/near/return-timer";
 import { claimUrl, newLinkKey } from "../../lib/near/keys";
 import { contractIsDeployed, getConfig, getDrop, keyBelongsToAccount, nearBalance, usdcBalance, usdcRegistered } from "../../lib/near/rpc";
 import { sendFunctionCall } from "../../lib/near/chain";
@@ -73,10 +74,13 @@ import "../site/app-theme.css";
 
 /** What LinkReadyCard says under the buttons here: the rail's own take-back rule. */
 const TAKE_BACK_NOTE =
-  "Whoever holds the link can claim it, like cash in an envelope. If nobody claims it before it expires, take it back from Your links below. It does not come back by itself.";
-/** The same card for a practice link: its funder is the practice balance, so this browser cannot take it back. */
+  "Whoever holds the link can claim it, like cash in an envelope. If nobody claims it before it expires, take it back from Your links below.";
+/** A link whose return timer is armed: nobody has to do anything for unclaimed money to come back. */
+const COMES_BACK_NOTE =
+  "Whoever holds the link can claim it, like cash in an envelope. If nobody claims it before it expires, the money comes back to you by itself: the network runs the return, and nobody has to do anything.";
+/** The same card for a practice link: its funder is the practice balance, so the money goes back there. */
 const PRACTICE_NOTE =
-  "Whoever holds the link can claim it, like cash in an envelope. After it expires, nobody can claim it, and only the practice balance can take the money back.";
+  "Whoever holds the link can claim it, like cash in an envelope. If nobody claims it before it expires, the money comes back to the practice balance by itself: the network runs the return, and nobody has to do anything.";
 
 /** The practice balance as a session: the configured account, and never a key. */
 const PRACTICE_SESSION: FunderSession = { accountId: NEAR_DEMO_FUNDER_ID, demo: true };
@@ -512,7 +516,16 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
         return;
       }
       recordDrop(link.publicKey, drop);
-      setResult({ kind: "created", link: { ...link, createTxHash: txHash ?? undefined, lastStatus: drop.status }, txHash, kept });
+      // The return timer, signed by the same key in a transaction of its own: from here the money comes back by itself.
+      setStep("Setting it to come back by itself");
+      const timer = await armOwnReturn({ signerId: funder.accountId, secretKey: funder.secret as KeyPairString, publicKeys: [link.publicKey], lifeS: link.expiresInS });
+      if (timer.armed) upsertLink({ publicKey: link.publicKey, returnTimerTxHash: timer.txHash });
+      setResult({
+        kind: "created",
+        link: { ...link, createTxHash: txHash ?? undefined, lastStatus: drop.status, ...(timer.armed ? { returnTimerTxHash: timer.txHash } : {}) },
+        txHash,
+        kept,
+      });
     } catch (e) {
       const message = describeError(e);
       upsertLink({ publicKey: link.publicKey, createError: message });
@@ -608,7 +621,17 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
             <input id="nr-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="1.00" autoComplete="off" />
           </div>
         </Field>
-        <Field label="The link expires in" htmlFor="nr-expiry" hint={practice ? "After that, nobody can claim it." : "After that, the money can be taken back by you."}>
+        <Field
+          label="The link expires in"
+          htmlFor="nr-expiry"
+          hint={
+            practice
+              ? "After that, nobody can claim it, and the money comes back to the practice balance by itself."
+              : returnTimerFits(expiry)
+                ? "After that, nobody can claim it, and the money comes back to you by itself."
+                : "After that, nobody can claim it, and you can take the money back."
+          }
+        >
           <select id="nr-expiry" className="nr-select" value={expiry} onChange={(e) => setExpiry(Number(e.target.value))}>
             {expiryOptions.map((o) => (
               <option key={o.seconds} value={o.seconds}>
@@ -669,7 +692,14 @@ function LinkCreated({ link, txHash, kept, feeNote, onAnother }: { link: StoredL
   return (
     <div className="flex flex-col gap-3">
       <p className="text-center text-3xl font-bold tabular-nums text-ink">{formatUsd(link.amountUnits)}</p>
-      <LinkReadyCard link={url} balanceId={link.publicKey} title="Your link is ready" trackHref={null} footnote={link.practice ? PRACTICE_NOTE : TAKE_BACK_NOTE} beacon={false} />
+      <LinkReadyCard
+        link={url}
+        balanceId={link.publicKey}
+        title="Your link is ready"
+        trackHref={null}
+        footnote={link.returnTimerTxHash ? (link.practice ? PRACTICE_NOTE : COMES_BACK_NOTE) : TAKE_BACK_NOTE}
+        beacon={false}
+      />
       <MoneyCard className="flex flex-col gap-2 p-4">
         <StateLine state={state} />
         <p className="text-sm text-ink-soft">{linkStatusLine(live, now)}</p>
@@ -680,8 +710,12 @@ function LinkCreated({ link, txHash, kept, feeNote, onAnother }: { link: StoredL
             ["Amount", formatUsd(link.amountUnits)],
             ["Network fee", feeNote],
             ["Expires", formatLocal(linkExpiresAt(live))],
+            ["If nobody claims it", link.returnTimerTxHash ? "it comes back by itself after it expires" : "take it back after it expires"],
           ]}
-          explorer={txHash ? [["View the transaction on explorer", explorerTxUrl(txHash)]] : undefined}
+          explorer={[
+            ...(txHash ? ([["View the transaction on explorer", explorerTxUrl(txHash)]] as [string, string][]) : []),
+            ...(link.returnTimerTxHash ? ([["View its return timer on explorer", explorerTxUrl(link.returnTimerTxHash)]] as [string, string][]) : []),
+          ]}
         />
         {!kept ? (
           <Notice kind="warn">This browser could not keep the link&apos;s key on disk. It stays only while this tab is open, so copy the link now.</Notice>

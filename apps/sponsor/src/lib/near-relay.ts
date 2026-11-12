@@ -196,12 +196,18 @@ export interface NearRpc {
   /** `tx` with wait_until FINAL: the fallback when the send timed out while the transaction was in flight. */
   txStatus(txHash: string, accountId: string): Promise<unknown>;
   /**
+   * `send_tx` with wait_until INCLUDED_FINAL, for the one transaction that does not reach FINAL soon by
+   * design: the escrow's `arm_return`, whose timer keeps the transaction open until the timer ends
+   * (lib/near-practice.ts). Optional so a fake chain that never arms need not implement it.
+   */
+  sendUntilIncluded?(signed: SignedTransaction): Promise<unknown>;
+  /**
    * `ft_balance_of` on a NEP-141 contract, in the token's smallest units. Used by the practice route
    * (lib/near-practice.ts) to answer "the practice balance is empty" before it signs anything. Optional
    * so a fake chain that never reaches that route need not implement it; the live RPC always does.
    */
   viewFtBalance?(tokenId: string, accountId: string): Promise<bigint>;
-  /** A read-only contract view at FINAL, JSON-decoded: the practice sweep's ledger read (lib/near-practice-sweep.ts). */
+  /** A read-only contract view at FINAL, JSON-decoded: the sweep's ledger read (lib/near-practice-sweep.ts). */
   viewFunction?(contractId: string, method: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -230,6 +236,7 @@ export function jsonRpcNearRpc(url: string): NearRpc {
       return { amountYocto: BigInt(String(view.amount)) };
     },
     sendUntilFinal: (signed) => provider.sendTransactionUntil(signed, "FINAL"),
+    sendUntilIncluded: (signed) => provider.sendTransactionUntil(signed, "INCLUDED_FINAL"),
     txStatus: (txHash, accountId) => provider.viewTransactionStatus({ txHash, accountId, waitUntil: "FINAL" }),
     async viewFtBalance(tokenId, accountId) {
       const balance = await provider.callFunction<string>({
@@ -720,7 +727,13 @@ export type NearSendDeps = Pick<NearRelayDeps, "config" | "secret" | "rpc" | "po
  * once) is retried twice with a fresh nonce. The relay (one signedDelegate action, below) and the
  * practice links (one ft_transfer_call, lib/near-practice.ts) both go through here.
  */
-export async function signAndSendActions(deps: NearSendDeps, receiverId: string, actionList: Action[]): Promise<{ txHash: string; response: unknown }> {
+export async function signAndSendActions(
+  deps: NearSendDeps,
+  receiverId: string,
+  actionList: Action[],
+  opts: { until?: "FINAL" | "INCLUDED_FINAL" } = {},
+): Promise<{ txHash: string; response: unknown }> {
+  if (opts.until === "INCLUDED_FINAL" && !deps.rpc.sendUntilIncluded) throw new Error("this RPC can only send and wait for FINAL");
   const signer = KeyPairSigner.fromSecretKey(deps.secret as KeyPairString);
   const publicKey = await signer.getPublicKey();
   let lastError: unknown;
@@ -731,7 +744,7 @@ export async function signAndSendActions(deps: NearSendDeps, receiverId: string,
     const { txHash: hashBytes, signedTransaction } = await signer.signTransaction(tx);
     const txHash = baseEncode(hashBytes);
     try {
-      const response = await sendFinal(deps, signedTransaction, txHash);
+      const response = opts.until === "INCLUDED_FINAL" ? await deps.rpc.sendUntilIncluded!(signedTransaction) : await sendFinal(deps, signedTransaction, txHash);
       return { txHash, response };
     } catch (e) {
       lastError = e;

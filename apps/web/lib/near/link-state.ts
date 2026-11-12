@@ -64,6 +64,7 @@ export function linkStatusLine(l: StoredLink, now: number): string {
   // A practice link's money belongs to the shared practice balance: this browser cannot take it back.
   if (status === "Open") {
     if (!expired) return `Waiting. Expires in ${formatRemaining(expiresAt - now)}.`;
+    if (l.returnTimerTxHash) return l.practice ? "Expired. Coming back to the practice balance by itself." : "Expired. Coming back to you by itself.";
     return l.practice ? "Expired. Nobody can claim it now." : "Expired. You can take the money back.";
   }
   if (status === "Claiming") {

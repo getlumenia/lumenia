@@ -49,6 +49,8 @@ export interface StoredLink {
   expiresAtNs?: string;
   statusChangedAtNs?: string;
   reclaimTxHash?: string;
+  /** The link's return timer (the escrow's `arm_return`): the arm transaction, when one was armed. */
+  returnTimerTxHash?: string;
   /** "Send to many": the row label and the id shared by every link of one batch transaction */
   label?: string;
   batchId?: string;

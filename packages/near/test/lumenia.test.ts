@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Lumenia, LumeniaError, payInstruction } from "../src/lumenia.js";
+import { armReturnTgas } from "../src/return-timer.js";
 import { parseLinkOrKey } from "../src/link.js";
 import { CONTRACT, FakeChain, FUNDER, tempStore, testConfig } from "./helpers.js";
 
@@ -29,7 +30,8 @@ describe("createPayLink", () => {
     expect(r.txHash).toBe("FAKETX1");
     expect(r.explorerUrl).toBe("https://testnet.nearblocks.io/txns/FAKETX1");
     expect(r.expiresAt).toBe("2026-11-11T15:00:00.000Z");
-    expect(r.instruction).toBe(payInstruction(r.expiresAt));
+    expect(r.instruction).toBe(payInstruction(r.expiresAt, r.returnTimer));
+    expect(r.instruction).toMatch(/comes back to this account by itself/);
     expect(r.receipt).toMatchObject({
       amount_usdc: "2.50",
       memo: "thanks",
@@ -44,6 +46,36 @@ describe("createPayLink", () => {
     expect(chain.usdc).toBe(17_500_000n);
     expect(chain.drops.get(r.publicKey)?.memo).toBe("thanks");
     expect(chain.calls.filter((c) => c === "ft_transfer_call")).toHaveLength(1);
+    // the return timer, armed after the link exists, for this link and a 3 h life
+    expect(chain.calls.indexOf("arm_return 1")).toBeGreaterThan(chain.calls.indexOf("ft_transfer_call"));
+    expect(chain.arms).toEqual([{ publicKeys: [r.publicKey], gasTgas: armReturnTgas(3 * 3600) }]);
+    expect(r.returnTimer).toEqual({ armed: true, txHash: "FAKETX2", explorerUrl: "https://testnet.nearblocks.io/txns/FAKETX2", gasTgas: armReturnTgas(3 * 3600) });
+  });
+
+  it("does not arm a timer for a life one transaction's gas cannot cover, and says what to do instead", async () => {
+    const { chain, lumenia } = setup();
+    const r = await lumenia.createPayLink({ amountUsdc: "1", expiresHours: 24 });
+    expect(chain.calls.some((c) => c.startsWith("arm_return"))).toBe(false);
+    expect(r.returnTimer?.armed).toBe(false);
+    expect(r.returnTimer && !r.returnTimer.armed ? r.returnTimer.reason : "").toMatch(/longer than one transaction's gas keeps a return timer awake.*lumenia_reclaim.*return_expired/);
+    expect(r.instruction).toMatch(/call lumenia_reclaim with the link's public key/);
+  });
+
+  it("keeps the payment when the timer cannot be armed", async () => {
+    const { chain, lumenia } = setup();
+    chain.failArm = "RPC unreachable";
+    const r = await lumenia.createPayLink({ amountUsdc: "1", expiresHours: 2 });
+    expect(r.receipt.status).toBe("Open");
+    expect(r.returnTimer).toEqual({ armed: false, reason: expect.stringMatching(/could not be armed \(RPC unreachable\); after the expiry, call lumenia_reclaim/) });
+    expect(r.instruction).toMatch(/call lumenia_reclaim/);
+  });
+
+  it("links live 8 hours by default, which one return timer covers", async () => {
+    const { chain, lumenia } = setup();
+    const r = await lumenia.createPayLink({ amountUsdc: "1" });
+    expect(r.expiresAt).toBe("2026-11-11T20:00:00.000Z");
+    expect(chain.arms[0]?.gasTgas).toBe(armReturnTgas(8 * 3600));
+    expect(r.returnTimer?.armed).toBe(true);
   });
 
   it("sends the contract the msg it expects", async () => {
@@ -217,9 +249,10 @@ describe("reclaim", () => {
     const paid = await lumenia.createPayLink({ amountUsdc: 1, expiresHours: 1 });
     advance(2 * 3_600_000);
     const r = await lumenia.reclaim(paid.link);
-    expect(r.txHash).toBe("FAKETX2");
-    expect(r.explorerUrl).toBe("https://testnet.nearblocks.io/txns/FAKETX2");
-    expect(r.receipt).toMatchObject({ receipt_id: paid.receipt.receipt_id, status: "Reclaimed", reclaim_tx_hash: "FAKETX2" });
+    // FAKETX1 made the link, FAKETX2 armed its return timer, FAKETX3 is the reclaim
+    expect(r.txHash).toBe("FAKETX3");
+    expect(r.explorerUrl).toBe("https://testnet.nearblocks.io/txns/FAKETX3");
+    expect(r.receipt).toMatchObject({ receipt_id: paid.receipt.receipt_id, status: "Reclaimed", reclaim_tx_hash: "FAKETX3" });
     expect(chain.usdc).toBe(20_000_000n);
     expect((await lumenia.linkStatus(paid.publicKey)).status).toBe("Reclaimed");
   });
@@ -333,6 +366,17 @@ describe("createPayLinks (batch)", () => {
     const csv = await lumenia.receiptsCsv();
     expect(csv).toContain(`,"Ali, courier",${r.batchId},`);
     expect(store.findByBatchId(r.batchId)).toHaveLength(3);
+    // a 48 h life is longer than one timer covers: nothing armed, and the instruction says reclaim
+    expect(chain.calls.some((c) => c.startsWith("arm_return"))).toBe(false);
+    expect(r.returnTimer?.armed).toBe(false);
+  });
+
+  it("arms ONE return timer for a whole batch whose life it covers", async () => {
+    const { chain, lumenia } = setup();
+    const r = await lumenia.createPayLinks({ payouts, expiresHours: 2 });
+    expect(chain.arms).toEqual([{ publicKeys: r.payouts.map((p) => p.publicKey), gasTgas: armReturnTgas(2 * 3600, 3) }]);
+    expect(r.returnTimer).toMatchObject({ armed: true, gasTgas: armReturnTgas(2 * 3600, 3) });
+    expect(r.instruction).toMatch(/Send each link to its own person.*comes back to this account by itself/);
   });
 
   it("validates rows before touching the chain: labels, minimum, per-link max, count, memo", async () => {

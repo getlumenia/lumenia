@@ -28,11 +28,13 @@ import {
   type PublicReceipt,
   type Receipt,
 } from "./receipts.js";
+import { armReturnTgas, returnTimerCoversS, returnTimerFits } from "./return-timer.js";
 import { LinkStore } from "./store.js";
 
 export const MIN_EXPIRES_HOURS = 1;
 export const MAX_EXPIRES_HOURS = 168;
-export const DEFAULT_EXPIRES_HOURS = 24;
+/** Eight hours: a life one return timer covers whole, so an unclaimed link comes home with no further signature. */
+export const DEFAULT_EXPIRES_HOURS = 8;
 export const MAX_MEMO_CHARS = 64;
 export const MAX_REFERENCE_CHARS = 64;
 /** Two identical payments inside this window are refused unless the caller says it is intended. */
@@ -53,6 +55,13 @@ export interface PayLinkInput {
   allowDuplicate?: boolean;
 }
 
+/**
+ * The link's return timer (the escrow's `arm_return`): armed right after the link exists, so that an
+ * unclaimed link's USDC comes back to the funder by itself after the expiry. Not armed when the life
+ * is longer than one transaction's gas keeps a timer awake, or when arming failed; the reason says so.
+ */
+export type ReturnTimer = { armed: true; txHash: string; explorerUrl: string; gasTgas: number } | { armed: false; reason: string };
+
 export interface PayLinkResult {
   link: string;
   instruction: string;
@@ -61,6 +70,8 @@ export interface PayLinkResult {
   txHash: string | null;
   explorerUrl: string | null;
   expiresAt: string;
+  /** Set when a new link was made. */
+  returnTimer?: ReturnTimer;
   /** Set when no new payment was made (idempotent replay). */
   note?: string;
 }
@@ -95,6 +106,8 @@ export interface PayManyResult {
   expiresAt: string;
   instruction: string;
   payouts: PayoutResult[];
+  /** One timer for the whole batch, set when a new batch was made. */
+  returnTimer?: ReturnTimer;
   note?: string;
 }
 
@@ -141,11 +154,14 @@ export interface LumeniaDeps {
   keyFactory?: () => LinkKey;
 }
 
-export function payInstruction(expiresAt: string): string {
+export function payInstruction(expiresAt: string, timer?: ReturnTimer): string {
+  const after = timer?.armed
+    ? `If nobody claims it by ${expiresAt}, the USDC comes back to this account by itself: its return timer is armed (tx ${timer.txHash}), so nobody has to act. lumenia_reclaim also works after the expiry.`
+    : `If nobody claims it by ${expiresAt}, call lumenia_reclaim with the link's public key to take the USDC back.`;
   return (
     "Send this link to the person. They open it in any browser; no wallet, no seed phrase and no gas needed. " +
     "The link IS the money: anyone holding it can claim, so send it over a private channel and do not post it. " +
-    `If nobody claims it by ${expiresAt}, call lumenia_reclaim with the link's public key to take the USDC back.`
+    after
   );
 }
 
@@ -326,13 +342,33 @@ export class Lumenia {
       throw new LumeniaError(`The deposit transaction ${outcome.txHash} succeeded but the contract shows no drop for ${key.publicKey} yet; check lumenia_link_status in a moment (receipt ${receipt.receipt_id}).`);
     }
     this.finish(receipt, { status: drop.label, expires_at: drop.expiresAt ?? expiresAt, create_tx_hash: outcome.txHash || null, explorer_url: outcome.txHash ? this.txUrl(outcome.txHash) : null, claimed_to: drop.claimedTo });
-    return this.resultFromReceipt(receipt);
+    // 7. The return timer, in a transaction of its own (a pending timer keeps it short of FINAL).
+    const returnTimer = await this.armReturnTimer([key.publicKey], expiresHours * 3600);
+    return { ...this.resultFromReceipt(receipt, returnTimer), returnTimer };
   }
 
-  private resultFromReceipt(receipt: Receipt): PayLinkResult {
+  /** Arms one return timer for links of this funder that share a life. Never throws: a failure is the reason. */
+  private async armReturnTimer(publicKeys: string[], lifeS: number): Promise<ReturnTimer> {
+    if (!returnTimerFits(lifeS, publicKeys.length)) {
+      const hours = Math.floor(returnTimerCoversS(1000, publicKeys.length) / 3600);
+      return {
+        armed: false,
+        reason: `a life of ${describeDuration(lifeS * 1000)} is longer than one transaction's gas keeps a return timer awake (about ${hours} hours for ${publicKeys.length === 1 ? "one link" : `${publicKeys.length} links`}); after the expiry, call lumenia_reclaim, and anyone may also send it home with the escrow's return_expired`,
+      };
+    }
+    const gasTgas = armReturnTgas(lifeS, publicKeys.length);
+    try {
+      const { txHash } = await this.chain.armReturn(publicKeys, gasTgas);
+      return { armed: true, txHash, explorerUrl: this.txUrl(txHash), gasTgas };
+    } catch (e) {
+      return { armed: false, reason: `the return timer could not be armed (${(e as Error).message}); after the expiry, call lumenia_reclaim` };
+    }
+  }
+
+  private resultFromReceipt(receipt: Receipt, timer?: ReturnTimer): PayLinkResult {
     return {
       link: receipt.link ?? "",
-      instruction: payInstruction(receipt.expires_at),
+      instruction: payInstruction(receipt.expires_at, timer),
       receipt: publicReceipt(receipt),
       publicKey: receipt.link_public_key,
       txHash: receipt.create_tx_hash,
@@ -518,7 +554,12 @@ export class Lumenia {
       throw new LumeniaError(`The escrow contract refused the batch and refunded the whole amount (tx ${outcome.txHash}).${detail}`);
     }
     await this.confirmBatch(made, outcome.txHash || null, null);
-    return this.manyResultFromReceipts(all);
+    // One return timer for the whole batch: one funder, one life, at most 30 links.
+    const returnTimer = await this.armReturnTimer(
+      made.map((m) => m.key.publicKey),
+      expiresHours * 3600,
+    );
+    return { ...this.manyResultFromReceipts(all, returnTimer), returnTimer };
   }
 
   /** Read every drop of a batch back and settle its receipt. */
@@ -549,7 +590,7 @@ export class Lumenia {
     this.store.upsertMany(receipts);
   }
 
-  private manyResultFromReceipts(receipts: Receipt[]): PayManyResult {
+  private manyResultFromReceipts(receipts: Receipt[], timer?: ReturnTimer): PayManyResult {
     const first = receipts[0];
     const totalUnits = receipts.reduce((sum, r) => sum + BigInt(r.amount_units), 0n);
     const expiresAt = first?.expires_at ?? this.now().toISOString();
@@ -560,7 +601,7 @@ export class Lumenia {
       txHash: first?.create_tx_hash ?? null,
       explorerUrl: first?.explorer_url ?? null,
       expiresAt,
-      instruction: `Send each link to its own person (the label says who). ${payInstruction(expiresAt)}`,
+      instruction: `Send each link to its own person (the label says who). ${payInstruction(expiresAt, timer)}`,
       payouts: receipts.map((r) => ({
         label: r.label ?? "",
         link: r.link ?? "",

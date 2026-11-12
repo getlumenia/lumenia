@@ -3,19 +3,21 @@
 Lumenia sends USDC by link. The sender escrows USDC and shares a link whose
 URL fragment holds a fresh ed25519 secret key; the recipient opens it in a
 browser and claims with no wallet, no seed phrase and no gas; the payout
-destination is chosen at claim time; the sender takes unclaimed money back
-after the link expires. This crate is the NEAR version of the escrow that is
+destination is chosen at claim time; unclaimed money goes back to the sender
+after the link expires, by itself when the link's return timer is armed (a
+NEP-519 yield that NEAR wakes every 200 blocks), or at the sender's `reclaim`,
+or at anyone's `return_expired` (which can only pay the sender). This crate is the NEAR version of the escrow that is
 live on Stellar (getlumenia.com), built for NEAR HACKATHON 2026. It lives at
 `contracts/lumen-drop-near/contract` in the Lumenia monorepo (the Stellar escrow
 is `contracts/lumen-drop`); `contracts/lumen-drop-near` is its own Cargo workspace.
 
-**Status: testnet only, not audited, hackathon code.** See "What is not done".
+**Status: testnet, plus a 3 USDC proof on mainnet (`lumenia.near`, which runs the build before the return timer until its owner redeploys); not audited, hackathon code.** See "What is not done".
 
 | | |
 |---|---|
 | Contract account | `lumenia-near.testnet` (owner key = deploy key for now) |
-| Code hash on chain | `GDKwUNKV1mvWVr48y77m9FEWkodcvCignc4GzJNAAcYv` (since 2026-11-12, third deploy below) |
-| wasm sha256 | `e207b02d57a4ead89053a61ac575501f7472b122112b076223aaea0b19093bff` (236,030 bytes, `cargo near build non-reproducible-wasm`) |
+| Code hash on chain | `9oj1uPkywGJgC2KJT6McVRHz1E6kmw7fq4orDy7a2xfp` (since 2026-11-12, fifth deploy below: the return timer) |
+| wasm sha256 | `82d5b84423db55c99b6e56ac14d6ac41814d3aee75f4dde53165b0782dd78b7f` (258,732 bytes, `cargo near build non-reproducible-wasm`) |
 | Source metadata (NEP-330) | `contract_source_metadata` returns `{"version":"0.1.0","link":"https://github.com/getlumenia/lumenia","standards":[{"standard":"nep330","version":"1.3.0"}],"build_info":null}`; `link` is `package.repository` (set once in the workspace `Cargo.toml`), baked into the wasm at build time |
 | Token | Circle testnet USDC `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` (6 decimals, storage min = max = 0.00125 NEAR) |
 | Root for named accounts | `testnet` (mainnet: `near`) |
@@ -35,6 +37,8 @@ is `contracts/lumen-drop`); `contracts/lumen-drop-near` is its own Cargo workspa
 | Probe: real root `testnet.create_account` with 0 NEAR attached returned `true` and created `lumenia-probe-0deposit.testnet` with a 0 NEAR balance (NEP-448), which `claim_to_new_account` relies on | `2MwLhhhHmtw2insgsVEzhiUAvXdfav6PACD7hLm5NjzB` | https://testnet.nearblocks.io/txns/2MwLhhhHmtw2insgsVEzhiUAvXdfav6PACD7hLm5NjzB |
 | Second deploy + `migrate` (the current code: starter, min_amount, batch create, ledger views; code hash `7RpDA5CPMQjJYww6do9jX1quJcZm3MAuyQdGJq9d1jhA`, whose NEP-330 `link` named the former standalone repository, a 404) | `HQ2i1UDH37oXu7YLAoGLYupNVhd5HoJjNwV2GqMKeJ13` | https://testnet.nearblocks.io/txns/HQ2i1UDH37oXu7YLAoGLYupNVhd5HoJjNwV2GqMKeJ13 |
 | Third deploy, no init call (2026-11-12): the same code, only the NEP-330 `link` changed to https://github.com/getlumenia/lumenia, so the state layout is unchanged and nothing was migrated; code hash `GDKwUNKV1mvWVr48y77m9FEWkodcvCignc4GzJNAAcYv`. Building today's source with `NEP330_LINK` set to the old URL reproduces the second deploy's `7RpDA5CP...` byte for byte, so the link is the only difference. `get_config` and `get_stats` answered the same values before and after (the pool lost exactly the 0.00174 NEAR fee) | `4c8ofXGBypJ13LooQS3Pctn6FUEb3Mm62ufwWXScobnv` | https://testnet.nearblocks.io/txns/4c8ofXGBypJ13LooQS3Pctn6FUEb3Mm62ufwWXScobnv |
+| Fourth deploy, no init call (2026-11-12): the pool-reserve guard (`MIN_POOL_RESERVE`, see "Stuck-claim recovery"); no state change; code hash `6xS5XbntjWeU8cpHZdc4oMKPyte4byHKKRqsGwdNiDgD` | `9vosLgxfEVigByi4weGV6rA9P4iNB5mobHBYun4W8hv6` | https://testnet.nearblocks.io/txns/9vosLgxfEVigByi4weGV6rA9P4iNB5mobHBYun4W8hv6 |
+| Fifth deploy, no init call (2026-11-12): the return timer (`arm_return`, `on_return_timer`) and `return_expired`, new methods only, no state change; code hash `9oj1uPkywGJgC2KJT6McVRHz1E6kmw7fq4orDy7a2xfp`. `get_stats` read the same 59 links before and after | `52A8aB9TrgRviya9foT8Nugx44J2cKps9x1EycUhuq7p` | https://testnet.nearblocks.io/txns/52A8aB9TrgRviya9foT8Nugx44J2cKps9x1EycUhuq7p |
 | Live create -> claim round (`scripts/live-round.sh`, 2026-11-11): the funder escrows 1 USDC behind a fresh link key | `4pV1q11f7UXLooG9cA3t1HBSFm9B4pYnUWYxr3gEgZAD` | https://testnet.nearblocks.io/txns/4pV1q11f7UXLooG9cA3t1HBSFm9B4pYnUWYxr3gEgZAD |
 | ... and the link key claims it into a fresh implicit account (created by the claim, 1 USDC and the 0.05 NEAR starter); this and the later proof transactions are listed in the monorepo's NEAR.md, and `pnpm near:verify:live` checks each one's final status on chain | `FhL77xssNU1P57uCcuC4DiDSaU17BFNUPfcceLn3dEgu` | https://testnet.nearblocks.io/txns/FhL77xssNU1P57uCcuC4DiDSaU17BFNUPfcceLn3dEgu |
 
@@ -77,6 +81,8 @@ A drop record is never deleted, so `get_drop` keeps answering "Claimed" or
 | `claim(account_id)` | the link key, as a transaction of the contract account itself | 0 NEAR, 60 to 100 Tgas (the web client attaches 100) | pays the drop to `account_id`; an implicit (64-hex) destination is created if missing and receives `starter_yocto`; a named destination must exist and receives no NEAR |
 | `claim_to_new_account(new_account_id, new_public_key)` | the link key | 0 NEAR, 90 to 100 Tgas | creates `<name>.<root>` through the root linkdrop with `starter_yocto` attached, then pays the drop |
 | `reclaim(public_key)` | the funder | 30 Tgas or more | after expiry, sends the USDC back and deletes the key |
+| `arm_return(public_keys: Vec<PublicKey>)` | anyone | 40 Tgas plus 2 per link, plus the gas of the wake-ups (about 3 Tgas each, one every 200 blocks); at most 1 PGas in one transaction | arms a return timer for 1 to 30 Open links of one funder: a NEP-519 yield with a caller-chosen id derived from the first link, so a second timer for it is refused while the first runs. Arm it in a transaction of its own: one whose timer is pending stays short of FINAL until the timer ends |
+| `return_expired(public_keys: Vec<PublicKey>)` | anyone | 40 Tgas plus 2 per link | sends 1 to 30 expired Open links of one funder back to that funder in one `ft_transfer`; refuses a link that is not expired, is claimed or returned, or is mid-claim |
 | `pause()` / `unpause()` | owner | - | pause stops `ft_on_transfer` only |
 | `top_up()` | anyone | the NEAR to add | adds to the sponsor pool (the contract balance) |
 | `set_config(key_allowance?, registration_deposit?, max_expiry_s?, starter_yocto?, min_amount?)` | owner | - | all optional |
@@ -84,7 +90,8 @@ A drop record is never deleted, so `get_drop` keeps answering "Claimed" or
 | `get_drops(from_index?, limit?) -> Vec<DropView>` | view | | public ledger, newest first; `from_index` 0 = newest, `limit` default 50, max 100 |
 | `get_drops_by_funder(funder, from_index?, limit?) -> Vec<DropView>` | view | | one funder's drops, same paging |
 | `get_config() -> ConfigView`, `get_stats() -> StatsView` | view | | stats: `drops_created/claimed/reclaimed`, `open_drops`, `pool_balance` (= `env::account_balance()`), `total_amount_created/claimed/reclaimed` (6-dp units) |
-| `on_account_ready`, `on_claim`, `on_reclaim` | `#[private]` callbacks | | not callable by link keys (not in the key's method list) |
+| `on_account_ready`, `on_claim`, `on_reclaim`, `on_return` | `#[private]` callbacks | | not callable by link keys (not in the key's method list) |
+| `on_return_timer(public_keys, hop)` | `#[private]`, run by NEAR when the timer's yield times out | | each wake-up: links Open and past their expiry go home in one transfer; links not yet due (or mid-claim) re-arm the next wake-up with the gas left; claimed or returned links drop out; it stops with `return_timer_stopped` when its gas runs low. Refuses a direct call (no promise result). Pending timers call it by this name, so a redeploy must never rename it |
 
 `DropView = { public_key, status: "Open" | "Claiming" | "Claimed" | "Reclaimed", funder, amount: U128 string, created_at_ns, expires_at_ns, status_changed_at_ns (decimal strings: nanoseconds do not fit a JS number), claimed_to, memo }`.
 It never carries anything secret: the public key is the drop's id, the secret
@@ -200,21 +207,41 @@ from a stuck callback) and `now >= expires_at_ns`. Status becomes Reclaimed,
 deletes the key and emits `drop_reclaimed`; on transfer failure the status
 returns to Open and the funder can try again.
 
+**Return, with nobody acting.** `arm_return([keys])` creates a yielded callback
+that nobody resumes (the contract has no resume method), so NEAR runs
+`on_return_timer` by itself each time the yield times out, every 200 blocks
+(119 s on testnet, 113 s on mainnet, measured 2026-11-12). Before the expiry a
+wake-up only arms the next one with the gas left (weight 1, the static floor
+`return_gas(n)` = 25 + 2n Tgas, so a wake-up past the expiry can always pay
+out); at the first wake-up after it, the links still Open turn Reclaimed and
+one `ft_transfer` of their sum goes to the funder; `on_return` then counts them,
+deletes each link key in its own receipt (a key already gone cannot undo the
+others) and emits one `drop_reclaimed` per link with `"by": "return timer"`. A
+failed transfer reopens them all. `return_expired([keys])` is the same return,
+called at once by anyone, with `"by"` the caller; the testnet Worker's sweep
+calls it every 15 minutes for every funder. `reclaim` stays funder-only and is
+the only way to end a claim stuck for ten minutes.
+
 ## Security model and pool economics
 
 - Funds are per drop. Every USDC amount in the contract belongs to exactly one
   `Drop` record and can only leave through that record's `claim` (to the
-  destination chosen by whoever holds the link key) or `reclaim` (to the
-  funder, after expiry).
+  destination chosen by whoever holds the link key) or a return to its funder
+  after the expiry: `reclaim` (the funder), `return_expired` (anyone) or the
+  return timer (NEAR). The permissionless returns can never pay anyone but the
+  funder, never before the expiry and never a link that is mid-claim.
 - The owner can never move a drop. The owner methods are `pause`, `unpause`
   and `set_config`; none of them touches a record or a token balance.
-- Pause never blocks `claim` or `reclaim`; it only stops `ft_on_transfer`,
+- Pause never blocks `claim`, `reclaim`, `arm_return` or `return_expired`; it only stops `ft_on_transfer`,
   which is the one entry point that adds exposure (sandbox test
   `pause_blocks_new_drops_but_a_pending_claim_and_a_reclaim_still_work`).
 - Link keys are function-call access keys of the contract account restricted
   to `claim` and `claim_to_new_account`, with a 1 NEAR gas allowance. A link
   key cannot attach a deposit, call anything else, or sign for another
-  account. The three callbacks and `migrate` are `#[private]`.
+  account. The callbacks (the timer's included) and `migrate` are `#[private]`.
+- A pending timer adds no storage to the escrow (sandbox: 259,734 bytes before
+  and after arming). Its gas is prepaid by whoever armed it; what it does not
+  burn is refunded when it ends.
 - **Pool-drain bound.** Per drop the pool risks: record + key storage about
   0.004 NEAR (the key's share is released on delete, the record's is not) +
   USDC registration 0.00125 NEAR (unregistered recipients only) + starter
@@ -260,6 +287,9 @@ returns to Open and the funder can try again.
 | `claim` to a fresh implicit account (hero path, starter included) | 20.5 Tgas | 100 Tgas |
 | `claim_to_new_account` through the root linkdrop | 24.1 Tgas | 100 Tgas |
 | `reclaim` | 7.4 Tgas | 100 Tgas (30 is enough) |
+| `return_expired` of two links (one transfer) | 8.6 Tgas | 100 Tgas (44 is enough) |
+| a return timer's wake-up | about 2.3 Tgas each (27.2 Tgas over 12 wake-ups); testnet: 2.33 Tgas, and the gas left falls 3 Tgas a wake-up with the next yield's creation | sized by the client: 45 Tgas plus 3 per 100 s of life, plus two spare wake-ups |
+| a whole timer for a 60-second link: arm, wake-ups, the return | 0.0009 NEAR paid by the arming account (sandbox); 13.1 Tgas for a 2-minute practice link on testnet | 57 Tgas |
 | the fresh recipient's first outgoing `ft_transfer` (paid by the starter) | 9.6 Tgas (5 Tgas attached) | 30 Tgas |
 
 Everything fits the web client's 100 Tgas claim transaction with a wide
@@ -267,12 +297,21 @@ margin; a full batch needs the funder to attach 300 Tgas to `ft_transfer_call`.
 
 ## Tests
 
-- 46 unit tests in `src/lib.rs` (msg parsing for both shapes, batch
+- 70 unit tests in `src/lib.rs` (msg parsing for both shapes, batch
   validation, implicit-account and sub-account checks, every guard of
   create/claim/reclaim/pause/config, the callbacks through mocked promise
   results, ledger paging, totals, `migrate` from a written V0 state, the
-  pool-reserve guard on new links and on claims).
-- 21 sandbox tests in `tests/sandbox.rs` against a real nearcore
+  pool-reserve guard on new links and on claims; and the returns: a
+  stranger's `return_expired` paying the funder in one transfer, refused
+  before the expiry, for a claimed link, for a link mid-claim, for two
+  funders, for an empty, repeated or oversized list, short of gas; a failed
+  return reopening every link; arming once, a second timer refused, a link
+  mid-claim not armable; a wake-up before the expiry re-arming and moving
+  nothing, after it sending the open links home, dropping claimed links and
+  waiting for a claim in progress, ending when everything is claimed,
+  stopping out of gas; the callback refused when called directly; pause never
+  blocking a return).
+- 27 sandbox tests in `tests/sandbox.rs` against a real nearcore
   sandbox, with the mock token `../test-usdc` (near-contract-standards
   FungibleToken, 6 decimals, 0.00125 NEAR registration) and the mock root
   linkdrop `../test-root` deployed on an account literally named `testnet`:
@@ -292,10 +331,20 @@ margin; a full batch needs the funder to attach 300 Tgas to `ft_transfer_call`.
   works; top_up and set_config of all fields; a 3-drop batch (3 Open drops,
   ledger newest first and paged, each claimed to a different kind of account,
   totals); a batch whose sum mismatches, refunded; a batch with one reused key,
-  refunded entirely; a 30-drop batch in gas with 300 Tgas attached. Time
-  passes with `sandbox.fast_forward`.
+  refunded entirely; a 30-drop batch in gas with 300 Tgas attached; an armed
+  link nobody opens coming home by itself (2 s of chain time after its expiry,
+  armed by a stranger, the escrow's storage unchanged by the pending timer); a
+  timer waking about ten times with nobody acting, the link still claimable,
+  then the claim ending it (about 2.3 Tgas a wake-up); a second timer refused
+  and a timer short of gas refused; an armed batch of three returning the two
+  nobody claimed in one transfer while the claimed one stays paid; a timer
+  returning thirty unclaimed links in one transfer; a stranger's
+  `return_expired` paying only the funder, refused before the expiry and for a
+  claimed link, while a stranger's `reclaim` is still refused. Time passes with
+  `sandbox.fast_forward` (the sandbox cannot look a transaction up after a
+  fast-forward, so these tests read effects, not receipts).
 
-All green on 2026-11-11 and again on 2026-11-12 after the NEP-330 link change: `43 passed` and `21 passed`; `cargo clippy --all-targets -- -D warnings` clean.
+All green on 2026-11-12 with the return timer: `70 passed` and `27 passed`; `cargo clippy --all-targets -- -D warnings` clean.
 
 ## Build, test, deploy (exactly as run)
 
@@ -329,7 +378,8 @@ the near-cli-rs legacy keychain (`~/.near-credentials/testnet/`).
 
 ## What is not done
 
-- No audit. Testnet only. Do not point it at mainnet USDC.
+- No audit. On mainnet it has run only as a capped proof with a few dollars (`lumenia.near`, see the monorepo's NEAR.md), and that deployment still runs the build before the return timer.
+- The return timer lives as long as the gas one transaction carries (1 PGas): about 8 hours of life for one link and 4 for a batch of 30, counted with margin. A longer link, or one whose maker did not arm it, goes home through `return_expired` (anyone) or `reclaim` (the funder).
 - Reproducible build not run: the wasm is a `non-reproducible-wasm` build.
   `[package.metadata.near.reproducible_build]` is in `Cargo.toml` so
   `cargo near build reproducible-wasm` can run inside the pinned Docker image

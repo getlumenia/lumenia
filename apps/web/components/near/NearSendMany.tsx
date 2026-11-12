@@ -25,6 +25,7 @@ import { DEFAULT_EXPIRY_S, EXPIRY_OPTIONS, formatLocal, toIso } from "../../lib/
 import { claimUrl, newLinkKey } from "../../lib/near/keys";
 import { getConfig, getDropsByFunder, usdcBalance } from "../../lib/near/rpc";
 import { sendFunctionCall } from "../../lib/near/chain";
+import { armOwnReturn } from "../../lib/near/return-timer";
 import { ftTransferCallUsedAmount, refusalReason, txFailure } from "../../lib/near/outcome";
 import { linkExpiresAt, linkStateOf, linkStatusLine } from "../../lib/near/link-state";
 import { loadLinks, saveLink, upsertLink, type FunderSession, type StoredLink } from "../../lib/near/store";
@@ -32,7 +33,7 @@ import { loadLinks, saveLink, upsertLink, type FunderSession, type StoredLink } 
 const EXAMPLE = "Ada, 5, rent\nBob, 0.10\nCy, 1.25, thanks";
 
 type Outcome =
-  | { kind: "created"; batchId: string; txHash: string; confirmed: number; expected: number; links: StoredLink[] }
+  | { kind: "created"; batchId: string; txHash: string; confirmed: number; expected: number; links: StoredLink[]; returnTimerTxHash?: string }
   | { kind: "failed"; batchId: string; txHash: string | null; message: string };
 
 export function NearSendMany({ funder, onChange, onUseOwnKey }: { funder: FunderSession; onChange: () => void; onUseOwnKey?: () => void }) {
@@ -143,7 +144,11 @@ function SendManyForm({ funder, onChange }: { funder: { accountId: string; secre
       }
       setStep("Confirming the links");
       const confirmed = await confirmBatch(funder.accountId, links);
-      setOutcome({ kind: "created", batchId, txHash: sent.txHash, confirmed, expected: links.length, links });
+      // One return timer for the whole batch, signed by the same key: what nobody claims comes back by itself.
+      setStep("Setting them to come back by themselves");
+      const timer = await armOwnReturn({ signerId: funder.accountId, secretKey: funder.secret as KeyPairString, publicKeys: links.map((l) => l.publicKey), lifeS: expiry });
+      if (timer.armed) for (const l of links) upsertLink({ publicKey: l.publicKey, returnTimerTxHash: timer.txHash });
+      setOutcome({ kind: "created", batchId, txHash: sent.txHash, confirmed, expected: links.length, links, ...(timer.armed ? { returnTimerTxHash: timer.txHash } : {}) });
       setText("");
     } catch (e) {
       const message = describeError(e);
@@ -295,6 +300,16 @@ function BatchCreated({ outcome, feeNote, onAnother }: { outcome: Extract<Outcom
         One transaction made them
         {outcome.confirmed < outcome.expected ? ` (${outcome.confirmed} of ${outcome.expected} confirmed so far; the rest are still being checked)` : ""}.{" "}
         <ExplorerLink href={explorerTxUrl(outcome.txHash)}>View it on the explorer</ExplorerLink>
+      </p>
+      <p className="text-sm text-ink-soft">
+        {outcome.returnTimerTxHash ? (
+          <>
+            What nobody claims comes back to you by itself after they expire, in one transfer.{" "}
+            <ExplorerLink href={explorerTxUrl(outcome.returnTimerTxHash)}>View the return timer</ExplorerLink>
+          </>
+        ) : (
+          "What nobody claims can be taken back from Your links after they expire."
+        )}
       </p>
       <div className="nr-rows">
         {shown.map((l) => {

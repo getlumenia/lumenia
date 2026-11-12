@@ -9,8 +9,14 @@
 //! gas. The payout destination is chosen at claim time. After the link expires
 //! the funder takes the USDC back with `reclaim`.
 //!
+//! Unclaimed money also goes home with nobody acting: `arm_return` starts a
+//! return timer (NEP-519 yield/resume) that NEAR wakes by itself about every
+//! 200 blocks; at the first wake-up after the expiry the links still open go
+//! back to their funder in one transfer. `return_expired` does the same at once
+//! and may be called by anyone: both can only ever pay the funder.
+//!
 //! Every drop is a separate record keyed by its public key; the owner can
-//! pause NEW drops only. Claim and reclaim always work while paused.
+//! pause NEW drops only. Claim, reclaim and the returns always work while paused.
 
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use near_sdk::json_types::{U64, U128};
@@ -20,7 +26,7 @@ use near_sdk::store::{LookupMap, Vector};
 use std::collections::BTreeSet;
 use near_sdk::{
     AccountId, Allowance, BorshStorageKey, CurveType, Gas, GasWeight, NearToken, PanicOnDefault,
-    Promise, PromiseOrValue, PublicKey, env, near, require,
+    Promise, PromiseOrValue, PublicKey, UserYieldId, env, near, require,
 };
 
 /// NEP-297 event standard name and version.
@@ -68,6 +74,18 @@ const GAS_CREATE_ACCOUNT: Gas = Gas::from_tgas(25);
 pub const MIN_GAS_CLAIM: Gas = Gas::from_tgas(60);
 pub const MIN_GAS_CLAIM_TO_NEW_ACCOUNT: Gas = Gas::from_tgas(90);
 pub const MIN_GAS_RECLAIM: Gas = Gas::from_tgas(30);
+/// Links one return (`return_expired`, `arm_return`) may carry: one funder's batch at most.
+pub const MAX_RETURN_DROPS: usize = MAX_BATCH_DROPS;
+/// Gas the return timer needs on top of a hop's floor to arm the next hop. Below it the timer
+/// stops (and says so); the links stay returnable by `return_expired` and `reclaim`.
+const GAS_TIMER_REARM: Gas = Gas::from_tgas(5);
+/// Gas `arm_return` and `return_expired` need for their own work, on top of `return_gas`.
+const GAS_RETURN_CALL: Gas = Gas::from_tgas(15);
+/// The callback NEAR runs on each wake-up of a return timer. Pending timers call it by this name,
+/// so it must never be renamed in a redeploy.
+const RETURN_TIMER_CALLBACK: &str = "on_return_timer";
+/// Domain separation for the timer's yield id (see `return_timer_id`).
+const RETURN_TIMER_ID_PREFIX: &[u8] = b"lumenia-return-timer-v1:";
 
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -292,6 +310,42 @@ fn emit_event(event: &str, data: serde_json::Value) {
         "data": [data],
     });
     env::log_str(&format!("EVENT_JSON:{payload}"));
+}
+
+/// Gas a return of `n` links needs from the call that starts it: its own work (reading and
+/// marking `n` links), the transfer to the funder and `on_return`. Every hop of a return timer
+/// carries at least this much, so a wake-up after the expiry can always pay out.
+pub fn return_gas(n: usize) -> Gas {
+    let n = u64::try_from(n).unwrap_or(u64::MAX);
+    Gas::from_tgas(25u64.saturating_add(n.saturating_mul(2)))
+}
+
+/// Static gas of `on_return` for `n` links: it deletes `n` link keys (one receipt each) and
+/// writes `n` events. With the transfer's 10 Tgas this leaves `return_gas(n)` room for the caller.
+fn on_return_gas(n: usize) -> Gas {
+    let n = u64::try_from(n).unwrap_or(u64::MAX);
+    Gas::from_tgas(8u64.saturating_add(n))
+}
+
+/// The yield id of the return timer led by `public_key`: one pending timer per leading link, so a
+/// second `arm_return` for the same links is refused while the first runs.
+fn return_timer_id(public_key: &PublicKey) -> UserYieldId {
+    let mut preimage = RETURN_TIMER_ID_PREFIX.to_vec();
+    preimage.extend_from_slice(public_key.as_bytes());
+    UserYieldId::new(env::sha256_array(&preimage))
+}
+
+/// Refuses an empty list, more than `MAX_RETURN_DROPS` links, or one link twice.
+fn check_return_keys(public_keys: &[PublicKey]) {
+    require!(!public_keys.is_empty(), "public_keys is empty");
+    require!(
+        public_keys.len() <= MAX_RETURN_DROPS,
+        "at most 30 links per return"
+    );
+    let mut seen = BTreeSet::new();
+    for k in public_keys {
+        require!(seen.insert(k.as_bytes().to_vec()), "a link appears twice");
+    }
 }
 
 fn to_view(public_key: &PublicKey, d: &Drop) -> DropView {
@@ -670,9 +724,253 @@ impl Contract {
                 "public_key": public_key,
                 "funder": funder,
                 "amount": amount,
+                "by": funder,
             }),
         );
         true
+    }
+
+    // ------------------------------------------------------------------
+    // Return: unclaimed money goes home without the funder
+    // ------------------------------------------------------------------
+
+    /// Send expired, unclaimed links back to their funder now: up to 30 links of one funder, paid
+    /// back in one transfer. Anyone may call it, because the money can only go to the account that
+    /// funded the links. A link that is mid-claim is refused (only the funder's `reclaim` may end a
+    /// stuck claim), and so is a link that has not expired.
+    pub fn return_expired(&mut self, public_keys: Vec<PublicKey>) -> Promise {
+        check_return_keys(&public_keys);
+        require!(
+            env::prepaid_gas() >= return_gas(public_keys.len()).saturating_add(GAS_RETURN_CALL),
+            "attach more gas: at least 40 Tgas plus 2 Tgas per link"
+        );
+        let now = env::block_timestamp();
+        let mut funder: Option<AccountId> = None;
+        for public_key in &public_keys {
+            let drop = match self.drops.get(public_key) {
+                Some(d) => d,
+                None => env::panic_str("no drop for this key"),
+            };
+            match drop.status {
+                DropStatus::Open => {}
+                DropStatus::Claiming => env::panic_str("a claim is in progress"),
+                DropStatus::Claimed => env::panic_str("drop already claimed"),
+                DropStatus::Reclaimed => env::panic_str("drop already reclaimed"),
+            }
+            require!(now >= drop.expires_at_ns, "drop has not expired yet");
+            match &funder {
+                None => funder = Some(drop.funder.clone()),
+                Some(f) => require!(*f == drop.funder, "every link in one return must have the same funder"),
+            }
+        }
+        self.send_back(public_keys, env::predecessor_account_id().to_string())
+    }
+
+    /// Arm the return timer of up to 30 open links of one funder (one link, or one batch). From
+    /// then on nobody has to act: NEAR runs `on_return_timer` by itself each time the yield times
+    /// out (about every 200 blocks, NEP-519); at the first wake-up after a link's expiry, the links
+    /// still open go back to the funder in one transfer. Anyone may arm a timer, because its only
+    /// possible effect is that return. One timer per leading link: a second arm is refused while
+    /// the first runs.
+    ///
+    /// The timer lives as long as the gas attached here (about 2 to 3 Tgas per wake-up, so 300 Tgas
+    /// covers a few hours); a link that outlives it still goes home through `return_expired`.
+    /// Arm in a transaction of its own: a transaction whose timer is pending does not reach FINAL
+    /// until the timer ends, so a client that waits for FINAL would hang.
+    pub fn arm_return(&mut self, public_keys: Vec<PublicKey>) -> bool {
+        check_return_keys(&public_keys);
+        let floor = return_gas(public_keys.len());
+        require!(
+            env::prepaid_gas() >= floor.saturating_add(GAS_RETURN_CALL),
+            "attach more gas: at least 40 Tgas plus 2 Tgas per link, and more for a longer timer"
+        );
+        let mut funder: Option<AccountId> = None;
+        let mut last_expiry = 0u64;
+        for public_key in &public_keys {
+            let drop = match self.drops.get(public_key) {
+                Some(d) => d,
+                None => env::panic_str("no drop for this key"),
+            };
+            require!(drop.status == DropStatus::Open, "only an open link can be armed");
+            match &funder {
+                None => funder = Some(drop.funder.clone()),
+                Some(f) => require!(*f == drop.funder, "every link in one timer must have the same funder"),
+            }
+            last_expiry = last_expiry.max(drop.expires_at_ns);
+        }
+        let args = json!({ "public_keys": public_keys, "hop": 1 }).to_string().into_bytes();
+        match Promise::new_yield_with_id(
+            RETURN_TIMER_CALLBACK,
+            args,
+            NO_DEPOSIT,
+            floor,
+            GasWeight(1),
+            return_timer_id(&public_keys[0]),
+        ) {
+            Some(timer) => timer.detach(),
+            None => env::panic_str("the return timer of this link is already armed"),
+        }
+        emit_event(
+            "return_armed",
+            json!({
+                "public_keys": public_keys,
+                "funder": funder,
+                "expires_at_ns": U64(last_expiry),
+                "by": env::predecessor_account_id(),
+            }),
+        );
+        true
+    }
+
+    /// A wake-up of the return timer: a NEP-519 yield callback that NEAR runs by itself when the
+    /// yield times out (nobody resumes it; this contract has no resume). Links that are open and
+    /// past their expiry go back to the funder; links not yet expired, or mid-claim, keep the timer
+    /// going while its gas lasts; claimed or returned links drop out. It never panics on a link's
+    /// state, so one wake-up cannot fail half-way.
+    #[private]
+    pub fn on_return_timer(&mut self, public_keys: Vec<PublicKey>, hop: u32) -> PromiseOrValue<bool> {
+        require!(env::promise_results_count() == 1, "only the return timer may call this");
+        let now = env::block_timestamp();
+        let mut due = Vec::new();
+        let mut waiting = Vec::new();
+        for public_key in public_keys {
+            match self.drops.get(&public_key) {
+                Some(d) if d.status == DropStatus::Open && now >= d.expires_at_ns => due.push(public_key),
+                Some(d) if matches!(d.status, DropStatus::Open | DropStatus::Claiming) => waiting.push(public_key),
+                _ => {}
+            }
+        }
+        if !waiting.is_empty() {
+            let floor = return_gas(waiting.len());
+            let mut needed = floor.saturating_add(GAS_TIMER_REARM);
+            if !due.is_empty() {
+                needed = needed.saturating_add(return_gas(due.len()));
+            }
+            let left = env::prepaid_gas().saturating_sub(env::used_gas());
+            let rearmed = left >= needed
+                && match Promise::new_yield_with_id(
+                    RETURN_TIMER_CALLBACK,
+                    json!({ "public_keys": waiting, "hop": hop.saturating_add(1) })
+                        .to_string()
+                        .into_bytes(),
+                    NO_DEPOSIT,
+                    floor,
+                    GasWeight(1),
+                    return_timer_id(&waiting[0]),
+                ) {
+                    Some(timer) => {
+                        timer.detach();
+                        true
+                    }
+                    None => false,
+                };
+            if rearmed {
+                env::log_str(&format!(
+                    "return timer: wake-up {hop}, {} link(s) not due yet, {} Tgas left, next wake-up armed",
+                    waiting.len(),
+                    left.as_tgas()
+                ));
+            } else {
+                emit_event(
+                    "return_timer_stopped",
+                    json!({
+                        "public_keys": waiting,
+                        "hop": hop,
+                        "gas_left_tgas": left.as_tgas(),
+                        "reason": if left >= needed { "another timer runs for these links" } else { "out of gas" },
+                    }),
+                );
+            }
+        }
+        if due.is_empty() {
+            return PromiseOrValue::Value(false);
+        }
+        PromiseOrValue::Promise(self.send_back(due, "return timer".to_string()))
+    }
+
+    /// Callback on the transfer of a return: counts the links as returned and deletes their link
+    /// keys, or reopens them all when the transfer failed.
+    #[private]
+    pub fn on_return(&mut self, public_keys: Vec<PublicKey>, by: String) -> bool {
+        require!(env::promise_results_count() == 1, "expected one promise result");
+        let success = env::promise_result_checked(0, MAX_RESULT_BYTES).is_ok();
+        if !success {
+            for public_key in &public_keys {
+                self.reopen(public_key, "ft_transfer back to the funder failed");
+            }
+            return false;
+        }
+        for public_key in public_keys {
+            let (funder, amount) = match self.drops.get(&public_key) {
+                Some(d) => (d.funder.clone(), d.amount),
+                None => continue,
+            };
+            self.drops_reclaimed = self.drops_reclaimed.saturating_add(1);
+            self.total_amount_reclaimed = self.total_amount_reclaimed.saturating_add(amount.0);
+            // One receipt per key: a key that is already gone cannot undo the others' deletion.
+            Promise::new(env::current_account_id())
+                .delete_key(public_key.clone())
+                .detach();
+            emit_event(
+                "drop_reclaimed",
+                json!({
+                    "public_key": public_key,
+                    "funder": funder,
+                    "amount": amount,
+                    "by": by,
+                }),
+            );
+        }
+        true
+    }
+
+    /// Marks the links Reclaimed and sends their sum to their (single) funder in one transfer.
+    /// The caller has checked that every link is open, expired and of one funder.
+    fn send_back(&mut self, public_keys: Vec<PublicKey>, by: String) -> Promise {
+        let now = env::block_timestamp();
+        let mut total: u128 = 0;
+        let mut funder: Option<AccountId> = None;
+        let mut memo: Option<String> = None;
+        let single = public_keys.len() == 1;
+        for public_key in &public_keys {
+            let drop = match self.drops.get_mut(public_key) {
+                Some(d) => d,
+                None => env::panic_str("drop vanished"),
+            };
+            drop.status = DropStatus::Reclaimed;
+            drop.status_changed_at_ns = now;
+            total = total.saturating_add(drop.amount.0);
+            if single {
+                memo = drop.memo.clone();
+            }
+            funder = Some(drop.funder.clone());
+        }
+        let funder = match funder {
+            Some(f) => f,
+            None => env::panic_str("nothing to return"),
+        };
+        let transfer_args = json!({
+            "receiver_id": funder,
+            "amount": U128(total),
+            "memo": memo,
+        })
+        .to_string()
+        .into_bytes();
+        let n = public_keys.len();
+        Promise::new(self.token_id.clone())
+            .function_call_weight(
+                "ft_transfer",
+                transfer_args,
+                ONE_YOCTO,
+                GAS_FT_TRANSFER,
+                GasWeight(2),
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(on_return_gas(n))
+                    .with_unused_gas_weight(1)
+                    .on_return(public_keys, by),
+            )
     }
 
     fn reopen(&mut self, public_key: &PublicKey, reason: &str) {
@@ -1713,5 +2011,358 @@ mod tests {
         let mut c = new_contract();
         testing_env!(ctx("alice.testnet", 0).build());
         c.top_up();
+    }
+
+    // ---------------- returns: unclaimed money goes home without the funder ----------------
+
+    /// The expiry of a drop made by `create` at time 0.
+    const EXPIRY: u64 = 3600 * NS_PER_S;
+
+    fn create_for(c: &mut Contract, funder: &str, n: u8, now_ns: u64) {
+        testing_env!(ctx("usdc.testnet", now_ns).build());
+        let out = c.ft_on_transfer(acc(funder), U128(5_000_000), msg(n, 3600));
+        assert!(matches!(out, PromiseOrValue::Value(U128(0))));
+    }
+
+    /// Function calls created by the last call: (receiver, method, args).
+    fn created_calls() -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for r in near_sdk::test_utils::get_created_receipts() {
+            for a in r.actions {
+                if let near_sdk::mock::MockAction::FunctionCallWeight { method_name, args, .. } = a {
+                    out.push((
+                        r.receiver_id.to_string(),
+                        String::from_utf8(method_name).unwrap(),
+                        String::from_utf8(args).unwrap(),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// Next wake-ups the last timer callback armed (the mock lists yields outside its receipts,
+    /// so the callback's own log line is what a test can see).
+    fn created_timers() -> usize {
+        near_sdk::test_utils::get_logs().iter().filter(|l| l.contains("next wake-up armed")).count()
+    }
+
+    fn logs_contain(needle: &str) -> bool {
+        near_sdk::test_utils::get_logs().iter().any(|l| l.contains(needle))
+    }
+
+    /// A wake-up of the return timer: one promise result, the timeout NEAR delivers.
+    fn wake(now_ns: u64, gas_tgas: u64) -> VMContextBuilder {
+        let mut b = ctx("drop.testnet", now_ns);
+        b.prepaid_gas(Gas::from_tgas(gas_tgas));
+        env_with_result(&b, PromiseResult::Failed);
+        b
+    }
+
+    #[test]
+    fn a_stranger_returns_expired_links_to_their_funder_in_one_transfer() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        create(&mut c, 2, 0);
+        testing_env!(ctx("stranger.testnet", EXPIRY).build());
+        let _ = c.return_expired(vec![key(1), key(2)]);
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Reclaimed");
+        assert_eq!(c.get_drop(key(2)).unwrap().status, "Reclaimed");
+        let calls = created_calls();
+        let transfers: Vec<_> = calls.iter().filter(|(_, m, _)| m == "ft_transfer").collect();
+        assert_eq!(transfers.len(), 1, "{calls:?}");
+        assert_eq!(transfers[0].0, "usdc.testnet");
+        assert!(transfers[0].2.contains("\"receiver_id\":\"funder.testnet\""), "{}", transfers[0].2);
+        assert!(transfers[0].2.contains("\"amount\":\"10000000\""), "{}", transfers[0].2);
+        assert!(calls.iter().any(|(to, m, _)| to == "drop.testnet" && m == "on_return"), "{calls:?}");
+
+        env_with_result(&ctx("drop.testnet", EXPIRY + 1), PromiseResult::Successful(vec![]));
+        assert!(c.on_return(vec![key(1), key(2)], "stranger.testnet".to_string()));
+        let s = c.get_stats();
+        assert_eq!((s.drops_reclaimed, s.open_drops), (2, 0));
+        assert_eq!(s.total_amount_reclaimed, U128(10_000_000));
+        assert!(logs_contain("\"event\":\"drop_reclaimed\""));
+        assert!(logs_contain("\"by\":\"stranger.testnet\""));
+    }
+
+    #[test]
+    #[should_panic(expected = "drop has not expired yet")]
+    fn return_expired_before_the_expiry_panics() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(ctx("stranger.testnet", EXPIRY - 1).build());
+        let _ = c.return_expired(vec![key(1)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "a claim is in progress")]
+    fn return_expired_never_touches_a_link_that_is_mid_claim() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(claim_ctx(1, EXPIRY - NS_PER_S).build());
+        let _ = c.claim(acc("alice.testnet"));
+        // even long after the stuck-claim window, only the funder's reclaim may end a claim
+        testing_env!(ctx("stranger.testnet", EXPIRY + STUCK_CLAIM_NS * 2).build());
+        let _ = c.return_expired(vec![key(1)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "drop already claimed")]
+    fn return_expired_refuses_a_claimed_link() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(claim_ctx(1, 10).build());
+        let _ = c.claim(acc("alice.testnet"));
+        env_with_result(&ctx("drop.testnet", 11), PromiseResult::Successful(vec![]));
+        assert!(c.on_claim(key(1), acc("alice.testnet"), U128(0)));
+        testing_env!(ctx("stranger.testnet", EXPIRY).build());
+        let _ = c.return_expired(vec![key(1)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "every link in one return must have the same funder")]
+    fn return_expired_refuses_links_of_two_funders() {
+        let mut c = new_contract();
+        create_for(&mut c, "funder.testnet", 1, 0);
+        create_for(&mut c, "other.testnet", 2, 0);
+        testing_env!(ctx("stranger.testnet", EXPIRY).build());
+        let _ = c.return_expired(vec![key(1), key(2)]);
+    }
+
+    fn return_list(keys: Vec<PublicKey>) {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(ctx("stranger.testnet", EXPIRY).build());
+        let _ = c.return_expired(keys);
+    }
+
+    #[test]
+    #[should_panic(expected = "public_keys is empty")]
+    fn return_expired_refuses_an_empty_list() {
+        return_list(vec![]);
+    }
+
+    #[test]
+    #[should_panic(expected = "a link appears twice")]
+    fn return_expired_refuses_a_link_twice() {
+        return_list(vec![key(1), key(1)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "at most 30 links per return")]
+    fn return_expired_refuses_more_than_thirty_links() {
+        return_list((0..31).map(key).collect());
+    }
+
+    #[test]
+    #[should_panic(expected = "attach more gas")]
+    fn return_expired_needs_gas_for_the_transfer_and_its_callback() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        let mut b = ctx("stranger.testnet", EXPIRY);
+        b.prepaid_gas(Gas::from_tgas(30));
+        testing_env!(b.build());
+        let _ = c.return_expired(vec![key(1)]);
+    }
+
+    #[test]
+    fn a_failed_return_reopens_every_link() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        create(&mut c, 2, 0);
+        testing_env!(ctx("stranger.testnet", EXPIRY).build());
+        let _ = c.return_expired(vec![key(1), key(2)]);
+        env_with_result(&ctx("drop.testnet", EXPIRY + 1), PromiseResult::Failed);
+        assert!(!c.on_return(vec![key(1), key(2)], "stranger.testnet".to_string()));
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Open");
+        assert_eq!(c.get_drop(key(2)).unwrap().status, "Open");
+        assert_eq!(c.get_stats().drops_reclaimed, 0);
+    }
+
+    #[test]
+    fn the_funders_reclaim_says_who_took_the_money_back() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(ctx("funder.testnet", EXPIRY).build());
+        let _ = c.reclaim(key(1));
+        env_with_result(&ctx("drop.testnet", EXPIRY + 1), PromiseResult::Successful(vec![]));
+        assert!(c.on_reclaim(key(1)));
+        assert!(logs_contain("\"by\":\"funder.testnet\""));
+    }
+
+    #[test]
+    fn anyone_may_arm_a_return_timer_once() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        create(&mut c, 2, 0);
+        testing_env!(ctx("stranger.testnet", 10).build());
+        assert!(c.arm_return(vec![key(1), key(2)]));
+        assert!(logs_contain("\"event\":\"return_armed\""));
+        assert!(logs_contain("\"by\":\"stranger.testnet\""));
+        // arming moves no money and changes no link
+        assert!(created_calls().is_empty());
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Open");
+    }
+
+    #[test]
+    #[should_panic(expected = "the return timer of this link is already armed")]
+    fn a_second_timer_for_the_same_links_is_refused() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(ctx("stranger.testnet", 10).build());
+        assert!(c.arm_return(vec![key(1)]));
+        c.arm_return(vec![key(1)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "only an open link can be armed")]
+    fn a_link_that_is_mid_claim_cannot_be_armed() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(claim_ctx(1, 10).build());
+        let _ = c.claim(acc("alice.testnet"));
+        testing_env!(ctx("stranger.testnet", 20).build());
+        c.arm_return(vec![key(1)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "every link in one timer must have the same funder")]
+    fn one_timer_carries_one_funder() {
+        let mut c = new_contract();
+        create_for(&mut c, "funder.testnet", 1, 0);
+        create_for(&mut c, "other.testnet", 2, 0);
+        testing_env!(ctx("stranger.testnet", 10).build());
+        c.arm_return(vec![key(1), key(2)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "attach more gas")]
+    fn arming_needs_gas_for_one_return() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        let mut b = ctx("stranger.testnet", 10);
+        b.prepaid_gas(Gas::from_tgas(35));
+        testing_env!(b.build());
+        c.arm_return(vec![key(1)]);
+    }
+
+    #[test]
+    fn a_wake_up_before_the_expiry_rearms_and_moves_nothing() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        wake(EXPIRY - NS_PER_S, 200);
+        let out = c.on_return_timer(vec![key(1)], 1);
+        assert!(matches!(out, PromiseOrValue::Value(false)));
+        assert_eq!(created_timers(), 1, "the timer arms its next wake-up");
+        assert!(created_calls().is_empty(), "no money moves before the expiry");
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Open");
+    }
+
+    #[test]
+    fn a_wake_up_after_the_expiry_sends_the_open_links_home() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        create(&mut c, 2, 0);
+        wake(EXPIRY, 200);
+        let out = c.on_return_timer(vec![key(1), key(2)], 7);
+        assert!(matches!(out, PromiseOrValue::Promise(_)));
+        // a promise is scheduled when it is dropped (in the contract, when the call returns)
+        drop(out);
+        assert_eq!(created_timers(), 0, "nothing left to wait for");
+        let calls = created_calls();
+        let transfers: Vec<_> = calls.iter().filter(|(_, m, _)| m == "ft_transfer").collect();
+        assert_eq!(transfers.len(), 1, "{calls:?}");
+        assert!(transfers[0].2.contains("\"amount\":\"10000000\""), "{}", transfers[0].2);
+        assert!(calls.iter().any(|(_, m, a)| m == "on_return" && a.contains("return timer")), "{calls:?}");
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Reclaimed");
+        assert_eq!(c.get_drop(key(2)).unwrap().status, "Reclaimed");
+    }
+
+    #[test]
+    fn a_wake_up_drops_claimed_links_and_waits_for_a_claim_in_progress() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        create(&mut c, 2, 0);
+        create(&mut c, 3, 0);
+        // link 1 claimed, link 2 mid-claim, link 3 untouched
+        testing_env!(claim_ctx(1, 10).build());
+        let _ = c.claim(acc("alice.testnet"));
+        env_with_result(&ctx("drop.testnet", 11), PromiseResult::Successful(vec![]));
+        assert!(c.on_claim(key(1), acc("alice.testnet"), U128(0)));
+        testing_env!(claim_ctx(2, EXPIRY - NS_PER_S).build());
+        let _ = c.claim(acc("bob.testnet"));
+
+        wake(EXPIRY, 200);
+        let _ = c.on_return_timer(vec![key(1), key(2), key(3)], 3);
+        // link 3 goes home, link 2 keeps the timer going, link 1 is out
+        assert_eq!(c.get_drop(key(3)).unwrap().status, "Reclaimed");
+        assert_eq!(c.get_drop(key(2)).unwrap().status, "Claiming");
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Claimed");
+        assert_eq!(created_timers(), 1);
+        let transfers: Vec<_> = created_calls().into_iter().filter(|(_, m, _)| m == "ft_transfer").collect();
+        assert_eq!(transfers.len(), 1);
+        assert!(transfers[0].2.contains("\"amount\":\"5000000\""), "{}", transfers[0].2);
+    }
+
+    #[test]
+    fn a_wake_up_with_every_link_claimed_ends_the_timer() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(claim_ctx(1, 10).build());
+        let _ = c.claim(acc("alice.testnet"));
+        env_with_result(&ctx("drop.testnet", 11), PromiseResult::Successful(vec![]));
+        assert!(c.on_claim(key(1), acc("alice.testnet"), U128(0)));
+        wake(EXPIRY - NS_PER_S, 200);
+        let out = c.on_return_timer(vec![key(1)], 2);
+        assert!(matches!(out, PromiseOrValue::Value(false)));
+        assert_eq!(created_timers(), 0);
+        assert!(created_calls().is_empty());
+    }
+
+    #[test]
+    fn a_timer_out_of_gas_stops_and_says_so() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        // a hop's floor for one link is 27 Tgas and re-arming needs 5 more
+        wake(EXPIRY - NS_PER_S, 30);
+        let out = c.on_return_timer(vec![key(1)], 41);
+        assert!(matches!(out, PromiseOrValue::Value(false)));
+        assert_eq!(created_timers(), 0);
+        assert!(logs_contain("\"event\":\"return_timer_stopped\""));
+        assert!(logs_contain("out of gas"));
+        // the link stays open and returnable by anyone after the expiry
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Open");
+    }
+
+    #[test]
+    #[should_panic(expected = "only the return timer may call this")]
+    fn the_timer_callback_cannot_be_called_directly() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(ctx("drop.testnet", EXPIRY).build());
+        let _ = c.on_return_timer(vec![key(1)], 1);
+    }
+
+    #[test]
+    fn pause_never_blocks_a_return() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        testing_env!(ctx("owner.testnet", 5).build());
+        c.pause();
+        testing_env!(ctx("stranger.testnet", 10).build());
+        assert!(c.arm_return(vec![key(1)]));
+        testing_env!(ctx("stranger.testnet", EXPIRY).build());
+        let _ = c.return_expired(vec![key(1)]);
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Reclaimed");
+    }
+
+    #[test]
+    fn return_gas_grows_with_the_links_and_covers_the_transfer_and_callback() {
+        assert_eq!(return_gas(1), Gas::from_tgas(27));
+        assert_eq!(return_gas(30), Gas::from_tgas(85));
+        for n in [1usize, 2, 10, 30] {
+            let attached = GAS_FT_TRANSFER.saturating_add(on_return_gas(n));
+            assert!(return_gas(n) > attached.saturating_add(Gas::from_tgas(5)), "n={n}");
+        }
     }
 }

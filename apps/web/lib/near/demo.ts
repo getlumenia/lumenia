@@ -10,10 +10,10 @@ export const DEMO_MIN_LINK_UNITS = "100000";
 export const DEMO_DEFAULT_AMOUNT = "1.00";
 /** Practice links keep their memo short (bytes, UTF-8); the Worker refuses a longer one. */
 export const DEMO_MAX_MEMO_BYTES = 64;
-/** A practice link lives an hour by default and a day at most (the Worker refuses longer), and the sponsor takes an
- *  expired one back to the practice balance on its own, so unclaimed practice dollars never sit locked for a week. */
+/** A practice link lives an hour by default and 8 hours at most (the Worker refuses longer): the Worker arms each
+ *  link's return timer, which covers that whole life, so an unclaimed practice link comes back by itself. */
 export const DEMO_DEFAULT_EXPIRY_S = 3_600;
-export const DEMO_MAX_EXPIRY_S = 86_400;
+export const DEMO_MAX_EXPIRY_S = 28_800;
 
 /** Offered when the practice account is named and there is a relayer to make its links. */
 export function practiceAvailable(accountId: string | undefined, relayerUrl: string | undefined): boolean {

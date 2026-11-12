@@ -152,6 +152,21 @@ export class FakeChain implements ChainPort {
     }
     return this.outcome(null);
   }
+  /** Make the next arm_return throw (an RPC failure). */
+  failArm: string | null = null;
+  /** Every arm_return: the links and the gas. */
+  arms: Array<{ publicKeys: string[]; gasTgas: number }> = [];
+  async armReturn(publicKeys: string[], gasTgas: number): Promise<{ txHash: string }> {
+    this.calls.push(`arm_return ${publicKeys.length}`);
+    if (this.failArm) {
+      const message = this.failArm;
+      this.failArm = null;
+      throw new Error(message);
+    }
+    this.arms.push({ publicKeys, gasTgas });
+    this.txCounter += 1;
+    return { txHash: `FAKETX${this.txCounter}` };
+  }
   async storageDeposit(): Promise<TxOutcome> {
     this.calls.push("storage_deposit");
     this.funderRegistered = true;

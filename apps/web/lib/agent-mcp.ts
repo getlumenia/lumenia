@@ -25,14 +25,16 @@
  * key, and does not talk to the A-Identity spend-policy vault (that bridge is roadmap: LumenDrop's
  * `deposit` needs the depositor's own `require_auth`). "Agents can pay anyone" is not a claim this
  * makes: the demo is one agent, one key, one link. On NEAR the funder key signs only
- * `ft_transfer_call` into the escrow, `reclaim` of its own expired drops and the one-time
- * `storage_deposit`; there is no generic "send transaction" tool.
+ * `ft_transfer_call` into the escrow, `arm_return` of the links it just made, `reclaim` of its own
+ * expired drops and the one-time `storage_deposit`; there is no generic "send transaction" tool.
  *
  * SAFETY OF THE LINK. The link's `#fragment` is the bearer key (on both rails). The server returns
  * it to the agent (that is the point: the agent forwards it to the person) and never logs it; the
  * agent host's own transcript is where it lives after that, which the human operating the agent
  * should know. Unclaimed money can be taken back after the expiry with `reclaim_link` (Stellar) or
- * `near_reclaim` (NEAR), never automatically. The NEAR receipt log keeps each secret link so the
+ * `near_reclaim` (NEAR). On NEAR it also comes back with no call at all when the link's return timer
+ * was armed: `near_pay_link` and `near_pay_many` arm it right after the link exists whenever one
+ * transaction's gas covers the link's life (the default 8 hours does). The NEAR receipt log keeps each secret link so the
  * agent can re-send one it made; the `lumenia://near/links` resource exposes exactly that and says
  * so; `near_receipts` and `lumenia://near/receipts.csv` never include a secret.
  *
@@ -420,7 +422,10 @@ function registerNearTools(server: McpServer, seam: NearSeam): void {
     .min(MIN_EXPIRES_HOURS)
     .max(MAX_EXPIRES_HOURS)
     .optional()
-    .describe(`Hours the link stays claimable, ${MIN_EXPIRES_HOURS} to ${MAX_EXPIRES_HOURS} (default ${NEAR_DEFAULT_EXPIRES_HOURS}); after that the funder may take unclaimed money back`);
+    .describe(
+      `Hours the link stays claimable, ${MIN_EXPIRES_HOURS} to ${MAX_EXPIRES_HOURS} (default ${NEAR_DEFAULT_EXPIRES_HOURS}). ` +
+        "Up to about 8 hours for one link (4 for a batch of 30), unclaimed money comes back to the funder by itself after the expiry; longer, call near_reclaim after the expiry",
+    );
   const referenceSchema = z
     .string()
     .min(1)
@@ -436,7 +441,8 @@ function registerNearTools(server: McpServer, seam: NearSeam): void {
         `Pay a PERSON who has no wallet, on ${NEAR_NETWORK_LABEL}: escrows USDC from the funder account ${funder} in Lumenia's NEAR escrow and returns a claim link ` +
         `(${NEAR_CLAIM_PATH}#<secret>). The recipient opens it in any browser and claims with no wallet, no seed phrase and no gas, into a NEAR account created at claim time. ` +
         "The link's #fragment is the bearer key: whoever holds the link can claim, so forward it over a private channel and never post it. " +
-        "Unclaimed money comes back to the funder with near_reclaim after the expiry (not automatic). " +
+        "If nobody claims it, the USDC comes back to the funder by itself after the expiry: the server arms the link's return timer right after it exists, " +
+        "and NEAR runs the return with no further call (returnTimer in the result; for a life longer than one timer lasts, use near_reclaim after the expiry). " +
         `Limits: ${NEAR_MIN_LINK_USDC} to ${maxLink} USDC per link and ${dailyBudget} USDC per rolling 24 hours (the funder's daily budget); every refusal spends nothing. ` +
         "Pass reference (an order id) so a retry can never pay twice. Testnet only.",
       inputSchema: {
@@ -456,6 +462,7 @@ function registerNearTools(server: McpServer, seam: NearSeam): void {
           (r.note ? `${r.note}\n` : "") +
           `NEAR link ready on ${NEAR_NETWORK_LABEL}: ${r.link}\n` +
           `Amount ${r.receipt.amount_usdc} USDC from ${r.receipt.funder_account}; deposit tx ${r.txHash ?? "unknown"}; receipt ${r.receipt.receipt_id}, status ${r.receipt.status}; expires ${r.expiresAt}. ` +
+          (r.returnTimer ? (r.returnTimer.armed ? `Return timer armed (tx ${r.returnTimer.txHash}). ` : `Return timer not armed: ${nearInstruction(r.returnTimer.reason)}. `) : "") +
           instruction;
         return done(text, { ...r, instruction, network: NEAR_NETWORK_LABEL });
       } catch (e) {
@@ -473,7 +480,8 @@ function registerNearTools(server: McpServer, seam: NearSeam): void {
         "(the contract keeps all or nothing; any failure refunds the whole batch and spends nothing). Each payout has a label (who it is for), " +
         `an amount between ${NEAR_MIN_LINK_USDC} and ${maxLink} USDC and an optional memo; every payout gets its own receipt carrying the label and a shared batch_id, ` +
         `and the batch total counts against the ${dailyBudget} USDC daily budget. Each link's #fragment is a bearer key: forward every link to its own person privately. ` +
-        "Pass reference (a payroll run id) so a retry can never pay the batch twice.",
+        "One return timer is armed for the whole batch right after it exists, so the payouts nobody claims come back to the funder by themselves after the expiry, in one transfer " +
+        "(returnTimer in the result; up to about 4 hours of life for 30 links, longer for fewer). Pass reference (a payroll run id) so a retry can never pay the batch twice.",
       inputSchema: {
         payouts: z
           .array(
@@ -503,6 +511,7 @@ function registerNearTools(server: McpServer, seam: NearSeam): void {
           (r.note ? `${r.note}\n` : "") +
           `${r.count} NEAR links ready on ${NEAR_NETWORK_LABEL}: ${r.totalUsdc} USDC in one transaction (tx ${r.txHash ?? "unknown"}), batch ${r.batchId}, expiry ${r.expiresAt}.\n` +
           r.payouts.map((p) => `- ${p.label}: ${p.receipt.amount_usdc} USDC ${p.link}`).join("\n") +
+          (r.returnTimer ? (r.returnTimer.armed ? `\nReturn timer armed for the batch (tx ${r.returnTimer.txHash}).` : `\nReturn timer not armed: ${nearInstruction(r.returnTimer.reason)}.`) : "") +
           `\n${instruction}`;
         return done(text, { ...r, instruction, network: NEAR_NETWORK_LABEL });
       } catch (e) {

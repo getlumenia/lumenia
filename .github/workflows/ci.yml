@@ -344,7 +344,7 @@ jobs:
       - name: Escrow crate - clippy (deny warnings)
         working-directory: contracts/lumen-drop-near/contract
         run: cargo clippy --all-targets -- -D warnings
-      - name: Escrow crate - unit + sandbox tests (46 + 21; near-sandbox downloads nearcore 2.14.0 on a cold cache)
+      - name: Escrow crate - unit + sandbox tests (70 + 27; near-sandbox downloads nearcore 2.14.0 on a cold cache)
         working-directory: contracts/lumen-drop-near/contract
         run: cargo test
 

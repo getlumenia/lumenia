@@ -42,7 +42,8 @@ import { decryptWithPassword, encryptWithPassword } from "./crypto";
 import { LINK_CSV_COLUMNS, csvField, csvLine, csvTextField, linkCsvLine, linksCsv } from "./csv";
 import { DEMO_DEFAULT_EXPIRY_S, DEMO_MAX_EXPIRY_S, DEMO_MAX_LINK_UNITS, DEMO_MAX_MEMO_BYTES, DEMO_MIN_LINK_UNITS, linkLimits, practiceAvailable } from "./demo";
 import { buildDropMsg, isConfigView, isDropView, isStatsView, isTerminal, memoBytes, reclaimable } from "./drops";
-import { EXPIRY_OPTIONS, expiresAtMs, formatRemaining, isExpired, nsToMs, toIso } from "./expiry";
+import { DEFAULT_EXPIRY_S, EXPIRY_OPTIONS, expiresAtMs, formatRemaining, isExpired, nsToMs, toIso } from "./expiry";
+import { returnTimerFits } from "@lumenia/near/return-timer";
 import {
   INTENTS_ASSETS,
   buildQuoteRequest,
@@ -178,7 +179,8 @@ async function main() {
   eq("1.2345 NEAR", formatNear(1_234_500_000_000_000_000_000_000n), "1.2345");
 
   section(4, "expiry math");
-  eq("the four options: 10 min demo, 1 h, 24 h, 7 d", EXPIRY_OPTIONS.map((o) => o.seconds), [600, 3600, 86400, 604800]);
+  eq("the five options: 2 min to watch it come back, 1 h, 8 h, 24 h, 7 d", EXPIRY_OPTIONS.map((o) => o.seconds), [120, 3600, 28800, 86400, 604800]);
+  eq("a sender's link lives 8 hours by default, a life one return timer covers", [DEFAULT_EXPIRY_S, returnTimerFits(DEFAULT_EXPIRY_S), returnTimerFits(86_400)], [28_800, true, false]);
   ok("all above the contract minimum of 60 s", EXPIRY_OPTIONS.every((o) => o.seconds >= 60));
   {
     const created = Date.UTC(2026, 10, 11, 12, 0, 0);
@@ -560,7 +562,7 @@ async function main() {
     ok("not with a malformed account id", !practiceAvailable("Not..Valid", RELAYER));
     ok("not with a relayer that is not an http(s) URL", !practiceAvailable("lumenia-relayer.testnet", "javascript:alert(1)"));
     eq("a practice link is $0.10 to $1.00, its memo at most 64 bytes (the Worker's own lines)", [DEMO_MIN_LINK_UNITS, DEMO_MAX_LINK_UNITS, DEMO_MAX_MEMO_BYTES], ["100000", "1000000", 64]);
-    eq("a practice link lives 1 hour by default and 1 day at most (the Worker's own line)", [DEMO_DEFAULT_EXPIRY_S, DEMO_MAX_EXPIRY_S], [3_600, 86_400]);
+    eq("a practice link lives 1 hour by default and 8 hours at most (the Worker's own line), all inside one return timer", [DEMO_DEFAULT_EXPIRY_S, DEMO_MAX_EXPIRY_S, returnTimerFits(DEMO_MAX_EXPIRY_S)], [3_600, 28_800, true]);
     eq("demo: $1.00 cap, 1.00 default", linkLimits(true, "100000000"), { maxUnits: DEMO_MAX_LINK_UNITS, defaultAmount: "1.00" });
     eq("otherwise: the testnet cap, 1 default", linkLimits(false, "100000000"), { maxUnits: "100000000", defaultAmount: "1" });
     ok("1 passes the demo cap, 1.01 does not", parseUsdcAmount("1", { maxUnits: linkLimits(true, "100000000").maxUnits }).ok && !parseUsdcAmount("1.01", { maxUnits: linkLimits(true, "100000000").maxUnits }).ok);
@@ -722,8 +724,15 @@ async function main() {
     ok("a practice link's recipient reads \"Sent from the shared practice balance\", the account id kept for Details", /drop\.funder === NEAR_DEMO_FUNDER_ID \? \(\s*<>Sent from the shared practice balance\.<\/>/.test(claim) && /\["Sent by", <span key="from" className="nc-mono">\{drop\.funder\}<\/span>\]/.test(claim));
     const sender = src("components", "near", "NearSend.tsx");
     ok(
-      "a practice link never promises a take-back this browser cannot do",
-      /footnote=\{link\.practice \? PRACTICE_NOTE : TAKE_BACK_NOTE\}/.test(sender) && /hint=\{practice \? "After that, nobody can claim it\." :/.test(sender) && /canReclaim = mine && expiredNow && !l\.practice && !!funder\?\.secret/.test(sender),
+      "a practice link never promises a take-back this browser cannot do: it says the money comes back by itself, and offers no take-back button",
+      /footnote=\{link\.returnTimerTxHash \? \(link\.practice \? PRACTICE_NOTE : COMES_BACK_NOTE\) : TAKE_BACK_NOTE\}/.test(sender) &&
+        /\? "After that, nobody can claim it, and the money comes back to the practice balance by itself\."/.test(sender) &&
+        /canReclaim = mine && expiredNow && !l\.practice && !!funder\?\.secret/.test(sender),
+    );
+    ok(
+      "an own-key link is armed to come back by itself right after it exists, by the same key, only until INCLUDED_FINAL",
+      /setStep\("Setting it to come back by itself"\);\s*const timer = await armOwnReturn\(\{ signerId: funder\.accountId, secretKey: funder\.secret as KeyPairString, publicKeys: \[link\.publicKey\], lifeS: link\.expiresInS \}\);/.test(sender) &&
+        /methodName: "arm_return"[\s\S]*waitUntil: "INCLUDED_FINAL"/.test(src("lib", "near", "return-timer.ts")),
     );
     const ledgerPage = src("app", "(site)", "ledger", "page.tsx");
     ok("/ledger: no network badge in the header", !/nr-badge/.test(ledgerPage) && !/NEAR_NETWORK|NEAR_CONTRACT_ID/.test(ledgerPage));
@@ -839,6 +848,16 @@ async function main() {
     matches("the record: practice, the hash and the funder the Worker named", happy.store.get(key.publicKey), { practice: true, createTxHash: "tx1", funder: "lumenia-relayer.testnet", secret: key.secret });
     ok("the request carried the public key and never the secret", happy.bodies.length === 1 && happy.bodies[0]?.publicKey === key.publicKey && !JSON.stringify(happy.bodies).includes(key.secret.slice("ed25519:".length)));
     ok("the link was created", made.kind === "created" && made.txHash === "tx1" && made.kept);
+    ok("an answer without a return timer (an older Worker) leaves none on the record", happy.store.get(key.publicKey)?.returnTimerTxHash === undefined);
+    const timed = fakes(async () => ({ ...okAnswer, returnTimer: { armed: true, txHash: "armtx1", explorerUrl: "https://testnet.nearblocks.io/txns/armtx1" } }));
+    const madeTimed = await runPracticeLink(link, timed.deps);
+    ok(
+      "the return timer the Worker armed goes on the record and the result: the link comes back by itself",
+      madeTimed.kind === "created" && madeTimed.link.returnTimerTxHash === "armtx1" && timed.store.get(key.publicKey)?.returnTimerTxHash === "armtx1",
+    );
+    const unarmed = fakes(async () => ({ ...okAnswer, returnTimer: { armed: false, reason: "the return timer could not be armed" } }));
+    await runPracticeLink(link, unarmed.deps);
+    ok("a timer the Worker could not arm is not claimed on the record", unarmed.store.get(key.publicKey)?.returnTimerTxHash === undefined);
 
     const refundedOutcome = { ...okOutcome, linkCreated: false, usedAmount: "0", logs: ["drop refused: the escrow is paused; tokens returned"] };
     const sad = fakes(async () => ({ ...okAnswer, txHash: "tx2", outcome: refundedOutcome }));

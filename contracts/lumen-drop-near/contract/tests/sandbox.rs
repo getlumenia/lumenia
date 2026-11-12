@@ -8,6 +8,7 @@
 use near_api::advanced::ExecuteSignedTransaction;
 use near_api::errors::ExecuteTransactionError;
 use near_api::types::transaction::result::{ExecutionFinalResult, ExecutionSuccess, TransactionResult};
+use near_api::types::TxExecutionStatus;
 use near_api::{Account, AccountId, Contract, NearGas, NearToken, NetworkConfig, PublicKey, Signer};
 use near_sdk::serde::Deserialize;
 use near_sdk::serde_json::{Value, json};
@@ -402,6 +403,104 @@ impl TestEnv {
 
     async fn expires_at_ns(&self, pk: &PublicKey) -> TestResult<u64> {
         Ok(self.drop_view(pk).await?.ok_or("drop missing")?.expires_at_ns.parse()?)
+    }
+
+    fn key_list(keys: &[PublicKey]) -> Value {
+        json!({ "public_keys": keys.iter().map(|k| k.to_string()).collect::<Vec<_>>() })
+    }
+
+    /// Arms a return timer. Sent with wait_until INCLUDED: a transaction whose timer is pending
+    /// does not reach FINAL until the timer ends. (The sandbox cannot show that transaction's
+    /// receipts afterwards: after a fast-forward it no longer finds it, so the tests read effects.)
+    async fn arm(&self, keys: &[PublicKey], by: &str, tgas: u64) -> TestResult {
+        let _pending = self
+            .drop
+            .call_function("arm_return", Self::key_list(keys))
+            .transaction()
+            .gas(NearGas::from_tgas(tgas))
+            .with_signer(id(by), self.signer.clone())
+            .wait_until(TxExecutionStatus::Included)
+            .send_to(&self.net)
+            .await?;
+        // let the arm receipt run before anyone looks
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        Ok(())
+    }
+
+    /// An arm that is expected to fail: it creates no timer, so it reaches FINAL.
+    async fn arm_final(&self, keys: &[PublicKey], by: &str, tgas: u64) -> SendResult {
+        self.drop
+            .call_function("arm_return", Self::key_list(keys))
+            .transaction()
+            .gas(NearGas::from_tgas(tgas))
+            .with_signer(id(by), self.signer.clone())
+            .send_to(&self.net)
+            .await
+    }
+
+    async fn return_expired(&self, keys: &[PublicKey], by: &str) -> SendResult {
+        self.drop
+            .call_function("return_expired", Self::key_list(keys))
+            .transaction()
+            .gas(NearGas::from_tgas(100))
+            .with_signer(id(by), self.signer.clone())
+            .send_to(&self.net)
+            .await
+    }
+
+    /// Lets blocks pass, 100 at a time, until every key has `status` (at most `rounds` rounds).
+    async fn wait_for_status(&self, keys: &[PublicKey], status: &str, rounds: usize) -> TestResult {
+        for _ in 0..rounds {
+            let mut all = true;
+            for k in keys {
+                if self.status(k).await? != status {
+                    all = false;
+                    break;
+                }
+            }
+            if all {
+                return Ok(());
+            }
+            self.sandbox.fast_forward(100).await?;
+        }
+        Err(format!("the links did not reach {status} in {rounds} rounds of 100 blocks").into())
+    }
+
+    async fn block_header(&self) -> TestResult<Value> {
+        let block = near_api::Chain::block().fetch_from(&self.net).await?;
+        Ok(near_sdk::serde_json::to_value(&block)?["header"].clone())
+    }
+
+    async fn height(&self) -> TestResult<u64> {
+        self.block_header().await?["height"].as_u64().ok_or_else(|| "no height in block header".into())
+    }
+
+    async fn gas_price(&self) -> TestResult<u128> {
+        let h = self.block_header().await?;
+        let p = &h["gas_price"];
+        Ok(match p {
+            Value::String(s) => s.parse()?,
+            Value::Number(n) => u128::from(n.as_u64().ok_or("gas_price")?),
+            _ => return Err("no gas_price in block header".into()),
+        })
+    }
+
+    /// The status turns Reclaimed when a return starts; the transfer, `on_return` and the key
+    /// deletions run in the next blocks. Waits until `on_return` has counted `n` returns, then lets
+    /// the key deletions land.
+    async fn wait_for_returned(&self, n: u64) -> TestResult {
+        for _ in 0..30 {
+            if self.stats().await?.drops_reclaimed >= n {
+                self.sandbox.fast_forward(5).await?;
+                return Ok(());
+            }
+            self.sandbox.fast_forward(2).await?;
+        }
+        Err(format!("on_return did not count {n} returns").into())
+    }
+
+    async fn storage_usage(&self, who: &str) -> TestResult<u64> {
+        Ok(Account(id(who)).view().fetch_from(&self.net).await?.data.storage_usage)
     }
 }
 
@@ -1045,3 +1144,180 @@ async fn a_batch_of_thirty_drops_fits_in_gas() -> TestResult {
 }
 
 
+
+// ---------------------------------------------------------------------------
+// Returns: unclaimed money goes home without the funder
+
+#[tokio::test]
+async fn an_armed_link_nobody_opens_comes_home_by_itself() -> TestResult {
+    let env = TestEnv::new().await?;
+    let (link, pk, _) = env.create_drop(3 * ONE_USDC, 60, Some("rent")).await?;
+    let storage_before = env.storage_usage(DROP).await?;
+    // a stranger arms the timer; from here on nobody signs anything
+    let bob_before = env.near_balance(BOB).await?;
+    env.arm(&[pk], BOB, 300).await?;
+    let storage_armed = env.storage_usage(DROP).await?;
+    println!("escrow storage before arming {storage_before} bytes, with a pending timer {storage_armed} bytes");
+    assert_eq!(env.status(&pk).await?, "Open", "arming moves nothing");
+
+    let expires = env.expires_at_ns(&pk).await?;
+    env.wait_for_status(&[pk], "Reclaimed", 30).await?;
+    env.wait_for_returned(1).await?;
+    let d = env.drop_view(&pk).await?.ok_or("drop")?;
+    let returned_at: u64 = d.status_changed_at_ns.parse()?;
+    assert!(returned_at >= expires, "the money went home only after the expiry");
+    println!("returned {} s of chain time after the expiry", (returned_at - expires) / NS_PER_S);
+
+    assert_eq!(env.usdc_balance(FUNDER).await?, FUNDER_SUPPLY, "the funder has every dollar back");
+    assert_eq!(env.usdc_balance(DROP).await?, 0);
+    assert!(!env.key_exists(&pk).await, "the link key is deleted");
+    let s = env.stats().await?;
+    assert_eq!((s.drops_reclaimed, s.open_drops), (1, 0));
+    assert_eq!(s.total_amount_reclaimed, (3 * ONE_USDC).to_string());
+    assert!(!failure_text(env.claim(&link, ALICE).await).is_empty(), "the dead link cannot be claimed");
+
+    // what the whole timer cost the account that armed it, once the unused gas came back
+    env.sandbox.fast_forward(20).await?;
+    let spent = bob_before.as_yoctonear().saturating_sub(env.near_balance(BOB).await?.as_yoctonear());
+    println!("COST of arming, every wake-up and the return, paid by the arming account: {:.6} NEAR", spent as f64 / 1e24);
+    assert!(spent < NearToken::from_millinear(50).as_yoctonear(), "a timer must cost cents: {spent}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_timer_wakes_by_itself_every_200_blocks_and_costs_little_gas() -> TestResult {
+    let env = TestEnv::new().await?;
+    let (link, pk, _) = env.create_drop(ONE_USDC, 3600, None).await?;
+    let funder_before = env.near_balance(FUNDER).await?;
+    let start = env.height().await?;
+    env.arm(&[pk], FUNDER, 300).await?;
+    // about ten wake-ups pass with nobody acting; the link stays open and claimable
+    for _ in 0..21 {
+        env.sandbox.fast_forward(100).await?;
+    }
+    assert_eq!(env.status(&pk).await?, "Open");
+    // the claim ends the timer at its next wake-up
+    env.claim(&link, ALICE).await?.assert_success();
+    for _ in 0..3 {
+        env.sandbox.fast_forward(100).await?;
+    }
+    assert_eq!(env.usdc_balance(ALICE).await?, ONE_USDC);
+    assert_eq!(env.status(&pk).await?, "Claimed", "a claimed link is never returned");
+    assert_eq!(env.usdc_balance(FUNDER).await?, FUNDER_SUPPLY - ONE_USDC, "nothing went back to the funder");
+
+    // the cost: everything the timer burnt, read from the arming account once its gas came back
+    env.sandbox.fast_forward(20).await?;
+    let blocks = env.height().await?.saturating_sub(start);
+    let spent = funder_before.as_yoctonear().saturating_sub(env.near_balance(FUNDER).await?.as_yoctonear());
+    let price = env.gas_price().await?;
+    let tgas = spent as f64 / price as f64 / 1e12;
+    let wakeups = (blocks / 200).max(1);
+    println!(
+        "COST of a timer over {blocks} blocks (about {wakeups} wake-ups): {:.6} NEAR = {tgas:.1} Tgas at {price} yocto/gas, about {:.2} Tgas a wake-up",
+        spent as f64 / 1e24,
+        tgas / wakeups as f64
+    );
+    assert!(tgas / (wakeups as f64) < 5.0, "a wake-up should cost a few Tgas");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_second_timer_for_the_same_link_is_refused_while_the_first_runs() -> TestResult {
+    let env = TestEnv::new().await?;
+    let (_link, pk, _) = env.create_drop(ONE_USDC, 3600, None).await?;
+    env.arm(&[pk], FUNDER, 300).await?;
+    assert_failed_with(env.arm_final(&[pk], BOB, 300).await, "already armed");
+    // too little gas for even one return is refused before anything is armed
+    let (_l2, pk2, _) = env.create_drop(ONE_USDC, 3600, None).await?;
+    assert_failed_with(env.arm_final(&[pk2], BOB, 30).await, "attach more gas");
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_armed_batch_returns_what_nobody_claimed_in_one_transfer_and_a_claim_stays_paid() -> TestResult {
+    let env = TestEnv::new().await?;
+    let links = [TestEnv::new_link()?, TestEnv::new_link()?, TestEnv::new_link()?];
+    let items = [(&links[0].1, ONE_USDC), (&links[1].1, 2 * ONE_USDC), (&links[2].1, 3 * ONE_USDC)];
+    env.ft_transfer_call(6 * ONE_USDC, &batch_msg(&items, 60)).send_to(&env.net).await?.assert_success();
+    for (_, pk) in &links {
+        env.wait_for_key(pk).await?;
+    }
+    let keys: Vec<PublicKey> = links.iter().map(|(_, pk)| *pk).collect();
+    env.arm(&keys, FUNDER, 300).await?;
+    env.claim(&links[0].0, ALICE).await?.assert_success();
+
+    env.wait_for_status(&keys[1..], "Reclaimed", 30).await?;
+    env.wait_for_returned(2).await?;
+    assert_eq!(env.status(&keys[0]).await?, "Claimed");
+    assert_eq!(env.usdc_balance(ALICE).await?, ONE_USDC);
+    assert_eq!(env.usdc_balance(FUNDER).await?, FUNDER_SUPPLY - ONE_USDC);
+    assert_eq!(env.usdc_balance(DROP).await?, 0);
+    let s = env.stats().await?;
+    assert_eq!((s.drops_claimed, s.drops_reclaimed, s.open_drops), (1, 2, 0));
+    assert_eq!(s.total_amount_reclaimed, (5 * ONE_USDC).to_string());
+    for k in &keys {
+        assert!(!env.key_exists(k).await, "every link key is deleted");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_timer_returns_thirty_unclaimed_links_in_one_transfer() -> TestResult {
+    let env = TestEnv::new().await?;
+    let mut links = Vec::new();
+    for _ in 0..30 {
+        links.push(TestEnv::new_link()?);
+    }
+    let items: Vec<(&PublicKey, u128)> = links.iter().map(|(_, pk)| (pk, MIN_AMOUNT)).collect();
+    env.ft_transfer_call_with_gas(30 * MIN_AMOUNT, &batch_msg(&items, 60), 300)
+        .send_to(&env.net)
+        .await?
+        .assert_success();
+    for (_, pk) in &links {
+        env.wait_for_key(pk).await?;
+    }
+    let keys: Vec<PublicKey> = links.iter().map(|(_, pk)| *pk).collect();
+    env.arm(&keys, FUNDER, 300).await?;
+    env.wait_for_status(&keys, "Reclaimed", 30).await?;
+    env.wait_for_returned(30).await?;
+    assert_eq!(env.usdc_balance(FUNDER).await?, FUNDER_SUPPLY);
+    assert_eq!(env.usdc_balance(DROP).await?, 0);
+    let s = env.stats().await?;
+    assert_eq!((s.drops_reclaimed, s.open_drops), (30, 0));
+    assert_eq!(s.total_amount_reclaimed, (30 * MIN_AMOUNT).to_string());
+    for k in &keys {
+        assert!(!env.key_exists(k).await, "every link key is deleted");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_stranger_can_only_send_expired_unclaimed_links_back_to_their_funder() -> TestResult {
+    let env = TestEnv::new().await?;
+    let links = [TestEnv::new_link()?, TestEnv::new_link()?, TestEnv::new_link()?];
+    let items = [(&links[0].1, ONE_USDC), (&links[1].1, 2 * ONE_USDC), (&links[2].1, 3 * ONE_USDC)];
+    env.ft_transfer_call(6 * ONE_USDC, &batch_msg(&items, 60)).send_to(&env.net).await?.assert_success();
+    for (_, pk) in &links {
+        env.wait_for_key(pk).await?;
+    }
+    let (pk0, pk1, pk2) = (links[0].1, links[1].1, links[2].1);
+    env.claim(&links[0].0, ALICE).await?.assert_success();
+
+    assert_failed_with(env.return_expired(&[pk1, pk2], BOB).await, "has not expired yet");
+    env.fast_forward_past(env.expires_at_ns(&pk1).await?).await?;
+    // a stranger still cannot reclaim, and a claimed link cannot be returned
+    assert_failed_with(env.reclaim(&pk1, BOB).await, "only the funder may reclaim");
+    assert_failed_with(env.return_expired(&[pk0, pk1], BOB).await, "drop already claimed");
+
+    let bob_usdc = env.usdc_balance(BOB).await?;
+    let ok = env.return_expired(&[pk1, pk2], BOB).await?.assert_success();
+    println!("GAS return_expired of two links: {}", ok.total_gas_burnt);
+    assert!(ok.receipt_failures().is_empty(), "{:?}", ok.receipt_failures());
+    assert_eq!(ok.logs().iter().filter(|l| l.contains("\"event\":\"drop_reclaimed\"") && l.contains("\"by\":\"bob.sandbox\"")).count(), 2);
+    assert_eq!(env.usdc_balance(FUNDER).await?, FUNDER_SUPPLY - ONE_USDC, "the money went to the funder");
+    assert_eq!(env.usdc_balance(BOB).await?, bob_usdc, "and not a cent to the caller");
+    assert_eq!(env.usdc_balance(DROP).await?, 0);
+    assert!(!env.key_exists(&pk1).await && !env.key_exists(&pk2).await);
+    assert_failed_with(env.return_expired(&[pk1], BOB).await, "drop already reclaimed");
+    Ok(())
+}

@@ -1,13 +1,15 @@
 // Expiry math. The contract stores nanosecond timestamps (u64); the browser works in ms.
 
 export const EXPIRY_OPTIONS = [
-  { label: "10 minutes (demo)", seconds: 600 },
+  { label: "2 minutes (watch it come back)", seconds: 120 },
   { label: "1 hour", seconds: 3_600 },
+  { label: "8 hours", seconds: 28_800 },
   { label: "24 hours", seconds: 86_400 },
   { label: "7 days", seconds: 604_800 },
 ] as const;
 
-export const DEFAULT_EXPIRY_S = 604_800;
+/** Eight hours: one return timer covers it whole, so an unclaimed link comes back with no further signature. */
+export const DEFAULT_EXPIRY_S = 28_800;
 
 const NS_PER_MS = 1_000_000n;
 

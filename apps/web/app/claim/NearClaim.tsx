@@ -422,10 +422,10 @@ function Claim({ secret }: { secret: KeyPairString }) {
         <div className="nc-main">
           <StateLine state="returned" />
           <h1 ref={heading} tabIndex={-1} className="nc-title">
-            The sender took this money back.
+            This money went back to the sender.
           </h1>
           <p className="nc-lead">
-            This link for {amount} expired on {formatLocal(expiresAt)} and the sender reclaimed it. Ask them for a new link.
+            This link for {amount} expired on {formatLocal(expiresAt)} and the money went back to the sender. Ask them for a new link.
           </p>
         </div>
       </>
@@ -481,7 +481,7 @@ function Claim({ secret }: { secret: KeyPairString }) {
             This link has expired.
           </h1>
           <p className="nc-lead">
-            {amount} was waiting here until {formatLocal(expiresAt)}. The sender can take it back now; ask them for a new link.
+            {amount} was waiting here until {formatLocal(expiresAt)}. It goes back to the sender now; ask them for a new link.
           </p>
         </div>
       </>
