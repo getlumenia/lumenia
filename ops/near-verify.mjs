@@ -22,7 +22,10 @@
 // about 3 minutes on an Apple M4 with the crates already in ~/.cargo (measured 2026-11-12: 165 s, 2.0 GB);
 // later runs reuse both and take about 40 s. That download is cargo's doing, not this script's.
 //
-// The live section reads the escrow's views, the relayer's health and the hosted pages, then checks every
+// The live section reads the escrow's views, checks that the testnet and mainnet escrows both run the code hash
+// NEAR.md documents (after a full run it also says whether this machine's build of the wasm reproduces it: a
+// non-reproducible build can differ across toolchains, so that line is a NOTE, never a FAIL), reads the relayer's
+// health and the hosted pages, then checks every
 // transaction hash in NEAR.md's proof tables over RPC (`tx` with wait_until NONE). The hashes are parsed from
 // NEAR.md at run time, so the check follows the document: base58 hashes of 32 bytes in table rows under a
 // heading that says "proof"; such a row is a mainnet one under a heading that says "mainnet" (or when it links
@@ -42,6 +45,7 @@
 //   NEAR.md                              the proof tables the live section checks on chain
 // A script that is not there yet is reported as FAIL "script missing", never as a crash.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, relative } from "node:path";
@@ -123,6 +127,22 @@ function healthUrl(raw, defaultPath) {
 const results = []; // checks: PASS / FAIL / SOFT
 const missingTools = []; // prerequisites that are not installed (not checks themselves; the step that needs one fails)
 const t0 = Date.now();
+let builtCodeHash = null; // the escrow wasm's code hash after the contract step, when it built one
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+// Base58 (Bitcoin alphabet), the encoding NEAR prints code hashes in.
+function base58(bytes) {
+  let n = BigInt("0x" + (Buffer.from(bytes).toString("hex") || "0"));
+  let out = "";
+  while (n > 0n) {
+    out = B58[Number(n % 58n)] + out;
+    n /= 58n;
+  }
+  for (const b of bytes) {
+    if (b !== 0) break;
+    out = "1" + out;
+  }
+  return out;
+}
 function record(name, ok, detail = "") {
   results.push({ name, status: ok ? "PASS" : "FAIL", detail });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  (" + detail + ")" : ""}`);
@@ -314,6 +334,11 @@ if (runOffline) {
       const ok = r.code === 0 && c.failedSuites === 0 && c.total > 0;
       record("contract tests (cargo test)", ok, ok ? `${c.total} tests ok (${c.oks.filter(Boolean).join(" + ")}), ${duration(Date.now() - started)}` : `exit ${r.code}, ${c.failedSuites} suite(s) failed, ${c.total} passed`);
       if (!ok) console.log(tail(r.out, 40));
+      const wasm = join(crateRoot, "target", "near", "lumenia_drop", "lumenia_drop.wasm");
+      if (ok && existsSync(wasm)) {
+        builtCodeHash = base58(createHash("sha256").update(readFileSync(wasm)).digest());
+        note(`the escrow wasm the sandbox tests built has code hash ${builtCodeHash} (the live section compares it with the deployed code)`);
+      }
     }
   }
 
@@ -575,6 +600,26 @@ async function liveChecks() {
     record(`${CONTRACT_ID} get_drops (public ledger)`, Array.isArray(page), `${Array.isArray(page) ? page.length : 0} newest rows read`);
   } catch (e) {
     record(`${CONTRACT_ID} get_drops (public ledger)`, false, errMsg(e));
+  }
+  // The deployed code: the testnet and the mainnet escrow must both run the code hash NEAR.md documents.
+  try {
+    const documented = (readFileSync(NEAR_MD, "utf8").match(/code hash ([1-9A-HJ-NP-Za-km-z]{43,44})/) || [])[1];
+    const codeHash = async (url, accountId) => {
+      const j = await rpcCall(url, "query", { request_type: "view_account", finality: "final", account_id: accountId });
+      if (j.error) throw new Error(`${accountId}: ${JSON.stringify(j.error).slice(0, 160)}`);
+      return j.result.code_hash;
+    };
+    const [t, m] = await Promise.all([codeHash(RPC, CONTRACT_ID), codeHash(NETWORKS.mainnet.rpc, NETWORKS.mainnet.sender)]);
+    record(`deployed code: ${CONTRACT_ID} and ${NETWORKS.mainnet.sender} run the code hash NEAR.md documents`, !!documented && t === documented && m === documented, `testnet ${t}, mainnet ${m}, NEAR.md ${documented ?? "none found"}`);
+    if (builtCodeHash) {
+      note(
+        builtCodeHash === documented
+          ? `this machine's build of the escrow reproduces the deployed code hash ${documented}`
+          : `this machine's build hashes to ${builtCodeHash}, the deployed code to ${documented}: a non-reproducible build can differ across toolchains (the deployed wasm was built with Rust 1.95 and cargo-near 0.23 on macOS)`,
+      );
+    }
+  } catch (e) {
+    record("deployed code hash", false, errMsg(e));
   }
 
   // The relayer: the sponsor Worker's /near/health once the coordinator deploys it; until then the Worker
