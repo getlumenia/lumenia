@@ -40,7 +40,7 @@ import { MAX_BATCH_DROPS, batchTotal, buildBatchMsg, parseBatchRows, splitCsvLin
 import { NEAR_CLAIM_PATH } from "./config";
 import { decryptWithPassword, encryptWithPassword } from "./crypto";
 import { LINK_CSV_COLUMNS, csvField, csvLine, csvTextField, linkCsvLine, linksCsv } from "./csv";
-import { DEMO_MAX_LINK_UNITS, DEMO_MAX_MEMO_BYTES, DEMO_MIN_LINK_UNITS, linkLimits, practiceAvailable } from "./demo";
+import { DEMO_DEFAULT_EXPIRY_S, DEMO_MAX_EXPIRY_S, DEMO_MAX_LINK_UNITS, DEMO_MAX_MEMO_BYTES, DEMO_MIN_LINK_UNITS, linkLimits, practiceAvailable } from "./demo";
 import { buildDropMsg, isConfigView, isDropView, isStatsView, isTerminal, memoBytes, reclaimable } from "./drops";
 import { EXPIRY_OPTIONS, expiresAtMs, formatRemaining, isExpired, nsToMs, toIso } from "./expiry";
 import {
@@ -559,10 +559,11 @@ async function main() {
     ok("not when both are undefined", !practiceAvailable(undefined, undefined));
     ok("not with a malformed account id", !practiceAvailable("Not..Valid", RELAYER));
     ok("not with a relayer that is not an http(s) URL", !practiceAvailable("lumenia-relayer.testnet", "javascript:alert(1)"));
-    eq("a practice link is $0.10 to $5.00, its memo at most 64 bytes (the Worker's own lines)", [DEMO_MIN_LINK_UNITS, DEMO_MAX_LINK_UNITS, DEMO_MAX_MEMO_BYTES], ["100000", "5000000", 64]);
-    eq("demo: $5.00 cap, 1.00 default", linkLimits(true, "100000000"), { maxUnits: DEMO_MAX_LINK_UNITS, defaultAmount: "1.00" });
+    eq("a practice link is $0.10 to $1.00, its memo at most 64 bytes (the Worker's own lines)", [DEMO_MIN_LINK_UNITS, DEMO_MAX_LINK_UNITS, DEMO_MAX_MEMO_BYTES], ["100000", "1000000", 64]);
+    eq("a practice link lives 1 hour by default and 1 day at most (the Worker's own line)", [DEMO_DEFAULT_EXPIRY_S, DEMO_MAX_EXPIRY_S], [3_600, 86_400]);
+    eq("demo: $1.00 cap, 1.00 default", linkLimits(true, "100000000"), { maxUnits: DEMO_MAX_LINK_UNITS, defaultAmount: "1.00" });
     eq("otherwise: the testnet cap, 1 default", linkLimits(false, "100000000"), { maxUnits: "100000000", defaultAmount: "1" });
-    ok("5 passes the demo cap, 5.01 does not", parseUsdcAmount("5", { maxUnits: linkLimits(true, "100000000").maxUnits }).ok && !parseUsdcAmount("5.01", { maxUnits: linkLimits(true, "100000000").maxUnits }).ok);
+    ok("1 passes the demo cap, 1.01 does not", parseUsdcAmount("1", { maxUnits: linkLimits(true, "100000000").maxUnits }).ok && !parseUsdcAmount("1.01", { maxUnits: linkLimits(true, "100000000").maxUnits }).ok);
     ok("5.01 passes the testnet cap, 100.01 does not", parseUsdcAmount("5.01", { maxUnits: linkLimits(false, "100000000").maxUnits }).ok && !parseUsdcAmount("100.01", { maxUnits: linkLimits(false, "100000000").maxUnits }).ok);
   }
 

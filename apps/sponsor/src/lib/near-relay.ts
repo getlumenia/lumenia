@@ -5,7 +5,7 @@
  * the cap vocabulary, the client) live in the workspace package `@lumenia/near`.
  *
  * WHAT IT DOES. A person who claimed a Lumenia link on NEAR owns a fresh account with USDC and
- * about 0.01 NEAR: enough to receive, not enough to pay gas. They sign a NEP-366 DelegateAction
+ * the testnet starter (0.05 NEAR) or nothing at all: on mainnet the starter is 0. They sign a NEP-366 DelegateAction
  * (the instruction) with their own full-access key; this relayer checks it, wraps it in ONE
  * transaction signed by `lumenia-relayer.testnet` and pays the gas and the 1 yoctoNEAR the token
  * contract demands. The network checks the sender's signature again and runs the call AS the
@@ -201,6 +201,8 @@ export interface NearRpc {
    * so a fake chain that never reaches that route need not implement it; the live RPC always does.
    */
   viewFtBalance?(tokenId: string, accountId: string): Promise<bigint>;
+  /** A read-only contract view at FINAL, JSON-decoded: the practice sweep's ledger read (lib/near-practice-sweep.ts). */
+  viewFunction?(contractId: string, method: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
 /**
@@ -239,6 +241,7 @@ export function jsonRpcNearRpc(url: string): NearRpc {
       if (typeof balance !== "string" || !/^\d+$/.test(balance)) throw new Error(`${tokenId}.ft_balance_of answered no balance for ${accountId}`);
       return BigInt(balance);
     },
+    viewFunction: (contractId, method, args) => provider.callFunction({ contractId, method, args, blockQuery: { finality: "final" } }),
   };
 }
 

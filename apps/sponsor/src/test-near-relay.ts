@@ -30,6 +30,7 @@
  *  RUN: pnpm --filter @lumenia/sponsor test:near-relay
  * ============================================================================
  */
+import { readFileSync } from "node:fs";
 import { Keypair } from "@stellar/stellar-sdk";
 import {
   KeyPair,
@@ -64,6 +65,7 @@ import {
   setNearRpcForTests,
   type NearRpc,
 } from "./lib/near-relay.js";
+import { PRACTICE_SWEEP_CRON, SWEEP_RECLAIM_TGAS, expiredOpenDrops, outcomeSucceeded, sweepExpiredPracticeLinks } from "./lib/near-practice-sweep.js";
 import { resetServiceCache } from "./lib/service.js";
 import { NEAR_RELAYER_LOW_TITLE, checkNearRelayer, type Alert } from "./lib/watchdog.js";
 import worker, { resetNearHealthCache } from "./worker.js";
@@ -851,12 +853,12 @@ async function main(): Promise<void> {
   console.log("\n[practice: parse] the body rules, offline");
   {
     const key = linkKey();
-    const okReq = parsePracticeRequest({ publicKey: key, amountUsdc: "1.5", expiresInS: 600, memo: "  hi  " });
-    check("a good body parses: units, the amount normalised, the memo trimmed", okReq.ok && okReq.request.amountUnits === "1500000" && okReq.request.amountUsdc === "1.50" && okReq.request.memo === "hi" && okReq.request.publicKey === key);
+    const okReq = parsePracticeRequest({ publicKey: key, amountUsdc: "0.5", expiresInS: 600, memo: "  hi  " });
+    check("a good body parses: units, the amount normalised, the memo trimmed", okReq.ok && okReq.request.amountUnits === "500000" && okReq.request.amountUsdc === "0.50" && okReq.request.memo === "hi" && okReq.request.publicKey === key);
     check("the msg is the escrow's single-link shape, built from the public key only", okReq.ok && practiceMsg(okReq.request) === JSON.stringify({ public_key: key, expires_in_s: 600, memo: "hi" }));
-    const noMemo = parsePracticeRequest({ publicKey: key, amountUsdc: "0.10", expiresInS: 604_800, memo: "   " });
-    check("a blank memo is dropped; 0.10 and 7 days are the edges, accepted", noMemo.ok && noMemo.request.memo === undefined && practiceMsg(noMemo.request) === JSON.stringify({ public_key: key, expires_in_s: 604_800 }));
-    check("5.00 and 6 decimals inside the range are accepted", parsePracticeRequest({ publicKey: key, amountUsdc: "5", expiresInS: 600 }).ok && parsePracticeRequest({ publicKey: key, amountUsdc: "0.123456", expiresInS: 600 }).ok);
+    const noMemo = parsePracticeRequest({ publicKey: key, amountUsdc: "0.10", expiresInS: 86_400, memo: "   " });
+    check("a blank memo is dropped; 0.10 and 1 day are the edges, accepted", noMemo.ok && noMemo.request.memo === undefined && practiceMsg(noMemo.request) === JSON.stringify({ public_key: key, expires_in_s: 86_400 }));
+    check("1.00 and 6 decimals inside the range are accepted", parsePracticeRequest({ publicKey: key, amountUsdc: "1", expiresInS: 600 }).ok && parsePracticeRequest({ publicKey: key, amountUsdc: "0.123456", expiresInS: 600 }).ok);
     check(`a memo of exactly ${PRACTICE_MAX_MEMO_BYTES} bytes is accepted`, parsePracticeRequest({ publicKey: key, amountUsdc: "1", expiresInS: 600, memo: "m".repeat(PRACTICE_MAX_MEMO_BYTES) }).ok);
   }
 
@@ -904,12 +906,12 @@ async function main(): Promise<void> {
       { name: "a secp256k1 key", code: "public_key", body: goodBody({ publicKey: "secp256k1:" + "1".repeat(88) }) },
       { name: "an amount as a JSON number", code: "amount", body: goodBody({ amountUsdc: 1 }) },
       { name: "an amount below 0.10", code: "amount", body: goodBody({ amountUsdc: "0.09" }) },
-      { name: "an amount above 5.00", code: "amount", body: goodBody({ amountUsdc: "5.01" }) },
+      { name: "an amount above 1.00", code: "amount", body: goodBody({ amountUsdc: "1.01" }) },
       { name: "an amount with 7 decimals", code: "amount", body: goodBody({ amountUsdc: "1.0000001" }) },
       { name: "an amount in words", code: "amount", body: goodBody({ amountUsdc: "one" }) },
       { name: "a negative amount", code: "amount", body: goodBody({ amountUsdc: "-1.00" }) },
       { name: "a life of 599 s", code: "expiry", body: goodBody({ expiresInS: 599 }) },
-      { name: "a life of 7 days and 1 s", code: "expiry", body: goodBody({ expiresInS: 604_801 }) },
+      { name: "a life of 1 day and 1 s", code: "expiry", body: goodBody({ expiresInS: 86_401 }) },
       { name: "a fractional life", code: "expiry", body: goodBody({ expiresInS: 3600.5 }) },
       { name: "a life as a string", code: "expiry", body: goodBody({ expiresInS: "3600" }) },
       { name: `a memo over ${PRACTICE_MAX_MEMO_BYTES} bytes`, code: "memo", body: goodBody({ memo: "\u00e7".repeat(33) }) },
@@ -1046,6 +1048,106 @@ async function main(): Promise<void> {
     check("no pipeline went to the (unconfigured) store", pipelines.length === 0);
     process.env.KV_REST_API_URL = savedUrl;
     process.env.KV_REST_API_TOKEN = savedToken;
+  }
+
+  console.log("\n[practice sweep] expired, unclaimed practice links go back to the practice balance");
+  {
+    const nowMs = Date.UTC(2026, 10, 12, 12, 0, 0);
+    const ns = (ms: number) => (BigInt(ms) * 1_000_000n).toString();
+    const row = (status: string, expiresMs: number, o: { funder?: string; amount?: string } = {}) => ({ public_key: linkKey(), status, funder: o.funder ?? RELAYER, amount: o.amount ?? "1000000", expires_at_ns: ns(expiresMs) });
+    const older = row("Open", nowMs - 120_000, { amount: "200000" });
+    const old = row("Open", nowMs - 60_000);
+    const future = row("Open", nowMs + 60_000);
+    const claimed = row("Claimed", nowMs - 3_600_000);
+    const claiming = row("Claiming", nowMs - 3_600_000);
+    const foreign = row("Open", nowMs - 60_000, { funder: "someone.testnet" });
+    const ledger = [old, future, claimed, claiming, foreign, older];
+    const picked = expiredOpenDrops(ledger, RELAYER, nowMs);
+    check("only expired Open links of the practice balance are picked, oldest expiry first", picked.length === 2 && picked[0]!.public_key === older.public_key && picked[1]!.public_key === old.public_key);
+    check("an expiry exactly now counts as expired", expiredOpenDrops([row("Open", nowMs)], RELAYER, nowMs).length === 1);
+    check(
+      "a failed receipt or a failed transaction is a failed reclaim",
+      !outcomeSucceeded({ status: { SuccessValue: "" }, receipts_outcome: [{ outcome: { status: { Failure: {} } } }] }) &&
+        outcomeSucceeded({ status: { SuccessValue: "" }, receipts_outcome: [{ outcome: { status: { SuccessValue: "" } } }] }) &&
+        !outcomeSucceeded({ status: { Failure: {} } }) &&
+        !outcomeSucceeded(null),
+    );
+
+    const sweepSent: SignedTransaction[] = [];
+    const views: Record<string, unknown>[] = [];
+    let sendMode: "ok" | "fail" | "throw" = "ok";
+    const sweepRpc: NearRpc = {
+      url: RPC_URL,
+      async viewBlock() {
+        return { height: HEIGHT, hash: "11111111111111111111111111111111" };
+      },
+      async viewAccessKey() {
+        return { nonce: 41n, permission: "FullAccess" };
+      },
+      async viewAccount() {
+        return { amountYocto: 10n ** 24n };
+      },
+      async sendUntilFinal(signed) {
+        sweepSent.push(signed);
+        if (sendMode === "throw") throw new Error("RPC unreachable (fetch failed)");
+        return sendMode === "fail"
+          ? { status: { Failure: { ActionError: {} } }, receipts_outcome: [] }
+          : { status: { SuccessValue: "" }, receipts_outcome: [{ outcome: { status: { SuccessValue: "dHJ1ZQ==" } } }] };
+      },
+      async txStatus() {
+        throw new Error("not used by the sweep");
+      },
+      async viewFunction(contractId, method, args) {
+        views.push({ contractId, method, ...args });
+        return Number(args.from_index ?? 0) === 0 ? ledger : [];
+      },
+    };
+    const sweepConfig = { network: "testnet" as const, rpcUrl: RPC_URL, relayerAccountId: RELAYER, escrowId: ESCROW, usdcId: USDC, caps: { perSenderPerDay: 20, globalPerDay: 500, senderCooldownS: 10 }, minNear: 1 };
+    const sweepDeps = { config: sweepConfig, secret: relayerKey.toString(), rpc: sweepRpc, pollMs: 0, maxPolls: 1 };
+    const lines: string[] = [];
+    const r = await sweepExpiredPracticeLinks(sweepDeps, { now: () => nowMs, max: 3, log: (l) => lines.push(l) });
+    check("one ledger read: the escrow's get_drops_by_funder for the practice balance", views.length === 1 && views[0]!.contractId === ESCROW && views[0]!.method === "get_drops_by_funder" && views[0]!.funder === RELAYER);
+    const calls = sweepSent.map((s) => {
+      const fc = s.transaction.actions[0]?.functionCall;
+      return {
+        receiver: s.transaction.receiverId,
+        signer: s.transaction.signerId,
+        method: fc?.methodName,
+        args: fc ? (JSON.parse(Buffer.from(fc.args).toString("utf8")) as { public_key?: string }) : {},
+        gas: fc ? BigInt(String(fc.gas)) : 0n,
+        deposit: fc ? BigInt(String(fc.deposit)) : -1n,
+        actions: s.transaction.actions.length,
+      };
+    });
+    check("two reclaims, one transaction each, from the practice balance to the escrow", calls.length === 2 && calls.every((c) => c.receiver === ESCROW && c.signer === RELAYER && c.actions === 1));
+    check(
+      "each is reclaim(public_key) of an expired link, 50 Tgas, no deposit, oldest first",
+      calls.every((c) => c.method === "reclaim" && c.gas === BigInt(teraToGas(SWEEP_RECLAIM_TGAS)) && c.deposit === 0n) && calls.map((c) => c.args.public_key).join() === [older.public_key, old.public_key].join(),
+    );
+    check("the Claiming link, the claimed one, the unexpired one and another funder's are never touched", !calls.some((c) => [claiming, claimed, future, foreign].some((d) => d.public_key === c.args.public_key)));
+    check("the result counts what it did and what it left alone", r.checked === 6 && r.expired === 2 && r.reclaimed.length === 2 && r.skippedClaiming === 1 && r.error === undefined, JSON.stringify(r));
+    check("one JSON line per reclaim and a summary, with no key in any", lines.length === 3 && lines.every((l) => !l.includes(relayerKey.toString())) && JSON.parse(lines[2]!).decision === "done");
+
+    sweepSent.length = 0;
+    const one = await sweepExpiredPracticeLinks(sweepDeps, { now: () => nowMs, max: 1, log: () => undefined });
+    check("the per-run maximum holds", sweepSent.length === 1 && one.reclaimed.length === 1);
+
+    sweepSent.length = 0;
+    sendMode = "fail";
+    const failedRun = await sweepExpiredPracticeLinks(sweepDeps, { now: () => nowMs, log: () => undefined });
+    check("a failed reclaim stops the run and says so", sweepSent.length === 1 && failedRun.reclaimed.length === 0 && /ended in a failure/.test(failedRun.error ?? ""));
+
+    sweepSent.length = 0;
+    sendMode = "throw";
+    const thrown = await sweepExpiredPracticeLinks(sweepDeps, { now: () => nowMs, log: () => undefined });
+    check("an RPC that cannot send stops the run without throwing", thrown.reclaimed.length === 0 && /could not be sent/.test(thrown.error ?? ""));
+
+    const noView = await sweepExpiredPracticeLinks({ ...sweepDeps, rpc: { ...sweepRpc, viewFunction: undefined } }, { now: () => nowMs, log: () => undefined });
+    check("an RPC without contract views skips the run", noView.checked === 0 && /no contract views/.test(noView.error ?? ""));
+
+    const toml = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
+    const [testnetPart, mainnetPart] = toml.split("\n[env.mainnet]\n");
+    check("the sweep's cron is on the testnet Worker and not on the mainnet one", (testnetPart ?? "").includes(`"${PRACTICE_SWEEP_CRON}"`) && !(mainnetPart ?? "").includes(PRACTICE_SWEEP_CRON));
   }
 
   globalThis.fetch = realFetch;

@@ -13,7 +13,7 @@
  * {"public_key","expires_in_s"[,"memo"]}) from the relayer account (NEAR_RELAYER_ACCOUNT_ID, key
  * NEAR_RELAYER_PRIVATE_KEY), with 1 yoctoNEAR and 100 Tgas, waited on until FINAL. The receiver, the
  * method, the deposit and the gas are constants here: a request chooses only the link's public key,
- * the amount (0.10 to 5.00 USDC), the life (600 s to 7 days) and an optional memo (64 bytes).
+ * the amount (0.10 to 1.00 USDC), the life (600 s to 1 day) and an optional memo (64 bytes).
  *
  * THE ORDER, cheapest refusal first, as in lib/near-relay.ts:
  *   the body, offline (400) -> the caps, READ ONLY (429) -> the practice balance, one view (503
@@ -33,7 +33,8 @@
  * The caller's address is a store key only: it is never logged and never echoed in an answer.
  *
  * WHAT IS NOT HERE. A practice link's funder on chain is the relayer account, so only the relayer's
- * key can take back one that expired unclaimed: an operator task, not a route. Testnet only, like
+ * key can take back one that expired unclaimed: the Worker's scheduled run does that
+ * (lib/near-practice-sweep.ts), not a route. Testnet only, like
  * the rest of the rail: the Worker refuses the route off its testnet environment.
  */
 import { actions, teraToGas } from "near-api-js";
@@ -59,11 +60,11 @@ import { ipBucket } from "./rate-limit.js";
 
 /** The smallest practice link, in USDC units (6 decimals): 0.10 USDC, the escrow's own minimum. */
 export const PRACTICE_MIN_UNITS = 100_000n;
-/** The largest practice link: 5.00 USDC, so the shared balance lasts. */
-export const PRACTICE_MAX_UNITS = 5_000_000n;
-/** A practice link lives from 10 minutes to 7 days. */
+/** The largest practice link: 1.00 USDC, so the shared balance lasts through judging. */
+export const PRACTICE_MAX_UNITS = 1_000_000n;
+/** A practice link lives from 10 minutes to 1 day; an expired one goes back to the balance (lib/near-practice-sweep.ts). */
 export const PRACTICE_MIN_EXPIRY_S = 600;
-export const PRACTICE_MAX_EXPIRY_S = 604_800;
+export const PRACTICE_MAX_EXPIRY_S = 86_400;
 /** A memo is stored on the public ledger with the link: short, and plain text. */
 export const PRACTICE_MAX_MEMO_BYTES = 64;
 /** The gas attached to the ft_transfer_call, as the relay policy allows for a link. */
@@ -163,7 +164,7 @@ export function parsePracticeRequest(body: unknown): PracticeParse {
 
   const expiresInS = b.expiresInS;
   if (typeof expiresInS !== "number" || !Number.isInteger(expiresInS) || expiresInS < PRACTICE_MIN_EXPIRY_S || expiresInS > PRACTICE_MAX_EXPIRY_S) {
-    return { ok: false, code: "expiry", reason: `expiresInS must be a whole number of seconds from ${PRACTICE_MIN_EXPIRY_S} to ${PRACTICE_MAX_EXPIRY_S} (10 minutes to 7 days)` };
+    return { ok: false, code: "expiry", reason: `expiresInS must be a whole number of seconds from ${PRACTICE_MIN_EXPIRY_S} to ${PRACTICE_MAX_EXPIRY_S} (10 minutes to 1 day)` };
   }
 
   let memo: string | undefined;

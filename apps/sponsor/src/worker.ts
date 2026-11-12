@@ -39,6 +39,7 @@ import {
   type NearRelayDeps,
 } from "./lib/near-relay.js";
 import { practiceConfigFromEnv, practiceLinkHandler } from "./lib/near-practice.js";
+import { PRACTICE_SWEEP_CRON, sweepExpiredPracticeLinks } from "./lib/near-practice-sweep.js";
 import { kvConfigFromEnv } from "./lib/rate-limit.js";
 import { withSubrequestMeter } from "./lib/subrequests.js";
 import { faucetHandler } from "./lib/faucet.js";
@@ -1633,8 +1634,16 @@ const handlers = {
    * escrow governance calls. Alerts land in `wrangler tail` and, with RESEND_API_KEY +
    * ALERT_NOTIFY_TO, by email. Schedule lives in wrangler.toml.
    */
-  async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+  async scheduled(event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
     hydrateEnv(env);
+    /* The practice sweep has its own cron (testnet only, lib/near-practice-sweep.ts), so its
+       subrequests never share an invocation's budget with the watchdog. */
+    if ((event as { cron?: unknown } | null)?.cron === PRACTICE_SWEEP_CRON) {
+      const sweep = runPracticeSweep();
+      ctx.waitUntil(sweep);
+      await sweep;
+      return;
+    }
     /* The watchdog needs the ACCOUNT, never the signer: built without a signer and without a single
        KMS call, so a KMS outage cannot stop the one stop that needs no store (lib/service.ts). This
        is the Worker's own scheduled run, the only caller that may halt and write the heartbeat:
@@ -1649,6 +1658,29 @@ const handlers = {
     await run;
   },
 };
+
+/**
+ * One run of the practice sweep: testnet Worker, NEAR configured with the relayer's key, sponsor not
+ * halted. Logs one line per decision (lib/near-practice-sweep.ts) and never throws.
+ */
+async function runPracticeSweep(): Promise<void> {
+  try {
+    const { config } = serviceConfigFromEnv();
+    if (config.network !== "testnet") return;
+    const near = nearConfigFromEnv();
+    if (!near.configured || !near.secret) {
+      console.log(`[near-sweep] skipped: ${near.configured ? "NEAR_RELAYER_PRIVATE_KEY is not set" : near.reason}`);
+      return;
+    }
+    if (await isHalted()) {
+      console.log("[near-sweep] skipped: the sponsor is halted");
+      return;
+    }
+    await sweepExpiredPracticeLinks({ config: near.config, secret: near.secret, rpc: nearRpc(near.config.rpcUrl) });
+  } catch (e) {
+    console.error(`[near-sweep] ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 export default {
   /**

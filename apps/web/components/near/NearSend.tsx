@@ -38,7 +38,7 @@ import {
   explorerTxUrl,
   nearLinkOrigin,
 } from "../../lib/near/config";
-import { DEMO_MAX_MEMO_BYTES, DEMO_MIN_LINK_UNITS, linkLimits, practiceAvailable } from "../../lib/near/demo";
+import { DEMO_DEFAULT_EXPIRY_S, DEMO_MAX_EXPIRY_S, DEMO_MAX_MEMO_BYTES, DEMO_MIN_LINK_UNITS, linkLimits, practiceAvailable } from "../../lib/near/demo";
 import { PRACTICE_COOLDOWN_S, PRACTICE_PER_DAY_PER_CONNECTION, requestPracticeLink, runPracticeLink } from "../../lib/near/practice";
 import { formatNear, formatUsd, formatUsdc, parseUsdcAmount } from "../../lib/near/amount";
 import { isValidAccountId } from "../../lib/near/account-id";
@@ -237,7 +237,7 @@ function FunderForm({ onReady, startOwn = false }: { onReady: (f: FunderSession)
         <>
           <PrimaryButton onClick={pickDemo}>Use the shared practice balance</PrimaryButton>
           <p className="text-xs text-ink-soft">
-            $0.10 to $5.00 a link, one every {PRACTICE_COOLDOWN_S} seconds. The balance is shared with everyone trying this, so treat
+            $0.10 to $1.00 a link, one every {PRACTICE_COOLDOWN_S} seconds. The balance is shared with everyone trying this, so treat
             it as a playground.
           </p>
           <button type="button" className="nr-link self-start" onClick={() => setOwn(true)}>
@@ -313,7 +313,7 @@ function FunderPanel({ funder, onForget }: { funder: FunderSession; onForget: ()
       </div>
       {funder.demo ? (
         <Notice kind="warn">
-          Shared practice balance: anyone can use it, so it may run low. Links are $0.10 to $5.00 each, one every{" "}
+          Shared practice balance: anyone can use it, so it may run low. Links are $0.10 to $1.00 each, one every{" "}
           {PRACTICE_COOLDOWN_S} seconds and up to {PRACTICE_PER_DAY_PER_CONNECTION} a day from one connection. Lumenia makes the link and
           covers the network fee; the link&apos;s key is made in this browser and stays here.
         </Notice>
@@ -385,7 +385,7 @@ async function pollDrop(publicKey: string, limitMs: number): Promise<DropView | 
 function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () => void }) {
   const limits = linkLimits(!!funder.demo, NEAR_MAX_LINK_UNITS);
   const [amount, setAmount] = useState(limits.defaultAmount);
-  const [expiry, setExpiry] = useState<number>(DEFAULT_EXPIRY_S);
+  const [expiry, setExpiry] = useState<number>(funder.demo ? DEMO_DEFAULT_EXPIRY_S : DEFAULT_EXPIRY_S);
   const [memo, setMemo] = useState("");
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState("");
@@ -395,7 +395,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
   const config = useLoadable(() => getConfig(), [], 60_000);
   const maxExpiry = config.value.state === "ready" ? config.value.value.max_expiry_s : Number.MAX_SAFE_INTEGER;
   const paused = config.value.state === "ready" && config.value.value.paused;
-  const expiryOptions = EXPIRY_OPTIONS.filter((o) => o.seconds <= maxExpiry);
+  const expiryOptions = EXPIRY_OPTIONS.filter((o) => o.seconds <= maxExpiry && (!funder.demo || o.seconds <= DEMO_MAX_EXPIRY_S));
 
   useEffect(() => setCanStore(storageAvailable()), []);
 
@@ -410,7 +410,7 @@ function CreateLink({ funder, onChange }: { funder: FunderSession; onChange: () 
     } else {
       const parsed = parseUsdcAmount(amount, { maxUnits: limits.maxUnits });
       if (!parsed.ok) {
-        setFormErr(practice && /limit here/.test(parsed.reason) ? "The shared practice balance is capped at $5.00 a link. Use your own account key for more." : parsed.reason);
+        setFormErr(practice && /limit here/.test(parsed.reason) ? "The shared practice balance is capped at $1.00 a link. Use your own account key for more." : parsed.reason);
         return;
       }
       if (practice && BigInt(parsed.units) < BigInt(DEMO_MIN_LINK_UNITS)) {

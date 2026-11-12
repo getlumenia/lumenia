@@ -146,7 +146,9 @@ binding = "CF_VERSION_METADATA"
 # calls. Alerts appear in `wrangler tail`; set RESEND_API_KEY + ALERT_NOTIFY_TO (secrets) to
 # also get email. Every 15 minutes is well inside the free plan's cron allowance.
 [triggers]
-crons = ["*/15 * * * *"]
+# The second schedule is the NEAR practice sweep (lib/near-practice-sweep.ts PRACTICE_SWEEP_CRON):
+# expired practice links go back to the shared practice balance. Testnet only.
+crons = ["*/15 * * * *", "7,22,37,52 * * * *"]
 
 # Uncomment after the Worker exists + the zone DNS is set:
 # [[routes]]
