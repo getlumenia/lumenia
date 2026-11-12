@@ -11,7 +11,7 @@ live on Stellar (getlumenia.com), built for NEAR HACKATHON 2026. It lives at
 `contracts/lumen-drop-near/contract` in the Lumenia monorepo (the Stellar escrow
 is `contracts/lumen-drop`); `contracts/lumen-drop-near` is its own Cargo workspace.
 
-**Status: testnet, plus a 3 USDC proof on mainnet (`lumenia.near`, which runs the build before the return timer until its owner redeploys); not audited, hackathon code.** See "What is not done".
+**Status: testnet, plus capped proofs on mainnet (`lumenia.near`, the same code since 2026-11-12: 3 USDC claimed in 2026-11-11's run, 0.10 USDC home by itself in 2026-11-12's); not audited, hackathon code.** See "What is not done".
 
 | | |
 |---|---|
@@ -378,7 +378,7 @@ the near-cli-rs legacy keychain (`~/.near-credentials/testnet/`).
 
 ## What is not done
 
-- No audit. On mainnet it has run only as a capped proof with a few dollars (`lumenia.near`, see the monorepo's NEAR.md), and that deployment still runs the build before the return timer.
+- No audit. On mainnet it has run only as a capped proof with a few dollars (`lumenia.near`, see the monorepo's NEAR.md), on the same code hash as testnet since 2026-11-12.
 - The return timer lives as long as the gas one transaction carries (1 PGas): about 8 hours of life for one link and 4 for a batch of 30, counted with margin. A longer link, or one whose maker did not arm it, goes home through `return_expired` (anyone) or `reclaim` (the funder).
 - Reproducible build not run: the wasm is a `non-reproducible-wasm` build.
   `[package.metadata.near.reproducible_build]` is in `Cargo.toml` so

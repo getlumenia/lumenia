@@ -6,8 +6,9 @@
 //   pnpm near:verify:offline    the same without any network call of its own
 //   pnpm near:verify:live       only the live read-only checks (no tests, a few seconds)
 // Flags: --offline (no live checks), --live-only (no offline steps), --only <step> runs just that step (one of
-// contract, near, web, sponsor, agent-market, agentmcp, live), --skip-install (accepted for compatibility:
-// this script never installs anything; run `pnpm install` yourself first).
+// contract, near, web, sponsor, agent-market, agentmcp, live), --all-proofs (look up every older proof hash at
+// the public services' pace instead of a sample), --skip-install (accepted for compatibility: this script never
+// installs anything; run `pnpm install` yourself first).
 // Exit code 0 when every hard check passes. Soft passes (a relayer route that is not deployed yet, a host
 // that blocks bots, a proof transaction that ends in success while a receipt inside it failed) are labelled
 // on their line and in the summary and never fail the run. No key is needed. Nothing is signed or spent.
@@ -30,11 +31,18 @@
 // NEAR.md at run time, so the check follows the document: base58 hashes of 32 bytes in table rows under a
 // heading that says "proof"; such a row is a mainnet one under a heading that says "mainnet" (or when it links
 // the hash on a mainnet explorer), a testnet one otherwise. A hash passes only when its final status is
-// SuccessValue or SuccessReceiptId. A regular RPC node keeps only its last few epochs (about a day or two), so
-// a hash it no longer knows is asked again from the archival node of the same network.
+// SuccessValue or SuccessReceiptId. A regular RPC node keeps only its recent blocks (on the free FastNear nodes,
+// less than a day in November 2026), so a hash it no longer knows is asked again, one at a time, from the
+// archival node of the same network and then from the NearBlocks API (/v3/txns/<hash>). Both are free public
+// services with tight rate limits (the archival node a handful of lookups, NearBlocks about 6 a minute), so by
+// default only a random sample of PROOF_SAMPLE (6) older hashes is looked up there and the rest are listed as
+// SKIP, never as FAIL; `--all-proofs` looks every one up at the services' pace (several minutes). The mainnet
+// state behind the proof table (the drop claimed into lumenia-first.near, a drop that went home) is read from
+// the escrow's own views, which every regular node answers.
 // Endpoints: testnet https://test.rpc.fastnear.com (NEAR_RPC_URL), archival https://archival-rpc.testnet.fastnear.com
 // (NEAR_ARCHIVAL_RPC_URL); mainnet https://rpc.mainnet.fastnear.com (NEAR_MAINNET_RPC_URL), archival
-// https://archival-rpc.mainnet.fastnear.com (NEAR_MAINNET_ARCHIVAL_RPC_URL). NEAR_MD points at another copy of the document.
+// https://archival-rpc.mainnet.fastnear.com (NEAR_MAINNET_ARCHIVAL_RPC_URL); NearBlocks https://api.nearblocks.io
+// and https://api-testnet.nearblocks.io. NEAR_MD points at another copy of the document.
 //
 // Layout it checks (the monorepo, not the former standalone repository):
 //   contracts/lumen-drop-near/contract   the NEAR escrow crate (cargo test: unit + sandbox suites)
@@ -60,6 +68,8 @@ const onlyIdx = argv.indexOf("--only");
 let only = onlyIdx > -1 ? argv[onlyIdx + 1] : null;
 if (only && ALIASES[only]) only = ALIASES[only];
 const offline = args.has("--offline");
+const ALL_PROOFS = args.has("--all-proofs") || process.env.NEAR_VERIFY_ALL_PROOFS === "1";
+const PROOF_SAMPLE = 6;
 const liveOnly = args.has("--live-only");
 
 if (args.has("--help") || args.has("-h")) {
@@ -125,6 +135,7 @@ function healthUrl(raw, defaultPath) {
 
 // ---------- bookkeeping ----------
 const results = []; // checks: PASS / FAIL / SOFT
+const skipped = []; // older proof hashes not looked up (the public fallbacks rate-limit): never a failure
 const missingTools = []; // prerequisites that are not installed (not checks themselves; the step that needs one fails)
 const t0 = Date.now();
 let builtCodeHash = null; // the escrow wasm's code hash after the contract step, when it built one
@@ -154,6 +165,10 @@ function soft(name, detail) {
 function missing(name, detail, optional = false) {
   missingTools.push({ name, detail, optional });
   console.log(`MISSING  ${name}  (${detail})`);
+}
+function skip(name, detail) {
+  skipped.push({ name, detail });
+  console.log(`SKIP  ${name}  (${detail})`);
 }
 function note(text) {
   console.log(`NOTE  ${text}`);
@@ -487,27 +502,71 @@ function proofHashes(markdown) {
   return [...found.values()];
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// The regular node first, then the archival one: a regular node keeps only its last few epochs, so an older
-// proof answers UNKNOWN_TRANSACTION there. A transport error or a rate-limit page is retried once.
-async function txLookup(hash, network) {
+// The regular node first. A hash it no longer knows (UNKNOWN_TRANSACTION) goes to fallbackLookup.
+async function regularLookup(hash, network) {
   const net = NETWORKS[network];
   const notes = [];
-  for (const [label, url] of [["regular", net.rpc], ["archival", net.archival]]) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const j = await rpcCall(url, "tx", { tx_hash: hash, sender_account_id: net.sender, wait_until: "NONE" });
-        if (j.result) return { result: j.result, via: label };
-        const name = j.error?.cause?.name || j.error?.name || "error";
-        notes.push(`${label} ${new URL(url).host}: ${name}`);
-        if (name === "UNKNOWN_TRANSACTION" || attempt === 2) break;
-      } catch (e) {
-        notes.push(`${label} ${new URL(url).host}: ${errMsg(e)}`);
-        if (attempt === 2) break;
-      }
-      await sleep(1000);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const j = await rpcCall(net.rpc, "tx", { tx_hash: hash, sender_account_id: net.sender, wait_until: "NONE" });
+      if (j.result) return { result: j.result, via: "regular" };
+      const name = j.error?.cause?.name || j.error?.name || JSON.stringify(j.error ?? j).slice(0, 80);
+      if (name === "UNKNOWN_TRANSACTION") return { unknown: true };
+      notes.push(`regular ${new URL(net.rpc).host}: ${name}`);
+    } catch (e) {
+      notes.push(`regular ${new URL(net.rpc).host}: ${errMsg(e)}`);
     }
+    await sleep(1000);
   }
   return { error: notes.join("; ") };
+}
+// The two free fallbacks, asked one hash at a time. A rate limit switches the archival node off for the rest of
+// the run; NearBlocks is waited out with --all-proofs and switched off otherwise.
+const fallbacks = { archivalOff: false, nearblocksOff: false };
+async function fallbackLookup(hash, network) {
+  const net = NETWORKS[network];
+  const notes = [];
+  if (!fallbacks.archivalOff) {
+    try {
+      const j = await rpcCall(net.archival, "tx", { tx_hash: hash, sender_account_id: net.sender, wait_until: "NONE" });
+      if (j.result) return { result: j.result, via: "archival" };
+      const name = j.error?.cause?.name || j.error?.name || (j.error?.code === -429 ? "rate limited" : JSON.stringify(j.error ?? j).slice(0, 80));
+      if (name === "rate limited") fallbacks.archivalOff = true;
+      notes.push(`archival ${new URL(net.archival).host}: ${name}`);
+    } catch (e) {
+      notes.push(`archival ${new URL(net.archival).host}: ${errMsg(e)}`);
+    }
+  }
+  const nb = `https://api${network === "testnet" ? "-testnet" : ""}.nearblocks.io/v3/txns/${hash}`;
+  for (let attempt = 1; attempt <= 4 && !fallbacks.nearblocksOff; attempt++) {
+    try {
+      const res = await fetch(nb, { headers: { accept: "application/json", "user-agent": UA }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      if (res.status === 429) {
+        if (!ALL_PROOFS) {
+          fallbacks.nearblocksOff = true;
+          break;
+        }
+        await sleep(61_000);
+        continue;
+      }
+      const j = await res.json().catch(() => null);
+      if (res.ok && j?.data?.transaction_hash) return { nearblocks: j.data, via: "nearblocks" };
+      notes.push(`nearblocks: HTTP ${res.status}${j?.errors?.[0]?.message ? " " + j.errors[0].message : ""}`);
+      break;
+    } catch (e) {
+      notes.push(`nearblocks: ${errMsg(e)}`);
+      break;
+    }
+  }
+  if (fallbacks.archivalOff && fallbacks.nearblocksOff) return { rateLimited: true, error: notes.join("; ") };
+  return { error: notes.join("; ") || "no fallback answered" };
+}
+// NearBlocks' transaction view carries the final status, not each receipt's: a success there is a PASS whose
+// line says so.
+function judgeNearblocks(d, hash) {
+  if (d.transaction_hash !== hash) return { ok: false, detail: `NearBlocks answered for another transaction, ${d.transaction_hash}` };
+  const ok = d.outcomes?.status === true;
+  return { ok, detail: `${d.outcomes?.status_key ?? (ok ? "SUCCESS" : "FAILURE")}, signer ${d.signer_account_id ?? "?"}; answered by NearBlocks (the final status; its receipts are not in that view)` };
 }
 function returnValue(b64) {
   const s = Buffer.from(String(b64 || ""), "base64").toString("utf8");
@@ -565,17 +624,69 @@ async function proofChecks() {
   }
   const byNet = (n) => proofs.filter((p) => p.network === n).length;
   console.log(`${proofs.length} hash${proofs.length === 1 ? "" : "es"} parsed from ${doc}: ${byNet("testnet")} testnet (${new URL(NETWORKS.testnet.rpc).host}), ${byNet("mainnet")} mainnet (${new URL(NETWORKS.mainnet.rpc).host})`);
-  const checked = await mapPool(proofs, 4, async (p) => ({ p, r: await txLookup(p.hash, p.network) }));
-  for (const { p, r } of checked) {
+  const first = await mapPool(proofs, 4, async (p) => ({ p, r: await regularLookup(p.hash, p.network) }));
+  // The older hashes: all of them with --all-proofs, else a random sample, each asked one at a time.
+  const older = first.filter((x) => x.r.unknown);
+  const picked = new Set(ALL_PROOFS ? older.map((x) => x.p.hash) : [...older].sort(() => Math.random() - 0.5).slice(0, PROOF_SAMPLE).map((x) => x.p.hash));
+  if (older.length) {
+    console.log(
+      `${older.length} older hash${older.length === 1 ? "" : "es"} the regular nodes no longer keep: ` +
+        (ALL_PROOFS ? "looking up every one at the public services' pace" : `looking up a random ${Math.min(PROOF_SAMPLE, older.length)} on the archival node and NearBlocks (--all-proofs for all)`),
+    );
+  }
+  for (const { p, r: r0 } of first) {
     const name = `${p.network} tx ${p.hash} (${p.what})`;
+    let r = r0;
+    if (r.unknown) {
+      if (!picked.has(p.hash)) {
+        skip(name, "older than the regular node keeps; not in this run's sample (--all-proofs looks it up)");
+        continue;
+      }
+      r = await fallbackLookup(p.hash, p.network);
+      if (r.rateLimited) {
+        skip(name, `the free archival node and NearBlocks are rate-limiting this machine (${r.error}); --all-proofs waits them out`);
+        continue;
+      }
+    }
     if (r.error) {
       record(name, false, `no answer: ${r.error}`);
+      continue;
+    }
+    if (r.nearblocks) {
+      const v = judgeNearblocks(r.nearblocks, p.hash);
+      record(name, v.ok, v.detail);
       continue;
     }
     const v = judgeTx(r.result, p.hash);
     const detail = v.detail + (r.via === "archival" ? "; answered by the archival node" : "");
     if (v.ok && v.soft) soft(name, detail);
     else record(name, v.ok, detail);
+  }
+  await mainnetStateCheck();
+}
+
+// The mainnet state behind the proof table, from the escrow's own views (every regular node answers them, however
+// old the transactions are): a drop claimed into lumenia-first.near, which exists, and a drop that went home.
+async function mainnetStateCheck() {
+  const net = NETWORKS.mainnet;
+  const name = `mainnet state behind the proof table (${net.sender} get_drops, lumenia-first.near)`;
+  try {
+    const j = await rpcCall(net.rpc, "query", {
+      request_type: "call_function",
+      finality: "final",
+      account_id: net.sender,
+      method_name: "get_drops",
+      args_base64: Buffer.from(JSON.stringify({ from_index: 0, limit: 100 })).toString("base64"),
+    });
+    if (j.error) throw new Error(JSON.stringify(j.error).slice(0, 160));
+    const drops = JSON.parse(Buffer.from(j.result.result).toString("utf8"));
+    const first = drops.find((d) => d.claimed_to === "lumenia-first.near" && d.status === "Claimed");
+    const home = drops.filter((d) => d.status === "Reclaimed").length;
+    const acct = await rpcCall(net.rpc, "query", { request_type: "view_account", finality: "final", account_id: "lumenia-first.near" });
+    const ok = !!first && home > 0 && !!acct.result;
+    record(name, ok, `${drops.length} links on the ledger; ${first ? `one Claimed into lumenia-first.near (${Number(first.amount) / 1e6} USDC)` : "none claimed into lumenia-first.near"}; ${home} went home; lumenia-first.near ${acct.result ? "exists" : "not found"}`);
+  } catch (e) {
+    record(name, false, errMsg(e));
   }
 }
 
@@ -673,7 +784,8 @@ const failed = results.filter((r) => r.status === "FAIL");
 const softs = results.filter((r) => r.status === "SOFT");
 const passed = results.length - failed.length;
 const softNote = softs.length ? ` (${softs.length} soft)` : "";
-console.log(`\n${failed.length === 0 ? "ALL GREEN" : "FAILURES: " + failed.length}  ${passed}/${results.length} checks passed${softNote}; total runtime ${duration(Date.now() - t0)}`);
+const skipNote = skipped.length ? `; ${skipped.length} older proof hash${skipped.length === 1 ? "" : "es"} not looked up (rate-limited public services; --all-proofs looks them all up)` : "";
+console.log(`\n${failed.length === 0 ? "ALL GREEN" : "FAILURES: " + failed.length}  ${passed}/${results.length} checks passed${softNote}${skipNote}; total runtime ${duration(Date.now() - t0)}`);
 for (const r of failed) console.log(`  - FAIL ${r.name}${r.detail ? ": " + r.detail : ""}`);
 for (const r of softs) console.log(`  - soft ${r.name}: ${r.detail}`);
 // A missing hard prerequisite already failed the step that needs it, hint included; only optional ones are left to list.
