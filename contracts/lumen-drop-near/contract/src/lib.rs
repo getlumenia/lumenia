@@ -40,6 +40,12 @@ pub const CLAIM_METHODS: &str = "claim,claim_to_new_account";
 pub const MAX_BATCH_DROPS: usize = 30;
 /// Longest page a ledger view returns.
 pub const MAX_PAGE: u64 = 100;
+/// Free NEAR (above what storage locks) the escrow keeps for paying out safely. A claim needs the
+/// starter, the token registration deposit and a little storage after the USDC has moved: if its
+/// last callback (`on_claim`) failed for lack of balance, the drop would stay Claiming and the
+/// stuck-claim reclaim could pay its funder a second time. So new links are refused when they would
+/// eat into this reserve, and a claim starts only when the reserve plus its own deposits are there.
+pub const MIN_POOL_RESERVE: NearToken = NearToken::from_millinear(50);
 
 const NS_PER_S: u64 = 1_000_000_000;
 /// Longest promise result a callback reads (a bool or nothing is expected).
@@ -460,6 +466,12 @@ impl Contract {
             env::predecessor_account_id() == env::current_account_id(),
             "claim must be a transaction signed by a link key of this contract"
         );
+        self.require_pool_reserve(
+            self.starter_yocto
+                .as_yoctonear()
+                .saturating_add(self.registration_deposit.as_yoctonear()),
+            "the escrow's pool is too low to pay out this claim safely; try again later",
+        );
         let public_key = env::signer_account_pk();
         let now = env::block_timestamp();
         let drop = match self.drops.get_mut(&public_key) {
@@ -821,6 +833,18 @@ impl Contract {
 
     /// Every check of a batch, before anything is written. `Err` carries the
     /// reason that is logged when the tokens are returned.
+    /// Panics unless the free NEAR above storage covers MIN_POOL_RESERVE plus `extra`.
+    fn require_pool_reserve(&self, extra: u128, message: &str) {
+        let storage = env::storage_byte_cost()
+            .as_yoctonear()
+            .saturating_mul(u128::from(env::storage_usage()));
+        let free = env::account_balance().as_yoctonear().saturating_sub(storage);
+        require!(
+            free >= MIN_POOL_RESERVE.as_yoctonear().saturating_add(extra),
+            message
+        );
+    }
+
     fn validate_batch(&self, batch: &BatchDropMsg, total: u128) -> Result<(), String> {
         if batch.drops.is_empty() {
             return Err("batch has no drops".to_string());
@@ -974,6 +998,7 @@ impl FungibleTokenReceiver for Contract {
                     parsed.expires_in_s,
                     parsed.memo,
                 );
+                self.require_pool_reserve(0, "the escrow's pool is too low for new links; tokens returned");
                 PromiseOrValue::Value(U128(0))
             }
             // A batch is all or nothing: any problem returns every token
@@ -990,6 +1015,7 @@ impl FungibleTokenReceiver for Contract {
                             item.memo,
                         );
                     }
+                    self.require_pool_reserve(0, "the escrow's pool is too low for new links; tokens returned");
                     PromiseOrValue::Value(U128(0))
                 }
                 Err(reason) => {
@@ -1076,6 +1102,47 @@ mod tests {
         let mut b = ctx("drop.testnet", now_ns);
         b.signer_account_pk(key(n));
         b
+    }
+
+    /// A context whose escrow holds `balance` NEAR with `storage` bytes in use.
+    fn ctx_pool(predecessor: &str, now_ns: u64, balance: NearToken, storage: u64) -> VMContextBuilder {
+        let mut b = ctx(predecessor, now_ns);
+        b.account_balance(balance).storage_usage(storage);
+        b
+    }
+
+    #[test]
+    #[should_panic(expected = "the escrow's pool is too low for new links")]
+    fn a_new_link_is_refused_when_the_pool_is_below_its_reserve() {
+        let mut c = new_contract();
+        // 100 bytes lock 0.001 NEAR; 0.01 NEAR leaves 0.009 free, under the 0.05 reserve.
+        testing_env!(ctx_pool("usdc.testnet", 0, NearToken::from_millinear(10), 100).build());
+        let _ = c.ft_on_transfer(acc("funder.testnet"), U128(5_000_000), msg(1, 3600));
+    }
+
+    #[test]
+    #[should_panic(expected = "the escrow's pool is too low to pay out this claim safely")]
+    fn a_claim_is_refused_before_it_starts_when_the_pool_is_below_its_reserve() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        let mut b = ctx_pool("drop.testnet", 1, NearToken::from_millinear(10), 100);
+        b.signer_account_pk(key(1));
+        testing_env!(b.build());
+        let _ = c.claim(acc("bob.testnet"));
+    }
+
+    #[test]
+    fn a_claim_refused_for_the_reserve_leaves_the_drop_open() {
+        let mut c = new_contract();
+        create(&mut c, 1, 0);
+        let mut b = ctx_pool("drop.testnet", 1, NearToken::from_millinear(10), 100);
+        b.signer_account_pk(key(1));
+        testing_env!(b.build());
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = c.claim(acc("bob.testnet"));
+        }));
+        assert!(refused.is_err());
+        assert_eq!(c.get_drop(key(1)).unwrap().status, "Open");
     }
 
     #[test]

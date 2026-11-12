@@ -240,8 +240,13 @@ returns to Open and the funder can try again.
   reclaimed. The chain was designed so that `on_claim` cannot fail after the
   `ft_transfer` succeeded (its gas is a static floor, guaranteed by the
   60/90 Tgas guards before any state change), but if it ever did, a reclaim
-  would move a second amount out of the shared pool of other drops. Watch
-  `Claiming` drops older than 10 minutes in production.
+  would move a second amount out of the shared pool of other drops. The one
+  failure left was a lack of balance for `on_claim`'s storage write in a pool
+  drained to its edge, so since 2026-11-12 a pool-reserve guard
+  (`MIN_POOL_RESERVE`, 0.05 NEAR free above storage) refuses new links that
+  would eat into it and starts a claim only when the reserve plus the claim's
+  own deposits are free. The Worker's practice sweep never reclaims a
+  `Claiming` drop. Watch `Claiming` drops older than 10 minutes in production.
 
 ## Measured gas (sandbox, nearcore 2.14.0, `total_gas_burnt` of the whole transaction)
 
@@ -262,10 +267,11 @@ margin; a full batch needs the funder to attach 300 Tgas to `ft_transfer_call`.
 
 ## Tests
 
-- 43 unit tests in `src/lib.rs` (msg parsing for both shapes, batch
+- 46 unit tests in `src/lib.rs` (msg parsing for both shapes, batch
   validation, implicit-account and sub-account checks, every guard of
   create/claim/reclaim/pause/config, the callbacks through mocked promise
-  results, ledger paging, totals, `migrate` from a written V0 state).
+  results, ledger paging, totals, `migrate` from a written V0 state, the
+  pool-reserve guard on new links and on claims).
 - 21 sandbox tests in `tests/sandbox.rs` against a real nearcore
   sandbox, with the mock token `../test-usdc` (near-contract-standards
   FungibleToken, 6 decimals, 0.00125 NEAR registration) and the mock root
