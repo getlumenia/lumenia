@@ -186,7 +186,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         env:
           REPORT: ${{ needs.heartbeat.outputs.report }}
           TEST_ALERT: ${{ github.event_name == 'workflow_dispatch' && inputs.test_alert == true }}
@@ -250,7 +250,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: actions/github-script@v8
+      - uses: actions/github-script@v9
         env:
           REPORT: ${{ needs.heartbeat.outputs.report }}
         with:
