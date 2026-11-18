@@ -60,7 +60,7 @@
   "dependencies": {
     "@lumenia/near": "workspace:*",
     "@noble/hashes": "2.2.0",
-    "@stellar/stellar-sdk": "16.3.0",
+    "@stellar/stellar-sdk": "16.4.1",
     "aws4fetch": "^1.0.20",
     "borsh": "2.0.0",
     "near-api-js": "7.4.0"
