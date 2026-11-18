@@ -8,8 +8,8 @@ This is the sender's surface only. It is a small Chrome MV3 / Firefox MV3 extens
 the website's own sender code (`apps/web/lib`) instead of re-implementing anything that moves
 money.
 
-This folder is version **0.1.4**, public on addons.mozilla.org since 2026-10-10 (13:26 UTC) and not
-uploaded to the Chrome Web Store yet, which serves 0.1.3 since 2026-10-10. "Published builds" below says what each published version
+This folder is version **0.1.5**, submitted to addons.mozilla.org and the Chrome Web Store on 2026-11-18
+and in review there; both stores serve 0.1.4 until it is approved. "Published builds" below says what each published version
 does differently from this source.
 
 ## Install
@@ -22,8 +22,10 @@ does differently from this source.
 
 | Version | Where | Public since | Built from | Package sha256 | The links it makes |
 |---|---|---|---|---|---|
+| 0.1.5 | addons.mozilla.org (listed) | submitted 2026-11-18, in review | commit `281d58f` (this folder; the README rows added after) | `lumenia-firefox-0.1.5.zip` as built: `38f9a15c925f3650633806d5f6b64b5723cbc0fc488a2602319f2bd032848bbd` | Private, as 0.1.3 |
+| 0.1.5 | Chrome Web Store | submitted 2026-11-18, in review | commit `281d58f` (this folder; the README rows added after) | `lumenia-chrome-0.1.5.zip` as built: `dc7df950d603baf5bd46313c0e533ec5f2f1945a1c4b9d080250d3465c5a10d7` | Private, as 0.1.3 |
 | 0.1.4 | addons.mozilla.org (listed) | 2026-10-10, 13:26 UTC (AMO version 6561729) | commit `c961c69` (this folder) | `lumenia-firefox-0.1.4.zip` as built: `dea18be9442c016b8a1ed5aea1bab15153b7312eed25845f6269a5a123d49d8f`; the signed file AMO serves: `3f5c82be654ab9c73794d5629373008c1b7b9faad779708a16dc0bbedc11a39b` | Private, as 0.1.3 |
-| 0.1.4 | Chrome Web Store | not uploaded yet (the owner's step) | commit `c961c69` (this folder) | `lumenia-chrome-0.1.4.zip` as built: `0af592130bb768430cd6abef2f4a3217a0636be7cb4f5412b4c67bf6f2fb39d6` | Private, as 0.1.3 |
+| 0.1.4 | Chrome Web Store | 2026-10-11 (the store page reads "Updated October 11, 2026", version 0.1.4, checked 2026-11-18) | commit `c961c69` (this folder) | `lumenia-chrome-0.1.4.zip` as built: `0af592130bb768430cd6abef2f4a3217a0636be7cb4f5412b4c67bf6f2fb39d6` | Private, as 0.1.3 |
 | 0.1.3 | addons.mozilla.org (listed) | 2026-10-09 | commit `00aa0a5` | signed file AMO serves: `17b2da7ee288d3c1a5570634bac5a466215c7447b3cabb0acbb2fdeb7ce07c3c` | Private: `/v2/c/<id>?[n=public&]src=ext#<key>[&s=<name>][&p=1]`. No amount anywhere in the link, and a name only when the sender types one, after the `#` |
 | 0.1.3 | Chrome Web Store | 2026-10-10, 10:32 UTC (the store's "published" mail) | commit `00aa0a5` | CRX as served on 2026-10-10: `94e119a4bf64f81125b36d8d04dce30da801aac6fae4eefb2699b76645a951bd` (569,213 bytes). Unpacked, it matches the package as built (`b2916797fa5166ba431c08dc26081998b6655a44cfdd51949b34173acc4e4e73`) file for file, apart from what the store adds (`_metadata/verified_contents.json` and an `update_url` line in `manifest.json`) | Private, as above |
 | 0.1.2 | Chrome Web Store | 2026-10-06, until 0.1.3 replaced it on 2026-10-10 | commit `062725f` | CRX as served on 2026-10-09: `0a62ccc9736aa6b2c40b0f2895ee099c184f9f61855b364f26f099bad43e85a7` | Pre-D2: `/v2/c/<id>?a=<amount>&s=<name>[&p=1][&n=public]&src=ext#<key>`, the amount and the name in the query (the name is "Someone" when none was typed) |
